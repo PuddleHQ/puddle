@@ -81,7 +81,7 @@
         decrypted. It applies at once, no restart.
       </p>
       <p class="from">
-        <span class="chip"
+        <span class="meta"
           >{store.mode === "inherit"
             ? "Global setting"
             : "This workspace"}</span
@@ -150,11 +150,6 @@
     gap: var(--space-2);
     margin: 0;
     font-size: var(--text-sm);
-  }
-  .chip {
-    padding: 0 var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-pill);
   }
   .reset {
     padding: 0;

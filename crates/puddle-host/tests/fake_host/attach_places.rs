@@ -29,7 +29,7 @@ async fn the_desktop_editor_opens_the_start_folder_or_the_multi_root_file_on_the
     };
     let root = attach().await;
     assert_eq!(root.ssh_host, "puddle-acme");
-    assert_eq!(root.path, "/workspaces/acme");
+    assert_eq!(root.path, "/workspace");
     assert!(!root.is_workspace_file);
 
     rig.guest
@@ -37,16 +37,13 @@ async fn the_desktop_editor_opens_the_start_folder_or_the_multi_root_file_on_the
     rig.guest
         .put_checkout("web", "https://example.org/acme/web.git");
     let multi = attach().await;
-    assert_eq!(
-        multi.path,
-        "/workspaces/acme/.puddle/editor/acme.code-workspace"
-    );
+    assert_eq!(multi.path, "/workspace/.puddle/editor/acme.code-workspace");
     assert!(multi.is_workspace_file);
 
     let reply = put_start_folder(&api, "acme", Some("api")).await;
     assert_eq!(reply.status, 200, "{}", reply.body);
     let folder = attach().await;
-    assert_eq!(folder.path, "/workspaces/acme/api");
+    assert_eq!(folder.path, "/workspace/api");
     assert!(!folder.is_workspace_file);
     host.shutdown().await;
 }
@@ -76,7 +73,7 @@ async fn a_desktop_attach_on_an_image_without_git_opens_the_folder_and_raises_no
         .last()
         .cloned()
         .unwrap();
-    assert_eq!(target.path, "/workspaces/acme");
+    assert_eq!(target.path, "/workspace");
     assert!(!target.is_workspace_file);
     assert!(problem_is(&api, "editor-file:acme", false).await.is_none());
     host.shutdown().await;
@@ -111,10 +108,7 @@ async fn a_desktop_attach_on_an_image_without_git_with_two_checkouts_opens_the_m
         .last()
         .cloned()
         .unwrap();
-    assert_eq!(
-        target.path,
-        "/workspaces/acme/.puddle/editor/acme.code-workspace"
-    );
+    assert_eq!(target.path, "/workspace/.puddle/editor/acme.code-workspace");
     assert!(target.is_workspace_file);
     assert!(problem_is(&api, "editor-file:acme", false).await.is_none());
     // The checkouts screen still says why it has nothing to show.
@@ -133,7 +127,7 @@ async fn the_browser_editor_gets_the_same_place_to_open_as_the_desktop_one_with_
     create(&api, &mut events, "acme").await;
     let open = || async { browser_target(&rig, &api, "acme").await.open.unwrap() };
     let root = open().await;
-    assert_eq!(root.path, "/workspaces/acme");
+    assert_eq!(root.path, "/workspace");
     assert!(!root.is_workspace_file);
 
     // The workspace keeps running; two checkouts appear, and the attach alone brings the file.
@@ -142,16 +136,13 @@ async fn the_browser_editor_gets_the_same_place_to_open_as_the_desktop_one_with_
     rig.guest
         .put_checkout("web", "https://example.org/acme/web.git");
     let multi = open().await;
-    assert_eq!(
-        multi.path,
-        "/workspaces/acme/.puddle/editor/acme.code-workspace"
-    );
+    assert_eq!(multi.path, "/workspace/.puddle/editor/acme.code-workspace");
     assert!(multi.is_workspace_file);
 
     let reply = put_start_folder(&api, "acme", Some("api")).await;
     assert_eq!(reply.status, 200, "{}", reply.body);
     let folder = open().await;
-    assert_eq!(folder.path, "/workspaces/acme/api");
+    assert_eq!(folder.path, "/workspace/api");
     assert!(!folder.is_workspace_file);
     host.shutdown().await;
 }

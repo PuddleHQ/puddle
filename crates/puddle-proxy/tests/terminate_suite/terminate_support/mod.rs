@@ -102,10 +102,14 @@ impl Pki {
         } else {
             name.to_owned()
         };
-        let mut params = rcgen::CertificateParams::new(vec![sans]).unwrap();
-        params
-            .distinguished_name
-            .push(rcgen::DnType::CommonName, name);
+        // `name` may list several names, comma separated: the certificate is valid for each.
+        let mut params =
+            rcgen::CertificateParams::new(sans.split(',').map(str::to_owned).collect::<Vec<_>>())
+                .unwrap();
+        params.distinguished_name.push(
+            rcgen::DnType::CommonName,
+            name.split(',').next().unwrap_or(name),
+        );
         match flaw {
             Flaw::Expired => {
                 params.not_before = rcgen::date_time_ymd(2000, 1, 1);

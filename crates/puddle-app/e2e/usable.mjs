@@ -15,22 +15,27 @@
 //      is the identity's, and the guest, the audit log and the API never hold the token;
 //   6. the first run's "Copy report" puts the system check's report on the Windows clipboard;
 //   7. the workspace's Terminal tab opens a shell: `whoami; pwd; sudo -n true && echo sudo-ok`, typed
-//      with real keys, reads `agent`, the start folder and `sudo-ok`, and no error page shows;
+//      with real keys, reads `agent`, the start folder and `sudo-ok`, and no error page shows; the page
+//      itself is read over DevTools (terminal-render.mjs): emulator sized, stylesheet applied, terminal
+//      font, ANSI colours unlike the default text, a mouse drag selects, no CSP or stylesheet error;
 //   8. the close button hides the window in the tray, with exactly one Windows notification however
 //      often it is pressed, and a heartbeat the guest writes every half second has no gap over 2 s
 //      while the window is hidden;
 //   9. a new request makes no notification while the window is in front, and exactly one, naming the
 //      workspace and the host, while it is minimized;
 //  10. Activity's "Export JSON lines" saves a .jsonl file in Downloads, one valid JSON record a line;
-//  11. the tray's "Quit Puddle" with the workspace running leaves no `puddle-app`, `puddle` or `msb` process
+//  11. the close button still hides the window when the page failed to load (broken-page.mjs refuses
+//      every request and reloads, so the window shows the browser's error page);
+//  12. the tray's "Quit Puddle" with the workspace running leaves no `puddle-app`, `puddle` or `msb` process
 //      within 90 s, and a new start lists the workspace as stopped.
-// Steps 7 to 11 run in the direct run only (below): the shell does not change behind a proxy.
+// Steps 7 to 12 run in the direct run only (below): the shell does not change behind a proxy.
 //
 // Windows notifications are read from the Action Center's history for the app's AppUserModelID (the
 // Start menu shortcut's, the `identifier` in tauri.conf.json), and the window's buttons are pressed with
 // the messages its title bar sends (desktop.ps1).
 //
-// Why UI Automation (uia.mjs) and not the DevTools Protocol like smoke.mjs: a release build has no
+// Why UI Automation (uia.mjs) and not the DevTools Protocol like smoke.mjs (the Terminal tab's rendering
+// check alone uses a DevTools port, opened by a WebView2 policy value, see terminal-render.mjs): a release build has no
 // debugging port (the shell honours PUDDLE_APP_DEBUG_PORT in debug builds only, and WebView2 ignores its
 // environment variable once the API sets arguments, which wry always does), and the MSI holds a release
 // build. So the real window is clicked the way a person does it: the first-run steps, the create form,
@@ -64,6 +69,8 @@ import { fileURLToPath } from "node:url";
 import { Uia } from "./uia.mjs";
 import { onChildEnd } from "./child-end.mjs";
 import { GiveUp, until } from "./poll.mjs";
+import { debugPortPolicy, inspectTerminal } from "./terminal-render.mjs";
+import { breakThePage } from "./broken-page.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const local = process.env.LOCALAPPDATA;
@@ -188,6 +195,16 @@ if (company) {
     stopForge();
     process.exit(1);
   });
+}
+
+// A release build has no DevTools port; the WebView2 policy for additional browser arguments gives the
+// installed app one, which the Terminal tab's rendering check reads (terminal-render.mjs). The value is
+// removed at the end.
+const DEBUG_PORT = 9223;
+try {
+  debugPortPolicy(DEBUG_PORT);
+} catch (err) {
+  console.log(`     no DevTools policy: ${err.message}`);
 }
 
 const connectionFile = join(dataDir, "api.json");
@@ -431,7 +448,7 @@ async function firstRunToCreateForm() {
       check("the recommended interception mode is preselected", mode.checked === true, JSON.stringify(mode));
     }
     if (step.id === "connect") {
-      const code = await uia.waitFor("the bundled code-server choice", { window: MAIN, role: "radio", nameRegex: "code-server \\(bundled\\)" });
+      const code = await uia.waitFor("the bundled code-server choice", { window: MAIN, role: "radio", nameRegex: "Built-in VS Code server" });
       check("code-server is preselected on the Connect step", code.checked === true, JSON.stringify(code));
     }
     if (step.continue) await uia.click(`${step.continue.name} (from ${step.heading})`, control(step.continue));
@@ -591,6 +608,54 @@ async function terminalTab(startFolder) {
   screenshot("terminal");
   const lines = (await terminalLines()).filter((l) => l.trim()).slice(-12).join(" ¦ ");
   check("the terminal reads agent, the start folder and sudo-ok", user && folder && sudo, `whoami ${user}, pwd ${startFolder} ${folder}, sudo ${sudo}; lines: ${lines}`);
+  await terminalRendering();
+}
+
+/**
+ * The close button on a page that failed to load: the window's page is made to fail on purpose (every
+ * request refused, then a reload shows the browser's error page), and the close button still hides the
+ * window in the tray, the app keeps running, and the window comes back from a second start.
+ */
+async function closeOnABrokenPage() {
+  mainWindow("front");
+  const broken = await breakThePage(DEBUG_PORT);
+  // The control: Puddle's own navigation is gone from the window, so the close below is pressed on a page
+  // that is not Puddle's.
+  const gone = await until("Puddle's navigation to be gone", async () => (await uia.find(inMain("link", "Workspaces"))).length === 0, 30_000, 1000).then(() => true, () => false);
+  check("the main window's page failed to load on purpose (the control)", gone && broken.refused.length > 0, `refused: ${broken.refused.join(", ")}; navigation gone: ${gone}`);
+  try {
+    const hidden = [];
+    for (const round of [1, 2]) {
+      mainWindow("front");
+      mainWindow("close");
+      const s = await windowBecomes(`the window to hide on the broken page (close ${round})`, (w) => !w.visible).catch(() => mainWindow());
+      hidden.push(!s.visible && !appExited);
+      await reopen().catch(() => {});
+    }
+    check("the close button hides the window in the tray on a page that failed to load", hidden.every(Boolean), `hidden after each close: ${hidden.join(", ")}; exited: ${appExited}`);
+  } finally {
+    await broken.restore();
+  }
+}
+
+/** Colours, font, size and a mouse selection of the terminal, read from the page over the policy's DevTools port. */
+async function terminalRendering() {
+  // Two SGR sequences by printf; the words appear in the output only (the typed command holds the escapes, not the words).
+  const command = "printf '\\033[31mCOLOR-RED\\033[0m \\033[1;32mCOLOR-GREEN\\033[0m\\n'";
+  await step("the colour sample is printed", async () => {
+    await uia.type("the terminal's input", { window: MAIN, role: "edit", name: `Terminal 1, ${WORKSPACE}` }, command, { enter: true });
+    await uia.waitFor("the colour sample line", { window: MAIN, role: "listitem", nameRegex: "COLOR-RED COLOR-GREEN" }, 60_000);
+  });
+  let report;
+  try {
+    report = await inspectTerminal(DEBUG_PORT);
+  } catch (err) {
+    check("the terminal's rendering could be read over DevTools", false, String(err?.message ?? err));
+    return;
+  }
+  for (const c of report.checks) check(`terminal rendering: ${c.name}`, c.ok, c.detail);
+  writeFileSync(join(out, "terminal-render.json"), JSON.stringify(report.dump, null, 2));
+  if (report.checks.some((c) => !c.ok)) screenshot("terminal-rendering");
 }
 
 /** The guest's clock, in seconds. */
@@ -807,7 +872,7 @@ try {
   check("a workspace made from the lab forge's private repository is running", running.status === "running", `${running.status}, image ${running.image}`);
   // The create allowed the forge itself before the first clone, so nobody approves it and nobody
   // clones again: the checkout is there and the rule says who made it.
-  const checkout = `/workspaces/${id}/app/package.json`;
+  const checkout = `/workspace/app/package.json`;
   const rules = (await api("GET", "/api/rules")).json?.rules ?? [];
   const grant = rules.find((r) => r.pattern === forge && r.effect === "allow" && r.scope?.type === "workspace" && r.scope.workspace === id);
   check("the create made an allow rule for the forge, marked as made by the create", grant?.created_by === "workspace_create", JSON.stringify(grant ?? rules));
@@ -859,8 +924,8 @@ try {
     { root: true, within: 900_000, ok: (r) => /apt=0/.test(r.text) },
   );
   check("nodejs and npm install from the distribution's archive after the approvals", /apt=0/.test(aptDone.text), `after ${aptDone.attempts} tries: ${aptDone.text.slice(-300)}`);
-  const rootDir = (await guest(id, "find /workspaces -maxdepth 3 -name package.json -not -path '*/node_modules/*' | head -1 | xargs dirname")).text.trim().split("\n").pop();
-  check("the checkout is in the workspace", rootDir.startsWith("/workspaces/"), rootDir);
+  const rootDir = (await guest(id, "find /workspace -maxdepth 2 -name package.json -not -path '*/node_modules/*' | head -1 | xargs dirname")).text.trim().split("\n").pop();
+  check("the checkout is in the workspace", rootDir.startsWith("/workspace/"), rootDir);
   const build = await guest(id, `cd ${rootDir} && node --version && npm --version && npm install --no-audit --no-fund 2>&1 | tail -2 && npm run build 2>&1 && npm test 2>&1 | tail -8 && node dist/app.js`);
   check("npm run build and npm test pass in the workspace", build.code === 0 && /build ok/.test(build.text) && /hello from usable/.test(build.text), build.text.slice(-500));
 
@@ -912,10 +977,11 @@ try {
   if (!company) {
     const listed = (await api("GET", "/api/workspaces")).json?.workspaces?.find((w) => w.id === id);
     const phase = (what, run) => run().catch((err) => check(`${what} ran to the end`, false, String(err?.message ?? err)));
-    await phase("the Terminal tab", () => terminalTab(listed?.start_folder ?? `/workspaces/${id}`));
+    await phase("the Terminal tab", () => terminalTab(listed?.start_folder ?? "/workspace"));
     await phase("the close button", () => closeToTray(id));
     await phase("the request notifications", () => requestNotifications(id));
     await phase("the Activity export", exportActivity);
+    await phase("the close button on a broken page", closeOnABrokenPage);
     await phase("the tray's Quit", () => quitFromTheTray(id));
   }
 
@@ -931,6 +997,7 @@ try {
   note(`windows at the end: ${appWindows().join(" | ") || "none"}`);
   screenshot("failure");
 } finally {
+  debugPortPolicy(undefined);
   writeFileSync(join(out, "app.log"), appLog);
   if (info) writeFileSync(join(out, "forgejo-server.log"), forgeLog());
   if (companyInfo) writeFileSync(join(out, "company-proxy.log"), companyLog());

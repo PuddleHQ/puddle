@@ -11,7 +11,7 @@ use puddle_api::{
     ApiConfig, ApiServer, ApiToken, BackupService, CredentialService, DevCertService,
     DoctorService, EventHub, FakeCredentials, FakeLauncher, FakeLearned, FakePorts,
     FakeProxySignIns, FakeRepos, FakeTerminals, FakeWorkspaces, Launcher, MemorySettings,
-    NetworkHealthService, NoNames, RepoService, RunningApi, Services, SettingsRepo,
+    NetworkHealthService, NoNames, RepoService, RestoreService, RunningApi, Services, SettingsRepo,
 };
 use puddle_netpolicy::CompanySignals;
 use puddle_secrets::MemoryStore;
@@ -78,6 +78,15 @@ pub(crate) async fn start_with_network(network: Arc<dyn NetworkHealthService>) -
 pub(crate) async fn start_with_backup(backup: Arc<dyn BackupService>) -> Api {
     start_inner(Options {
         backup: Some(backup),
+        ..Options::default()
+    })
+    .await
+}
+
+/// An API reading restore uploads through `restore`.
+pub(crate) async fn start_with_restore(restore: Arc<dyn RestoreService>) -> Api {
+    start_inner(Options {
+        restore: Some(restore),
         ..Options::default()
     })
     .await
@@ -158,6 +167,7 @@ struct Options {
     own_credentials: Option<Arc<dyn CredentialService>>,
     doctor: Option<Arc<dyn DoctorService>>,
     backup: Option<Arc<dyn BackupService>>,
+    restore: Option<Arc<dyn RestoreService>>,
     with_repos: bool,
     dev_cert: Option<Arc<dyn DevCertService>>,
     company_signals: Option<Arc<dyn CompanySignals>>,
@@ -172,6 +182,7 @@ impl Default for Options {
             own_credentials: None,
             doctor: None,
             backup: None,
+            restore: None,
             with_repos: true,
             dev_cert: None,
             company_signals: None,
@@ -187,6 +198,7 @@ async fn start_inner(options: Options) -> Api {
         own_credentials,
         doctor,
         backup,
+        restore,
         with_repos,
         dev_cert,
         company_signals,
@@ -231,6 +243,7 @@ async fn start_inner(options: Options) -> Api {
     );
     let services = doctor.into_iter().fold(services, Services::with_doctor);
     let services = backup.into_iter().fold(services, Services::with_backup);
+    let services = restore.into_iter().fold(services, Services::with_restore);
     let services = dev_cert.into_iter().fold(services, Services::with_dev_cert);
     let repos = Arc::new(FakeRepos::new());
     let services = if with_repos {

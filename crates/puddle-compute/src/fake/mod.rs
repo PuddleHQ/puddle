@@ -58,7 +58,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use puddle_types::{
-    CpuCount, GuestEnv, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus,
+    CpuCount, GuestEnv, GuestPath, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -66,8 +66,8 @@ pub use self::exec::{ExecContext, ExecHandler, FsError};
 use self::exec::{Files, builtin};
 use crate::{
     Capabilities, ComputeError, DiskSize, ExecOutput, ExecRequest, ImageConfig, MountKind,
-    RootDiskGrowth, RootDiskUse, Runtime, Sandbox, SandboxInfo, SandboxSpec, SshStream, VolumeInfo,
-    VolumeSpec,
+    PullProgress, PullReport, RootDiskGrowth, RootDiskUse, Runtime, Sandbox, SandboxInfo,
+    SandboxSpec, SshStream, VolumeInfo, VolumeSpec,
 };
 
 /// The identification line the fake SSH server sends.
@@ -100,6 +100,8 @@ pub enum Op {
     List,
     /// [`Runtime::remove`].
     Remove,
+    /// [`Runtime::kill`].
+    Kill,
     /// [`Runtime::stale_dirs`].
     StaleDirs,
     /// [`Runtime::remove_stale_dir`].
@@ -280,6 +282,8 @@ struct State {
     terminals: bool,
     /// [`FakeRuntime::set_live_root_grow`] turned off: a running sandbox grows at its next boot.
     no_live_root_grow: bool,
+    /// [`FakeRuntime::script_pull`]: what every pull reports to its caller before it answers.
+    pull_script: Vec<PullProgress>,
     /// [`FakeRuntime::wait_in_every_call`]: each call waits once before it answers.
     waits: bool,
 }
@@ -386,7 +390,7 @@ impl std::fmt::Debug for FakeRuntime {
 
 impl FakeRuntime {
     /// `mcr.microsoft.com/devcontainers/base:debian`: no ENTRYPOINT, CMD `bash`.
-    pub const DEBIAN: &'static str = "mcr.microsoft.com/devcontainers/base:debian@sha256:38f9e6c291f054e3c868d95a5477cbfcf76c0fa7c218dda65dc6aa3fbfe06871";
+    pub const DEBIAN: &'static str = "mcr.microsoft.com/devcontainers/base:debian@sha256:41ff7ce12ec45f2704f27a6e091831186ad922ec8112e6339425bfefdf5a70f9";
     /// `docker:dind`: ENTRYPOINT `dockerd-entrypoint.sh`.
     pub const DIND: &'static str = "docker:dind";
     /// `alpine:3`: CMD `/bin/sh`.
@@ -432,6 +436,12 @@ impl FakeRuntime {
             .state
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Makes every [`Runtime::pull_image_reporting`] report `steps`, in order, before it answers,
+    /// as a pull that downloads would.
+    pub fn script_pull(&self, steps: Vec<PullProgress>) {
+        self.lock().pull_script = steps;
     }
 
     /// Makes `image` pullable with `config`.
@@ -520,6 +530,20 @@ impl FakeRuntime {
             .get(name.as_str())
             .map(|r| r.spec.volumes.clone())
             .unwrap_or_default()
+    }
+
+    /// Moves every named volume of the sandbox `name` to `guest`, as in a sandbox an earlier
+    /// version made with another folder. Returns whether there is such a sandbox.
+    #[must_use = "false means there is no such sandbox"]
+    pub fn move_volume_mounts(&self, name: &SandboxName, guest: &GuestPath) -> bool {
+        let mut state = self.lock();
+        let Some(record) = state.sandboxes.get_mut(name.as_str()) else {
+            return false;
+        };
+        for volume in &mut record.spec.volumes {
+            volume.guest = guest.clone();
+        }
+        true
     }
 
     /// Simulates the VM dying: a running sandbox becomes `Crashed`. Returns whether it was
@@ -657,6 +681,18 @@ impl Runtime for FakeRuntime {
                 image: image.to_string(),
                 reason: "manifest unknown".into(),
             })
+    }
+
+    async fn pull_image_reporting<'a>(
+        &'a self,
+        image: &'a ImageRef,
+        report: PullReport<'a>,
+    ) -> Result<ImageConfig, ComputeError> {
+        let script = self.lock().pull_script.clone();
+        for step in script {
+            report(step);
+        }
+        self.pull_image(image).await
     }
 
     async fn create(&self, spec: SandboxSpec) -> Result<FakeSandbox, ComputeError> {
@@ -904,6 +940,7 @@ impl Runtime for FakeRuntime {
                 puddle_owned: true,
                 root_disk: r.root_disk,
                 routes: r.spec.routes.clone(),
+                volume_mounts: r.spec.volumes.iter().map(|v| v.guest.clone()).collect(),
             })
             .chain(state.foreign.iter().map(|(name, status)| SandboxInfo {
                 name: name.clone(),
@@ -911,6 +948,7 @@ impl Runtime for FakeRuntime {
                 puddle_owned: false,
                 root_disk: None,
                 routes: Vec::new(),
+                volume_mounts: Vec::new(),
             }))
             .collect();
         out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -932,6 +970,23 @@ impl Runtime for FakeRuntime {
             }),
             Some(_) => {
                 state.sandboxes.remove(name.as_str());
+                Ok(())
+            }
+        }
+    }
+
+    async fn kill(&self, name: &SandboxName) -> Result<(), ComputeError> {
+        self.turn().await;
+        let mut state = self.lock();
+        state.enter(Op::Kill, Some(name.as_str()), None)?;
+        match state.sandboxes.get_mut(name.as_str()) {
+            None => Err(ComputeError::NotFound {
+                sandbox: name.to_string(),
+            }),
+            Some(r) => {
+                if !r.status.is_down() {
+                    r.status = WorkspaceStatus::Crashed;
+                }
                 Ok(())
             }
         }
@@ -1144,6 +1199,7 @@ impl Sandbox for FakeSandbox {
         state.enter(Op::Exec, Some(self.name.as_str()), Some(detail))?;
         self.check_running(&state, "exec")?;
         self.run(&mut state, &request)
+            .map(|output| output.capped(request.max_output))
     }
 
     async fn serve_ssh<S: SshStream>(&self, mut stream: S) -> Result<(), ComputeError> {

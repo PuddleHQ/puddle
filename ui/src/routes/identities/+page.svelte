@@ -214,8 +214,7 @@
         <div class="main">
           <div class="titleline">
             <h2><a href="/identities/{identity.id}">{identity.label}</a></h2>
-            {#if identity.is_default}<span class="chip default">Default</span
-              >{/if}
+            {#if identity.is_default}<span class="meta">Default</span>{/if}
             {#if identity.credentials.length > 0}<CheckChip
                 check={status}
               />{/if}
@@ -228,7 +227,7 @@
           {:else}
             <ul class="chips" aria-label="Credentials of {identity.label}">
               {#each identity.credentials as credential (credentialChip(credential))}
-                <li class="chip">{credentialChip(credential)}</li>
+                <li class="meta">{credentialChip(credential)}</li>
               {/each}
             </ul>
           {/if}
@@ -304,12 +303,6 @@
     gap: var(--space-4);
     margin-bottom: var(--space-4);
   }
-  h1 {
-    font-size: var(--text-xl);
-  }
-  h1:focus {
-    outline: none;
-  }
   h2 {
     font-size: var(--text-lg);
   }
@@ -320,7 +313,7 @@
     color: var(--color-text-muted);
   }
   .sub {
-    max-width: 52rem;
+    max-width: var(--page-reading-width);
   }
   .author {
     color: var(--color-text);
@@ -383,23 +376,9 @@
     padding: 0;
     list-style: none;
   }
-  .chip {
-    padding: 0 var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-pill);
-    font-size: var(--text-sm);
-    overflow-wrap: anywhere;
-  }
-  .chip.default {
-    color: var(--color-accent);
-    border-color: var(--color-accent);
-  }
+  /* An empty screen is plain words on the page, not a box. */
   .empty {
-    max-width: 40rem;
-    padding: var(--space-6);
-    background: var(--color-surface);
-    border: 1px solid var(--color-border-subtle);
-    border-radius: var(--radius-md);
+    padding-block: var(--space-4);
   }
   .empty p {
     margin: var(--space-2) 0 0;

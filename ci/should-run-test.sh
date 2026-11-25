@@ -40,7 +40,7 @@ run() {
     shift
     : >"$tmp/out"
     : >"$tmp/log"
-    env -u PUDDLE_QUEUE_SKIP_PUSH -u GITHUB_REF PATH="$tmp/bin:$PATH" GITHUB_REPOSITORY=o/r GITHUB_SHA=c1 \
+    env -u PUDDLE_QUEUE_SKIP_PUSH -u PUDDLE_LIGHT_CI -u GITHUB_REF PATH="$tmp/bin:$PATH" GITHUB_REPOSITORY=o/r GITHUB_SHA=c1 \
         GITHUB_OUTPUT="$tmp/out" FAKE_LOG="$tmp/log" FAKE_RUNS="$tmp/runs" "${vars[@]}" \
         "$script" "$@" >/dev/null 2>&1 || rc=$?
     if [ "$want" = "exit 2" ]; then
@@ -79,6 +79,8 @@ grep -q -- '--event merge_group' "$tmp/log" || bad "--queue-tested did not filte
 grep -q -- '--status success' "$tmp/log" || bad "--queue-tested did not filter on green runs"
 grep -q -- '--workflow ci.yml' "$tmp/log" || bad "--queue-tested did not filter on the workflow"
 run tested=false "API error" "${PUSH[@]}" FAKE_FAIL=1 -- ci.yml --queue-tested
+run tested=false "light CI mode: the queue ran only the unit tier" "${PUSH[@]}" PUDDLE_LIGHT_CI=on -- ci.yml --queue-tested
+run tested=true "PUDDLE_LIGHT_CI not exactly on" "${PUSH[@]}" PUDDLE_LIGHT_CI=ON -- ci.yml --queue-tested
 run tested=false "variable unset" GITHUB_EVENT_NAME=push GITHUB_REF=refs/heads/develop -- ci.yml --queue-tested
 run tested=false "variable not exactly on" GITHUB_EVENT_NAME=push GITHUB_REF=refs/heads/develop PUDDLE_QUEUE_SKIP_PUSH=ON -- ci.yml --queue-tested
 run tested=false "push to main" GITHUB_EVENT_NAME=push GITHUB_REF=refs/heads/main PUDDLE_QUEUE_SKIP_PUSH=on -- ci.yml --queue-tested

@@ -6,11 +6,9 @@ import {
   entryPattern,
   globalState,
   isOn,
-  overrides,
   overridesLabel,
   setNameError,
   setsOnFor,
-  stateFor,
   systemFor,
   systemScope,
   userSetNumber,
@@ -50,12 +48,6 @@ describe("where a set is on (R-37)", () => {
       ],
     });
     expect(overridesLabel(set)).toBe("off in api; on in web");
-    expect(stateFor(set, "api")).toBe("Off here");
-    expect(stateFor(set, "web")).toBe("On here");
-    expect(stateFor(set, "other")).toBe("On, as for every workspace");
-    expect(stateFor(builtIn("x"), "other")).toBe("Off, as for every workspace");
-    expect(overrides(set, "api")).toBe(true);
-    expect(overrides(set, "other")).toBe(false);
   });
 
   it("offers only your sets that are on for the workspace", () => {

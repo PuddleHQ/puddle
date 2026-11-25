@@ -38,6 +38,7 @@ mod repos;
 mod repositories;
 mod repository_hosts;
 mod request_rules;
+mod restore;
 mod rule_sets;
 mod rules;
 mod settings_view;
@@ -111,6 +112,11 @@ pub use repository_hosts::{
     AllowedHost, RepositoryHost, RepositoryHostState, RepositoryHosts, RepositoryHostsRequest,
 };
 pub use request_rules::{NewRequestRuleRequest, RequestRule, RequestRuleList};
+pub use restore::{
+    RestoreApplied, RestoreApplyRequest, RestoreDisk, RestoreIdentityToken, RestoreMode,
+    RestorePart, RestorePartName, RestorePreview, RestoreResult, RestoreResultView, RestoreSecret,
+    RestoreWorkspace, SafetyCopy, SafetyCopyList,
+};
 pub use rule_sets::{
     NewRuleSetRequest, RuleSetEntry, RuleSetEntryPage, RuleSetEntrySwitchRequest, RuleSetKind,
     RuleSetList, RuleSetOverride, RuleSetSwitchRequest, RuleSetSwitched, RuleSetUpdateRequest,

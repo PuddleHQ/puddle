@@ -5,7 +5,8 @@
 # from the stock image that runs a command and is deleted, and an uninstall that leaves nothing
 # outside Puddle's own data folders (ci/msi-install-test.ps1). A runner without a usable hypervisor
 # skips the boot steps with a warning, except on a pull request, where that fails (as vm-windows). Not a required check: it runs on pull requests that
-# touch the installer (paths below), nightly on develop (skipped when this workflow already has a
+# touch the installer, the first-run pages or the scripts that walk them (paths below; develop's installed-app walk
+# was red for 5 days after a change to the pages that no pull request ran it for), nightly on develop (skipped when this workflow already has a
 # green run on the commit), and by hand. The MSI of the run is kept as an artifact.
 #
 # The `upgrade` job tests the upgrade a user makes, on a machine of its own: it installs the last
@@ -13,7 +14,7 @@
 # run kept), makes a workspace and writes files to it, upgrades to this run's build, and checks that
 # the workspace starts with its files intact under the newer runtime (ci/msi-install-test.ps1
 # -BaselineMsi), and that the state a user builds up (rules, a pending request, variables, a secret,
-# settings, an identity, a home file) is equal after it (crates/puddle-app/e2e/upgrade-state.mjs). The
+# settings, an identity, a file in the workspace folder) is equal after it (crates/puddle-app/e2e/upgrade-state.mjs). The
 # dispatch input `plant_breakage` shows the job fails when a migration loses data.
 #
 # The `usable` job is the "usable" bar (install, create, approve, edit, build, push) with no person: it installs the MSI
@@ -61,6 +62,9 @@ on:
       - crates/puddle-app/wix/**
       - crates/puddle-app/build.rs
       - crates/puddle-app/e2e/usable.mjs
+      - crates/puddle-app/e2e/terminal-render.mjs
+      - crates/puddle-app/e2e/broken-page.mjs
+      - crates/puddle-app/e2e/cdp.mjs
       - crates/puddle-app/e2e/uia.mjs
       - crates/puddle-app/e2e/uia.ps1
       - crates/puddle-app/e2e/upgrade-state.mjs
@@ -68,6 +72,8 @@ on:
       - crates/puddle-app/e2e/poll.mjs
       - crates/puddle-app/e2e/child-end.mjs
       - crates/puddle-app/e2e/desktop.ps1
+      - ui/src/lib/welcome/**
+      - ui/src/routes/welcome/**
       - ci/fetch-forgejo.sh
       - ci/forgejo.sha256
       - crates/puddle-e2e/src/lab/forgejo.rs
@@ -450,6 +456,7 @@ jobs:
             ${{ runner.temp }}/usable-out/*.log
             ${{ runner.temp }}/usable-out/*.out
             ${{ runner.temp }}/usable-out/uia-tree-*.txt
+            ${{ runner.temp }}/usable-out/terminal-render.json
             ${{ runner.temp }}/usable-out/forgejo-server.log
             ${{ runner.temp }}/usable-out/company-proxy.log
             ${{ runner.temp }}/usable-out/company-lab.out

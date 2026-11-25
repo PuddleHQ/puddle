@@ -860,6 +860,35 @@ pub enum Step {
         #[serde(default)]
         reason: Option<String>,
     },
+    /// Sets what a restore preview of an uploaded file answers: one new rule, the workspaces named
+    /// without a disk on this machine, and the secrets named without a value here.
+    RestorePreview {
+        /// Workspaces whose disk is not here.
+        #[serde(default)]
+        missing_disks: Vec<String>,
+        /// Secrets that need a value.
+        #[serde(default)]
+        secrets: Vec<String>,
+    },
+    /// Makes every confirm of a restore fail with `reason` from now on; without one, it succeeds.
+    RestoreApplyFails {
+        /// What the failure says.
+        #[serde(default)]
+        reason: Option<String>,
+    },
+    /// Sets what the last restore did, as read after a restart; no message clears it.
+    RestoreResult {
+        /// Whether it was applied.
+        applied: bool,
+        /// What it says.
+        #[serde(default)]
+        message: Option<String>,
+    },
+    /// Sets the safety copies the list shows, newest first.
+    SafetyCopies {
+        /// Their folder names.
+        names: Vec<String>,
+    },
     /// Sets where the development certificate stands and what the next presses of "Trust it now"
     /// come to (a yes, a no, a failure with the system's words).
     DevCertificate {

@@ -166,3 +166,32 @@ fn named_volumes_are_read_from_the_config() {
     ];
     assert_eq!(named_volumes(&config), ["ws-a"]);
 }
+
+#[test]
+fn named_mount_points_are_read_from_the_config_and_none_from_an_unreadable_one() {
+    let named = |guest: &str| VolumeMount::Named {
+        name: "ws-a".into(),
+        guest: guest.into(),
+        create: None,
+        options: microsandbox::sandbox::MountOptions::default(),
+        stat_virtualization: microsandbox::sandbox::StatVirtualization::Strict,
+        host_permissions: microsandbox::sandbox::HostPermissions::Private,
+        follow_root_symlinks: false,
+    };
+    let mut config = SandboxConfig::default();
+    config.spec.mounts = vec![
+        named("/workspaces/a"),
+        named("relative"),
+        VolumeMount::Tmpfs {
+            guest: "/t".into(),
+            size_mib: None,
+            options: microsandbox::sandbox::MountOptions::default(),
+        },
+    ];
+    let points: Vec<String> = named_mount_points(Ok::<_, String>(config))
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(points, ["/workspaces/a"]);
+    assert_eq!(named_mount_points(bad_config()), Vec::<GuestPath>::new());
+}

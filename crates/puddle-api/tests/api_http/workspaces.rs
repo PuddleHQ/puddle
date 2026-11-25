@@ -117,6 +117,46 @@ async fn an_empty_install_lists_nothing() {
 }
 
 #[tokio::test]
+async fn create_reports_the_image_download_counts_and_no_other_step_does() {
+    let api = start().await;
+    let mut stream = Stream::open(&api, "?workspace=web").await;
+    create(&api, "web").await;
+    api.workspaces.idle().await;
+    stream.read_until(|b| b.contains("\"step\":\"done\"")).await;
+    let counts: Vec<_> = stream
+        .data()
+        .iter()
+        .filter(|e| e["type"] == "workspace_progress" && !e["bytes_done"].is_null())
+        .map(|e| {
+            (
+                e["step"].clone(),
+                e["bytes_done"].clone(),
+                e["bytes_total"].clone(),
+            )
+        })
+        .collect();
+    let total = json!(400 * 1024 * 1024_u64);
+    assert_eq!(
+        counts,
+        [
+            (
+                json!("pulling_image"),
+                json!(100 * 1024 * 1024_u64),
+                total.clone()
+            ),
+            (
+                json!("pulling_image"),
+                json!(240 * 1024 * 1024_u64),
+                total.clone()
+            ),
+            (json!("pulling_image"), total.clone(), total),
+            (json!("unpacking_image"), json!(0), Value::Null),
+        ]
+    );
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
 async fn create_is_accepted_busy_and_finishes_with_progress_events() {
     let api = start().await;
     let mut stream = Stream::open(&api, "?workspace=web").await;
@@ -167,7 +207,16 @@ async fn create_is_accepted_busy_and_finishes_with_progress_events() {
         .collect();
     assert_eq!(
         steps,
-        ["preparing_volume", "pulling_image", "cloning", "done"]
+        [
+            "preparing_volume",
+            "pulling_image",
+            "pulling_image",
+            "pulling_image",
+            "pulling_image",
+            "unpacking_image",
+            "cloning",
+            "done"
+        ]
     );
     let cloning: Vec<_> = stream
         .data()
@@ -1172,7 +1221,7 @@ async fn desktop_attach_opens_the_editor_when_direct_ssh_is_on() {
         json!({
             "opened": true,
             "message": null,
-            "open_uri": "vscode://vscode-remote/ssh-remote+puddle-web/workspaces/web"
+            "open_uri": "vscode://vscode-remote/ssh-remote+puddle-web/workspace"
         })
     );
     assert_eq!(api.launcher.opened(), [WorkspaceId::new("web").unwrap()]);
@@ -1383,7 +1432,7 @@ async fn a_desktop_that_cannot_open_says_why() {
         json!({
             "opened": false,
             "message": "VS Code is not installed",
-            "open_uri": "vscode://vscode-remote/ssh-remote+puddle-web/workspaces/web"
+            "open_uri": "vscode://vscode-remote/ssh-remote+puddle-web/workspace"
         })
     );
     api.running.shutdown().await;

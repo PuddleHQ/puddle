@@ -62,7 +62,7 @@ impl WorkspaceConfig {
     /// Default [`WorkspaceConfig::default_size`]: 32 GiB.
     pub const DEFAULT_SIZE: DiskSize = DiskSize::gib(32);
     /// Default [`WorkspaceConfig::maintenance_image`]: the stock devcontainer image, pinned by digest.
-    pub const DEFAULT_MAINTENANCE_IMAGE: &'static str = "mcr.microsoft.com/devcontainers/base:debian@sha256:38f9e6c291f054e3c868d95a5477cbfcf76c0fa7c218dda65dc6aa3fbfe06871";
+    pub const DEFAULT_MAINTENANCE_IMAGE: &'static str = "mcr.microsoft.com/devcontainers/base:debian@sha256:41ff7ce12ec45f2704f27a6e091831186ad922ec8112e6339425bfefdf5a70f9";
     /// Default [`WorkspaceConfig::maintenance_memory`], in MiB.
     pub const DEFAULT_MAINTENANCE_MEMORY_MIB: u32 = 1024;
 }
@@ -112,7 +112,7 @@ enum JobOutput {
 }
 
 /// The workspace lifecycle (ADR 0006): one named disk volume `ws-<id>` per workspace, mounted at
-/// `/workspaces/<id>` (see [`Layout`]), attached to one sandbox at a time.
+/// `/workspace` (see [`Layout`]), attached to one sandbox at a time.
 ///
 /// Holder tracking is Puddle's own (point 8): a sandbox created with a workspace holds it until
 /// [`Workspaces::sandbox_removed`], running or stopped, and any other attach is refused with
@@ -269,7 +269,7 @@ impl Workspaces {
         };
         Ok(Attachment {
             reservation,
-            mount: mount_for(id, &volume, &info)?,
+            mount: mount_for(&volume, &info)?,
             created_volume,
             kept_size,
             before: Before { record, stale_dir },
@@ -352,7 +352,7 @@ impl Workspaces {
         id: &WorkspaceId,
         user: SessionUser,
     ) -> Result<(), WorkspaceError> {
-        let request = Layout::new(id)?.prepare_request(user);
+        let request = Layout::new()?.prepare_request(user);
         let out = sandbox
             .exec(request)
             .await
@@ -392,7 +392,7 @@ impl Workspaces {
         dir: &CheckoutDir,
         user: SessionUser,
     ) -> Result<GuestPath, WorkspaceError> {
-        let layout = Layout::new(id)?;
+        let layout = Layout::new()?;
         let checkout = layout.checkout(dir)?;
         let request = layout
             .clone_request(url, dir)?
@@ -535,7 +535,7 @@ impl Workspaces {
         id: &WorkspaceId,
         dir: &CheckoutDir,
     ) -> Result<bool, WorkspaceError> {
-        let path = Layout::new(id)?.checkout(dir)?;
+        let path = Layout::new()?.checkout(dir)?;
         let request = ExecRequest::new(
             "sh",
             [
@@ -1032,14 +1032,14 @@ impl Workspaces {
     ) -> Result<Vec<(CheckoutDir, String)>, WorkspaceError> {
         let name = &maintenance_name(id)?;
         clear_leftover(rt, id, name).await?;
-        let layout = Layout::new(id)?;
+        let layout = Layout::new()?;
         // The size is for a volume the import makes; one that exists keeps its own.
         let mount = match existing {
             Some(info) => {
                 if info.size != size {
                     info!(workspace = %id, size = %info.size, "workspace volume exists; keeping its size");
                 }
-                mount_for(id, &id.volume_name(), info)?
+                mount_for(&id.volume_name(), info)?
             }
             None => VolumeMount::named(id.volume_name(), layout.mount().clone()).ensure_size(size),
         };
@@ -1180,7 +1180,7 @@ impl Workspaces {
         let spec = SandboxSpec::new(name.clone(), self.config.maintenance_image.clone())
             .with_memory(self.config.maintenance_memory)
             .with_cpus(1)
-            .with_volume(mount_for(id, &volume, info)?);
+            .with_volume(mount_for(&volume, info)?);
         debug!(workspace = %id, sandbox = %name, "starting a maintenance sandbox");
         let sandbox = match rt.create(spec).await {
             Ok(s) => s,
@@ -1254,12 +1254,8 @@ impl Drop for Loan<'_> {
 
 /// The mount of `volume` at the workspace's mount point, always with kind disk and the size
 /// (ADR 0006 point 9).
-fn mount_for(
-    id: &WorkspaceId,
-    volume: &VolumeName,
-    info: &VolumeInfo,
-) -> Result<VolumeMount, WorkspaceError> {
-    let layout = Layout::new(id)?;
+fn mount_for(volume: &VolumeName, info: &VolumeInfo) -> Result<VolumeMount, WorkspaceError> {
+    let layout = Layout::new()?;
     let mount = VolumeMount::named(volume.clone(), layout.mount().clone());
     Ok(if info.size.as_mib() > 0 {
         mount.ensure_size(info.size)

@@ -132,11 +132,22 @@ mod openssh {
         assert!(st.success());
     }
 
-    async fn rig() -> Rig {
-        assert!(
-            Path::new(SSHD).exists(),
-            "{SSHD} is missing: these tests need OpenSSH's server (package openssh-server)"
-        );
+    /// The rig, or `None` on a machine without OpenSSH's server (a developer's WSL). A job that
+    /// provides it sets `PUDDLE_REQUIRE_SSHD` (the Linux CI job and the host lane do), and then
+    /// a missing server fails the test instead of skipping it.
+    #[expect(
+        clippy::print_stderr,
+        reason = "a local run without sshd says that it skipped"
+    )]
+    async fn rig() -> Option<Rig> {
+        if !Path::new(SSHD).exists() {
+            assert!(
+                std::env::var_os("PUDDLE_REQUIRE_SSHD").is_none(),
+                "PUDDLE_REQUIRE_SSHD is set but {SSHD} is missing (package openssh-server)"
+            );
+            eprintln!("skipped: {SSHD} is missing (package openssh-server)");
+            return None;
+        }
         let dir = tempfile::tempdir().unwrap();
         let d = dir.path();
         keygen(&d.join("host")).await;
@@ -178,11 +189,11 @@ mod openssh {
             ),
         )
         .unwrap();
-        Rig {
+        Some(Rig {
             dir,
             endpoint,
             config,
-        }
+        })
     }
 
     fn whoami() -> String {
@@ -213,7 +224,7 @@ mod openssh {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn ssh_exit_codes_come_through() {
-        let rig = rig().await;
+        let Some(rig) = rig().await else { return };
         let ok = run("ssh", &["-F", cfg(&rig), "box", "echo hello"]).await;
         assert_eq!(ok.status.code(), Some(0), "{ok:?}");
         assert_eq!(ok.stdout, b"hello\n");
@@ -230,7 +241,7 @@ mod openssh {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn scp_and_sftp_copy_files_both_ways() {
-        let rig = rig().await;
+        let Some(rig) = rig().await else { return };
         let d = rig.dir.path();
         let data = payload(8 * 1024 * 1024);
         let src = d.join("src.bin");
@@ -270,7 +281,7 @@ mod openssh {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn a_local_forward_carries_data_both_ways() {
-        let rig = rig().await;
+        let Some(rig) = rig().await else { return };
         // The "guest" service: an echo server.
         let service = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let service_port = service.local_addr().unwrap().port();

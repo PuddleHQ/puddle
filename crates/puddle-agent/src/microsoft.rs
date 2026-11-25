@@ -460,6 +460,12 @@ pub fn roll_back(builds: &Path, failed: &str, clean_up: bool) -> io::Result<bool
     Ok(true)
 }
 
+/// The clean-up [`confirm`] and [`roll_back`] run, for a caller that owes one. Same rules: not
+/// during a download it does not own, and with the pointers held still.
+pub fn clean_up(builds: &Path) {
+    prune(builds);
+}
+
 /// Deletes the build folders (and leftovers of dead downloads) that no pointer names. Anything
 /// that is not named like one of those is left alone.
 fn prune(builds: &Path) {

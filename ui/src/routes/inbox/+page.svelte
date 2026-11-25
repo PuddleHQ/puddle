@@ -326,13 +326,6 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-3);
-    max-width: 64rem;
-  }
-  h1 {
-    font-size: var(--text-xl);
-  }
-  h1:focus {
-    outline: none;
   }
   .sub,
   .muted {
@@ -347,16 +340,15 @@
     border-radius: var(--radius-md);
   }
   .group,
-  .decided,
-  .empty {
+  .decided {
     margin-bottom: var(--space-4);
     background: var(--color-surface);
     border: 1px solid var(--color-border-subtle);
     border-radius: var(--radius-md);
-    max-width: 64rem;
   }
+  /* An empty screen is plain words on the page, not a box. */
   .empty {
-    padding: var(--space-6);
+    padding-block: var(--space-4);
   }
   .empty h2,
   .empty p {

@@ -15,6 +15,7 @@ set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/coverage-run-test.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
+# shellcheck source=../scripts/test-fail.sh
 . "$(dirname "$0")/../scripts/test-fail.sh"
 # A hook (git-env's victim variables) must not steer anything below.
 # shellcheck disable=SC2046 # the list is words by design

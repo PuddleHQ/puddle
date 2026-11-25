@@ -11,6 +11,7 @@ set -eu
 # commands at the real one.
 for v in $(git rev-parse --local-env-vars); do unset "$v"; done
 here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=test-fail.sh
 . "$here/test-fail.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT

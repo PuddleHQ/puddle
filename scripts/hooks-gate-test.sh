@@ -5,6 +5,7 @@ set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/hgt.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
+# shellcheck source=../scripts/test-fail.sh
 . "$(dirname "$0")/../scripts/test-fail.sh"
 
 printf '# a comment\n\necho one\nsleep 1 && echo two\n' >"$tmp/ok.list"

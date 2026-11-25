@@ -11,6 +11,7 @@ for v in $(git rev-parse --local-env-vars); do unset "$v"; done
 # The caller (check.sh, CI, a host run) sets these; each case sets its own.
 unset CARGO_TARGET_DIR CHECK_TMPDIR
 here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=../scripts/test-fail.sh
 . "$(dirname "$0")/../scripts/test-fail.sh"
 # Under /var/tmp, not the caller's TMPDIR: a gate run's TMPDIR is already a long chk.* dir, and nesting this test's
 # own chk.* dirs below it pushes them past the socket-path guard of check.sh (the host's hooks gate failed on it).

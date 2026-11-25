@@ -5,6 +5,7 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 cap="$here/cap-test-memory.sh"
+# shellcheck source=../scripts/test-fail.sh
 . "$(dirname "$0")/../scripts/test-fail.sh"
 
 out=$("$cap" echo "a b" c) || fail "a plain command must run"

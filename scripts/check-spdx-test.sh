@@ -7,6 +7,7 @@ set -eu
 # check.sh runs under hooks that export GIT_DIR and friends; a leaked one would point `git init` at the real repository.
 # shellcheck disable=SC1091 # the helper sits beside this script
 . "$(dirname "$0")/git-clean-env.sh"
+# shellcheck source=../scripts/test-fail.sh
 . "$(dirname "$0")/../scripts/test-fail.sh"
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/check-spdx-test.XXXXXX")

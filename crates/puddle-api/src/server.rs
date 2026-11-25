@@ -1050,6 +1050,7 @@ async fn serve(
         ACCEPT_BACKOFF,
         "api",
         async move {
+            // either answer (stop asked, or the sender gone) ends the accepting
             let _ = stopper.wait_for(|stop| *stop).await;
         },
         |connections, stream, peer| {

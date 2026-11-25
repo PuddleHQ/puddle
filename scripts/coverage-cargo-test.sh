@@ -11,6 +11,7 @@ set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/coverage-cargo-test.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
+# shellcheck source=../scripts/test-fail.sh
 . "$(dirname "$0")/../scripts/test-fail.sh"
 # shellcheck disable=SC2046 # the list is words by design
 unset $(git rev-parse --local-env-vars)

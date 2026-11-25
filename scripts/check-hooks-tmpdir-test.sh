@@ -15,6 +15,7 @@ unset CARGO_TARGET_DIR CHECK_TMPDIR
     exit 0
 }
 here=$(cd "$(dirname "$0")/.." && pwd)
+# shellcheck source=../scripts/test-fail.sh
 . "$(dirname "$0")/../scripts/test-fail.sh"
 # Under /var/tmp, not the caller's TMPDIR, so the base below has room for the exact lengths.
 root=$(mktemp -d /var/tmp/chk-hooks.XXXXXX)

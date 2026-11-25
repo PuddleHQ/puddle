@@ -8,6 +8,7 @@
 # hook) running at the same time does not fail it. Where the namespaces cannot be made (no passwordless sudo) it says so and passes, except in CI.
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=../scripts/test-fail.sh
 . "$(dirname "$0")/../scripts/test-fail.sh"
 sudo=sudo
 [ "$(id -u)" != 0 ] || sudo=

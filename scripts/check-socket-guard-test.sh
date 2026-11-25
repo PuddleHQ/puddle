@@ -8,6 +8,7 @@ set -eu
 for v in $(git rev-parse --local-env-vars); do unset "$v"; done
 unset CARGO_TARGET_DIR CHECK_TMPDIR
 here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=../scripts/test-fail.sh
 . "$(dirname "$0")/../scripts/test-fail.sh"
 # Under /var/tmp, not the caller's TMPDIR: a gate run's own TMPDIR is a long chk.* dir, and the cases below need a
 # root short enough to build a 68-byte base below it.

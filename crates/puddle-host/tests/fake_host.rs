@@ -15,6 +15,8 @@ mod support;
 mod attach_places;
 #[path = "fake_host/backup_restore.rs"]
 mod backup_restore;
+#[path = "fake_host/backup_round_trip.rs"]
+mod backup_round_trip;
 #[path = "fake_host/cleanup_and_problems.rs"]
 mod cleanup_and_problems;
 #[cfg(unix)]

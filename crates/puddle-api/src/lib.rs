@@ -87,6 +87,8 @@ pub use puddle_services::doctor::{
 };
 pub use puddle_services::error::{ApiErrorBody, ErrorCode, ErrorField};
 #[cfg(any(test, feature = "testing"))]
+pub use puddle_services::fake_workspaces;
+#[cfg(any(test, feature = "testing"))]
 pub use puddle_services::fake_workspaces::{FakeLauncher, FakeWorkspaces, Unsaved};
 pub use puddle_services::learned::{FakeLearned, LearnedService, NoLearned};
 pub use puddle_services::network_health::{
@@ -123,8 +125,8 @@ pub use puddle_services::workspaces::{
     not_found,
 };
 pub use puddle_services::{
-    backup, checkouts, credential_store, credentials, dev_cert, doctor, error, fake_workspaces,
-    learned, network_health, ports, proxy_sign_in, repos, restore, terminals, wire, workspaces,
+    backup, checkouts, credential_store, credentials, dev_cert, doctor, error, learned,
+    network_health, ports, proxy_sign_in, repos, restore, terminals, wire, workspaces,
 };
 
 pub use events::{DEFAULT_EVENT_BUFFER, EventHub, Lagged};

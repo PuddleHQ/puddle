@@ -247,7 +247,7 @@ undocumented_unsafe_blocks = "warn"
 unimplemented = "warn"
 unwrap_used = "warn"
 wildcard_dependencies = "warn"
-# Idiom audit (T-1498) lints that keep the cleaned-up shapes cleaned up.
+# Idiom audit lints that keep the cleaned-up shapes cleaned up.
 redundant_clone = "warn"
 or_fun_call = "warn"
 use_self = "warn"

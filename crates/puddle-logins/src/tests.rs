@@ -1229,6 +1229,41 @@ async fn a_capture_that_cannot_store_every_token_leaves_the_earlier_pair_in_the_
     }
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_token_the_store_writes_after_it_timed_out_does_not_outlast_the_put_back() {
+    let store = Arc::new(Scripted::new([]));
+    let registry = Arc::new(StandIns::new());
+    let logins = logins_on(&store, &registry);
+    let first = capture_claude(&logins, REAL_ACCESS, REAL_REFRESH)
+        .await
+        .unwrap();
+    logins.set_store_timeout(std::time::Duration::from_millis(100));
+    // The refresh's new refresh token is written late: after the capture gave up on it.
+    let (started, parked) = tokio::sync::oneshot::channel();
+    let (go, wait) = std::sync::mpsc::channel();
+    store.then([SetStep::Pass, SetStep::Park(started, wait)]);
+    tokio::spawn(async move {
+        parked.await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let _ = go.send(());
+    });
+    assert_eq!(capture_claude(&logins, ACCESS_B, REFRESH_B).await, None);
+    // Let a write that is still on its way land, so a late one cannot hide.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let vault = Vault::new(Arc::clone(&store) as Arc<dyn SecretStore>, &workspace());
+    for (role, real, given) in [
+        (Role::Access, REAL_ACCESS, &first["access_token"]),
+        (Role::Refresh, REAL_REFRESH, &first["refresh_token"]),
+    ] {
+        let kept = vault.read(&CLAUDE, role).unwrap().unwrap();
+        assert_eq!(
+            (kept.stand_in.as_str(), kept.real.as_str()),
+            (given.as_str().unwrap(), real),
+            "a write that finished after the put back left a pair that never went together"
+        );
+    }
+}
+
 #[tokio::test]
 async fn a_first_login_that_cannot_store_every_token_leaves_nothing_in_the_store() {
     let store = Arc::new(Scripted::new([SetStep::Pass, SetStep::Fail]));

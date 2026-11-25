@@ -74,6 +74,11 @@ export interface EventStreamOptions {
   onError?: (reason: string) => void;
   /** Called once when the service refused the stream (401/403), just before it stops. */
   onRefused?: (refusal: StreamRefusal) => void;
+  /**
+   * How long an open stream may send nothing, not even a keep-alive comment, before it counts as
+   * dead and is reconnected. The service sends a comment every 15 s, so the default is three missed.
+   */
+  silenceMs?: number;
   /** Wait times between attempts; the last repeats. */
   backoffMs?: readonly number[];
   /** For tests. */
@@ -83,6 +88,8 @@ export interface EventStreamOptions {
   /** The stream's URL; for tests. */
   url?: string;
 }
+
+export const DEFAULT_SILENCE_MS = 45_000;
 
 export const DEFAULT_BACKOFF_MS: readonly number[] = [1000, 2000, 5000, 10_000];
 
@@ -96,6 +103,33 @@ export function sleep(ms: number, signal: AbortSignal): Promise<void> {
     };
     const timer = setTimeout(done, ms);
     signal.addEventListener("abort", done);
+  });
+}
+
+/**
+ * One read of the stream, or a rejection after `ms` without a byte. A half-open connection (the
+ * peer vanished without a FIN) never errors and never ends, so only a clock notices it.
+ */
+function readWithin(
+  reader: ReadableStreamDefaultReader<string>,
+  ms: number,
+  onSilent: () => void,
+): Promise<ReadableStreamReadResult<string>> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      onSilent();
+      reject(new Error("event stream silent"));
+    }, ms);
+    reader.read().then(
+      (result) => {
+        clearTimeout(timer);
+        resolve(result);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
   });
 }
 
@@ -132,6 +166,7 @@ export async function* eventStream(
     ? options.backoffMs
     : DEFAULT_BACKOFF_MS;
   const { signal } = options;
+  const silenceMs = options.silenceMs ?? DEFAULT_SILENCE_MS;
   let failures = 0;
   let everConnected = false;
   options.onState?.("connecting");
@@ -185,7 +220,9 @@ export async function* eventStream(
         .getReader();
       try {
         for (;;) {
-          const { done, value } = await reader.read();
+          const { done, value } = await readWithin(reader, silenceMs, () => {
+            failure = `the event stream went silent for ${Math.round(silenceMs / 1000)} s`;
+          });
           if (done) break;
           parser.feed(value);
           while (queue.length > 0) yield queue.shift() as PuddleEvent;

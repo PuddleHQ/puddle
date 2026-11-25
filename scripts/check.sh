@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # The quality gates, in one place: git hooks, CI and humans all run this script, so the gates
 # can't drift apart. Usage: scripts/check.sh <gate>...   Gates:
-#   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, git-pins, mutants-exclusions, silent-skips, early-exit-pipes, spawn, workflow-yaml, test-hooks, quality, secrets, clippy, clippy-windows, dormant, deny, advisories, notices, openapi, test, rustdoc, doc, coverage,
+#   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, git-pins, mutants-exclusions, silent-skips, silent-revert, early-exit-pipes, spawn, workflow-yaml, test-hooks, quality, secrets, clippy, clippy-windows, dormant, deny, advisories, notices, openapi, test, rustdoc, doc, coverage,
 #   coverage-ratchet, diff-coverage, diff-coverage-fast, coverage-determinism, mutants,
 #   ui, ui-licences, ui-audit, ui-e2e
 #   fast     = fmt typos spdx shellcheck hooks platform-literals standalone git-pins mutants-exclusions silent-skips early-exit-pipes spawn workflow-yaml test-hooks   (pre-commit hook)
@@ -257,6 +257,8 @@ run_gate() {
     # A test that returns early because a prerequisite is missing passes without testing; this fails
     # the hidden forms (docs/STANDARDS.md, "Skipped tests").
     silent-skips) scripts/check-silent-skips.sh --self-test && scripts/check-silent-skips.sh ;;
+    # A change that undoes a merged commit of the last 14 days without naming it (self-test only here; CI passes the PR's base).
+    silent-revert) scripts/check-silent-revert.sh --self-test && scripts/check-silent-revert.sh ;;
     early-exit-pipes) scripts/check-early-exit-pipes.sh --self-test && scripts/check-early-exit-pipes.sh ;;
     workflow-yaml) python3 -I scripts/check-workflow-yaml.py --self-test && python3 -I scripts/check-workflow-yaml.py ;;
     spawn) python3 -I scripts/check-spawn.py --self-test && python3 -I scripts/check-spawn.py ;;

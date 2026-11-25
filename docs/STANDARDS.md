@@ -325,6 +325,13 @@ and the secret-store contract test on a real keyring (`ci/with-keyring.sh cargo 
 a developer machine and the host lane do not carry, and the CI job installs them per run. A change to
 the code behind one of them is verified by the pull request's required checks, not before the push.
 
+### Silent reverts
+
+A pull request that puts back the old text of a commit already on develop, without saying so, fails
+`scripts/check.sh silent-revert` (CI, pull requests only): a rebuilt branch or a conflict resolved to the old side did
+this once and the installed-app walk stayed red for five days. A deliberate revert names the commit in the pull
+request (`Reverts #<number>` or the commit's 8-character SHA).
+
 ### Rules
 
 - **New behaviour is tested at the lowest tier that can catch its bug, plus the tier that proves it

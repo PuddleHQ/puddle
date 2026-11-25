@@ -91,12 +91,20 @@ beforeEach(async () => {
 });
 afterEach(cleanup);
 
+const NOOPS = {
+  onStart: () => {},
+  onStop: () => {},
+  onConnect: () => {},
+  onDismiss: () => {},
+};
+
 describe("the workspace id stays out of what a person reads", () => {
   it("the sweep can tell a leak from a disclosure", () => {
     const { container } = render(WorkspaceRow, {
       props: {
         workspace: workspace(NAME, { id: ID, status: "volume_missing" }),
         now: 0,
+        ...NOOPS,
       },
     });
     const leaking = document.createElement("p");
@@ -111,7 +119,11 @@ describe("the workspace id stays out of what a person reads", () => {
   for (const status of STATUSES) {
     it(`the card of a ${status} workspace`, () => {
       const { container } = render(WorkspaceRow, {
-        props: { workspace: workspace(NAME, { id: ID, status }), now: 0 },
+        props: {
+          workspace: workspace(NAME, { id: ID, status }),
+          now: 0,
+          ...NOOPS,
+        },
       });
       expect(container).toHaveTextContent(NAME);
       expectNoId(container, status);
@@ -121,7 +133,11 @@ describe("the workspace id stays out of what a person reads", () => {
   for (const busy of BUSY) {
     it(`the card of a workspace that is ${busy}`, () => {
       const { container } = render(WorkspaceRow, {
-        props: { workspace: workspace(NAME, { id: ID, busy }), now: 0 },
+        props: {
+          workspace: workspace(NAME, { id: ID, busy }),
+          now: 0,
+          ...NOOPS,
+        },
       });
       expectNoId(container, busy);
     });

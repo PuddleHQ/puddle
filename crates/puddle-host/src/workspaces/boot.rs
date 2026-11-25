@@ -137,7 +137,6 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     ) -> Result<(puddle_boot::BootPlan, GuestEnv, GuestState), OpError> {
         self.plan_guest(
             &record.id,
-            &record.id,
             image,
             record.start_folder.as_ref(),
             crate::editor_file::terminal_folder(record),
@@ -152,7 +151,6 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// and its environment. A start that fails after this must call `Injection::end`.
     pub(super) async fn plan_guest(
         &self,
-        id: &WorkspaceId,
         name: &WorkspaceId,
         image: ImageConfig,
         start_folder: Option<&StartFolder>,
@@ -164,7 +162,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let capture = crate::logins::capture_enabled(inner.settings.as_ref(), name);
         let editor = inner
             .kit
-            .editor(id, self.reconnection_grace(name), self.editor_kind())?
+            .editor(name, self.reconnection_grace(name), self.editor_kind())?
             .map(|server| server.with_user(session_user));
         let mode = crate::settings_read::mise_or_off(inner.settings.as_ref(), name);
         let mise = MiseLayer::of(mode)?;
@@ -177,7 +175,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         // writes it again. A start folder replaces it.
         let editor_file = start_folder
             .is_none()
-            .then(|| crate::editor_file::workspace_file_path(&root, id))
+            .then(|| crate::editor_file::workspace_file_path(&root, name))
             .flatten()
             .map(GuestFile::kept);
         let state = GuestState {

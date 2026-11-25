@@ -548,7 +548,9 @@ describe("editing a rule in place", () => {
     expect(within(dialog).getByLabelText("Host")).toHaveValue("*.github.com");
     expect(within(dialog).getByLabelText("Deny")).toBeChecked();
     expect(within(dialog).getByLabelText("One workspace")).toBeChecked();
-    expect(within(dialog).getByLabelText("Workspace")).toHaveValue("shop");
+    expect(
+      within(dialog).getByRole("combobox", { name: "Workspace" }),
+    ).toHaveValue("shop");
     expect(within(dialog).getByLabelText("Expires")).toHaveDisplayValue(
       /^Unchanged/,
     );
@@ -1052,6 +1054,23 @@ describe("method and path rules", () => {
       expect(rows[1]).toHaveAttribute("aria-current", "true"),
     );
     expect(rows[0]).not.toHaveAttribute("aria-current");
+    window.history.replaceState({}, "", "/rules");
+  });
+
+  it("opens the new-rule form with the host and workspace the address names, as Activity links to it", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/rules?new-rule=ads.example.net&workspace=shop",
+    );
+    render(RulesPage);
+    const dialog = await screen.findByRole("dialog", { name: "Add a rule" });
+    expect(within(dialog).getByLabelText(/^Host/)).toHaveValue(
+      "ads.example.net",
+    );
+    expect(
+      within(dialog).getByRole("combobox", { name: "Workspace" }),
+    ).toHaveValue("shop");
     window.history.replaceState({}, "", "/rules");
   });
 

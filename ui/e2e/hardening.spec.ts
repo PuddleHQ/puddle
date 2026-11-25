@@ -394,6 +394,7 @@ test.describe("an audit record type the app does not know", () => {
       .toBeGreaterThanOrEqual(before);
     // The rest of the page still works: the other rows are there and the new one opens raw.
     await row.getByRole("button").click();
+    await page.getByRole("button", { name: "Show raw record" }).click();
     const raw = page.locator("tbody tr.detail pre");
     expect(JSON.parse((await raw.textContent()) ?? "{}")).toEqual(future);
     await expectNoAxeViolations(page);

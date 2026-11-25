@@ -257,6 +257,19 @@ describe("the activity page", () => {
       await screen.findByText("No records match");
       expect(screen.getByText(/in last 24 hours matches/)).toBeInTheDocument();
     });
+    it("offers the last 7 days, with their count, when only older records exist", async () => {
+      api.entries = [
+        connection(1, { host: "old.test", ts: Date.now() - 3 * 86_400_000 }),
+        connection(2, { host: "older.test", ts: Date.now() - 4 * 86_400_000 }),
+      ];
+      render(ActivityPage);
+      const button = await screen.findByRole("button", {
+        name: /Show the last 7 days \(2\s+records\)/,
+      });
+      await fireEvent.click(button);
+      await waitFor(() => expect(rows()).toHaveLength(2));
+      expect(screen.getByLabelText("Time range")).toHaveValue("7d");
+    });
     it("says nothing has been recorded when no filter is set", async () => {
       api.entries = [];
       window.history.replaceState({}, "", "/activity?range=all");
@@ -363,9 +376,7 @@ describe("the activity page", () => {
         target: { value: "w-shop" },
       });
       await waitFor(() => expect(rows()).toHaveLength(2));
-      await fireEvent.click(
-        screen.getByRole("button", { name: "Export JSON lines" }),
-      );
+      await fireEvent.click(screen.getByRole("button", { name: "Export" }));
       await screen.findByText(/Saved 2 records as puddle-activity-/);
       expect(clicked).toHaveLength(1);
       expect(clicked[0]?.download).toMatch(/^puddle-activity-.*\.jsonl$/);
@@ -384,18 +395,14 @@ describe("the activity page", () => {
       window.history.replaceState({}, "", "/activity?range=all");
       render(ActivityPage);
       await screen.findByText("Nothing recorded yet");
-      await fireEvent.click(
-        screen.getByRole("button", { name: "Export JSON lines" }),
-      );
+      await fireEvent.click(screen.getByRole("button", { name: "Export" }));
       await screen.findByText(/Nothing to export/);
       expect(clicked).toHaveLength(0);
     });
     it("says so when the log can't be read", async () => {
       await open();
       api.failNext = 500;
-      await fireEvent.click(
-        screen.getByRole("button", { name: "Export JSON lines" }),
-      );
+      await fireEvent.click(screen.getByRole("button", { name: "Export" }));
       await screen.findByText(/couldn't read the log/);
       expect(clicked).toHaveLength(0);
     });
@@ -407,7 +414,7 @@ describe("the activity page", () => {
       api.pageRows = 5;
       render(ActivityPage);
       await waitFor(() => expect(rows().length).toBeGreaterThan(0));
-      const button = screen.getByRole("button", { name: "Export JSON lines" });
+      const button = screen.getByRole("button", { name: "Export" });
       let release = () => {};
       api.gate = new Promise<void>((resolve) => {
         release = resolve;

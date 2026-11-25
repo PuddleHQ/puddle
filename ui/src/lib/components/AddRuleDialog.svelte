@@ -147,6 +147,13 @@
     scope = `set:${set}`;
   }
 
+  /** Empties the form and fills a host (and the workspace it is for); Activity's "Make a rule from this". */
+  export function prefill(host: string, workspaceId: string | null): void {
+    reset();
+    pattern = host;
+    if (workspaceId !== null) workspace = workspaceId;
+  }
+
   /** Empties the form; the page calls it after a rule was added. */
   export function clear(): void {
     reset();

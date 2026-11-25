@@ -92,21 +92,21 @@ fn a_document_that_is_not_settings_is_an_error_not_the_defaults() {
 #[test]
 fn mise_is_on_by_default_and_follows_the_workspace_switches() {
     let repo = MemorySettings::default();
-    if !puddle_settings::Tools::AVAILABLE {
+    if puddle_settings::Tools::AVAILABLE {
+        assert_eq!(mise(&repo, &a()).unwrap(), MiseMode::On { trust: true });
+        repo.save_workspace(&a(), json!({"tools": {"repo_code": false}}))
+            .unwrap();
+        assert_eq!(mise(&repo, &a()).unwrap(), MiseMode::On { trust: false });
+        repo.save_workspace(&a(), json!({"tools": {"mise": false}}))
+            .unwrap();
+        assert_eq!(mise(&repo, &a()).unwrap(), MiseMode::Off);
+    } else {
         // The default build leaves the layer out (dormant): off whatever is stored.
         assert_eq!(mise(&repo, &a()).unwrap(), MiseMode::Off);
         repo.save_workspace(&a(), json!({"tools": {"mise": true, "repo_code": true}}))
             .unwrap();
         assert_eq!(mise(&repo, &a()).unwrap(), MiseMode::Off);
-        return;
     }
-    assert_eq!(mise(&repo, &a()).unwrap(), MiseMode::On { trust: true });
-    repo.save_workspace(&a(), json!({"tools": {"repo_code": false}}))
-        .unwrap();
-    assert_eq!(mise(&repo, &a()).unwrap(), MiseMode::On { trust: false });
-    repo.save_workspace(&a(), json!({"tools": {"mise": false}}))
-        .unwrap();
-    assert_eq!(mise(&repo, &a()).unwrap(), MiseMode::Off);
 }
 
 #[test]

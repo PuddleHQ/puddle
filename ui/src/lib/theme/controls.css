@@ -89,6 +89,12 @@
 .meta.warn {
   color: var(--color-warning);
 }
+/* A fact that holds a sentence or a string the user typed (a URL, a host, a path): it wraps, and
+   breaks inside a word when it has to, so a narrow page never scrolls sideways for it. */
+.meta.wrap {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 
 /* The modal shared by the confirm dialog and the form dialogs. */
 .confirm-overlay {

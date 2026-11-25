@@ -68,7 +68,11 @@ async fn a_changed_retention_is_recorded_with_both_values_and_who_asked() {
     let api = start().await;
     for days in [30, 30, 7] {
         let put = api
-            .send("PUT", "/api/audit/retention", Some(&json!({ "days": days })))
+            .send(
+                "PUT",
+                "/api/audit/retention",
+                Some(&json!({ "days": days })),
+            )
             .await;
         assert_eq!(put.status, 200, "{}", put.body);
     }

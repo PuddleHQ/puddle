@@ -31,6 +31,7 @@ on:
       - freshness
       - company-network-windows
       - soak
+      - soak-windows
     types: [completed]
 
 permissions:

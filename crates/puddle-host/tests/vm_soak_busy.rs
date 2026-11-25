@@ -466,6 +466,7 @@ async fn vm_soak_four_busy_workspaces_and_a_bystander() {
     let mut samples = Vec::new();
     let mut peak_rss = 0_u64;
     let mut last_log = Instant::now();
+    // flake-ok: samples the bystander's API while the four jobs run; the loop ends when they do, it waits for no condition
     while !runs.iter().all(tokio::task::JoinHandle::is_finished) {
         let from = Instant::now();
         let ws = api

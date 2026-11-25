@@ -12,12 +12,10 @@
 use std::io::Write;
 use std::process::ExitCode;
 
-use puddle_host::HostPaths;
-
 use crate::cli::{Command, UsageError};
-use crate::cmd::data_folder;
 use crate::cmd::serve::options::{Effective, Flags};
 use crate::cmd::serve::{ServeArgs, effective};
+use crate::cmd::{CommandError, data_folder, data_folder_here};
 
 /// What `puddle user` should do.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,8 +145,7 @@ fn write_result(out: &mut impl Write, result: &str) -> ExitCode {
     }
 }
 
-// string-error-ok: a subcommand's error is the line main prints before exiting 1; nothing matches on a kind
-fn execute(args: &UserArgs) -> Result<Output, String> {
+fn execute(args: &UserArgs) -> Result<Output, CommandError> {
     // Only `add` and `reset` need the whole option table (the invite origin); `list` and `remove`
     // read the data folder alone, so a bad value of another option does not stop them.
     let server_options = || {
@@ -156,17 +153,12 @@ fn execute(args: &UserArgs) -> Result<Output, String> {
             flags: args.flags.clone(),
             print_config: false,
         })
-        .map_err(|e| e.to_string())
     };
-    let data = match data_folder::configured_here(&args.flags).map_err(|e| e.to_string())? {
-        Some(dir) => dir,
-        None => puddle_fs::data_dir().map_err(|e| e.to_string())?,
-    };
-    let paths = HostPaths::new(data);
+    let paths = data_folder_here(&args.flags)?;
     match &args.action {
         Action::Reset(name) => {
             let origin = invite_origin(&server_options()?)?;
-            let invite = puddle_host::reset_user(&paths, name).map_err(|e| e.to_string())?;
+            let invite = puddle_host::reset_user(&paths, name)?;
             Ok(Output {
                 notice: format!(
                     "{name}'s password is removed and every browser they were signed in on is \
@@ -180,12 +172,9 @@ fn execute(args: &UserArgs) -> Result<Output, String> {
             let options = server_options()?;
             let origin = invite_origin(&options)?;
             if options.switch("multi_user") != Some(true) {
-                return Err(format!(
-                    "several users are off (multi_user), so only the owner can sign in and \
-                     {name} could not use an invite; switch multi_user on first"
-                ));
+                return Err(CommandError::MultiUserOff { name: name.clone() });
             }
-            let invite = puddle_host::add_user(&paths, name).map_err(|e| e.to_string())?;
+            let invite = puddle_host::add_user(&paths, name)?;
             Ok(Output {
                 notice: format!(
                     "{name} is added. Give them this link; they open it within 24 hours and \
@@ -195,7 +184,7 @@ fn execute(args: &UserArgs) -> Result<Output, String> {
             })
         }
         Action::Remove(name) => {
-            puddle_host::remove_user(&paths, name).map_err(|e| e.to_string())?;
+            puddle_host::remove_user(&paths, name)?;
             Ok(Output {
                 notice: format!(
                     "{name} can no longer sign in. Their workspaces and everything else of \
@@ -206,7 +195,7 @@ fn execute(args: &UserArgs) -> Result<Output, String> {
             })
         }
         Action::List => {
-            let rows = puddle_host::list_users(&paths).map_err(|e| e.to_string())?;
+            let rows = puddle_host::list_users(&paths)?;
             Ok(Output {
                 notice: String::new(),
                 result: table(&rows, now_ms()),
@@ -267,9 +256,8 @@ fn ago(now: u64, then: Option<u64>) -> String {
 
 /// The address an invite link points at: the first public host. Checked before anything is
 /// changed, so a reset never leaves a user without a password and without a link.
-// string-error-ok: a subcommand's error is the line main prints before exiting 1; nothing matches on a kind
-fn invite_origin(options: &Effective) -> Result<String, String> {
-    let remote = options.remote().map_err(|e| e.to_string())?;
+fn invite_origin(options: &Effective) -> Result<String, CommandError> {
+    let remote = options.remote()?;
     remote
         .and_then(|r| {
             r.serving
@@ -277,11 +265,7 @@ fn invite_origin(options: &Effective) -> Result<String, String> {
                 .first()
                 .map(puddle_api::PublicHost::origin)
         })
-        .ok_or_else(|| {
-            "remote serving is not on in these options, so there is no public address for the \
-             link; give the same --config (or PUDDLE_REMOTE and PUDDLE_PUBLIC_HOSTS) as the server"
-                .to_owned()
-        })
+        .ok_or(CommandError::NoPublicAddress)
 }
 
 #[cfg(test)]

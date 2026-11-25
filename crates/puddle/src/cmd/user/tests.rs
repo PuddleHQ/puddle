@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use std::sync::Arc;
 
+use puddle_host::HostPaths;
 use puddle_store::{Limits, Store, SystemClock};
 use sha2::Digest as _;
 
@@ -95,7 +96,7 @@ fn without_a_public_address_nothing_is_reset() {
     let paths = HostPaths::new(dir.path().to_path_buf());
     drop(Store::open(&paths.store(), Arc::new(SystemClock), Limits::default()).unwrap());
     let args = config_in(dir.path(), "data_dir = \".\"\n");
-    let err = execute(&args).unwrap_err();
+    let err = execute(&args).unwrap_err().to_string();
     assert!(err.contains("no public address"), "{err}");
     // The owner's password and devices were not touched: there is no invite either.
     let store = Store::open(&paths.store(), Arc::new(SystemClock), Limits::default()).unwrap();
@@ -113,20 +114,33 @@ fn a_user_that_does_not_exist_or_a_missing_folder_is_said_so() {
         "data_dir = \".\"\nremote = true\npublic_hosts = [\"puddle.example.org\"]\n",
     );
     args.action = Action::Reset("ghost".to_owned());
-    assert_eq!(execute(&args).unwrap_err(), "no user named ghost");
+    assert_eq!(
+        execute(&args).unwrap_err().to_string(),
+        "no user named ghost"
+    );
     let empty = tempfile::tempdir().unwrap();
     let args = config_in(
         empty.path(),
         "data_dir = \".\"\nremote = true\npublic_hosts = [\"puddle.example.org\"]\n",
     );
-    assert!(execute(&args).unwrap_err().contains("no database"));
+    assert!(
+        execute(&args)
+            .unwrap_err()
+            .to_string()
+            .contains("no database")
+    );
 }
 
 #[test]
 fn a_config_file_that_is_wrong_stops_the_reset_with_its_message() {
     let dir = tempfile::tempdir().unwrap();
     let args = config_in(dir.path(), "prot = 1\n");
-    assert!(execute(&args).unwrap_err().contains("unknown key `prot`"));
+    assert!(
+        execute(&args)
+            .unwrap_err()
+            .to_string()
+            .contains("unknown key `prot`")
+    );
 }
 
 struct Broken;
@@ -242,7 +256,9 @@ fn an_add_prints_a_link_the_server_redeems_and_a_list_and_remove_follow_it() {
 fn an_add_without_a_public_address_makes_no_user_and_a_remove_needs_none() {
     let (dir, paths) = with_database();
     let local = "data_dir = \".\"\n";
-    let err = execute(&config_with(dir.path(), local, Action::Add("Ann".into()))).unwrap_err();
+    let err = execute(&config_with(dir.path(), local, Action::Add("Ann".into())))
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("no public address"), "{err}");
     let store = Store::open(&paths.store(), Arc::new(SystemClock), Limits::default()).unwrap();
     assert!(store.user_named("Ann").unwrap().is_none());
@@ -252,14 +268,16 @@ fn an_add_without_a_public_address_makes_no_user_and_a_remove_needs_none() {
         local,
         Action::Remove("ghost".into()),
     ))
-    .unwrap_err();
+    .unwrap_err()
+    .to_string();
     assert_eq!(err, "no user named ghost");
     let err = execute(&config_with(
         dir.path(),
         local,
         Action::Remove("owner".into()),
     ))
-    .unwrap_err();
+    .unwrap_err()
+    .to_string();
     assert!(err.contains("can't be deleted"), "{err}");
 }
 
@@ -298,7 +316,8 @@ fn with_several_users_off_an_add_makes_no_user_and_says_why() {
         OWNER_ONLY,
         Action::Add("Ann".into()),
     ))
-    .unwrap_err();
+    .unwrap_err()
+    .to_string();
     assert!(err.contains("multi_user"), "{err}");
     let store = Store::open(&paths.store(), Arc::new(SystemClock), Limits::default()).unwrap();
     assert!(store.user_named("Ann").unwrap().is_none());

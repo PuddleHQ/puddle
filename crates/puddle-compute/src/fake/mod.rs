@@ -58,7 +58,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use puddle_types::{
-    CpuCount, GuestEnv, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus,
+    CpuCount, GuestEnv, GuestPath, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -522,6 +522,20 @@ impl FakeRuntime {
             .unwrap_or_default()
     }
 
+    /// Moves every named volume of the sandbox `name` to `guest`, as in a sandbox an earlier
+    /// version made with another folder. Returns whether there is such a sandbox.
+    #[must_use = "false means there is no such sandbox"]
+    pub fn move_volume_mounts(&self, name: &SandboxName, guest: &GuestPath) -> bool {
+        let mut state = self.lock();
+        let Some(record) = state.sandboxes.get_mut(name.as_str()) else {
+            return false;
+        };
+        for volume in &mut record.spec.volumes {
+            volume.guest = guest.clone();
+        }
+        true
+    }
+
     /// Simulates the VM dying: a running sandbox becomes `Crashed`. Returns whether it was
     /// running.
     #[must_use = "false means the sandbox wasn't running"]
@@ -904,6 +918,7 @@ impl Runtime for FakeRuntime {
                 puddle_owned: true,
                 root_disk: r.root_disk,
                 routes: r.spec.routes.clone(),
+                volume_mounts: r.spec.volumes.iter().map(|v| v.guest.clone()).collect(),
             })
             .chain(state.foreign.iter().map(|(name, status)| SandboxInfo {
                 name: name.clone(),
@@ -911,6 +926,7 @@ impl Runtime for FakeRuntime {
                 puddle_owned: false,
                 root_disk: None,
                 routes: Vec::new(),
+                volume_mounts: Vec::new(),
             }))
             .collect();
         out.sort_by(|a, b| a.name.cmp(&b.name));

@@ -67,7 +67,7 @@ async fn vm_perf_guest_fsync_reaches_flushfilebuffers_on_the_volume_image() {
     let tag = format!("{}-flush", settings.prefix);
     let id = WorkspaceId::new(&tag).unwrap();
     let name = SandboxName::new(&tag).unwrap();
-    let mount = Layout::new(&id).unwrap().mount().to_string();
+    let mount = Layout::new().unwrap().mount().to_string();
     let image = format!("{}\\disk.raw", id.volume_name().as_str());
     let scratch = tempfile::tempdir().unwrap();
     let work = scratch.path().to_owned();

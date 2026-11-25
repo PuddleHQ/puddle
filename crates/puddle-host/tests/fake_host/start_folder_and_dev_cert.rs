@@ -104,10 +104,12 @@ async fn a_start_folder_reaches_the_login_shell_file_and_a_missing_one_is_a_prob
     let mut events = api.events().await;
     create(&api, &mut events, "acme").await;
 
-    // No start folder: new terminals land in the volume root.
+    // No start folder and one repository: new terminals land in it, or in the volume root while
+    // it is not there.
     let files = rig.guest.plan_files(rig.guest.boots() - 1);
     let file = pem_of(&files, "/etc/profile.d/03-puddle-start-folder.sh");
-    assert!(file.contains("cd '/workspaces/acme'"), "{file}");
+    assert!(file.contains("cd '/workspace/api'"), "{file}");
+    assert!(file.contains("cd '/workspace'\n"), "{file}");
 
     // The setting is checked, saved, and written into the running guest without a restart.
     let boots = rig.guest.boots();
@@ -120,7 +122,7 @@ async fn a_start_folder_reaches_the_login_shell_file_and_a_missing_one_is_a_prob
     assert_eq!(rig.guest.boots(), boots + 1);
     let files = rig.guest.plan_files(rig.guest.boots() - 1);
     let file = pem_of(&files, "/etc/profile.d/03-puddle-start-folder.sh");
-    assert!(file.contains("cd '/workspaces/acme/web/src'"), "{file}");
+    assert!(file.contains("cd '/workspace/web/src'"), "{file}");
     events
         .until(
             is_event("workspace_repositories_changed", "acme"),
@@ -215,11 +217,7 @@ async fn an_attach_writes_the_multi_root_file_for_two_checkouts_and_a_file_it_ca
     attach().await;
     let plan = last_plan(&rig);
     assert!(plan.contains(file), "{plan}");
-    for folder in [
-        "/workspaces/acme/api",
-        "/workspaces/acme/web",
-        "workspace files",
-    ] {
+    for folder in ["/workspace/api", "/workspace/web", "workspace files"] {
         assert!(plan.contains(folder), "{folder}: {plan}");
     }
     // A start keeps the file as the last attach wrote it, so the editor server opens it at once
@@ -227,7 +225,7 @@ async fn an_attach_writes_the_multi_root_file_for_two_checkouts_and_a_file_it_ca
     stop_and_start(&api, &mut events, "acme").await;
     let plan = last_plan(&rig);
     assert!(
-        plan.contains(&format!("\npuddle_keep '/workspaces/acme/{file}'\n")),
+        plan.contains(&format!("\npuddle_keep '/workspace/{file}'\n")),
         "{plan}"
     );
     // A start folder replaces the window: Puddle's lines go again, at an attach and at a start.
@@ -240,7 +238,7 @@ async fn an_attach_writes_the_multi_root_file_for_two_checkouts_and_a_file_it_ca
 
     // A file the hook cannot parse is left alone and a problem names it, until it parses.
     *rig.guest.boot_says.lock().unwrap() =
-        format!("puddle-boot: /workspaces/acme/{file} left as it is: expected a value at line 1\n");
+        format!("puddle-boot: /workspace/{file} left as it is: expected a value at line 1\n");
     attach().await;
     let (_, detail) = problem_is(&api, "editor-file:acme", true).await.unwrap();
     assert!(detail.contains("left as it is"), "{detail}");
@@ -250,7 +248,7 @@ async fn an_attach_writes_the_multi_root_file_for_two_checkouts_and_a_file_it_ca
     // Another merged file left first does not hide it: the notice looks at every left file.
     *rig.guest.boot_says.lock().unwrap() = format!(
         "puddle-boot: /home/agent/.docker/config.json left as it is: the file is not UTF-8\n\
-         puddle-boot: /workspaces/acme/{file} left as it is: expected a value at line 1\n"
+         puddle-boot: /workspace/{file} left as it is: expected a value at line 1\n"
     );
     attach().await;
     let (_, detail) = problem_is(&api, "editor-file:acme", true).await.unwrap();
@@ -298,7 +296,7 @@ async fn a_start_folder_set_on_a_running_workspace_drops_the_multi_root_file_bef
 
     rig.guest.fail_listing.store(true, Ordering::SeqCst);
     let target = attach().await;
-    assert_eq!(target.path, "/workspaces/acme/api");
+    assert_eq!(target.path, "/workspace/api");
     assert!(!target.is_workspace_file);
     host.shutdown().await;
 }

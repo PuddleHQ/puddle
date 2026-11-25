@@ -748,6 +748,7 @@ async fn the_specs_owned_disks_and_volume_mounts_can_be_read_back() {
     let name = s.name.clone();
     assert_eq!(rt.owned_disks(&name).len(), 0);
     assert_eq!(rt.volume_mounts(&name).len(), 0);
+    assert!(!rt.move_volume_mounts(&name, &path("/elsewhere")));
     rt.create(s).await.unwrap();
     let disks = rt.owned_disks(&name);
     assert_eq!(disks.len(), 1);
@@ -756,6 +757,10 @@ async fn the_specs_owned_disks_and_volume_mounts_can_be_read_back() {
     let volumes = rt.volume_mounts(&name);
     assert_eq!(volumes.len(), 1);
     assert_eq!(volumes[0].guest, path("/w"));
+    assert!(rt.move_volume_mounts(&name, &path("/elsewhere")));
+    assert_eq!(rt.volume_mounts(&name)[0].guest, path("/elsewhere"));
+    let listed = rt.list().await.unwrap();
+    assert_eq!(listed[0].volume_mounts, [path("/elsewhere")]);
 }
 
 #[tokio::test]

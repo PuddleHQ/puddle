@@ -109,7 +109,7 @@ async fn vm_radar_mise_environment_reaches_every_way_into_the_guest_and_follows_
     put(&api, "/api/settings", json!({"tools": {"mise": false}})).await;
     let ws = create_workspace_from(&vm, &api, "miseenv", HOSTS, json!({})).await;
     let name: &'static str = Box::leak(ws.as_str().to_owned().into_boxed_str());
-    let mount = format!("/workspaces/{ws}");
+    let mount = "/workspace".to_string();
     let mut events = api.events().await;
 
     let (code, out) = terminal(
@@ -139,7 +139,7 @@ async fn vm_radar_mise_environment_reaches_every_way_into_the_guest_and_follows_
         out.contains(&format!("data={mount}/.puddle/mise/data\n")),
         "{out}"
     );
-    assert!(out.contains("ceiling=/workspaces\n"), "{out}");
+    assert!(out.contains("ceiling=/\n"), "{out}");
     assert!(out.contains(&format!("trusted={mount}\n")), "{out}");
     assert!(
         out.contains("marker=marker"),

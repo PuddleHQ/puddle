@@ -83,7 +83,7 @@ fn files_get_types_caching_and_security_headers() {
 #[test]
 fn routes_without_a_file_get_the_app_shell() {
     let ui = service();
-    for path in ["/", "/inbox", "/workspaces/a/b"] {
+    for path in ["/", "/inbox", "/workspace/b"] {
         let r = ui.respond(&Method::GET, path);
         assert_eq!(r.status(), StatusCode::OK, "{path}");
         assert_eq!(header(&r, "content-type"), "text/html", "{path}");

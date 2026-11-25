@@ -171,17 +171,17 @@ async fn a_host_with_code_server_tells_each_guest_where_to_run_the_editor_server
     );
     assert_eq!(
         seen.get("PUDDLE_AGENT_EDITOR_DATA").map(String::as_str),
-        Some("/workspaces/acme/.puddle/code-server")
+        Some("/workspace/.puddle/code-server")
     );
     assert_eq!(
         seen.get("PUDDLE_AGENT_EDITOR_FOLDER").map(String::as_str),
-        Some("/workspaces/acme")
+        Some("/workspace")
     );
     // Where an attach writes the multi-root file, for a server that starts after one.
     assert_eq!(
         seen.get("PUDDLE_AGENT_EDITOR_WORKSPACE_FILE")
             .map(String::as_str),
-        Some("/workspaces/acme/.puddle/editor/acme.code-workspace")
+        Some("/workspace/.puddle/editor/acme.code-workspace")
     );
     assert_eq!(
         seen.get("PUDDLE_AGENT_EDITOR_GRACE").map(String::as_str),
@@ -391,13 +391,13 @@ async fn microsofts_server_runs_after_consent_with_its_own_folder_and_the_teleme
         );
         assert_eq!(
             get("PUDDLE_AGENT_EDITOR_DIR"),
-            Some("/workspaces/acme/.puddle/vscode-server/servers")
+            Some("/workspace/.puddle/vscode-server/servers")
         );
         assert_eq!(
             get("PUDDLE_AGENT_EDITOR_DATA"),
-            Some("/workspaces/acme/.puddle/vscode-server")
+            Some("/workspace/.puddle/vscode-server")
         );
-        assert_eq!(get("PUDDLE_AGENT_EDITOR_FOLDER"), Some("/workspaces/acme"));
+        assert_eq!(get("PUDDLE_AGENT_EDITOR_FOLDER"), Some("/workspace"));
         assert_eq!(get("PUDDLE_AGENT_EDITOR_GRACE"), Some("300"));
     }
 }

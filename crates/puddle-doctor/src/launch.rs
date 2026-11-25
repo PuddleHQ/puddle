@@ -93,9 +93,7 @@ fn kill(child: &mut Child) {
 
 #[cfg(unix)]
 fn kill_descendants(child: &Child) {
-    let Some(pid) = rustix::process::Pid::from_raw(i32::try_from(child.id()).unwrap_or(0)) else {
-        return;
-    };
+    let pid = rustix::process::Pid::from_child(child);
     // The group was made by `process_group(0)` in `run`; a failed kill means it is gone already.
     let _gone = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
 }

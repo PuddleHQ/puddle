@@ -24,6 +24,10 @@ pub struct FirstRun {
     /// When the flow was finished or skipped; unset while it still has to run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<UnixMillis>,
+    /// The id of the step the user was on when they last left the flow, so reopening it resumes
+    /// there; unset at the start and once the flow is completed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<String>,
     #[serde(flatten)]
     pub(crate) extra: BTreeMap<String, Value>,
 }

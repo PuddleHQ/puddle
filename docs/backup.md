@@ -64,8 +64,8 @@ and not yet reflected in `puddle.db`, or the other way round.
 what a restore of it would do on this machine, without changing anything: for the rules, rule
 sets, workspaces, identities, environment variables, settings and users, how many entries are in
 the backup, how many would be added, how many exist here and differ, how many are equal and how
-many exist only here; which restored workspaces have a disk on this machine; which secrets would
-need a value; and how many workspaces run. The file is read into a private staging folder in the
+many exist only here; which restored workspaces have a disk on this machine; which secrets and which Git
+identity tokens would need a value; and how many workspaces run. The file is read into a private staging folder in the
 data folder. A staged copy that is not applied is removed after 24 hours.
 
 A file that cannot be read faithfully is refused with the reason, and nothing stays staged: not a

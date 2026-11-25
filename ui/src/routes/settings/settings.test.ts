@@ -32,17 +32,23 @@ import { palette } from "#lib/theme/palette.svelte.ts";
 import { NO_CUSTOM } from "#lib/theme/palette.ts";
 import { theme } from "#lib/theme/theme.svelte.ts";
 import Appearance from "./(pages)/appearance/+page.svelte";
+import Editor from "./(pages)/editor/+page.svelte";
 import EditorAndGit from "./(pages)/editor-and-git/+page.svelte";
 import Network from "./(pages)/network/+page.svelte";
 import Notifications from "./(pages)/notifications/+page.svelte";
 import ThisComputer from "./(pages)/this-computer/+page.svelte";
 import Workspaces from "./(pages)/workspaces/+page.svelte";
 
+// Every test here mounts all seven pages of Settings, so one test costs about a second on an idle
+// host and several times that on a loaded one; the default 5 s limit is under the loaded cost.
+vi.setConfig({ testTimeout: 30_000 });
+
 const ALL = [
   Appearance,
   Notifications,
   Workspaces,
   Network,
+  Editor,
   EditorAndGit,
   ThisComputer,
 ];
@@ -202,6 +208,7 @@ describe("the screen", () => {
       "Proxy",
       "Local destinations",
       "Decrypting traffic",
+      "Editor defaults",
       "Browser VS Code",
       "Git and SSH",
       "Startup and window",
@@ -1301,5 +1308,79 @@ describe("Microsoft's server", () => {
     );
     await save();
     expect(api.vscode.auto_update).toBe(false);
+  });
+});
+
+describe("the editor defaults", () => {
+  it("shows them unset, saves each one and sends the group whole", async () => {
+    await open();
+    expect(screen.getByLabelText("Editor colour theme")).toHaveValue("");
+    await fireEvent.input(screen.getByLabelText("Editor colour theme"), {
+      target: { value: "Default Dark Modern" },
+    });
+    await save();
+    expect(api.layer.editor.colour_theme).toBe("Default Dark Modern");
+
+    await fireEvent.input(screen.getByLabelText("Font size (pixels)"), {
+      target: { value: "16" },
+    });
+    await save();
+    expect(api.layer.editor).toMatchObject({
+      colour_theme: "Default Dark Modern",
+      font_size: 16,
+    });
+
+    await fireEvent.input(screen.getByLabelText("Extensions to install"), {
+      target: { value: "Rust-Lang.Rust-Analyzer\nesbenp.prettier-vscode" },
+    });
+    await save();
+    expect(api.layer.editor.extensions).toEqual([
+      "esbenp.prettier-vscode",
+      "rust-lang.rust-analyzer",
+    ]);
+
+    const bindings =
+      '[{"key":"ctrl+alt+t","command":"workbench.action.terminal.toggleTerminal"}]';
+    await fireEvent.input(screen.getByLabelText("Key bindings"), {
+      target: { value: bindings },
+    });
+    await save();
+    expect(api.layer.editor.keybindings).toBe(bindings);
+  });
+
+  it("clears a field when its box is emptied", async () => {
+    api.layer.editor.font_size = 18;
+    api.layer.editor.extensions = ["a.b"];
+    await open();
+    expect(screen.getByLabelText("Font size (pixels)")).toHaveValue("18");
+    await fireEvent.input(screen.getByLabelText("Font size (pixels)"), {
+      target: { value: "" },
+    });
+    await fireEvent.input(screen.getByLabelText("Extensions to install"), {
+      target: { value: "" },
+    });
+    await save();
+    expect(api.layer.editor.font_size).toBeNull();
+    expect(api.layer.editor.extensions).toBeNull();
+  });
+
+  it("says why a value cannot be saved and sends nothing", async () => {
+    await open();
+    await fireEvent.input(screen.getByLabelText("Font size (pixels)"), {
+      target: { value: "4" },
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent("8 to 40");
+    expect(
+      screen.getByRole("button", { name: "Save Font size (pixels)" }),
+    ).toBeDisabled();
+    await fireEvent.input(screen.getByLabelText("Key bindings"), {
+      target: { value: "{}" },
+    });
+    await waitFor(() =>
+      expect(screen.getAllByRole("alert").at(-1)).toHaveTextContent(
+        "JSON array",
+      ),
+    );
+    expect(putBodies()).toHaveLength(0);
   });
 });

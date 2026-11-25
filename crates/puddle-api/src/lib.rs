@@ -120,8 +120,8 @@ pub use remote::{
 };
 pub use repos::{FakeRepos, NoRepos, RepoService, ReposError};
 pub use restore::{
-    FAKE_RESTORE_MAGIC, FakeRestore, NoRestore, RestoreFacts, RestoreService, RestoreServiceError,
-    SecretRef, UploadStream,
+    FAKE_RESTORE_MAGIC, FakeRestore, IdentityTokenRef, NoRestore, RestoreFacts, RestoreService,
+    RestoreServiceError, SecretRef, UploadStream,
 };
 pub use server::{ApiConfig, ApiServer, RunningApi, ServeError, Services};
 pub use settings::{MemorySettings, SettingsLock, SettingsRepo, SettingsRepoError};

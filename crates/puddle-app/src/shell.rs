@@ -409,6 +409,7 @@ fn open_in_order<R: Runtime>(
 ) -> Result<(), ShellError> {
     match open_windows(app, options, &backend, probe_first) {
         Ok(()) => {
+            restart_on_restore(app, &backend, AppHandle::request_restart);
             app.manage(backend);
             Ok(())
         }
@@ -418,6 +419,23 @@ fn open_in_order<R: Runtime>(
             Err(err)
         }
     }
+}
+
+/// Calls `restart` once the user confirms a restore. The restore applies at the next start, so the
+/// desktop app quits (the exit hook, [`stop`], runs first and frees the data folder) and starts
+/// again; the start-up apply then finds the marker. A confirm that came before this call counts.
+pub fn restart_on_restore<R: Runtime>(
+    app: &AppHandle<R>,
+    backend: &Backend,
+    restart: impl FnOnce(&AppHandle<R>) + Send + 'static,
+) {
+    let signal = backend.restore_signal();
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        signal.notified().await;
+        tracing::info!("a restore is confirmed: restarting to apply it");
+        restart(&app);
+    });
 }
 
 fn open_windows<R: Runtime>(

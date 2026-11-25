@@ -163,6 +163,10 @@ export async function inspectContextMenu(port) {
   const item = (state, name) => state.items.find((i) => i.name === name);
   try {
     await page.send("Runtime.enable");
+    // The runner window is not the foreground one after the PowerShell clipboard calls, and a page that is not
+    // focused cannot read the clipboard ("Document is not focused"); a user's window is focused, so emulate that.
+    await page.send("Emulation.setFocusEmulationEnabled", { enabled: true }).catch(() => {});
+    await page.send("Page.bringToFront").catch(() => {});
     await page.evaluate(`window.addEventListener("contextmenu", (e) => { window.__nativeMenuPrevented = e.defaultPrevented; });`);
     let state = await read();
     if (!state.word) throw new Error("the colour sample is not on screen");

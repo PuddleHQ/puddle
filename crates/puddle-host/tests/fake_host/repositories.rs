@@ -43,11 +43,14 @@ async fn a_failed_sync_after_the_clones_leaves_nothing_behind() {
     host.shutdown().await;
 }
 
-/// A list of repositories without its generated entry ids.
+/// A list of repositories without its generated entry ids and the branch the last listing found
+/// (the tests that read the branch read it from the list itself).
 fn without_entries(list: &serde_json::Value) -> serde_json::Value {
     let mut list = list.clone();
     for r in list.as_array_mut().unwrap() {
-        r.as_object_mut().unwrap().remove("entry");
+        let r = r.as_object_mut().unwrap();
+        r.remove("entry");
+        r.remove("branch");
     }
     list
 }

@@ -359,3 +359,30 @@ async fn a_registry_that_keeps_cancelling_fails_the_pull_with_the_reason() {
     );
     assert!(lab.registry.layer_requests().len() >= 2);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_pull_reports_its_download_growing_to_the_size_of_the_image() {
+    let lab = lab(0, 0).await;
+    let seen = Mutex::new(Vec::new());
+    let report = |p: puddle_compute::PullProgress| {
+        seen.lock().unwrap_or_else(PoisonError::into_inner).push(p);
+    };
+    let config = lab
+        .runtime
+        .pull_image_reporting(&lab.image, &report)
+        .await
+        .unwrap();
+    assert_eq!(config.env_var("PUDDLE_LAB"), Some("resume"));
+    let seen = seen.into_inner().unwrap_or_else(PoisonError::into_inner);
+    let downloads: Vec<_> = seen
+        .iter()
+        .filter(|p| p.phase == puddle_compute::PullPhase::Downloading)
+        .collect();
+    let last = downloads.last().expect("a download was reported");
+    assert!(last.done > 0, "{seen:?}");
+    assert_eq!(Some(last.done), last.total, "{seen:?}");
+    assert!(
+        downloads.windows(2).all(|w| w[0].done <= w[1].done),
+        "the count only grows: {seen:?}"
+    );
+}

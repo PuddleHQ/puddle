@@ -56,6 +56,38 @@ fn a_hanging_program_is_killed_at_the_limit() {
     assert!(start.elapsed() < Duration::from_secs(10));
 }
 
+/// The limit ends the program's children too (`az.cmd` runs the real `az` in one), so nothing it
+/// started outlives the call or keeps the output pipes open.
+#[cfg(unix)]
+#[test]
+fn the_limit_ends_what_the_program_started() {
+    let dir = tempfile::tempdir().unwrap();
+    let pid_file = dir.path().join("grandchild.pid");
+    let script = format!("sleep 30 & echo $! > '{}'; wait", pid_file.display());
+    let outcome = run(&mut shell(&script), Duration::from_millis(500));
+    assert!(matches!(outcome, ProcessOutcome::TimedOut { .. }));
+    let pid = std::fs::read_to_string(&pid_file)
+        .unwrap()
+        .trim()
+        .to_owned();
+    // flake-ok: the signal is delivered before `run` returns; a dead process may stay a zombie
+    // of its reaper for a moment, so `kill -0` is polled for up to 5 s.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let alive = Command::new("kill")
+            .args(["-0", &pid])
+            .stderr(Stdio::null())
+            .status()
+            .unwrap()
+            .success();
+        if !alive {
+            break;
+        }
+        assert!(Instant::now() < deadline, "grandchild {pid} still runs");
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
 #[test]
 fn a_missing_program_fails_to_spawn_with_its_os_error() {
     let outcome = run(

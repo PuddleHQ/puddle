@@ -57,6 +57,10 @@ pub struct Schedule {
     pub start: u64,
     /// How long the loops run; the idle night follows.
     pub active_secs: u64,
+    /// Seconds of one playbook hour: 3600 for the real day, less for a compressed run. Every
+    /// window the playbook names in hours ("hour 1", "after hour 4", "in any hour") is read in
+    /// these; the 10 minutes of the SSE line stay real minutes (the page's silence is real time).
+    pub hour: u64,
 }
 
 impl Schedule {
@@ -66,11 +70,17 @@ impl Schedule {
         Self {
             start,
             active_secs: 8 * HOUR,
+            hour: HOUR,
         }
     }
 
     const fn active_end(self) -> u64 {
         self.start + self.active_secs
+    }
+
+    /// Width of the windows "hour 1" and "hour 8" are read from: a quarter of an hour.
+    const fn level_window(self) -> u64 {
+        self.hour / 4
     }
 }
 
@@ -172,12 +182,9 @@ fn mean(v: &[f64]) -> Option<f64> {
 
 /// Samples needed in a comparison window before a level counts as measured.
 const MIN_WINDOW_SAMPLES: usize = 3;
-/// Width of the windows "hour 1" and "hour 8" are read from.
-const LEVEL_WINDOW: u64 = HOUR / 4;
-
-/// The level around `centre_from..centre_from + LEVEL_WINDOW`: the median of the samples there.
-fn level(points: &[(u64, f64)], from: u64) -> Option<f64> {
-    let v = values_in(points, from, from + LEVEL_WINDOW);
+/// The level in `from..from + window`: the median of the samples there.
+fn level(points: &[(u64, f64)], from: u64, window: u64) -> Option<f64> {
+    let v = values_in(points, from, from + window);
     (v.len() >= MIN_WINDOW_SAMPLES).then(|| median(v)).flatten()
 }
 
@@ -185,8 +192,9 @@ fn leak(series: &Series, sched: Schedule, out: &mut Vec<Finding>) {
     for field in [".rss_kb", ".handles"] {
         for metric in proc_metrics(series, field) {
             let pts = series.points(metric);
-            let early = level(pts, sched.start + HOUR);
-            let late = level(pts, sched.active_end().saturating_sub(LEVEL_WINDOW));
+            let w = sched.level_window();
+            let early = level(pts, sched.start + sched.hour, w);
+            let late = level(pts, sched.active_end().saturating_sub(w), w);
             let (Some(early), Some(late)) = (early, late) else {
                 continue;
             };
@@ -278,16 +286,16 @@ fn idle_growth(series: &Series, sched: Schedule, out: &mut Vec<Finding>) {
 fn api_latency(series: &Series, sched: Schedule, out: &mut Vec<Finding>) {
     for metric in series.metrics("api.", ".ms") {
         let pts = series.points(metric);
-        let Some(base) = p95(values_in(pts, sched.start, sched.start + HOUR)) else {
+        let Some(base) = p95(values_in(pts, sched.start, sched.start + sched.hour)) else {
             continue;
         };
         if base >= 100.0 {
             continue;
         }
         let last = pts.last().map_or(0, |&(t, _)| t);
-        let mut from = sched.start + 4 * HOUR;
+        let mut from = sched.start + 4 * sched.hour;
         while from <= last {
-            if let Some(p) = p95(values_in(pts, from, from + HOUR))
+            if let Some(p) = p95(values_in(pts, from, from + sched.hour))
                 && p > 500.0
             {
                 find(
@@ -297,12 +305,12 @@ fn api_latency(series: &Series, sched: Schedule, out: &mut Vec<Finding>) {
                     metric,
                     format!(
                         "p95 {p} ms in hour {} against {base} ms at hour 0 (lines: 500 and 100)",
-                        (from - sched.start) / HOUR
+                        (from - sched.start) / sched.hour
                     ),
                 );
                 break;
             }
-            from += HOUR;
+            from += sched.hour;
         }
     }
 }
@@ -337,8 +345,8 @@ fn sse_silence(series: &Series, sched: Schedule, out: &mut Vec<Finding>) {
             "sse.age_s",
             format!(
                 "no event for {age} s at {}:{:02} into the run and no reconnect; the page would stop updating silently",
-                t.saturating_sub(sched.start) / HOUR,
-                t.saturating_sub(sched.start) % HOUR / 60
+                t.saturating_sub(sched.start) / sched.hour,
+                t.saturating_sub(sched.start) % sched.hour * 60 / sched.hour
             ),
         );
     }
@@ -349,7 +357,7 @@ fn w4_failures(series: &Series, sched: Schedule, out: &mut Vec<Finding>) {
     let end = sched.active_end();
     let mut from = sched.start;
     while from < end {
-        let v = values_in(pts, from, (from + HOUR).min(end));
+        let v = values_in(pts, from, (from + sched.hour).min(end));
         if let Some(m) = mean(&v)
             && m > 0.01
         {
@@ -361,11 +369,11 @@ fn w4_failures(series: &Series, sched: Schedule, out: &mut Vec<Finding>) {
                 format!(
                     "{:.1} % failed in hour {} (line: 1 %)",
                     m * 100.0,
-                    (from - sched.start) / HOUR
+                    (from - sched.start) / sched.hour
                 ),
             );
         }
-        from += HOUR;
+        from += sched.hour;
     }
     let night: Vec<f64> = values_in(pts, end, u64::MAX);
     if let Some(&worst) = night.iter().max_by(|a, b| a.total_cmp(b))
@@ -406,17 +414,18 @@ fn wal_size(series: &Series, out: &mut Vec<Finding>) {
 const DB_BYTES_PER_RECORD: f64 = 8.0 * KIB;
 
 fn db_growth(series: &Series, sched: Schedule, out: &mut Vec<Finding>) {
-    let from = sched.start + HOUR;
-    let to = sched.active_end().saturating_sub(LEVEL_WINDOW);
+    let w = sched.level_window();
+    let from = sched.start + sched.hour;
+    let to = sched.active_end().saturating_sub(w);
     let (Some(db0), Some(db1)) = (
-        level(series.points("file.db.bytes"), from),
-        level(series.points("file.db.bytes"), to),
+        level(series.points("file.db.bytes"), from, w),
+        level(series.points("file.db.bytes"), to, w),
     ) else {
         return;
     };
     let (Some(n0), Some(n1)) = (
-        level(series.points("count.audit"), from),
-        level(series.points("count.audit"), to),
+        level(series.points("count.audit"), from, w),
+        level(series.points("count.audit"), to, w),
     ) else {
         return;
     };

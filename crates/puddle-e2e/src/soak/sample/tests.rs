@@ -110,6 +110,19 @@ fn processes_are_found_by_command_name_prefix() {
     assert_eq!(find_processes(&dir.path().join("none"), &prefixes), []);
 }
 
+#[test]
+fn a_prefix_ending_in_a_dollar_is_a_whole_name() {
+    let dir = tempfile::tempdir().unwrap();
+    for (pid, comm) in [("12", "puddle\n"), ("13", "puddle-soak\n")] {
+        std::fs::create_dir(dir.path().join(pid)).unwrap();
+        std::fs::write(dir.path().join(pid).join("comm"), comm).unwrap();
+    }
+    assert_eq!(
+        find_processes(dir.path(), &["puddle$".to_owned()]),
+        [("puddle".to_owned(), 12)]
+    );
+}
+
 #[tokio::test]
 async fn a_get_returns_status_body_and_time_and_sends_the_token() {
     let app = Router::new().route(
@@ -367,4 +380,30 @@ async fn a_reader_that_cannot_connect_keeps_trying_and_counts_each_try() {
     })
     .await;
     task.abort();
+}
+
+/// A restart of `puddle serve` moves the API (a new token, maybe a new port): after `retarget`
+/// the timed calls go to the new one.
+#[tokio::test]
+async fn a_retargeted_sampler_reads_the_new_api() {
+    let api = serve(Router::new().route("/api/health", get_route(|| async { "{}" }))).await;
+    let cfg = Config {
+        api: Target {
+            addr: "127.0.0.1:1".to_owned(),
+            token: None,
+        },
+        w4: None,
+        process_prefixes: vec![],
+        db: None,
+        files: vec![],
+        disk: None,
+    };
+    let mut sampler = Sampler::start(cfg, || 7);
+    let mut before = Series::default();
+    sampler.sample(100, &mut before).await;
+    assert_eq!(before.points("api.health.ms"), []);
+    sampler.retarget(target(api));
+    let mut after = Series::default();
+    sampler.sample(400, &mut after).await;
+    assert_eq!(after.points("api.health.ms").len(), 1, "{}", after.render());
 }

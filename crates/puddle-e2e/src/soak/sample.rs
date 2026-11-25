@@ -152,10 +152,19 @@ async fn open_stream(target: &Target) -> io::Result<TcpStream> {
     Ok(stream)
 }
 
+/// Where the API is now: a restart of `puddle serve` gives it a new token, and the soak run moves
+/// its sampler there with [`Sampler::retarget`].
+pub type ApiSlot = Arc<Mutex<Target>>;
+
 /// Reads `GET /api/events` for ever, counting each `data:` or `event:` line as an event (a comment
 /// line, the keep-alive, is not one) and reconnecting after a second when the stream ends. Ends
 /// only when the task is dropped.
 pub async fn read_events(target: Target, state: Arc<SseState>) {
+    read_events_at(Arc::new(Mutex::new(target)), state).await;
+}
+
+/// [`read_events`] against whatever `slot` holds at each connect.
+pub async fn read_events_at(slot: ApiSlot, state: Arc<SseState>) {
     let mut first = true;
     // flake-ok: a reader that reconnects for ever until stopped, not a wait for a condition
     loop {
@@ -164,6 +173,7 @@ pub async fn read_events(target: Target, state: Arc<SseState>) {
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
         first = false;
+        let target = slot.lock().unwrap().clone();
         let Ok(stream) = open_stream(&target).await else {
             continue;
         };
@@ -246,7 +256,8 @@ pub fn read_process(proc_dir: &Path) -> Option<[(&'static str, f64); 3]> {
 }
 
 /// Every process under `proc_root` whose command name starts with one of `prefixes`, as
-/// `(comm, pid)`.
+/// `(comm, pid)`. A prefix that ends in `$` is a whole name: `puddle$` finds `puddle` and not
+/// `puddle-soak`.
 #[must_use]
 pub fn find_processes(proc_root: &Path, prefixes: &[String]) -> Vec<(String, u32)> {
     let mut found = Vec::new();
@@ -265,7 +276,10 @@ pub fn find_processes(proc_root: &Path, prefixes: &[String]) -> Vec<(String, u32
             continue;
         };
         let comm = comm.trim().to_owned();
-        if prefixes.iter().any(|p| comm.starts_with(p.as_str())) {
+        if prefixes.iter().any(|p| {
+            p.strip_suffix('$')
+                .map_or_else(|| comm.starts_with(p.as_str()), |exact| comm == exact)
+        }) {
             found.push((comm, pid));
         }
     }
@@ -336,6 +350,7 @@ pub struct Config {
 #[derive(Debug)]
 pub struct Sampler {
     cfg: Config,
+    api: ApiSlot,
     sse: Arc<SseState>,
     w4: Arc<Mutex<W4Window>>,
     cpu_before: Option<(u64, u64)>,
@@ -349,7 +364,8 @@ impl Sampler {
     #[must_use]
     pub fn start(cfg: Config, now: fn() -> u64) -> Self {
         let sse = SseState::new();
-        tokio::spawn(read_events(cfg.api.clone(), sse.clone()));
+        let api = Arc::new(Mutex::new(cfg.api.clone()));
+        tokio::spawn(read_events_at(api.clone(), sse.clone()));
         let w4 = Arc::new(Mutex::new(W4Window::default()));
         if let Some(target) = cfg.w4.clone() {
             tokio::spawn(probe_web_app(
@@ -362,10 +378,16 @@ impl Sampler {
         }
         Self {
             cfg,
+            api,
             sse,
             w4,
             cpu_before: None,
         }
+    }
+
+    /// Points the API reads and the event reader at `api` from the next request or reconnect on.
+    pub fn retarget(&self, api: Target) {
+        *self.api.lock().unwrap() = api;
     }
 
     /// One sample at `now`: every reading that works goes into `into`; one that fails is left out
@@ -435,12 +457,9 @@ impl Sampler {
     }
 
     async fn api(&self, now: u64, into: &mut Series) {
+        let api = self.api.lock().unwrap().clone();
         for (name, path) in API_CALLS {
-            let Some(reply) = get(&self.cfg.api, path)
-                .await
-                .ok()
-                .filter(|r| r.status == 200)
-            else {
+            let Some(reply) = get(&api, path).await.ok().filter(|r| r.status == 200) else {
                 continue;
             };
             into.push(
@@ -457,7 +476,7 @@ impl Sampler {
                 into.push(now, &format!("count.{what}"), c);
             }
         }
-        if let Ok(reply) = get(&self.cfg.api, "/api/problems").await
+        if let Ok(reply) = get(&api, "/api/problems").await
             && reply.status == 200
             && let Ok(c) = count_in(&reply.body, "problems")
         {

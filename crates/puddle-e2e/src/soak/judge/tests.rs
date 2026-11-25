@@ -388,3 +388,41 @@ fn a_silence_with_no_reconnect_series_at_all_counts_as_no_reconnect() {
     assert_eq!(f.len(), 1, "{f:?}");
     assert_eq!(f[0].check, Check::SseSilence);
 }
+
+/// The same day squeezed into 2 minutes an hour: every time of `with_rss`'s run scaled by `hour`
+/// over 3600, as a compressed soak samples it.
+fn squeezed(series: &Series, hour: u64) -> Series {
+    let mut out = Series::default();
+    for metric in series.metrics("", "") {
+        for &(t, v) in series.points(metric) {
+            out.push(START + (t - START) * hour / 3600, metric, v);
+        }
+    }
+    out
+}
+
+#[test]
+fn a_compressed_run_is_judged_in_its_own_hours() {
+    let hour = 120;
+    let s = squeezed(
+        &with_rss(|h| if h < 2.0 { 100_000.0 } else { 131_000.0 }),
+        hour,
+    );
+    let compressed = Schedule {
+        start: START,
+        active_secs: 8 * hour,
+        hour,
+    };
+    let found = judge(&s, compressed);
+    assert!(
+        found
+            .iter()
+            .any(|f| f.check == Check::Leak && f.severity == Severity::Major),
+        "{found:?}"
+    );
+    // Read in real hours the whole run sits before "hour 1", so nothing is found: the scale is
+    // what makes the leak visible.
+    assert_eq!(judge(&s, Schedule::day(START)), []);
+    let flat = squeezed(&with_rss(flat_rss), hour);
+    assert_eq!(judge(&flat, compressed), []);
+}

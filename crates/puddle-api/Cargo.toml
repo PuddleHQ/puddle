@@ -17,6 +17,10 @@ embedded-ui = ["dep:rust-embed"]
 # `FakeWorkspaces`, `FakeLauncher` and `contract`, the workspace-service suite every implementation runs.
 # For tests and the UI fixture; never in a shipped program.
 testing = []
+# The soak run's canary: every connect to `/api/events` keeps a 4 MiB buffer for good, so the
+# soak workflow can prove its judge fails a leak (`soak.yml`, job `canary`). Never in a shipped
+# program: scripts/check-test-hooks.sh fails a release tree that turns it on.
+soak-planted-leak = []
 
 [dependencies]
 argon2 = { workspace = true }

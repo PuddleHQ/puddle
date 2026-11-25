@@ -712,3 +712,27 @@ describe("undo", () => {
     expect(store.decided).toHaveLength(1);
   });
 });
+
+describe("PendingStore.start shared by several screens", () => {
+  it("polls once for two holders and stops when the last lets go", () => {
+    const calls: string[] = [];
+    const api = {
+      GET: async (path: string) => {
+        calls.push(path);
+        return { data: undefined, error: undefined, response: new Response() };
+      },
+      POST: async () => ({
+        data: undefined,
+        error: undefined,
+        response: new Response(),
+      }),
+    };
+    const store = new PendingStore({ api: api as never, pollMs: 60_000 });
+    const stopA = store.start();
+    const stopB = store.start();
+    expect(calls).toHaveLength(1);
+    stopA();
+    stopA();
+    stopB();
+  });
+});

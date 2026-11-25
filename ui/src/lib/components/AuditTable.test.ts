@@ -95,7 +95,13 @@ describe("AuditTable", () => {
     ]);
     expect(body()).toHaveLength(3);
     const first = within(body()[0] as HTMLElement);
-    expect(first.getByText("h3.example.com:443")).toBeInTheDocument();
+    expect(
+      first.getByText(
+        (_, el) =>
+          el?.classList.contains("host") === true &&
+          el.textContent === "h3.example.com:443",
+      ),
+    ).toBeInTheDocument();
     expect(first.getByText("Allowed")).toBeInTheDocument();
     expect(first.getByText("demo")).toBeInTheDocument();
     expect(screen.getByRole("table")).toHaveAttribute("aria-rowcount", "4");

@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
+  import HostName from "./HostName.svelte";
   import { actorLabel } from "#lib/rules/model.ts";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import { absoluteTime, relativeTime } from "#lib/format/relative-time.ts";
@@ -66,12 +67,7 @@
           {@attach (row) => reveal(row, rule.id === selected)}
         >
           <td class="host">
-            <span
-              class="mono"
-              title={rule.host.startsWith("*.")
-                ? "This host and every subdomain of it"
-                : undefined}>{rule.host}</span
-            >
+            <HostName host={rule.host} />
             {#if !rule.enabled}<span class="meta">off</span>{/if}
             {#if rule.warning}
               <p class="warning">

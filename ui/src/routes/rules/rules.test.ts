@@ -1123,8 +1123,8 @@ describe("method and path rules", () => {
     await waitFor(() => expect(requestRulesStore.status).toBe("ready"));
     requestApi.rules = [requestRule(2, { host: "late.example.com" })];
     source.emit({ type: "request_rules_changed" });
-    expect(
-      await within(section()).findByText("late.example.com"),
-    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(section()).toHaveTextContent("late.example.com"),
+    );
   });
 });

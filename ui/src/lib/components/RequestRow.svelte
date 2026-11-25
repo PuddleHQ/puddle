@@ -2,6 +2,7 @@
 <script lang="ts">
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import DecisionControl from "./DecisionControl.svelte";
+  import HostName from "./HostName.svelte";
   import {
     LOCAL_LABELS,
     companySignalText,
@@ -54,11 +55,15 @@
   onfocusin={() => onFocusRow(row)}
 >
   <p class="dest">
-    <span class="host">{request.host}</span>{#if request.port === 0}<span
+    <HostName
+      host={request.host}
+      port={request.port}
+      registrable={row.domain}
+    />{#if request.port === 0}<span
         class="port srv"
         title="Asked for a service record (SRV) to find where to connect; no port is known yet"
         >name lookup (SRV)</span
-      >{:else}<span class="port">:{request.port}</span>{/if}
+      >{/if}
   </p>
   <p class="facts">
     <b class="mono">{workspaces.labelOf(request.workspace)}</b> · {request.attempts}
@@ -145,14 +150,6 @@
   }
   .dest {
     overflow-wrap: anywhere;
-  }
-  .host {
-    font-family: var(--font-mono);
-    font-weight: 600;
-  }
-  .port {
-    font-family: var(--font-mono);
-    color: var(--color-text-muted);
   }
   .port.srv {
     margin-inline-start: var(--space-2);

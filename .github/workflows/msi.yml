@@ -5,7 +5,8 @@
 # from the stock image that runs a command and is deleted, and an uninstall that leaves nothing
 # outside Puddle's own data folders (ci/msi-install-test.ps1). A runner without a usable hypervisor
 # skips the boot steps with a warning, except on a pull request, where that fails (as vm-windows). Not a required check: it runs on pull requests that
-# touch the installer (paths below), nightly on develop (skipped when this workflow already has a
+# touch the installer, the first-run pages or the scripts that walk them (paths below; develop's installed-app walk
+# was red for 5 days after a change to the pages that no pull request ran it for), nightly on develop (skipped when this workflow already has a
 # green run on the commit), and by hand. The MSI of the run is kept as an artifact.
 #
 # The `upgrade` job tests the upgrade a user makes, on a machine of its own: it installs the last
@@ -70,6 +71,8 @@ on:
       - crates/puddle-app/e2e/poll.mjs
       - crates/puddle-app/e2e/child-end.mjs
       - crates/puddle-app/e2e/desktop.ps1
+      - ui/src/lib/welcome/**
+      - ui/src/routes/welcome/**
       - ci/fetch-forgejo.sh
       - ci/forgejo.sha256
       - crates/puddle-e2e/src/lab/forgejo.rs

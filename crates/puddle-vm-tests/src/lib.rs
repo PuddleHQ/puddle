@@ -62,6 +62,7 @@ pub mod keepalive;
 pub mod load;
 mod prefix;
 mod runtime;
+pub mod soak;
 pub mod sockets;
 mod vscode;
 

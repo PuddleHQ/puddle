@@ -193,7 +193,12 @@ fn program_folder(out: &Path, opts: &Options) -> io::Result<PathBuf> {
     for (from, name) in files {
         let link = runtime.join(name);
         if std::fs::symlink_metadata(&link).is_err() {
-            std::os::unix::fs::symlink(std::path::absolute(from)?, link)?;
+            let from = std::path::absolute(from)?;
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(from, link)?;
+            // Windows symlinks need a privilege; the soak runs on Linux, copy is enough to compile and work.
+            #[cfg(not(unix))]
+            std::fs::copy(from, link)?;
         }
     }
     Ok(exe)

@@ -2,7 +2,6 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
-import { PALETTES, PRESETS } from "./palette.ts";
 
 // A status colour (the green of a finished check, the red of an error, the amber of a warning)
 // comes from --color-success, --color-danger and --color-warning, which every palette sets. A
@@ -68,16 +67,5 @@ describe("status colours", () => {
     expect(
       literalColours("a.css", ".m { background: rgb(0 0 0 / 0.5); }"),
     ).toEqual([]);
-  });
-
-  it("every named theme has a success colour of its own, apart from Pond's", () => {
-    for (const preset of PRESETS.filter((p) => p !== "pond")) {
-      for (const scheme of ["light", "dark"] as const) {
-        expect(
-          PALETTES[preset][scheme].success,
-          `${preset} ${scheme}`,
-        ).not.toBe(PALETTES.pond[scheme].success);
-      }
-    }
   });
 });

@@ -74,13 +74,13 @@ mod probe;
 mod proxy;
 mod pull;
 mod records;
+mod request_target;
 mod resolve;
 mod route;
 mod ssh;
 pub mod ssh_agent;
 mod ssh_git;
 mod tap;
-mod target;
 pub mod terminate;
 #[cfg(feature = "testing")]
 pub mod testing;

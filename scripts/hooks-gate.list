@@ -36,6 +36,7 @@ ci/vm-tests-report-test.sh
 scripts/check-socket-guard-test.sh
 scripts/check-enclosing-repo-test.sh
 scripts/target-names-test.sh
+scripts/no-target-dirs-test.sh
 ci/fetch-gitleaks-test.sh
 ci/fetch-code-server-test.sh
 ci/fetch-vscode-test.sh
@@ -67,6 +68,7 @@ ci/fork-upkeep-issue-test.sh
 scripts/check-gate-exit.sh --self-test
 scripts/check-gate-exit.sh
 scripts/target-names-test.sh --self-test
+scripts/no-target-dirs-test.sh --self-test
 scripts/dead-resolver-test.sh
 scripts/coverage-determinism.sh --self-test
 ci/check-runtime-layout-test.sh

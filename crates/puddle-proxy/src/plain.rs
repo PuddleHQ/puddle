@@ -32,7 +32,7 @@ use crate::proxy::{
     ClientReader, Proxy, ProxyConfig, Refusal, WorkspaceHandler, admit, parse_request,
     read_request, refuse, refuse_by_request_rule,
 };
-use crate::target::Target;
+use crate::request_target::Target;
 use crate::terminate::h1::{
     self, Abort, AnswerBody, BoxError, ChannelBody, H1Conn, Parsed, UpBody, Written,
 };

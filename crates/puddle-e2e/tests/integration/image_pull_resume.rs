@@ -87,7 +87,7 @@ fn image() -> (Vec<u8>, BTreeMap<String, Vec<u8>>) {
 }
 
 /// What the registry saw and how it behaves.
-struct Registry {
+pub(crate) struct Registry {
     manifest: Vec<u8>,
     blobs: BTreeMap<String, Vec<u8>>,
     layer_digest: String,
@@ -258,18 +258,40 @@ async fn serve(listener: TcpListener, tls: rustls::ServerConfig, registry: Arc<R
     }
 }
 
-struct Lab {
-    runtime: MsbRuntime,
-    image: ImageRef,
+pub(crate) struct Lab {
+    pub(crate) runtime: MsbRuntime,
+    pub(crate) image: ImageRef,
     registry: Arc<Registry>,
+    /// The link between the pull proxy and the registry, when the lab was made with one.
+    #[cfg(target_os = "linux")]
+    pub(crate) link: Option<crate::rig::LinkShim>,
     _home: tempfile::TempDir,
     _route: puddle_proxy::PullRoute,
 }
 
 async fn lab(cuts: usize, cut_after: usize) -> Lab {
+    lab_with(cuts, cut_after, false).await
+}
+
+/// A lab whose pull proxy reaches the registry through a [`crate::rig::LinkShim`] a test can cut.
+#[cfg(target_os = "linux")]
+pub(crate) async fn lab_behind_a_link() -> Lab {
+    lab_with(0, 0, true).await
+}
+
+async fn lab_with(cuts: usize, cut_after: usize, with_link: bool) -> Lab {
     let registry = Registry::new(cuts, cut_after);
     let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
     let addr: SocketAddr = listener.local_addr().unwrap();
+    #[cfg(target_os = "linux")]
+    let link = with_link.then(|| crate::rig::LinkShim::start(addr));
+    #[cfg(target_os = "linux")]
+    let reach = link.as_ref().map_or(addr, crate::rig::LinkShim::addr);
+    #[cfg(not(target_os = "linux"))]
+    let reach = {
+        assert!(!with_link);
+        addr
+    };
     listener.set_nonblocking(true).unwrap();
     let (root, tls) = pull_lab::lab_pki();
     tokio::spawn(serve(
@@ -279,7 +301,7 @@ async fn lab(cuts: usize, cut_after: usize) -> Lab {
     ));
     let proxy = PullProxy::bind(&PuddleEndpoints::new())
         .unwrap()
-        .with_resolver(Arc::new(pull_lab::LabResolver(addr)));
+        .with_resolver(Arc::new(pull_lab::LabResolver(reach)));
     let proxy_url = proxy.proxy_url().expose().to_owned();
     let route = proxy.serve().unwrap();
     let home = puddle_test_kit::private_tempdir();
@@ -296,6 +318,8 @@ async fn lab(cuts: usize, cut_after: usize) -> Lab {
         runtime: MsbRuntime::open(config).await.unwrap(),
         image: ImageRef::new(&format!("{REGISTRY}/{REPO}:1")).unwrap(),
         registry,
+        #[cfg(target_os = "linux")]
+        link,
         _home: home,
         _route: route,
     }

@@ -55,7 +55,7 @@ pub(crate) async fn pull(
     let registry = builder.build().map_err(|e| fail(chain(&e)))?;
     let result = Box::pin(registry.pull(&reference, &options))
         .await
-        .map_err(|e| fail(chain(&e)))?;
+        .map_err(|e| fail(explain_connect(chain(&e), reference.registry())))?;
     Ok(convert(result.config))
 }
 
@@ -74,6 +74,22 @@ fn chain(err: &dyn std::error::Error) -> String {
         source = cause.source();
     }
     text
+}
+
+/// What the registry client says when it could not open a connection (a refused or swallowed
+/// route, a proxy that refused the tunnel): `client error (Connect)`. The pull proxy's own text
+/// for it ("could not connect to host:port") does not survive the client, which keeps only
+/// "tunnel error: unsuccessful", so the reason says in plain words what happened and to whom.
+const CONNECT_FAILED: &str = "client error (Connect)";
+
+/// `reason` with a lead that says Puddle could not connect to `registry`, when the client's own
+/// text says the connection was never made; any other reason is left as it is.
+fn explain_connect(reason: String, registry: &str) -> String {
+    if reason.contains(CONNECT_FAILED) {
+        format!("could not connect to {registry}: {reason}")
+    } else {
+        reason
+    }
 }
 
 /// msb's configured CA certificates (PEM each) followed by Puddle's registry roots.

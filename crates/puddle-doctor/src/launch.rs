@@ -103,7 +103,7 @@ fn kill_descendants(child: &Child) {
 #[cfg(windows)]
 fn kill_descendants(child: &Child) {
     // `taskkill /T` walks the tree from the pid; a failure means the tree is gone already.
-    let _gone = Command::new("taskkill")
+    let _gone = puddle_process::command("taskkill")
         .args(["/T", "/F", "/PID", &child.id().to_string()])
         .stdin(Stdio::null())
         .stdout(Stdio::null())

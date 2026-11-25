@@ -303,6 +303,16 @@ pub trait Runtime: Send + Sync + 'static {
     /// [`ComputeError::NotFound`]; [`ComputeError::InvalidState`] when it is running.
     fn remove(&self, name: &SandboxName) -> impl Future<Output = Result<(), ComputeError>> + Send;
 
+    /// Ends the VM of a sandbox by name, without connecting to it and without a graceful stop:
+    /// the way out for a sandbox in a state [`Runtime::get`] refuses (`Starting`, `Draining`,
+    /// `Paused`), such as one a dead Puddle left behind. Returns once the sandbox is down;
+    /// a sandbox that is already down is not an error.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::NotFound`]; [`ComputeError::Runtime`] when the VM did not end.
+    fn kill(&self, name: &SandboxName) -> impl Future<Output = Result<(), ComputeError>> + Send;
+
     /// Names whose sandbox directory exists without a sandbox record (left by a failed create
     /// while the upstream msb bug is unfixed), in name order. May include names Puddle didn't
     /// create.

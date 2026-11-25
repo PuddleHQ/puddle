@@ -100,6 +100,8 @@ pub enum Op {
     List,
     /// [`Runtime::remove`].
     Remove,
+    /// [`Runtime::kill`].
+    Kill,
     /// [`Runtime::stale_dirs`].
     StaleDirs,
     /// [`Runtime::remove_stale_dir`].
@@ -948,6 +950,23 @@ impl Runtime for FakeRuntime {
             }),
             Some(_) => {
                 state.sandboxes.remove(name.as_str());
+                Ok(())
+            }
+        }
+    }
+
+    async fn kill(&self, name: &SandboxName) -> Result<(), ComputeError> {
+        self.turn().await;
+        let mut state = self.lock();
+        state.enter(Op::Kill, Some(name.as_str()), None)?;
+        match state.sandboxes.get_mut(name.as_str()) {
+            None => Err(ComputeError::NotFound {
+                sandbox: name.to_string(),
+            }),
+            Some(r) => {
+                if !r.status.is_down() {
+                    r.status = WorkspaceStatus::Crashed;
+                }
                 Ok(())
             }
         }

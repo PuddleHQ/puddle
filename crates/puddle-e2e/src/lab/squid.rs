@@ -311,6 +311,7 @@ fn host_cannot_reach_listener(cache_log: &str, port: u16) -> bool {
             .is_err_and(|e| e.kind() == std::io::ErrorKind::ConnectionRefused)
     };
     cache_log.contains(LISTENING_LINE) && refused() && {
+        // flake-ok: an absence window; the second refusal must come a moment after the first, there is no signal for it.
         std::thread::sleep(Duration::from_millis(200));
         refused()
     }

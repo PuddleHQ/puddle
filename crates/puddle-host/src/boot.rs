@@ -24,7 +24,7 @@ use puddle_store::Store;
 use puddle_types::{
     GuestEnv, GuestFile, GuestPath, ImageRef, MemoryMib, SessionUser, WorkspaceId, guest_path,
 };
-use puddle_workspace::{Layout, WORKSPACES_ROOT};
+use puddle_workspace::Layout;
 
 use crate::dev_cert::GuestCertSource;
 use crate::git_hosts::{Authors, SshListing};
@@ -145,6 +145,9 @@ pub(crate) struct GuestInputs<'a> {
     pub(crate) start_folder: Option<&'a StartFolder>,
     /// The multi-root file for the editor, when the workspace has two or more checkouts.
     pub(crate) editor_file: Option<&'a GuestFile>,
+    /// The editor defaults (theme, font size, extensions, key bindings) the agent merges into the
+    /// editor's settings, when any is set.
+    pub(crate) editor_defaults: Option<&'a GuestFile>,
     /// The guest user sessions run as: the boot hook adds it, and per-user settings go to its
     /// home.
     pub(crate) session_user: SessionUser,
@@ -158,19 +161,19 @@ pub(crate) struct GuestInputs<'a> {
 /// Where the managed mise layer lives in one workspace and what it may trust.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MiseLayer {
-    /// `/workspaces/<id>/.puddle/mise`.
+    /// `/workspace/.puddle/mise`.
     pub(crate) dir: GuestPath,
     /// The workspace's volume when the repository's own code is trusted (`repo_code`).
     pub(crate) trusted: Option<GuestPath>,
 }
 
 impl MiseLayer {
-    /// The layer of workspace `id` for `mode`; `None` while the layer is off.
-    pub(crate) fn of(id: &WorkspaceId, mode: MiseMode) -> Result<Option<Self>, BootInputError> {
+    /// The layer for `mode`; `None` while the layer is off.
+    pub(crate) fn of(mode: MiseMode) -> Result<Option<Self>, BootInputError> {
         let MiseMode::On { trust } = mode else {
             return Ok(None);
         };
-        let layout = Layout::new(id)?;
+        let layout = Layout::new()?;
         Ok(Some(Self {
             dir: layout.mise_dir()?,
             trusted: trust.then(|| layout.mount().clone()),
@@ -313,7 +316,7 @@ impl BootKit {
             .map(|layer| {
                 mise_config(&MiseSettings {
                     dir: layer.dir.clone(),
-                    ceiling: GuestPath::new(WORKSPACES_ROOT)?,
+                    ceiling: GuestPath::new("/")?,
                     trusted: layer.trusted.clone(),
                     image_path: image_env
                         .iter()
@@ -339,6 +342,9 @@ impl BootKit {
                 &crate::editor_file::start_path(guest.root, guest.start_folder),
             ));
         if let Some(file) = guest.editor_file {
+            builder = builder.file(file.clone());
+        }
+        if let Some(file) = guest.editor_defaults {
             builder = builder.file(file.clone());
         }
         if let Some(lines) = guest.ssh.and_then(SshListing::lines) {
@@ -404,7 +410,7 @@ impl BootKit {
         if self.code_server.is_none() && kind == ServerKind::CodeServer {
             return Ok(None);
         }
-        let layout = Layout::new(id)?;
+        let layout = Layout::new()?;
         let data = layout.puddle_dir()?;
         let mount = layout.mount().to_string();
         let mut server = match kind {

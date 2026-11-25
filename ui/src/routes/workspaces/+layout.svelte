@@ -9,14 +9,13 @@
 
   let { children } = $props();
 
-  // One listener for the list and every detail page, so moving between them keeps the data.
+  // The list itself is read by the shell (the sidebar counts it); this section adds what its
+  // screens need on top: the requests waiting and the toast for an ended operation.
   onMount(() => {
     workspaces.onSettled = workspaceActions.settled;
-    const stopWorkspaces = workspaces.start();
     const stopPending = pending.start();
     return () => {
       workspaces.onSettled = null;
-      stopWorkspaces();
       stopPending();
     };
   });

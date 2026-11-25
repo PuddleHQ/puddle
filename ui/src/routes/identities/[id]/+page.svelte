@@ -302,13 +302,6 @@
     font-size: var(--text-sm);
     color: var(--color-text-muted);
   }
-  h1 {
-    font-size: var(--text-xl);
-    overflow-wrap: anywhere;
-  }
-  h1:focus {
-    outline: none;
-  }
   h2 {
     font-size: var(--text-lg);
     margin-bottom: var(--space-2);

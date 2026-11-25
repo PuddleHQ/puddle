@@ -30,6 +30,14 @@ use crate::workspaces::{
     admit_reset_root_disk, admit_settled, admit_start, admit_stop, not_found,
 };
 
+/// The size of the image a fake create "downloads", and how far each report of it is.
+const FAKE_PULL_BYTES: u64 = 400 * 1024 * 1024;
+const FAKE_PULL_DOWNLOAD: [u64; 3] = [
+    FAKE_PULL_BYTES / 4,
+    FAKE_PULL_BYTES * 3 / 5,
+    FAKE_PULL_BYTES,
+];
+
 /// One step an operation reports: the step, its detail, and the checkout a cloning step is about.
 type Step = (WorkspaceStep, Option<String>, Option<CheckoutDir>);
 
@@ -356,6 +364,25 @@ impl FakeWorkspaces {
             step,
             detail,
             repository,
+            bytes_done: None,
+            bytes_total: None,
+        });
+    }
+
+    fn progress_bytes(
+        &self,
+        record: &WorkspaceRecord,
+        step: WorkspaceStep,
+        bytes_done: u64,
+        bytes_total: Option<u64>,
+    ) {
+        self.inner.events.emit(Event::WorkspaceProgress {
+            workspace: record.id.clone(),
+            step,
+            detail: None,
+            repository: None,
+            bytes_done: Some(bytes_done),
+            bytes_total,
         });
     }
 
@@ -385,7 +412,23 @@ impl FakeWorkspaces {
         tokio::spawn(async move {
             for step in steps {
                 this.pause().await;
+                let pulling = step.0 == WorkspaceStep::PullingImage;
                 this.progress(&record, step);
+                if pulling {
+                    // What a first pull of the image reports: a download that counts up to its
+                    // total, then an unpack whose total is not known until the end.
+                    for done in FAKE_PULL_DOWNLOAD {
+                        this.pause().await;
+                        this.progress_bytes(
+                            &record,
+                            WorkspaceStep::PullingImage,
+                            done,
+                            Some(FAKE_PULL_BYTES),
+                        );
+                    }
+                    this.pause().await;
+                    this.progress_bytes(&record, WorkspaceStep::UnpackingImage, 0, None);
+                }
             }
             this.pause().await;
             this.finish(&record.id, op);
@@ -1226,7 +1269,7 @@ impl WorkspaceService for FakeWorkspaces {
                 AttachMode::Desktop => {
                     let target = DesktopTarget {
                         ssh_host: format!("puddle-{}", record.id),
-                        path: format!("/workspaces/{}", record.id),
+                        path: "/workspace".to_owned(),
                         is_workspace_file: false,
                     };
                     Ok(

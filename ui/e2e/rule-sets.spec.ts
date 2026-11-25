@@ -75,11 +75,12 @@ test("a built-in set ships off, and switches for one workspace", async ({
     github.getByRole("switch", { name: "On for every workspace" }),
   ).not.toBeChecked();
   await expect(github).toContainText("Off (built-in sets ship off)");
-  await github
-    .getByLabel("Workspace", { exact: true })
-    .selectOption({ label: "demo" });
-  await github.getByRole("button", { name: "On there" }).click();
-  await expect(github).toContainText("On in demo");
+  await github.getByText(/^Per workspace/).click();
+  const demo = github.getByRole("group", { name: "GitHub in demo" });
+  await demo.getByRole("button", { name: "On", exact: true }).click();
+  await expect(
+    demo.getByRole("button", { name: "On", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
   const stored = (await sets(request, backend)).find(
     (s) => s.id === "builtin:github",
   );
@@ -162,11 +163,12 @@ test("a set of your own: make it, then approve a request into it from the inbox"
   // On everywhere would ask; keep it to demo so the inbox decision needs no confirm.
   await card.getByRole("switch", { name: "On for every workspace" }).click();
   await expect(card).toContainText("Off for every workspace");
-  await card
-    .getByLabel("Workspace", { exact: true })
-    .selectOption({ label: "demo" });
-  await card.getByRole("button", { name: "On there" }).click();
-  await expect(card).toContainText("On in demo");
+  await card.getByText(/^Per workspace/).click();
+  const demo = card.getByRole("group", { name: "Client X in demo" });
+  await demo.getByRole("button", { name: "On", exact: true }).click();
+  await expect(
+    demo.getByRole("button", { name: "On", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
 
   await page.goto("/inbox");
   const row = page.locator("li.req", { hasText: "registry.example.org" });

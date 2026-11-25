@@ -38,8 +38,8 @@ export interface Screen {
   /** Takes the emulator out of the page, keeping its contents. */
   unmount(): void;
   fit(): void;
-  /** Applies the UI's colours and font as `probe` resolves them now. */
-  applyLook(probe: HTMLElement): void;
+  /** Applies the UI's colours and font as the tokens resolve under `host` now. */
+  applyLook(host: HTMLElement): void;
   setScreenReaderMode(on: boolean): void;
   label(text: string): void;
   focus(): void;
@@ -135,8 +135,8 @@ export class XtermScreen implements Screen {
     this.#fit.fit();
   }
 
-  applyLook(probe: HTMLElement): void {
-    const { theme, fontFamily } = readLook(probe);
+  applyLook(host: HTMLElement): void {
+    const { theme, fontFamily } = readLook(host);
     this.term.options.theme = theme;
     this.term.options.fontFamily = fontFamily;
   }

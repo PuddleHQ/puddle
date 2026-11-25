@@ -145,10 +145,10 @@ async fn each_checkout_is_cloned_in_a_sandbox_with_no_route_that_is_gone_afterwa
     assert_eq!(
         lines,
         [
-            "m--acme - git clone --quiet --no-local --no-checkout --origin puddle-checkout -- /puddle/import/0 /workspaces/acme/api".to_owned(),
-            format!("m--acme - sh -c {FINISH_IMPORT_SH} puddle-import /workspaces/acme/api /puddle/import/0 https://github.com/acme/api.git"),
-            "m--acme - git clone --quiet --no-local --no-checkout --origin puddle-checkout -- /puddle/import/1 /workspaces/acme/web".to_owned(),
-            format!("m--acme - sh -c {FINISH_IMPORT_SH} puddle-import /workspaces/acme/web /puddle/import/1 https://github.com/acme/web.git"),
+            "m--acme - git clone --quiet --no-local --no-checkout --origin puddle-checkout -- /puddle/import/0 /workspace/api".to_owned(),
+            format!("m--acme - sh -c {FINISH_IMPORT_SH} puddle-import /workspace/api /puddle/import/0 https://github.com/acme/api.git"),
+            "m--acme - git clone --quiet --no-local --no-checkout --origin puddle-checkout -- /puddle/import/1 /workspace/web".to_owned(),
+            format!("m--acme - sh -c {FINISH_IMPORT_SH} puddle-import /workspace/web /puddle/import/1 https://github.com/acme/web.git"),
             "m--acme root sync ".to_owned(),
         ]
     );
@@ -256,7 +256,7 @@ async fn a_clone_whose_finishing_step_fails_is_removed_and_a_failed_removal_is_s
         assert!(
             s.guest
                 .lines()
-                .contains(&"m--acme root rm -rf -- /workspaces/acme/api".to_owned())
+                .contains(&"m--acme root rm -rf -- /workspace/api".to_owned())
         );
     }
 }
@@ -288,7 +288,7 @@ async fn a_clone_that_runs_out_of_time_fails_alone_and_a_lost_guest_fails_the_im
     assert!(
         s.guest
             .lines()
-            .contains(&"m--acme root rm -rf -- /workspaces/acme/api".to_owned())
+            .contains(&"m--acme root rm -rf -- /workspace/api".to_owned())
     );
 
     // The guest gone mid-import: the create fails, and the volume it made goes with it.

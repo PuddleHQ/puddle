@@ -8,6 +8,7 @@ export type PageId =
   | "notifications"
   | "workspaces"
   | "network"
+  | "editor"
   | "editor-and-git"
   | "this-computer";
 
@@ -29,6 +30,7 @@ export const PAGES: readonly SettingsPage[] = [
   page("notifications", "Notifications"),
   page("workspaces", "Workspaces"),
   page("network", "Network"),
+  page("editor", "Editor"),
   page("editor-and-git", "Editor and Git"),
   page("this-computer", "This computer"),
 ];
@@ -259,6 +261,31 @@ export const SETTINGS: readonly SettingEntry[] = [
   ),
 
   entry(
+    "editor",
+    "set-editor-theme",
+    "Editor colour theme",
+    "editor vs code theme dark light colour color",
+  ),
+  entry(
+    "editor",
+    "set-editor-font-size",
+    "Font size (pixels)",
+    "editor vs code text size zoom",
+  ),
+  entry(
+    "editor",
+    "set-editor-extensions",
+    "Extensions to install",
+    "editor vs code plugins preinstall",
+  ),
+  entry(
+    "editor",
+    "set-editor-keybindings",
+    "Key bindings",
+    "editor vs code keyboard shortcuts keymap",
+  ),
+
+  entry(
     "editor-and-git",
     "set-server",
     "Server",
@@ -326,7 +353,12 @@ export const SETTINGS: readonly SettingEntry[] = [
     "Devices and sign-in",
     "password phones browsers sessions",
   ),
-  entry("this-computer", "set-backup", "Back up", "export archive restore"),
+  entry(
+    "this-computer",
+    "set-backup",
+    "Back up and restore",
+    "export archive restore",
+  ),
   entry(
     "this-computer",
     "set-audit",

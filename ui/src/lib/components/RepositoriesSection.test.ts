@@ -582,12 +582,18 @@ describe("identities and empty states", () => {
     ).toBeInTheDocument();
   });
 
-  it("points to the Git tab when no identity covers a listed repository", async () => {
+  it("says a public repository needs no identity and points to the Git tab for a private one", async () => {
     idApi.git = { "w-dev": { ids: [], repos: [], push: true, pull: false } };
     await mount();
     expect(
-      await section().findByRole("link", { name: "open the Git tab" }),
+      await section().findByRole("link", {
+        name: "add an identity on the Git tab",
+      }),
     ).toHaveAttribute("href", "/workspaces/w-dev/git");
+    expect(
+      section().getByText(/No identity needed for a public repository/),
+    ).toBeInTheDocument();
+    expect(section().queryByText(/No identity covers/)).toBeNull();
   });
 
   it("says why Clone again is off on a stopped workspace", async () => {

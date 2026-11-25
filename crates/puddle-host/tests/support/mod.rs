@@ -134,6 +134,32 @@ impl Api {
         }
     }
 
+    /// A `POST` whose body is `bytes` (a file), with the token.
+    pub(crate) async fn post_bytes(&self, path: &str, bytes: &[u8]) -> Reply {
+        let mut stream = TcpStream::connect(self.addr).await.unwrap();
+        let head = format!(
+            "POST {path} HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\nContent-Type: application/gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            self.addr,
+            self.token,
+            bytes.len()
+        );
+        stream.write_all(head.as_bytes()).await.unwrap();
+        stream.write_all(bytes).await.unwrap();
+        let mut raw = Vec::new();
+        stream.read_to_end(&mut raw).await.unwrap();
+        let text = String::from_utf8_lossy(&raw).into_owned();
+        let (head, body) = text.split_once("\r\n\r\n").unwrap_or((&text, ""));
+        let status = head
+            .split(' ')
+            .nth(1)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_else(|| panic!("no status in {head:?}"));
+        Reply {
+            status,
+            body: dechunk(head, body),
+        }
+    }
+
     pub(crate) async fn get(&self, path: &str) -> Reply {
         self.request("GET", path, None, true).await
     }

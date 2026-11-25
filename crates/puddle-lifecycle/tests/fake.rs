@@ -124,14 +124,14 @@ async fn given_trim_paths_are_trimmed_instead_of_every_filesystem() {
     let trims = fstrim_ok(&rt);
     let lc = Lifecycle::new(rt.clone(), ShutdownConfig::default());
     let sb = rt.create(spec("ws")).await.unwrap();
-    let mount = GuestPath::new("/workspaces/w1").unwrap();
+    let mount = GuestPath::new("/workspace").unwrap();
     lc.manage(sb, vec![mount]).unwrap();
     let report = lc.shutdown().await;
     assert!(report.all_stopped());
     let trims = trims.lock().unwrap().clone();
     assert_eq!(trims.len(), 1);
     assert!(trims[0].starts_with("ws: sh -c "), "{trims:?}");
-    assert!(trims[0].ends_with(" fstrim /workspaces/w1"), "{trims:?}");
+    assert!(trims[0].ends_with(" fstrim /workspace"), "{trims:?}");
 }
 
 #[tokio::test]
@@ -560,6 +560,33 @@ async fn an_orphan_whose_get_says_it_is_down_is_not_stopped() {
     assert_eq!(report.failures.len(), 1);
     assert_eq!(report.failures[0].action, "remove");
     drop(left);
+}
+
+#[tokio::test]
+async fn an_orphan_left_starting_draining_or_paused_is_killed_and_its_record_removed() {
+    for held in [
+        WorkspaceStatus::Starting,
+        WorkspaceStatus::Draining,
+        WorkspaceStatus::Paused,
+    ] {
+        let rt = FakeRuntime::new();
+        let name = SandboxName::new("stuck").unwrap();
+        let left = rt.create(spec("stuck")).await.unwrap();
+        assert!(rt.set_status(&name, held));
+        // `get` refuses a sandbox that is not running, so the stop path cannot reach it.
+        let report = reconcile(&rt, &Inventory::default(), &ShutdownConfig::default())
+            .await
+            .unwrap();
+        assert_eq!(report.stopped, vec![name.clone()], "{held:?}");
+        assert!(
+            report.failures.is_empty(),
+            "{held:?}: {:?}",
+            report.failures
+        );
+        assert_eq!(report.removed, vec![name.clone()], "{held:?}");
+        assert_eq!(status_of(&rt, "stuck").await, None, "{held:?}");
+        drop(left);
+    }
 }
 
 #[tokio::test]

@@ -20,6 +20,7 @@
     type Workspace,
   } from "#lib/workspaces/model.ts";
   import { repoLabel } from "#lib/workspaces/repo-label.ts";
+  import { tabHref } from "#lib/workspaces/tabs.ts";
   import "#lib/theme/controls.css";
 
   let {
@@ -32,6 +33,8 @@
     onStart,
     onStop,
     onConnect,
+    onRename,
+    onDelete,
     onDismiss,
   }: {
     workspace: Workspace;
@@ -45,6 +48,8 @@
     onStart: (w: Workspace) => void;
     onStop: (w: Workspace) => void;
     onConnect: (w: Workspace) => void;
+    onRename: (w: Workspace) => void;
+    onDelete: (w: Workspace) => void;
     onDismiss: (w: Workspace) => void;
   } = $props();
 
@@ -74,6 +79,7 @@
     <p class="repo" title={first?.url}>
       {#if first}
         {repoLabel(first.url)}
+        {#if first.branch}<span class="branch">{first.branch}</span>{/if}
         {#if workspace.repositories.length > 1}
           <span class="more">and {workspace.repositories.length - 1} more</span>
         {/if}
@@ -128,6 +134,18 @@
             >
               Open details
             </DropdownMenu.Item>
+            <DropdownMenu.Item
+              class="row-menu-item"
+              onSelect={() => goto(tabHref(workspace.id, "terminal"))}
+            >
+              Terminal <span class="visually-hidden">of {workspace.name}</span>
+            </DropdownMenu.Item>
+            <DropdownMenu.Item
+              class="row-menu-item"
+              onSelect={() => onRename(workspace)}
+            >
+              Rename <span class="visually-hidden">{workspace.name}</span>
+            </DropdownMenu.Item>
             {#if !down}
               <DropdownMenu.Item
                 class="row-menu-item"
@@ -137,6 +155,12 @@
                 Stop <span class="visually-hidden">{workspace.name}</span>
               </DropdownMenu.Item>
             {/if}
+            <DropdownMenu.Item
+              class="row-menu-item"
+              onSelect={() => onDelete(workspace)}
+            >
+              Delete <span class="visually-hidden">{workspace.name}</span>
+            </DropdownMenu.Item>
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
@@ -243,6 +267,10 @@
   }
   .more {
     font-family: var(--font-sans);
+  }
+  .branch::before {
+    content: "·";
+    margin: 0 var(--space-1);
   }
   .full {
     color: var(--color-warning);

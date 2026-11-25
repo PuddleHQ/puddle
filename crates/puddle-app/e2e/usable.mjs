@@ -23,7 +23,7 @@
 //      while the window is hidden;
 //   9. a new request makes no notification while the window is in front, and exactly one, naming the
 //      workspace and the host, while it is minimized;
-//  10. Activity's "Export JSON lines" saves a .jsonl file in Downloads, one valid JSON record a line;
+//  10. Activity's "Export" saves a .jsonl file in Downloads, one valid JSON record a line;
 //  11. the close button still hides the window when the page failed to load (broken-page.mjs refuses
 //      every request and reloads, so the window shows the browser's error page);
 //  12. the tray's "Quit Puddle" with the workspace running leaves no `puddle-app`, `puddle` or `msb` process
@@ -69,7 +69,7 @@ import { fileURLToPath } from "node:url";
 import { Uia } from "./uia.mjs";
 import { onChildEnd } from "./child-end.mjs";
 import { GiveUp, until } from "./poll.mjs";
-import { debugPortPolicy, inspectTerminal } from "./terminal-render.mjs";
+import { debugPortPolicy, inspectContextMenu, inspectTerminal } from "./terminal-render.mjs";
 import { breakThePage } from "./broken-page.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -656,6 +656,16 @@ async function terminalRendering() {
   for (const c of report.checks) check(`terminal rendering: ${c.name}`, c.ok, c.detail);
   writeFileSync(join(out, "terminal-render.json"), JSON.stringify(report.dump, null, 2));
   if (report.checks.some((c) => !c.ok)) screenshot("terminal-rendering");
+  let menu;
+  try {
+    menu = await inspectContextMenu(DEBUG_PORT);
+  } catch (err) {
+    check("the terminal's right-click menu could be driven over DevTools", false, String(err?.message ?? err));
+    return;
+  }
+  for (const c of menu.checks) check(`terminal menu: ${c.name}`, c.ok, c.detail);
+  writeFileSync(join(out, "terminal-menu.json"), JSON.stringify(menu.dump, null, 2));
+  if (menu.checks.some((c) => !c.ok)) screenshot("terminal-menu");
 }
 
 /** The guest's clock, in seconds. */
@@ -747,7 +757,7 @@ async function requestNotifications(id) {
   mainWindow("front");
 }
 
-/** Activity's "Export JSON lines" saves the records as a .jsonl file in Downloads. */
+/** Activity's "Export" saves the records as a .jsonl file in Downloads. */
 async function exportActivity() {
   const downloads = join(homedir(), "Downloads");
   const earlier = new Set(existsSync(downloads) ? readdirSync(downloads) : []);
@@ -755,8 +765,8 @@ async function exportActivity() {
     mainWindow("front");
     await uia.click("the Activity link", { window: MAIN, role: "link", nameRegex: "^Activity" });
     await uia.waitFor("the Activity heading", heading("Activity"));
-    await uia.call({ action: "focus", ...inMain("button", "Export JSON lines") });
-    await uia.click("Export JSON lines", inMain("button", "Export JSON lines"));
+    await uia.call({ action: "focus", ...inMain("button", "Export") });
+    await uia.click("Export", inMain("button", "Export"));
     return uia.waitFor("the page's word on the export", { window: MAIN, nameRegex: "^(Saved [\\d,.\\s]+ records? as puddle-activity-.+\\.jsonl\\.|Nothing to export|Export cancelled)" }, 120_000);
   }).catch((err) => ({ name: `nothing: ${err.message}` }));
   const said = /^Saved ([\d,.\s]+) records? as (puddle-activity-.+\.jsonl)\.$/.exec(saved.name ?? "");
@@ -777,7 +787,7 @@ async function exportActivity() {
   });
   const count = said ? Number(said[1].replace(/\D/g, "")) : undefined;
   check(
-    "Export JSON lines saves the records in Downloads, one JSON object a line, as many as the page says",
+    "Export saves the records in Downloads, one JSON object a line, as many as the page says",
     file !== undefined && lines.length > 0 && valid && said?.[2] === file && count === lines.length,
     `page: "${saved.name}"; file: ${file ?? "none"} with ${lines.length} lines, all JSON ${valid}; new in Downloads: ${readdirSync(downloads).filter((f) => !earlier.has(f)).join(", ") || "nothing"}`,
   );

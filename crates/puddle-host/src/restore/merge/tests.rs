@@ -327,3 +327,44 @@ fn a_present_temp_file_is_not_copied() {
     assert!(new.join("global.json").is_file());
     assert!(!new.join(".global.json.1.tmp").exists());
 }
+
+#[test]
+fn a_restore_never_takes_over_the_first_run_flag() {
+    for mode in [ApplyMode::Add, ApplyMode::Replace] {
+        let dir = tempfile::tempdir().unwrap();
+        let here = dir.path().join("here");
+        let there = dir.path().join("there");
+        write(&here, "global.json", r#"{"version":1}"#);
+        write(
+            &there,
+            "global.json",
+            r#"{"version":1,"first_run":{"completed_at":5},"a":1}"#,
+        );
+        let new = dir.path().join("new");
+        settings(mode, &here, &there, &new).unwrap();
+        let global = read(&new.join("global.json"));
+        assert_eq!(
+            global["first_run"],
+            Value::Null,
+            "the flag stays unset here"
+        );
+        assert_eq!(
+            global["a"].as_i64(),
+            Some(1),
+            "{mode:?}: the other settings still come over"
+        );
+
+        // A machine that has been through the flow keeps its own value.
+        write(
+            &here,
+            "global.json",
+            r#"{"version":1,"first_run":{"completed_at":9}}"#,
+        );
+        let again = dir.path().join("again");
+        settings(mode, &here, &there, &again).unwrap();
+        assert_eq!(
+            read(&again.join("global.json"))["first_run"]["completed_at"],
+            9
+        );
+    }
+}

@@ -65,6 +65,27 @@
     );
   }
 
+  /** With nothing in a short range, the next step is the 7-day range, with how many records it holds. */
+  let week = $state<{ count: number; more: boolean } | null>(null);
+  $effect(() => {
+    week = null;
+    if (store.status !== "ready" || total !== 0) return;
+    if (filter.range !== "1h" && filter.range !== "24h") return;
+    const wider: Filter = { ...filter, range: "7d" };
+    let stale = false;
+    void store.count(wider).then((n) => {
+      if (!stale) week = n;
+    });
+    return () => {
+      stale = true;
+    };
+  });
+
+  function showWeek() {
+    filter = { ...filter, range: "7d" };
+    apply();
+  }
+
   onMount(() => {
     filter = fromSearch(window.location.search);
     void store.load(filter);
@@ -169,7 +190,7 @@
       Live
     </label>
     <button type="button" class="btn" disabled={exporting} onclick={save}>
-      <Download aria-hidden="true" size={16} />Export JSON lines
+      <Download aria-hidden="true" size={16} />Export
     </button>
   </div>
 </div>
@@ -281,6 +302,14 @@
         Nothing in {rangeLabel} matches these filters. Change them, or pick a longer
         time range.
       </p>
+      {#if week !== null && week.count > 0}
+        <button type="button" class="btn" onclick={showWeek}>
+          Show the last 7 days ({week.count.toLocaleString()}{week.more
+            ? "+"
+            : ""}
+          {week.count === 1 && !week.more ? "record" : "records"})
+        </button>
+      {/if}
     {:else}
       <h2>Nothing recorded yet</h2>
       <p>Connections, decisions and rule changes appear here as they happen.</p>

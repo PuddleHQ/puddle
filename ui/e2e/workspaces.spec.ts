@@ -557,6 +557,46 @@ test.describe("start and stop", () => {
     await expect(shop).toContainText("Running");
   });
 
+  test("the row menu opens the terminal tab", async ({ page, backend }) => {
+    await openList(page, backend);
+    const shop = card(page, "web-shop");
+    await shop.getByRole("button", { name: "More about web-shop" }).click();
+    await page.getByRole("menuitem", { name: "Terminal of web-shop" }).click();
+    await expect(page).toHaveURL(/\/workspaces\/web-shop\/terminal$/);
+  });
+
+  test("the row menu renames a workspace without leaving the list", async ({
+    page,
+    backend,
+  }) => {
+    await openList(page, backend);
+    const shop = card(page, "web-shop");
+    await shop.getByRole("button", { name: "More about web-shop" }).click();
+    await page.getByRole("menuitem", { name: "Rename web-shop" }).click();
+    const form = page.getByRole("dialog", { name: "Rename workspace" });
+    await form.getByLabel("Name").fill("Web shop (prod)");
+    await form.getByRole("button", { name: "Save" }).click();
+    await expect(toast(page, "Renamed to Web shop (prod).")).toBeVisible();
+    await expect(card(page, "Web shop (prod)")).toBeVisible();
+    await expect(page).toHaveURL(/\/workspaces$/);
+  });
+
+  test("the row menu deletes a stopped workspace after the check", async ({
+    page,
+    backend,
+  }) => {
+    await openList(page, backend);
+    const tools = card(page, "data-tools");
+    await tools.getByRole("button", { name: "More about data-tools" }).click();
+    await page.getByRole("menuitem", { name: "Delete data-tools" }).click();
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toContainText("found nothing unsaved");
+    await dialog.getByRole("checkbox", { name: /Delete data-tools/ }).click();
+    await dialog.getByRole("button", { name: "Delete workspace" }).click();
+    await expect(toast(page, "Deleted data-tools.")).toBeVisible();
+    await expect(tools).toHaveCount(0);
+  });
+
   test("a workspace stopped from elsewhere changes the card at once", async ({
     page,
     backend,

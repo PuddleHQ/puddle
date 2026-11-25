@@ -324,6 +324,13 @@ pub trait WorkspaceService: Send + Sync {
         })
     }
 
+    /// The branch each checkout of the workspace had at the last listing this run made, by
+    /// directory. Reads what is kept and lists nothing, so the workspaces list stays cheap; empty
+    /// before the first listing.
+    fn known_branches(&self, _id: &WorkspaceId) -> std::collections::BTreeMap<String, String> {
+        std::collections::BTreeMap::new()
+    }
+
     /// The checkouts under the workspace's volume root, each with the list entry that has its
     /// directory. A running workspace lists them now (calls at the same
     /// moment share one listing); a stopped one answers the last listing this run made, or says

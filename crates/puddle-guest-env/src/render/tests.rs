@@ -171,7 +171,9 @@ fn the_known_hosts_file_is_a_merge_of_one_block_and_refuses_what_is_not_host_key
     assert!(matches!(f.apply(), puddle_types::ApplyKind::Merge(_)));
     assert_eq!(
         text(&f),
-        format!("# puddle: begin\n{lines}\n# puddle: end\n")
+        format!(
+            "# puddle: begin\n# managed by Puddle; hand edits between these markers are overwritten\n{lines}\n# puddle: end\n"
+        )
     );
     for bad in ["", "# a comment", "a ssh-rsa A\n\nb ssh-rsa B"] {
         let err = ssh_known_hosts_file(bad).unwrap_err();

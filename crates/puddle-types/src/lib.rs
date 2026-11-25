@@ -31,6 +31,7 @@ mod fill;
 #[cfg(any(test, feature = "testing"))]
 pub mod fixture;
 mod guest;
+mod hex;
 mod host;
 mod interception;
 mod local;
@@ -45,11 +46,14 @@ mod query_name;
 mod reason_code;
 mod request_match;
 mod session_user;
+mod source_name;
+mod source_spec;
 mod tool;
 
 pub use connection::{
     ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOrigin, ConnectionOutcome,
-    ConnectionReason, HttpRequestLine, NullConnectionLog, RefusedReason, request_path,
+    ConnectionProtocol, ConnectionReason, HttpRequestLine, NullConnectionLog, RefusedReason,
+    request_path,
 };
 pub use cpus::CpuCount;
 pub use error::ValidationError;
@@ -66,13 +70,20 @@ pub use interception::{CURATED_PASS_THROUGH, InterceptionMode};
 pub use local::{CompanySignal, LocalCategory};
 pub use memory::MemoryMib;
 pub use merge::{
-    MAX_MERGE_FILE, MergeEntry, MergeFormat, MergeRefusal, MergeSpec, Merged, Unmerged, unmerge,
+    MAX_MERGE_FILE, MergeEntry, MergeFormat, MergeRefusal, MergeSpec, Merged, Unmerged,
+    parse as parse_merge_file, unmerge,
 };
 pub use name::{
     CheckoutDir, EntryId, ImageRef, ImageRefLit, RESERVED_WORKSPACE_NAMES, SandboxName, VolumeName,
     WORKSPACE_VOLUME_PREFIX, WorkspaceId,
 };
 
+pub use source_name::{
+    AccountName, HostName, HostNameLit, NameError, OrgName, StoredId, TenantId, UrlPath,
+};
+pub use source_spec::{AZURE_DEVOPS_HOST, SourceSpec, TokenScope};
+
+pub use hex::hex_lower;
 pub use percent::{escape_at, hex_digit, percent_decoded, percent_decoded_bytes};
 pub use policy::{
     BlockReason, Decision, EgressRequest, PatternKind, PendingId, PendingOutcome, Policy,

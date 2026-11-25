@@ -39,9 +39,9 @@ use aes_gcm::aead::KeyInit;
 use aes_gcm::{AeadInOut, Aes256Gcm, Nonce};
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::name::StoredId;
 use crate::secret::Secret;
 use crate::store::{SecretStore, StoreError};
+use puddle_types::StoredId;
 
 const MAGIC: &[u8; 4] = b"PDLV";
 const VERSION: u8 = 1;

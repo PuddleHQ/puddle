@@ -79,8 +79,9 @@ async fn node_that_hangs_is_stopped_at_the_budget() {
 
 #[tokio::test]
 async fn a_hung_node_reports_what_it_printed_and_how_far_it_got() {
+    // The budget starts at node's first byte: a slow start under parallel load must not eat it.
     let err = Node::from_env()
-        .run(
+        .run_after_first_output(
             [
                 "-e",
                 "console.log('out-line'); console.error('err-line'); setInterval(()=>{},1000)",
@@ -88,6 +89,7 @@ async fn a_hung_node_reports_what_it_printed_and_how_far_it_got() {
             &[],
             "",
             Duration::from_secs(3),
+            Duration::from_secs(120),
         )
         .await
         .expect_err("hang");
@@ -100,6 +102,24 @@ async fn a_hung_node_reports_what_it_printed_and_how_far_it_got() {
     ] {
         assert!(said.contains(part), "{part} not in {said}");
     }
+}
+
+#[tokio::test]
+async fn a_node_that_never_prints_ends_at_the_start_limit() {
+    let err = Node::from_env()
+        .run_after_first_output(
+            ["-e", "setInterval(()=>{},1000)"],
+            &[],
+            "",
+            Duration::from_secs(60),
+            Duration::from_secs(2),
+        )
+        .await
+        .expect_err("hang");
+    assert!(
+        matches!(err, HarnessError::NodeHung { limit, .. } if limit == Duration::from_secs(2)),
+        "{err}"
+    );
 }
 
 #[tokio::test]
@@ -149,7 +169,7 @@ fn stub_modules() -> tempfile::TempDir {
                      once: (e, f) => { once[e] = f; if (e === 'crash' && keys.includes('crashed')) f(); },
                      goto: async (u) => { if (u.endsWith('/hang')) await new Promise(() => {}); url = u; h.console({ type: () => 'log', text: () => 'at ' + u }); },
                      waitForFunction: async (e) => { if (e === 'never') { h.pageerror(new Error('never ready')); throw new Error('timed out'); } },
-                     evaluate: async (e) => ({ evaluated: e, url, cookies: jar.map(c => c.name), keys, strict: o.ignoreHTTPSErrors }),
+                     evaluate: async (e) => ({ evaluated: e, url, cookies: jar.map(c => c.name), keys, strict: o.ignoreHTTPSErrors, scheme: o.colorScheme ?? null }),
                      keyboard: { press: async (k) => { keys.push(k); }, type: async (t) => { keys.push('typed:' + t); } },
                      close: async () => {},
                    };
@@ -175,7 +195,7 @@ async fn the_driver_opens_the_page_waits_and_returns_the_result_with_the_console
     let outcome = stub_client(&modules).open(&request).await.expect("opened");
     assert_eq!(
         outcome.result,
-        json!({"evaluated": "answer", "url": "http://x.localhost:9/", "cookies": [], "keys": [], "strict": true})
+        json!({"evaluated": "answer", "url": "http://x.localhost:9/", "cookies": [], "keys": [], "strict": true, "scheme": null})
     );
     assert_eq!(outcome.console, ["log: at http://x.localhost:9/"]);
 }
@@ -371,4 +391,27 @@ fn the_client_needs_the_modules_variable_and_takes_a_node_override() {
     .expect("with a node override");
     // The process's own environment: either answer is right, the line must run.
     let _ = BrowserClient::from_env();
+}
+
+#[tokio::test]
+async fn a_session_can_have_the_systems_colour_scheme_dark() {
+    let modules = stub_modules();
+    let client = stub_client(&modules);
+    let mut dark = client
+        .session_in_color_scheme("dark")
+        .await
+        .expect("session");
+    let (_, opened) = dark
+        .open(&PageRequest::new("http://x.localhost:9/a", "ready").result("r"))
+        .await
+        .expect("page");
+    assert_eq!(opened.result["scheme"], "dark");
+    dark.quit().await.expect("quit");
+    let mut plain = client.session().await.expect("session");
+    let (_, opened) = plain
+        .open(&PageRequest::new("http://x.localhost:9/a", "ready").result("r"))
+        .await
+        .expect("page");
+    assert_eq!(opened.result["scheme"], Value::Null);
+    plain.quit().await.expect("quit");
 }

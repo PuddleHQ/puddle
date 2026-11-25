@@ -539,6 +539,7 @@ macro_rules! contract_tests {
             get_readopts_a_running_sandbox_without_owning_it,
             unknown_names_are_not_found,
             remove_needs_a_stopped_sandbox_and_frees_the_name,
+            kill_ends_a_vm_by_name_and_is_idempotent,
             exec_exit_codes_are_exact,
             signal_killed_exec_is_a_failure,
             exec_timeout_is_enforced,

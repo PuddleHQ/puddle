@@ -110,11 +110,9 @@ async fn vm_host_creates_a_workspace_with_progress_and_stops_cleanly() {
     let handle = runtime.get(&sandbox.sandbox_name()).await.unwrap();
     let out = handle
         .exec(
-            ExecRequest::sh(format!(
-                "git -C /workspaces/{name}/Hello-World log --oneline | head -1"
-            ))
-            .as_user("root")
-            .with_timeout(Duration::from_secs(60)),
+            ExecRequest::sh("git -C /workspace/Hello-World log --oneline | head -1".to_string())
+                .as_user("root")
+                .with_timeout(Duration::from_secs(60)),
         )
         .await
         .unwrap();
@@ -630,7 +628,7 @@ async fn vm_host_clones_each_repository_and_one_that_cannot_be_reached_fails_alo
             .starts_with("git exited "),
         "{problems}"
     );
-    let listing = guest(&runtime, &sandbox, &format!("ls -1A /workspaces/{name}")).await;
+    let listing = guest(&runtime, &sandbox, "ls -1A /workspace").await;
     let listed: Vec<&str> = listing.lines().filter(|l| *l != ".puddle").collect();
     assert_eq!(
         listed,
@@ -860,7 +858,7 @@ async fn vm_host_starts_a_workspace_from_a_checkout_on_this_computer() {
         "{problems}"
     );
 
-    let clone = format!("/workspaces/{name}/shop");
+    let clone = "/workspace/shop".to_string();
     let refs = guest(
         &runtime,
         &sandbox,
@@ -940,7 +938,7 @@ async fn vm_host_starts_a_workspace_from_a_checkout_on_this_computer() {
 async fn checkouts_are_whole(runtime: &MsbRuntime, sandbox: &WorkspaceId, dirs: &[&str]) {
     let restarted = runtime.start(&sandbox.sandbox_name()).await.unwrap();
     for dir in dirs {
-        let repo = format!("/workspaces/{sandbox}/{dir}");
+        let repo = format!("/workspace/{dir}");
         let out = restarted
             .exec(
                 ExecRequest::sh(format!(
@@ -1011,7 +1009,7 @@ async fn vm_host_manage_lists_adds_and_removes_checkouts_in_the_real_guest() {
         &runtime,
         &sandbox,
         &format!(
-            "cd /workspaces/{name} && git init -q manual && \
+            "cd /workspace && git init -q manual && \
              git -C manual remote add origin {manual} && mkdir notes && \
              git init -q shell && git -C shell remote add origin git@github.com:o/r.git"
         ),
@@ -1092,7 +1090,7 @@ async fn vm_host_manage_lists_adds_and_removes_checkouts_in_the_real_guest() {
         .until(ended(name_static), Duration::from_mins(10))
         .await;
     assert_eq!(end["step"], "done", "{end}");
-    let there = guest(&runtime, &sandbox, &format!("ls -1A /workspaces/{name}")).await;
+    let there = guest(&runtime, &sandbox, "ls -1A /workspace").await;
     assert!(there.lines().any(|l| l == "Spoon-Knife"), "{there}");
 
     // Taking the entry off the list changes the list only.
@@ -1106,7 +1104,7 @@ async fn vm_host_manage_lists_adds_and_removes_checkouts_in_the_real_guest() {
     let there = guest(
         &runtime,
         &sandbox,
-        &format!("git -C /workspaces/{name}/Spoon-Knife rev-parse HEAD"),
+        "git -C /workspace/Spoon-Knife rev-parse HEAD",
     )
     .await;
     assert_eq!(there.trim().len(), 40, "{there}");
@@ -1207,7 +1205,7 @@ async fn vm_host_clones_a_public_repository_when_the_identity_is_not_signed_in_a
         .await;
     // The clone went through the decrypting proxy with no credential and the repository arrived.
     assert_eq!(end["step"], "done", "{end}");
-    let clone = format!("/workspaces/{name}/Hello-World");
+    let clone = "/workspace/Hello-World".to_string();
     let log = guest(
         &runtime,
         &sandbox,
@@ -3701,7 +3699,7 @@ async fn editor_up(runtime: &MsbRuntime, sandbox: &WorkspaceId) {
 /// What a client sees of the editor server in a fresh sandbox: the release is read-only, the
 /// password is the owner's alone, a client signs in with it, and it is on no command line.
 /// Returns the password.
-async fn check_editor_session(runtime: &MsbRuntime, sandbox: &WorkspaceId, name: &str) -> String {
+async fn check_editor_session(runtime: &MsbRuntime, sandbox: &WorkspaceId) -> String {
     // The release is read-only in the guest, and the password is the owner's alone.
     let mount = guest(
         runtime,
@@ -3745,7 +3743,9 @@ async fn check_editor_session(runtime: &MsbRuntime, sandbox: &WorkspaceId, name:
         "anonymous 302 http://127.0.0.1:41337/login",
         "login 302",
         // Signed in, the client is sent to the folder the editor opens.
-        format!("signed-in 302 http://127.0.0.1:41337/?folder=/workspaces/{name}").as_str(),
+        "signed-in 302 http://127.0.0.1:41337/?folder=/workspace"
+            .to_string()
+            .as_str(),
         "on-command-lines 0",
         "grace-300",
     ] {
@@ -3768,14 +3768,13 @@ async fn rebuild_sandbox(api: &Api, events: &mut support::Events, name: &str) {
 
 /// What the guest says about Docker's data folder: its mount, the mounts of the root and of the
 /// workspace volume for comparison, and the folder's size in bytes.
-fn docker_disk_script(name: &str) -> String {
-    format!(
-        r#"echo "docker=$(awk '$2=="/var/lib/docker"{{print $1" "$3}}' /proc/mounts)"
-echo "volume=$(awk '$2=="/workspaces/{name}"{{print $1}}' /proc/mounts)"
-echo "root=$(awk '$2=="/"{{print $1" "$3}}' /proc/mounts | tail -1)"
-echo "size=$(df -P -B1 /var/lib/docker | awk 'NR==2{{print $2}}')"
+fn docker_disk_script() -> String {
+    r#"echo "docker=$(awk '$2=="/var/lib/docker"{print $1" "$3}' /proc/mounts)"
+echo "volume=$(awk '$2=="/workspace"{print $1}' /proc/mounts)"
+echo "root=$(awk '$2=="/"{print $1" "$3}' /proc/mounts | tail -1)"
+echo "size=$(df -P -B1 /var/lib/docker | awk 'NR==2{print $2}')"
 echo "marker=$(cat /var/lib/docker/puddle-marker 2>/dev/null)""#
-    )
+        .to_string()
 }
 
 /// The value of `key=` in the guest's reply, empty when the line is missing (the assertions on it
@@ -3815,7 +3814,7 @@ async fn vm_host_dockers_data_is_on_a_disk_of_the_sandbox_that_a_rebuild_replace
         .await;
     assert_eq!(end["step"], "done", "{end}");
 
-    let script = docker_disk_script(&name);
+    let script = docker_disk_script();
     let first = guest(&runtime, &sandbox, &script).await;
     let docker = said(&first, "docker");
     assert!(
@@ -3968,8 +3967,8 @@ async fn vm_host_runs_the_editor_server_and_its_data_survives_a_rebuilt_sandbox(
     assert_eq!(end["step"], "done", "{end}");
 
     editor_up(&runtime, &sandbox).await;
-    let data = format!("/workspaces/{name}/.puddle/code-server");
-    let password = check_editor_session(&runtime, &sandbox, &name).await;
+    let data = "/workspace/.puddle/code-server".to_string();
+    let password = check_editor_session(&runtime, &sandbox).await;
     // A new workspace's server runs as its session user, agent, and its folders are agent's. The
     // match is anchored on the program so this script's own shell, whose command line holds the
     // same words, is not counted.
@@ -4237,7 +4236,7 @@ async fn vm_host_the_editor_server_opens_a_window_with_every_checkout() {
     assert_eq!(end["step"], "done", "{end}");
     editor_up(&runtime, &sandbox).await;
 
-    let root = format!("/workspaces/{name}");
+    let root = "/workspace".to_string();
     let file = format!("{root}/.puddle/editor/{name}.code-workspace");
     // The sign-in the client of the editor makes, and where it is sent.
     let lands = || {
@@ -4923,7 +4922,7 @@ async fn vm_host_a_login_shell_lands_in_the_start_folder_and_a_missing_one_opens
         .until(ended(name_static), Duration::from_secs(600))
         .await;
     assert_eq!(end["step"], "done", "{end}");
-    let root = format!("/workspaces/{name}");
+    let root = "/workspace".to_string();
     let set = |path: &'static str| {
         let (api, url) = (&api, format!("/api/workspaces/{name}/start-folder"));
         async move { api.put(&url, &json!({ "path": path }).to_string()).await }
@@ -5010,6 +5009,26 @@ async fn terminal_end(
     }
 }
 
+/// The prompt reads `user@<name>`, and the workspace id is nowhere in it.
+async fn assert_prompt_shows_name(link: &mut puddle_api::TerminalLink, user: &str, id: &str) {
+    let typed = "echo \"prompt=<${PS1@P}>\"; echo end=$((20 + 22))\r";
+    link.input
+        .send(puddle_api::TerminalInput::Bytes(typed.as_bytes().to_vec()))
+        .await
+        .unwrap();
+    let seen = terminal_text_until(link, "end=42").await;
+    assert!(
+        seen.contains(&format!("prompt=<{user}@play ground:")),
+        "{seen:?}"
+    );
+    let shown = seen
+        .rsplit("prompt=<")
+        .next()
+        .and_then(|rest| rest.split('>').next())
+        .unwrap_or_default();
+    assert!(!shown.contains(id), "{seen:?}");
+}
+
 /// K and W tiers. A terminal on a real guest: the host's own SSH connection to the runtime's server
 /// grants a pty and a login shell as the session user, in the start folder; the shell's exit
 /// status reaches the host, and a stop ends a terminal that is still open with `stopped`.
@@ -5043,7 +5062,7 @@ async fn vm_host_a_terminal_is_a_shell_as_the_session_user_in_the_start_folder()
         .to_owned();
     assert_ne!(user, "root", "the session user is not root");
 
-    let root = format!("/workspaces/{name}");
+    let root = "/workspace".to_string();
     guest(&runtime, &sandbox, &format!("mkdir -p {root}/play/src")).await;
     let reply = api
         .put(
@@ -5052,6 +5071,15 @@ async fn vm_host_a_terminal_is_a_shell_as_the_session_user_in_the_start_folder()
         )
         .await;
     assert_eq!(reply.json()["exists"], true, "{}", reply.body);
+
+    // The terminal's prompt shows the name, not the generated id the guest's host name keeps.
+    let renamed = api
+        .patch(
+            &format!("/api/workspaces/{name}"),
+            &json!({"name": "play ground"}).to_string(),
+        )
+        .await;
+    assert_eq!(renamed.status, 200, "{}", renamed.body);
 
     let size = puddle_api::TerminalSize::new(100, 30).unwrap();
     let service = host.workspaces();
@@ -5076,6 +5104,8 @@ async fn vm_host_a_terminal_is_a_shell_as_the_session_user_in_the_start_folder()
         )),
         "{seen:?}"
     );
+
+    assert_prompt_shows_name(&mut link, &user, &name).await;
 
     // The shell's own exit ends the session with its status.
     link.input
@@ -5398,11 +5428,9 @@ async fn vm_host_a_deleted_workspaces_id_is_never_reused_and_a_version_2_list_ke
     guest(
         &runtime,
         &second_id,
-        &format!(
-            "set -e; mkdir -p /workspaces/{second}/app; cd /workspaces/{second}/app; \
+        "set -e; mkdir -p /workspace/app; cd /workspace/app; \
              git init -q; git -c user.name=t -c user.email=t@example.org commit -q --allow-empty -m kept; \
-             echo kept > notes.txt"
-        ),
+             echo kept > notes.txt",
     )
     .await;
     op_and_wait(&api, &mut events, &second, "stop").await;
@@ -5431,7 +5459,7 @@ async fn vm_host_a_deleted_workspaces_id_is_never_reused_and_a_version_2_list_ke
     let seen = guest(
         &runtime,
         &second_id,
-        &format!("cd /workspaces/{second}/app; git log --format=%s; cat notes.txt"),
+        "cd /workspace/app; git log --format=%s; cat notes.txt",
     )
     .await;
     assert_eq!(seen.trim(), "kept\nkept", "{seen}");
@@ -5635,5 +5663,86 @@ async fn vm_host_a_restart_of_puddle_keeps_the_sandbox_and_its_root_disk() {
     );
 
     let down = vm.host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}
+
+/// A reset of the root disk loses what the dialog says and nothing else: a package installed with
+/// apt, a file in the home directory and a cache file are gone after the stop, the reset and the
+/// next start, while the volume's own file and a git checkout on it, with its commit, are as they
+/// were. The package is built in the guest and installed from the file, so apt does the install and
+/// no third-party mirror is involved.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_a_reset_of_the_root_disk_loses_packages_and_home_files_and_keeps_the_volume() {
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        ..
+    } = start_vm_host("resetloses").await;
+    let name = format!("{}-resetloses", settings.prefix.as_str());
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let id = create_bare(&api, &mut events, &name).await;
+    let sandbox = WorkspaceId::new(&id).unwrap();
+
+    // On the root disk: a package, a home file and a cache file. On the volume: a file and a
+    // checkout with one commit.
+    install_root_disk_probe(&runtime, &sandbox).await;
+    guest(
+        &runtime,
+        &sandbox,
+        "set -e; mkdir -p \"$HOME/.cache\"; echo cached > \"$HOME/.cache/probe\"; sync",
+    )
+    .await;
+    guest(
+        &runtime,
+        &sandbox,
+        "set -e; mkdir -p /workspace/app; cd /workspace/app; \
+        git init -q; git -c user.name=t -c user.email=t@example.org commit -q --allow-empty -m kept; \
+        echo kept > notes.txt; echo volume > /workspace/volume-file; sync",
+    )
+    .await;
+    assert_eq!(
+        root_disk_probe(&runtime, &sandbox).await,
+        "installed\ninstall ok installed\nkept",
+        "the probe is there before the reset"
+    );
+    let boot_before = boot_id_of(&runtime, &sandbox).await;
+
+    rebuild_sandbox(&api, &mut events, &id).await;
+
+    assert_ne!(
+        boot_id_of(&runtime, &sandbox).await,
+        boot_before,
+        "the guest started again"
+    );
+    let gone = guest(
+        &runtime,
+        &sandbox,
+        "command -v puddle-keep-probe >/dev/null && echo command-there || echo command-gone; \
+         dpkg-query -W -f='${Status}\n' puddle-keep-probe 2>/dev/null | grep -q 'install ok installed' \
+           && echo package-there || echo package-gone; \
+         test -e \"$HOME/keep-probe-file\" && echo home-there || echo home-gone; \
+         test -e \"$HOME/.cache/probe\" && echo cache-there || echo cache-gone",
+    )
+    .await;
+    assert_eq!(
+        gone.trim(),
+        "command-gone\npackage-gone\nhome-gone\ncache-gone",
+        "the reset removed the package, the home file and the cache"
+    );
+    let kept = guest(
+        &runtime,
+        &sandbox,
+        "cat /workspace/volume-file; cd /workspace/app; git log --format=%s; cat notes.txt",
+    )
+    .await;
+    assert_eq!(
+        kept.trim(),
+        "volume\nkept\nkept",
+        "the volume file and the checkout (one commit and its file) are untouched"
+    );
+
+    let down = host.shutdown().await;
     assert!(down.sandboxes.all_stopped(), "{down:?}");
 }

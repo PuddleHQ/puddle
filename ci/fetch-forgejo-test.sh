@@ -6,7 +6,8 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-fail() { echo "fetch-forgejo-test: FAIL: $1" >&2; exit 1; }
+# shellcheck disable=SC1091 # the helper sits in scripts/
+. "$(dirname "$0")/../scripts/test-fail.sh"
 hash_of_file() { sha256sum <"$1" | cut -d' ' -f1; }
 
 asset=forgejo-9.9.9-linux-amd64

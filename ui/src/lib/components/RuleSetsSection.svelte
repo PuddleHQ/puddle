@@ -104,6 +104,16 @@
     return null;
   }
 
+  // Yours and the ones that ship with Puddle sit under their own sub-headings, so no set needs a
+  // label that says which it is.
+  const groups = $derived([
+    { title: "Your sets", sets: store.sets.filter((s) => s.kind === "user") },
+    {
+      title: "Built-in sets",
+      sets: store.sets.filter((s) => s.kind !== "user"),
+    },
+  ]);
+
   async function confirmDelete(set: RuleSet) {
     deleting = null;
     const result = await store.remove(set.id);
@@ -138,28 +148,33 @@
   {:else if store.status === "failed"}
     <LoadNotice what="the rule sets" message={store.loadError} />
   {:else}
-    {#each store.sets as set (set.id)}
-      <RuleSetCard
-        {set}
-        {workspaces}
-        {onSwitch}
-        {onAddEntry}
-        {onDeleteEntry}
-        loadEntries={async (s, q, offset) => {
-          const page = await store.entries(s.id, q, offset);
-          if (!page.ok) throw new Error(page.message);
-          return page.value;
-        }}
-        onRename={(s) => {
-          dialogMode = "rename";
-          renaming = s;
-          dialogOpen = true;
-        }}
-        onDelete={(s) => {
-          deleting = s;
-          deleteOpen = true;
-        }}
-      />
+    {#each groups as group (group.title)}
+      {#if group.sets.length > 0}
+        <h3>{group.title}</h3>
+        {#each group.sets as set (set.id)}
+          <RuleSetCard
+            {set}
+            {workspaces}
+            {onSwitch}
+            {onAddEntry}
+            {onDeleteEntry}
+            loadEntries={async (s, q, offset) => {
+              const page = await store.entries(s.id, q, offset);
+              if (!page.ok) throw new Error(page.message);
+              return page.value;
+            }}
+            onRename={(s) => {
+              dialogMode = "rename";
+              renaming = s;
+              dialogOpen = true;
+            }}
+            onDelete={(s) => {
+              deleting = s;
+              deleteOpen = true;
+            }}
+          />
+        {/each}
+      {/if}
     {/each}
   {/if}
 </section>
@@ -213,6 +228,11 @@
     justify-content: space-between;
     align-items: flex-start;
     gap: var(--space-4);
+  }
+  h3 {
+    margin: var(--space-3) 0 0;
+    font-size: var(--text-md);
+    color: var(--color-text-muted);
   }
   h2 {
     margin: 0;

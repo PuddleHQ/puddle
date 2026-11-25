@@ -253,7 +253,20 @@ test.describe("creating", () => {
     await expect(
       created.getByRole("button", { name: "Start Ledger_Service" }),
     ).toBeDisabled();
-    // The service reports where it is.
+    // The service reports where it is, with the bytes while an image comes down.
+    await backend.control.emit({
+      type: "workspace_progress",
+      workspace: "ledger-service",
+      step: "pulling_image",
+      detail: null,
+      bytes_done: 120 * 1024 * 1024,
+      bytes_total: 480 * 1024 * 1024,
+    });
+    await expect(created).toContainText("Downloading the image");
+    await expect(created).toContainText("120 MB of 480 MB, 25 %");
+    await expect(
+      created.getByRole("progressbar", { name: "Downloading the image" }),
+    ).toHaveAttribute("value", "25");
     await backend.control.emit({
       type: "workspace_progress",
       workspace: "ledger-service",
@@ -542,6 +555,46 @@ test.describe("start and stop", () => {
       toast(page, "Stopping web-shop failed: the guest did not answer"),
     ).toBeVisible();
     await expect(shop).toContainText("Running");
+  });
+
+  test("the row menu opens the terminal tab", async ({ page, backend }) => {
+    await openList(page, backend);
+    const shop = card(page, "web-shop");
+    await shop.getByRole("button", { name: "More about web-shop" }).click();
+    await page.getByRole("menuitem", { name: "Terminal of web-shop" }).click();
+    await expect(page).toHaveURL(/\/workspaces\/web-shop\/terminal$/);
+  });
+
+  test("the row menu renames a workspace without leaving the list", async ({
+    page,
+    backend,
+  }) => {
+    await openList(page, backend);
+    const shop = card(page, "web-shop");
+    await shop.getByRole("button", { name: "More about web-shop" }).click();
+    await page.getByRole("menuitem", { name: "Rename web-shop" }).click();
+    const form = page.getByRole("dialog", { name: "Rename workspace" });
+    await form.getByLabel("Name").fill("Web shop (prod)");
+    await form.getByRole("button", { name: "Save" }).click();
+    await expect(toast(page, "Renamed to Web shop (prod).")).toBeVisible();
+    await expect(card(page, "Web shop (prod)")).toBeVisible();
+    await expect(page).toHaveURL(/\/workspaces$/);
+  });
+
+  test("the row menu deletes a stopped workspace after the check", async ({
+    page,
+    backend,
+  }) => {
+    await openList(page, backend);
+    const tools = card(page, "data-tools");
+    await tools.getByRole("button", { name: "More about data-tools" }).click();
+    await page.getByRole("menuitem", { name: "Delete data-tools" }).click();
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toContainText("found nothing unsaved");
+    await dialog.getByRole("checkbox", { name: /Delete data-tools/ }).click();
+    await dialog.getByRole("button", { name: "Delete workspace" }).click();
+    await expect(toast(page, "Deleted data-tools.")).toBeVisible();
+    await expect(tools).toHaveCount(0);
   });
 
   test("a workspace stopped from elsewhere changes the card at once", async ({
@@ -1410,7 +1463,7 @@ test.describe("the settings tab", () => {
       ),
     ).toBeVisible();
     await expect(
-      page.locator('[data-setting="memory"] .chip', {
+      page.locator('[data-setting="memory"] .meta', {
         hasText: "This workspace",
       }),
     ).toBeVisible();
@@ -1473,7 +1526,7 @@ test.describe("the settings tab", () => {
         overrides: { cpus: number | null };
       };
     expect((await read()).overrides.cpus).toBe(chosen);
-    await expect(page.locator('[data-setting="cpus"] .chip')).toHaveText(
+    await expect(page.locator('[data-setting="cpus"] .meta')).toHaveText(
       "This workspace",
     );
 

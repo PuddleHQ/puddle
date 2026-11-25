@@ -64,6 +64,31 @@ impl fmt::Display for ConnectionOrigin {
     }
 }
 
+/// The protocol of the request a connection record names (`method` and `path`): what the proxy
+/// read in clear. Records written before this existed have none and read as HTTP when they name
+/// a method.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ConnectionProtocol {
+    /// An HTTP request: `method` is the HTTP method.
+    Http,
+    /// Git over SSH, which Puddle ends: `method` is the command (`git-receive-pack`) or what was
+    /// refused (`ssh-command`, `ssh-channel`).
+    Ssh,
+}
+
+impl ConnectionProtocol {
+    /// The stored and wire name: `http` or `ssh`.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Http => "http",
+            Self::Ssh => "ssh",
+        }
+    }
+}
+
 /// How reaching the destination went, once the proxy had decided to let a connection through
 /// (R-24). A refusal Puddle made on purpose has none: a `403` is a decision, not an outcome.
 /// Without this an allowed connection that ended in a `502` or `504` reads like any other allow.
@@ -245,10 +270,12 @@ pub fn request_path(target: &str) -> &str {
     }
 }
 
-/// The method and path of a request the proxy saw in clear. Only [`request_path`] of the target
-/// is kept, so a query string, fragment or userinfo never gets in.
+/// The method and path of a request the proxy saw in clear, and its protocol: HTTP, or Git over
+/// SSH where the method is the command. Only [`request_path`] of the target is kept, so a query
+/// string, fragment or userinfo never gets in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpRequestLine {
+    protocol: ConnectionProtocol,
     method: String,
     path: String,
 }
@@ -258,9 +285,26 @@ impl HttpRequestLine {
     #[must_use]
     pub fn new(method: impl Into<String>, target: &str) -> Self {
         Self {
+            protocol: ConnectionProtocol::Http,
             method: method.into(),
             path: request_path(target).to_owned(),
         }
+    }
+
+    /// A Git-over-SSH command (`git-receive-pack`) or refusal (`ssh-command`, `ssh-channel`) on
+    /// `path`, in the place of the method.
+    #[must_use]
+    pub fn ssh(command: impl Into<String>, path: &str) -> Self {
+        Self {
+            protocol: ConnectionProtocol::Ssh,
+            ..Self::new(command, path)
+        }
+    }
+
+    /// Whether this is HTTP or Git over SSH.
+    #[must_use]
+    pub fn protocol(&self) -> ConnectionProtocol {
+        self.protocol
     }
 
     /// `GET`, `POST`, ...

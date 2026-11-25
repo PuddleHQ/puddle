@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use puddle_agent_proto::editor::ServerKind;
+use puddle_agent_proto::editor::{EDITOR_DEFAULTS_GUEST, EditorDefaults, ServerKind};
 use puddle_api::{
     Attached, BrowserTarget, DesktopTarget, EditorLogin, EditorSignIn, OpenTarget, WorkspaceRecord,
 };
@@ -11,7 +11,7 @@ use puddle_boot::GatedSandbox;
 use puddle_compute::{ComputeError, Runtime};
 use puddle_settings::{Effective, ReconnectionGrace, ServerChoice, resolve};
 use puddle_ssh::SshEndpoint;
-use puddle_types::{Problem, SessionUser, WorkspaceId};
+use puddle_types::{GuestFile, Problem, SessionUser, WorkspaceId, guest_path};
 
 use crate::op_error::OpError;
 use crate::settings_read::SettingsReadError;
@@ -161,6 +161,46 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 ReconnectionGrace::DEFAULT.secs()
             }
         }
+    }
+
+    /// The file that carries `name`'s editor defaults (colour theme, font size, extensions, key
+    /// bindings) into the guest, or `None` when none is set at either level. Settings that cannot
+    /// be read mean no defaults: the editor is not worth a failed start.
+    pub(super) fn editor_defaults_file(&self, name: &WorkspaceId) -> Option<GuestFile> {
+        let settings = self.inner.settings.as_ref();
+        let read = || {
+            let global = crate::settings_read::global(settings)?;
+            let own = crate::settings_read::workspace(settings, name)?;
+            Ok::<_, SettingsReadError>(resolve(&global, Some(&own)).editor)
+        };
+        let editor = match read() {
+            Ok(editor) => editor,
+            Err(reason) => {
+                tracing::warn!(workspace = %name, %reason, "the editor starts without the defaults: the settings cannot be read");
+                return None;
+            }
+        };
+        let defaults = EditorDefaults {
+            colour_theme: editor.colour_theme.value.map(|t| t.as_str().to_owned()),
+            font_size: editor
+                .font_size
+                .value
+                .map(puddle_settings::EditorFontSize::get),
+            extensions: editor
+                .extensions
+                .value
+                .iter()
+                .map(|id| id.as_str().to_owned())
+                .collect(),
+            keybindings: editor.keybindings.value.map(|k| k.as_str().to_owned()),
+        };
+        if defaults.is_empty() {
+            return None;
+        }
+        // A struct of strings and numbers always serialises.
+        serde_json::to_vec_pretty(&defaults)
+            .ok()
+            .map(|bytes| GuestFile::new(guest_path!(EDITOR_DEFAULTS_GUEST), bytes))
     }
 
     /// Asks the launcher to open `record`'s editor in a window of its own. A launcher with no
@@ -389,6 +429,34 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
     }
 
+    /// The keeper a boot hands its sandbox to: the lifecycle.
+    pub(super) fn keeper(&self) -> super::settle::LifecycleKeeper<'_, R> {
+        super::settle::LifecycleKeeper {
+            runtime: &self.inner.runtime,
+            lifecycle: &self.inner.lifecycle,
+        }
+    }
+
+    /// Waits for the change that runs in `name`'s guest (an author or variable rewrite) to end,
+    /// and keeps the next one waiting until the guard is dropped. An operation that takes the guest
+    /// down holds it until the guest is gone from `live`, so no change runs the boot hook in a
+    /// guest that is stopping; the changes that waited then find no guest and leave it to the next
+    /// start. The wait is bounded by the boot hook's own time limit, which a rewrite runs under.
+    /// `None` when no sandbox was served.
+    pub(super) async fn hold_guest(
+        &self,
+        name: &WorkspaceId,
+    ) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+        let rewrite = self
+            .inner
+            .live
+            .lock()
+            .await
+            .get(name)
+            .map(|entry| Arc::clone(&entry.rewrite))?;
+        Some(rewrite.lock_owned().await)
+    }
+
     /// Stops what a failed boot or a finished stop leaves: the SSH endpoint and the lifecycle's
     /// handle. The route stays (the sandbox may start again); `drop_route` ends it too.
     pub(super) async fn quiesce(&self, name: &WorkspaceId, drop_route: bool) {
@@ -445,6 +513,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let inner = &self.inner;
         let mut leftovers = Vec::new();
         let name = &record.id;
+        let _guest = self.hold_guest(name).await;
         let gated = inner
             .live
             .lock()

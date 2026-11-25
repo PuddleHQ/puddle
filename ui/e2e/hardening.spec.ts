@@ -6,7 +6,11 @@
 // the first-run flow can be finished from the keyboard alone. Each test has a backend of its own.
 import type { Locator, Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { expectNoAxeViolations, staysEmpty } from "./support";
+import {
+  expectNoAxeViolations,
+  lengthenUserStrings,
+  staysEmpty,
+} from "./support";
 
 const ROUTES = [
   "/workspaces",
@@ -24,6 +28,7 @@ const ROUTES = [
   "/identities/1",
   "/settings",
   "/settings/network-health",
+  "/settings/app-errors",
   "/welcome",
   "/welcome/check",
   "/welcome/certificates",
@@ -207,6 +212,14 @@ test.describe("zoomed to 200 % on a 1280 px window", () => {
       await open(page, backend, route);
       await staysEmpty(page, () => overflow(page), route);
     });
+    test(`${route} has none with every host, URL and path 120 characters longer`, async ({
+      page,
+      backend,
+    }) => {
+      await lengthenUserStrings(page);
+      await open(page, backend, route);
+      await staysEmpty(page, () => overflow(page), route);
+    });
   }
 });
 
@@ -381,6 +394,7 @@ test.describe("an audit record type the app does not know", () => {
       .toBeGreaterThanOrEqual(before);
     // The rest of the page still works: the other rows are there and the new one opens raw.
     await row.getByRole("button").click();
+    await page.getByRole("button", { name: "Show raw record" }).click();
     const raw = page.locator("tbody tr.detail pre");
     expect(JSON.parse((await raw.textContent()) ?? "{}")).toEqual(future);
     await expectNoAxeViolations(page);

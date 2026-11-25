@@ -124,14 +124,18 @@ async fn views(state: &AppState, records: Vec<WorkspaceRecord>) -> Vec<Workspace
     records
         .into_iter()
         .zip(direct)
-        .map(|(record, d)| present(record, d))
+        .map(|(record, d)| {
+            let branches = state.workspaces.known_branches(&record.id);
+            present(record, d).with_branches(&branches)
+        })
         .collect()
 }
 
 /// One workspace as the API shows it.
 pub(super) async fn view(state: &AppState, record: WorkspaceRecord) -> Workspace {
     let d = direct_ssh_of_one(state, &record).await;
-    present(record, d)
+    let branches = state.workspaces.known_branches(&record.id);
+    present(record, d).with_branches(&branches)
 }
 
 fn present(record: WorkspaceRecord, d: DirectSsh) -> Workspace {
@@ -156,6 +160,23 @@ pub(crate) async fn list_workspaces(
     Ok(Json(WorkspaceList {
         workspaces: views(&state, workspaces).await,
     }))
+}
+
+/// The image a create boots when the form names none, with a line from the image's own labels
+/// that says what is in it. The line is `null` until the host has read the labels.
+#[utoipa::path(
+    get,
+    path = "/api/workspaces/default-image",
+    tag = "workspaces",
+    responses((status = OK, description = "the default image", body = crate::wire::DefaultImage))
+)]
+pub(crate) async fn default_image(
+    State(state): State<AppState>,
+) -> Json<crate::wire::DefaultImage> {
+    Json(crate::wire::DefaultImage {
+        image: crate::DEFAULT_IMAGE.to_owned(),
+        description: state.workspaces.default_image_description(),
+    })
 }
 
 /// The workspaces of `records` that are `principal`'s.

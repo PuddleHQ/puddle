@@ -110,7 +110,121 @@ export const READ = `(() => {
   };
 })()`;
 
-const firstFamily = (f) => String(f ?? "").split(",")[0].replace(/["'\s]/g, "").toLowerCase();
+/** The Windows clipboard's text (`set` writes it first); read through PowerShell, outside the page, so it is what another program would see. */
+export function windowsClipboard(set) {
+  const script = set === undefined ? "Get-Clipboard -Raw" : `Set-Clipboard -Value '${set.replaceAll("'", "''")}'`;
+  const r = spawnSync("powershell", ["-NoProfile", "-Sta", "-Command", script], { encoding: "utf8" });
+  if (r.status !== 0) throw new Error(`clipboard ${set === undefined ? "read" : "write"} failed: ${r.stderr || r.stdout}`);
+  return set === undefined ? (r.stdout ?? "").replace(/\r?\n$/, "") : "";
+}
+
+/** Page-side: the centre of the red word's cell run, the Terminal menu (if open) and what the native menu event did. */
+const MENU_READ = `(() => {
+  const red = [...document.querySelectorAll(".xterm-rows span")].find((s) => s.textContent === "COLOR-RED");
+  const box = red?.getBoundingClientRect();
+  const menu = document.querySelector('[role="menu"][aria-label="Terminal actions"]');
+  const items = menu ? [...menu.querySelectorAll('[role="menuitem"]')].map((b) => { const r = b.getBoundingClientRect(); return { name: b.textContent.trim(), disabled: b.disabled, x: r.x + r.width / 2, y: r.y + r.height / 2 }; }) : [];
+  return {
+    word: box && { x: box.x + box.width / 2, y: box.y + box.height / 2, left: box.x, width: box.width },
+    menu: Boolean(menu),
+    items,
+    rows: [...document.querySelectorAll(".xterm-rows > div")].map((d) => d.textContent).join("\\n"),
+    nativePrevented: window.__nativeMenuPrevented,
+  };
+})()`;
+
+/**
+ * The right-click menu of the Terminal, driven as a user does it with real mouse events over the DevTools
+ * port: drag-select the red word, right-click, Copy must put it on the Windows clipboard; then text put on
+ * the Windows clipboard, right-click, Paste must reach the shell. The page prevents the webview's native
+ * menu and shows its own (TerminalView.svelte), so that menu is what is asserted; the dump records what the
+ * native one did (`nativePrevented`). Returns `{ checks, dump }` like `inspectTerminal`.
+ */
+export async function inspectContextMenu(port) {
+  const target = await until("a DevTools page target", () => terminalTarget(port), 30_000, 1000);
+  const page = await connect(target.webSocketDebuggerUrl);
+  const dump = { steps: [] };
+  const checks = [];
+  const note = (name, ok, detail) => checks.push({ name, ok, detail });
+  const read = () => page.evaluate(MENU_READ);
+  const mouse = (type, x, y, button = "left") => page.send("Input.dispatchMouseEvent", { type, x, y, button, buttons: type === "mouseReleased" ? 0 : button === "left" ? 1 : 2, clickCount: 1 });
+  const click = async (x, y, button = "left") => {
+    await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
+    await mouse("mousePressed", x, y, button);
+    await mouse("mouseReleased", x, y, button);
+  };
+  const openMenu = async (x, y) => {
+    await click(x, y, "right");
+    return until("the Terminal menu to open", async () => {
+      const s = await read();
+      return s.menu && s.items.length > 0 ? s : false;
+    }, 5000, 200);
+  };
+  const item = (state, name) => state.items.find((i) => i.name === name);
+  try {
+    await page.send("Runtime.enable");
+    // The runner window is not the foreground one after the PowerShell clipboard calls, and a page that is not
+    // focused cannot read the clipboard ("Document is not focused"); a user's window is focused, so emulate that.
+    await page.send("Emulation.setFocusEmulationEnabled", { enabled: true }).catch(() => {});
+    await page.send("Page.bringToFront").catch(() => {});
+    await page.evaluate(`window.addEventListener("contextmenu", (e) => { window.__nativeMenuPrevented = e.defaultPrevented; });`);
+    let state = await read();
+    if (!state.word) throw new Error("the colour sample is not on screen");
+    // Select the word with a drag, as the rendering check does.
+    const { word } = state;
+    await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: word.left + 1, y: word.y });
+    await mouse("mousePressed", word.left + 1, word.y);
+    for (let i = 1; i <= 6; i++) await mouse("mouseMoved", word.left + 1 + ((word.width + 2) * i) / 6, word.y);
+    await mouse("mouseReleased", word.left + word.width + 2, word.y);
+    // Copy: right-click on the selected word, choose Copy, read the Windows clipboard from outside.
+    windowsClipboard("clipboard-was-not-written");
+    try {
+      state = await openMenu(word.x, word.y);
+      dump.steps.push({ copyMenu: state.items, nativePrevented: state.nativePrevented });
+      const copy = item(state, "Copy");
+      note("right-click opens the Terminal menu with Copy, Paste, Select all and Clear", ["Copy", "Paste", "Select all", "Clear"].every((n) => item(state, n)), JSON.stringify(state.items.map((i) => i.name)));
+      note("Copy is enabled while a word is selected", Boolean(copy && !copy.disabled), JSON.stringify(copy));
+      note("the webview's own menu is suppressed (the app's menu stands in)", state.nativePrevented === true, `contextmenu defaultPrevented: ${state.nativePrevented}`);
+      if (copy && !copy.disabled) await click(copy.x, copy.y);
+      const copied = await until("Copy to reach the Windows clipboard", () => {
+        const text = windowsClipboard();
+        return text !== "clipboard-was-not-written" ? { text } : false;
+      }, 5000, 300).catch(() => ({ text: windowsClipboard() }));
+      note("Copy puts the selected word on the Windows clipboard", copied.text === "COLOR-RED", JSON.stringify(copied.text));
+    } catch (err) {
+      note("right-click Copy works", false, String(err?.message ?? err));
+    }
+    // Paste: text on the Windows clipboard, right-click, Paste, and it must show at the shell's prompt.
+    const marker = `PASTE-MARK-${Date.now() % 100000}`;
+    windowsClipboard(marker);
+    try {
+      state = await openMenu(word.x, word.y);
+      const paste = item(state, "Paste");
+      note("Paste is offered in the Terminal menu", Boolean(paste && !paste.disabled), JSON.stringify(paste));
+      if (paste) await click(paste.x, paste.y);
+      const shown = await until("the pasted text to show in the shell", async () => ((await read()).rows.includes(marker) ? true : false), 10_000, 300).catch(() => false);
+      if (shown) note("Paste sends the clipboard text to the shell", true, marker);
+      else {
+        // Not pasted: tell a read that waits at the webview's own clipboard prompt (setting Ask, the default; nobody
+        // answers it on the runner, clipboard-permission.mjs) from a refusal or a read that works but never reached the shell.
+        const probe = await page.evaluate(`Promise.race([navigator.clipboard.readText().then((t) => "read:" + t, (e) => "rejected:" + e.name + " " + e.message + " focus=" + document.hasFocus()), new Promise((r) => setTimeout(() => r("pending"), 3000))])`, true).catch((e) => `error:${e}`);
+        dump.steps.push({ pasteProbe: probe });
+        const prompt = probe === "pending";
+        note("Paste sends the clipboard text to the shell, or waits at the webview's clipboard prompt (Ask)", prompt, prompt ? "the script read waits at the prompt: setting Ask, nobody to press Allow here, so the shell was not reached (follow-up: run this under Allow)" : `probe ${probe}; rows: ${(await read()).rows.slice(-200)}`);
+      }
+    } catch (err) {
+      note("right-click Paste works", false, String(err?.message ?? err));
+    }
+    // Leave the prompt as it was: Ctrl+U drops the pasted text from the shell's line.
+    await page.send("Input.dispatchKeyEvent", { type: "rawKeyDown", modifiers: 2, key: "u", code: "KeyU", windowsVirtualKeyCode: 85 }).catch(() => {});
+    await page.send("Input.dispatchKeyEvent", { type: "keyUp", modifiers: 2, key: "u", code: "KeyU", windowsVirtualKeyCode: 85 }).catch(() => {});
+    return { checks, dump };
+  } finally {
+    page.close();
+  }
+}
+
+const firstFamily =(f) => String(f ?? "").split(",")[0].replace(/["'\s]/g, "").toLowerCase();
 
 /**
  * Reads the Terminal page over DevTools port `port`. The terminal must show a line coloured red

@@ -134,6 +134,23 @@ export class AuditStore {
     return query;
   }
 
+  /** How many records a filter would show, up to one page (`more`: at least that many); `null` when unreadable. Changes nothing. */
+  async count(
+    filter: Filter,
+  ): Promise<{ count: number; more: boolean } | null> {
+    try {
+      const { data } = await this.#api.GET("/api/audit", {
+        params: {
+          query: { ...toQuery(filter, this.#now()), limit: PAGE_SIZE },
+        },
+      });
+      if (!data) return null;
+      return { count: data.entries.length, more: data.next_before !== null };
+    } catch {
+      return null;
+    }
+  }
+
   /** Reads the next older page. Several calls at once read one page. */
   async loadMore(): Promise<void> {
     if (this.loadingMore || this.#nextBefore === null || !this.#filter) return;

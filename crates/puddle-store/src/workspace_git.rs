@@ -2,7 +2,7 @@
 //! What a workspace's Git settings hold: its ordered identities, the repository table with a
 //! Pull and a Push toggle per repository, and the two "only listed" switches.
 
-use puddle_secrets::HostName;
+use puddle_types::HostName;
 
 use crate::error::StoreError;
 use crate::identity::{CredentialChoice, Identity, Owner, resolve};
@@ -271,9 +271,9 @@ pub struct RepoEntry {
     pub id: i64,
     /// The repository.
     pub repo: RepoRef,
-    /// A fetch from it may go out (when "only pull from listed repos" is on).
+    /// A fetch from it may go out (when "only pull from allowed repositories" is on).
     pub pull: bool,
-    /// A push to it may go out (when "only push to listed repos" is on).
+    /// A push to it may go out (when "only push to allowed repositories" is on).
     pub push: bool,
     /// Epoch ms it was added.
     pub created_at: u64,

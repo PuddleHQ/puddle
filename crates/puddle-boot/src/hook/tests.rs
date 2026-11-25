@@ -196,3 +196,28 @@ fn hostile_left_files_name_only_merged_files_once_with_a_cut_clean_reason() {
     assert_eq!(why.chars().count(), MAX_LEFT_REASON_CHARS);
     assert_eq!(BootReport::default().left_files(), []);
 }
+
+#[test]
+fn a_cut_stderr_says_so_in_the_failure() {
+    let mut out = ExecOutput::new(1, "", "puddle-boot: error: x\n");
+    out.stderr_truncated = true;
+    assert_eq!(
+        classify(Ok(out)),
+        Err(BootFailure::Exited {
+            code: 1,
+            stderr: "puddle-boot: error: x\n(the rest of the output was cut)".into()
+        })
+    );
+}
+
+#[test]
+fn the_boot_hook_request_caps_its_output() {
+    let plan = BootPlan::builder(&puddle_compute::ImageConfig::default())
+        .no_agent()
+        .build()
+        .unwrap();
+    assert_eq!(
+        plan.exec_request(Duration::from_secs(1)).max_output,
+        Some(BootPlan::HOOK_MAX_OUTPUT)
+    );
+}

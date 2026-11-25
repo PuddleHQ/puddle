@@ -10,6 +10,7 @@ fn stand_in(command: &mut Command) -> Squid {
         dir: tempfile::tempdir().unwrap(),
         stop: Stop::Process(command.stdout(Stdio::null()).spawn().unwrap()),
         started: StartCost::default(),
+        bin: None,
     }
 }
 
@@ -40,6 +41,68 @@ fn a_squid_with_a_parent_proxy_sends_every_tunnel_to_it() {
     );
     write_config(dir.path(), dir.path(), &SquidOptions::open(&[443]), 3128);
     assert!(!read(&dir.path().join("squid.conf")).contains("cache_peer"));
+}
+
+#[test]
+fn a_squid_that_resolves_with_the_machines_resolver_has_no_name_server_of_its_own_set() {
+    let dir = tempfile::tempdir().unwrap();
+    write_config(dir.path(), dir.path(), &SquidOptions::open(&[443]), 3128);
+    assert!(read(&dir.path().join("squid.conf")).contains("dns_nameservers 127.0.0.2"));
+    write_config(
+        dir.path(),
+        dir.path(),
+        &SquidOptions::open(&[443]).live(),
+        3128,
+    );
+    assert!(!read(&dir.path().join("squid.conf")).contains("dns_nameservers"));
+}
+
+/// A program that takes Squid's command line, listens on the port its configuration names and
+/// answers like Squid does to the readiness probe.
+const FAKE_SQUID: &str = r#"#!/bin/sh
+port=$(sed -n 's/^http_port 127.0.0.1:\([0-9]*\)$/\1/p' "$2")
+exec python3 -c '
+import socketserver, sys
+class Handler(socketserver.StreamRequestHandler):
+    def handle(self):
+        self.rfile.readline()
+        self.wfile.write(b"HTTP/1.0 503 Service Unavailable\r\nServer: squid\r\n\r\n")
+socketserver.TCPServer.allow_reuse_address = True
+socketserver.TCPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
+' "$port"
+"#;
+
+#[test]
+fn a_paused_squid_stops_answering_and_a_resumed_one_answers_again_on_the_same_port() {
+    let program = tempfile::tempdir().unwrap();
+    let bin = program.path().join("fake-squid");
+    puddle_test_kit::write_executable(&bin, FAKE_SQUID);
+    // A port nothing can hold across the program's own bind: a taken one is retried, as in `launch`.
+    let mut squid = on_free_port(free_port, |port| {
+        let dir = tempfile::tempdir().unwrap();
+        write_config(dir.path(), dir.path(), &SquidOptions::open(&[443]), port);
+        let child = spawn_process(bin.as_os_str(), dir.path(), port);
+        let mut squid = Squid {
+            port,
+            prefix: Prefix::new("squid"),
+            dir,
+            stop: Stop::Process(child),
+            started: StartCost::default(),
+            bin: Some(bin.clone().into_os_string()),
+        };
+        squid.wait().map(|()| squid)
+    });
+    let port = squid.port();
+    assert!(squid_answers(port));
+
+    squid.pause();
+    squid.pause();
+    // Only Squid's own page counts as an answer, so a stranger that takes the freed port does not.
+    assert!(!squid_answers(port), "a paused Squid does not answer");
+
+    squid.resume();
+    assert_eq!(squid.port(), port);
+    assert!(squid_answers(port), "the resumed Squid answers on its port");
 }
 
 #[test]

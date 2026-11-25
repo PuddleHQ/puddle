@@ -535,11 +535,11 @@ pub struct AttachIdentityRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GitSwitchesRequest {
-    /// "Only push to listed repos".
+    /// "Only push to allowed repositories".
     #[serde(default)]
     #[schema(required = false)]
     pub only_push_listed: Option<bool>,
-    /// "Only pull from listed repos".
+    /// "Only pull from allowed repositories".
     #[serde(default)]
     #[schema(required = false)]
     pub only_pull_listed: Option<bool>,
@@ -549,11 +549,11 @@ pub struct GitSwitchesRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceSwitchesRequest {
-    /// "Only push to listed repos": the workspace's own value.
+    /// "Only push to allowed repositories": the workspace's own value.
     #[serde(default)]
     #[schema(required = false)]
     pub only_push_listed: Option<bool>,
-    /// "Only pull from listed repos": the workspace's own value.
+    /// "Only pull from allowed repositories": the workspace's own value.
     #[serde(default)]
     #[schema(required = false)]
     pub only_pull_listed: Option<bool>,

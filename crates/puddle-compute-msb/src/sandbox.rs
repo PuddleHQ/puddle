@@ -209,6 +209,7 @@ impl Sandbox for MsbSandbox {
                 user,
                 stdin,
                 timeout,
+                max_output,
             } = request;
             let env: Vec<(String, String)> = env
                 .iter()
@@ -216,6 +217,9 @@ impl Sandbox for MsbSandbox {
                 .collect();
             let call = self.sdk.exec_with(program.clone(), move |mut e| {
                 e = e.args(args).envs(env).timeout(timeout).tty(false);
+                if let Some(cap) = max_output {
+                    e = e.max_output(cap);
+                }
                 if let Some(cwd) = cwd {
                     e = e.cwd(cwd.as_str());
                 }
@@ -239,11 +243,16 @@ impl Sandbox for MsbSandbox {
                 return Err(timed_out());
             };
             match result {
-                Ok(output) => Ok(ExecOutput::new(
-                    output.status().code,
-                    output.stdout_bytes().to_vec(),
-                    output.stderr_bytes().to_vec(),
-                )),
+                Ok(output) => {
+                    let mut out = ExecOutput::new(
+                        output.status().code,
+                        output.stdout_bytes().to_vec(),
+                        output.stderr_bytes().to_vec(),
+                    );
+                    out.stdout_truncated = output.stdout_truncated();
+                    out.stderr_truncated = output.stderr_truncated();
+                    Ok(out)
+                }
                 Err(MicrosandboxError::ExecTimeout(_)) => Err(timed_out()),
                 Err(MicrosandboxError::ExecFailed(failure)) => {
                     spawn_failure(&failure).ok_or_else(|| runtime("exec", &failure.message))

@@ -69,7 +69,14 @@ test.describe("with several users on", () => {
     await openAdmin(page, backend);
     await expect(page.getByRole("link", { name: "Admin" })).toBeVisible();
     await expect(
-      page.getByText(/Nobody else has an account yet/),
+      page.getByText(/Only one person uses this Puddle/),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "This server" }),
+    ).toHaveCount(0);
+    await page.getByRole("button", { name: "Show server details" }).click();
+    await expect(
+      page.getByRole("heading", { name: "This server" }),
     ).toBeVisible();
 
     const secret = await addUser(page, "Sam");
@@ -181,7 +188,14 @@ test.describe("with one user", () => {
     await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
     await expect(page.getByRole("link", { name: "Admin" })).toHaveCount(0);
     await page.goto("/admin");
-    await expect(page.getByText(/no admin screen here/)).toBeVisible();
+    await expect(
+      page.getByText(/Only one person uses this Puddle/),
+    ).toBeVisible();
+    await expect(page.getByText(/Couldn't read the admin data/)).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Try again" })).toHaveCount(
+      0,
+    );
+    await expect(page.getByRole("button", { name: "Add user" })).toHaveCount(0);
     await expectNoAxeViolations(page, "admin where there is none");
   });
 });

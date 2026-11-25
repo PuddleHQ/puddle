@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Terminals, event readers and the managed tools layer.
 
+#[cfg(target_os = "linux")]
+use super::secret_leaks::files_holding;
 use super::*;
 
 /// An event already in the socket when the deadline has passed is read, not reported as a timeout.
@@ -104,6 +106,96 @@ async fn a_terminal_runs_as_the_session_user_and_a_stop_ends_it_with_the_stopped
     host.shutdown().await;
 }
 
+/// Opens a terminal in `workspace`, asks the stand-in shell which sandbox serves it, and closes it.
+async fn sandbox_a_terminal_reaches(
+    service: &puddle_host::HostWorkspaces<FakeRuntime>,
+    workspace: &str,
+) -> String {
+    let id = WorkspaceId::new(workspace).unwrap();
+    let size = puddle_api::TerminalSize::new(80, 24).unwrap();
+    let mut link = puddle_api::TerminalService::open(service, &id, size)
+        .await
+        .unwrap();
+    link.input
+        .send(puddle_api::TerminalInput::Bytes(b"hostname\r".to_vec()))
+        .await
+        .unwrap();
+    let mut seen = String::new();
+    loop {
+        let item = tokio::time::timeout(Duration::from_secs(10), link.output.recv())
+            .await
+            .unwrap();
+        // A terminal that closes early returns what it said, so the caller's assertion fails on it.
+        let Some(item) = item else {
+            return format!("closed after {seen:?}");
+        };
+        if let puddle_api::TerminalOutput::Bytes(b) = item {
+            seen.push_str(&String::from_utf8_lossy(&b));
+            // The shell echoes the typed line, then answers with the name and a new prompt.
+            if let Some((_, answer)) = seen.split_once("hostname\r\n")
+                && let Some((name, _)) = answer.split_once("\r\n")
+            {
+                return name.to_owned();
+            }
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_terminal_opened_for_one_of_two_running_workspaces_runs_in_that_workspaces_sandbox() {
+    let rig = Rig::named_ids();
+    rig.runtime.serve_terminals();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "alpha").await;
+    create(&api, &mut events, "bravo").await;
+    let service = host.workspaces();
+
+    // Each name reaches its own sandbox, in either order and again, so a terminal that always
+    // went to the first or the last workspace, or swapped the two, fails.
+    let mut reached = Vec::new();
+    for workspace in ["alpha", "bravo", "alpha", "bravo", "bravo", "alpha"] {
+        reached.push((
+            workspace,
+            sandbox_a_terminal_reaches(service, workspace).await,
+        ));
+    }
+    let sandbox_of = |workspace: &str| {
+        let id = WorkspaceId::new(workspace).unwrap();
+        rig.runtime
+            .calls()
+            .into_iter()
+            .find_map(|c| {
+                (c.op == Op::Create && c.target.as_deref().is_some_and(|t| t.contains(id.as_str())))
+                    .then_some(c.target)
+                    .flatten()
+            })
+            .expect("the workspace's sandbox was created")
+    };
+    let (alpha, bravo) = (sandbox_of("alpha"), sandbox_of("bravo"));
+    assert_ne!(alpha, bravo);
+    for (workspace, sandbox) in &reached {
+        let want = if *workspace == "alpha" {
+            &alpha
+        } else {
+            &bravo
+        };
+        assert_eq!(sandbox, want, "the terminal opened for {workspace}");
+    }
+
+    // The runtime saw the terminals' connections on the same two sandboxes and no other.
+    let served: std::collections::BTreeSet<String> = rig
+        .runtime
+        .calls()
+        .into_iter()
+        .filter(|c| c.op == Op::ServeSsh)
+        .filter_map(|c| c.target)
+        .collect();
+    assert!(served.is_superset(&[alpha, bravo].into()), "{served:?}");
+    host.shutdown().await;
+}
+
 const MISE_SUDOERS: &str = "/etc/sudoers.d/puddle-mise";
 
 /// The variables the latest start gave the sandbox, as (name, value).
@@ -141,7 +233,7 @@ async fn a_start_with_managed_tools_on_sets_mise_the_shims_first_and_the_sudo_ke
     global_mise(&api, true).await;
     create(&api, &mut events, "acme").await;
     let env = last_boot_guest_env(&rig);
-    let dir = "/workspaces/acme/.puddle/mise";
+    let dir = "/workspace/.puddle/mise";
     assert_eq!(
         env.get("MISE_DATA_DIR"),
         Some(format!("{dir}/data").as_str())
@@ -154,10 +246,10 @@ async fn a_start_with_managed_tools_on_sets_mise_the_shims_first_and_the_sudo_ke
         env.get("MISE_STATE_DIR"),
         Some(format!("{dir}/state").as_str())
     );
-    assert_eq!(env.get("MISE_CEILING_PATHS"), Some("/workspaces"));
+    assert_eq!(env.get("MISE_CEILING_PATHS"), Some("/"));
     assert_eq!(
         env.get("MISE_TRUSTED_CONFIG_PATHS"),
-        Some("/workspaces/acme"),
+        Some("/workspace"),
         "the repository's own code is trusted by default"
     );
     assert_eq!(env.get("MISE_DISABLE_UPDATE_WARNING"), Some("1"));
@@ -208,7 +300,7 @@ async fn without_trust_the_repository_code_path_is_not_set_and_an_existing_works
     restart(&api, &mut events, "acme").await;
     let env = last_boot_guest_env(&rig);
     assert_eq!(env.get("MISE_TRUSTED_CONFIG_PATHS"), None);
-    assert_eq!(env.get("MISE_CEILING_PATHS"), Some("/workspaces"));
+    assert_eq!(env.get("MISE_CEILING_PATHS"), Some("/"));
     let files = rig.guest.plan_files(rig.guest.boots() - 1);
     assert!(!pem_of(&files, MISE_SUDOERS).contains("TRUSTED"));
     host.shutdown().await;
@@ -277,10 +369,7 @@ async fn mise_is_fetched_in_the_background_after_the_start_and_a_good_fetch_rais
     .await;
     let fetches = mise_fetches(&rig);
     assert_eq!(fetches.len(), 1, "{fetches:?}");
-    assert_eq!(
-        fetches[0].0,
-        ["mise-fetch", "/workspaces/acme/.puddle/mise"]
-    );
+    assert_eq!(fetches[0].0, ["mise-fetch", "/workspace/.puddle/mise"]);
     assert_eq!(
         fetches[0].1.as_deref(),
         Some("agent"),
@@ -403,26 +492,6 @@ async fn with_mise_off_nothing_is_fetched_and_an_old_problem_goes() {
         .await;
         assert_eq!(mise_fetches(&rig).len(), before, "{switch}: no new fetch");
     }
-}
-
-#[cfg(target_os = "linux")]
-/// Everything under `dir` that holds `needle`, as the files' relative paths.
-pub(super) fn files_holding(dir: &std::path::Path, needle: &str) -> Vec<String> {
-    let mut found = Vec::new();
-    let mut folders = vec![dir.to_path_buf()];
-    while let Some(folder) = folders.pop() {
-        for entry in std::fs::read_dir(&folder).into_iter().flatten().flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                folders.push(path);
-            } else if std::fs::read(&path)
-                .is_ok_and(|bytes| bytes.windows(needle.len()).any(|w| w == needle.as_bytes()))
-            {
-                found.push(path.strip_prefix(dir).unwrap().display().to_string());
-            }
-        }
-    }
-    found
 }
 
 #[cfg(target_os = "linux")]

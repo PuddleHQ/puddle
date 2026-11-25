@@ -153,7 +153,7 @@ export class WorkspaceGitStore {
   }
 
   /**
-   * Sets "only push to listed repos" and/or "only pull from listed repos", or sends one back to
+   * Sets "only push to allowed repositories" and/or "only pull from allowed repositories", or sends one back to
    * following the default for new workspaces.
    */
   setSwitches(switches: {

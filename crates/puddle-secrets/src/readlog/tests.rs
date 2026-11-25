@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use super::*;
 use crate::error::Tool;
-use crate::name::{AccountName, HostName};
+use puddle_types::{AccountName, HostName};
 
 fn gh(account: &str) -> SourceSpec {
     SourceSpec::Gh {

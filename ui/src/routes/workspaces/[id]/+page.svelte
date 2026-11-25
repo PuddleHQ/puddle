@@ -12,7 +12,7 @@
   import { editorProblems } from "#lib/stores/editor-problems.svelte.ts";
   import { WorkspacePortsStore } from "#lib/stores/workspace-ports.svelte.ts";
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
-  import { canStart, diskPercent } from "#lib/workspaces/model.ts";
+  import { allows, diskPercent } from "#lib/workspaces/model.ts";
   import { forwardText } from "#lib/workspaces/ports.ts";
   import { tabHref } from "#lib/workspaces/tabs.ts";
   import "#lib/theme/controls.css";
@@ -113,7 +113,7 @@
         >.
         {#if workspace.status === "running"}
           Open a terminal here, or use Connect for the editor and SSH.
-        {:else if canStart(workspace)}
+        {:else if allows(workspace, "start")}
           Start it to open a terminal or the editor.
         {/if}
       </p>
@@ -174,9 +174,9 @@
 
 <style>
   .stack {
+    max-width: var(--page-reading-width);
     display: grid;
     gap: var(--space-4);
-    max-width: 60rem;
   }
   .card {
     display: grid;

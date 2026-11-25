@@ -2,12 +2,12 @@
 //! The `TerminalService` and `WorkspaceService` implementations of the host.
 
 use futures_util::future::BoxFuture;
+use puddle_api::phase::{Action, admit, begin};
 use puddle_api::{
     AttachMode, Attached, DEFAULT_IMAGE, DeleteCheck, DisplayName, GitSetup, KeptLogins,
     LocalCheckoutError, LocalSource, NewWorkspace, Operation, ShellInitCheck, StartFolder,
     StartFolderChange, WorkspaceError, WorkspaceRecord, WorkspaceService, admit_delete_fingerprint,
-    admit_delete_status, admit_grow_size, admit_reset_root_disk, admit_settled, admit_start,
-    admit_stop,
+    admit_grow_size,
 };
 use puddle_api::{TerminalError, TerminalLink, TerminalService, TerminalSize};
 use puddle_compute::{DiskSize, Runtime};
@@ -105,6 +105,10 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         })
     }
 
+    fn default_image_description(&self) -> Option<String> {
+        self.default_image_note()
+    }
+
     fn names(&self) -> Vec<(WorkspaceId, String)> {
         self.state()
             .slots
@@ -182,7 +186,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 record.disk_size_mib =
                     u64::from(self.inner.workspaces.config().default_size.as_mib());
                 record.disk_used_mib = None;
-                record.busy = Some(Operation::Creating);
+                begin(&mut record, Operation::Creating)?;
                 state.slots.insert(id, Slot::new(record.clone(), true));
                 self.ticket(record, Operation::Creating)
             };
@@ -244,9 +248,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let ticket = self.accept(id, Operation::Starting, admit_start, |r| {
-                r.status = WorkspaceStatus::Starting;
-            })?;
+            let ticket = self.accept(id, Operation::Starting)?;
             let record = ticket.record().clone();
             self.status_event(&record);
             let this = self.clone();
@@ -261,9 +263,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let ticket = self.accept(id, Operation::Stopping, admit_stop, |r| {
-                r.status = WorkspaceStatus::Draining;
-            })?;
+            let ticket = self.accept(id, Operation::Stopping)?;
             let record = ticket.record().clone();
             self.status_event(&record);
             // A stopped workspace is the one a user deletes next: have the delete check's image
@@ -284,7 +284,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let ticket = self.accept(id, Operation::Reclaiming, admit_settled, |_| {})?;
+            let ticket = self.accept(id, Operation::Reclaiming)?;
             let record = ticket.record().clone();
             let this = self.clone();
             let work = record.clone();
@@ -306,12 +306,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let ticket = self.accept(
-                id,
-                Operation::ResettingRootDisk,
-                admit_reset_root_disk,
-                |_| {},
-            )?;
+            let ticket = self.accept(id, Operation::ResettingRootDisk)?;
             let record = ticket.record().clone();
             let this = self.clone();
             let work = record.clone();
@@ -359,7 +354,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     added / (1024 * 1024 * 1024)
                 )));
             }
-            let ticket = self.accept(id, Operation::GrowingRootDisk, admit_settled, |_| {})?;
+            let ticket = self.accept(id, Operation::GrowingRootDisk)?;
             let record = ticket.record().clone();
             let this = self.clone();
             let work = record.clone();
@@ -398,7 +393,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         fingerprint: Option<&'a str>,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let ticket = self.accept(id, Operation::Deleting, admit_delete_status, |_| {})?;
+            let ticket = self.accept(id, Operation::Deleting)?;
             let record = ticket.record().clone();
             // The check runs before the call returns, so a refusal reaches the caller.
             // The ticket goes with the check: a request dropped while it runs leaves the
@@ -458,47 +453,51 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         name: DisplayName,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let mut state = self.state();
-            if state.closed {
-                return Err(WorkspaceError::Unavailable(
-                    "Puddle is shutting down".to_owned(),
-                ));
-            }
-            puddle_api::check_rename(state.slots.values().map(|s| &s.record), id, &name)?;
-            let slot = state.slots.get_mut(id).ok_or_else(|| not_found(id))?;
-            let before = std::mem::replace(&mut slot.record.name, name);
-            if let Err(e) = self.persist(&state) {
-                // Nothing changes when the list can't be saved, so a restart doesn't undo a
-                // rename the user was told about.
-                if let Some(slot) = state.slots.get_mut(id) {
-                    slot.record.name = before;
+            let record = {
+                let mut state = self.state();
+                if state.closed {
+                    return Err(WorkspaceError::Unavailable(
+                        "Puddle is shutting down".to_owned(),
+                    ));
                 }
-                let name = state.slots.get(id).map(|s| s.record.id.clone());
+                puddle_api::check_rename(state.slots.values().map(|s| &s.record), id, &name)?;
+                let slot = state.slots.get_mut(id).ok_or_else(|| not_found(id))?;
+                let before = std::mem::replace(&mut slot.record.name, name);
+                if let Err(e) = self.persist(&state) {
+                    // Nothing changes when the list can't be saved, so a restart doesn't undo a
+                    // rename the user was told about.
+                    if let Some(slot) = state.slots.get_mut(id) {
+                        slot.record.name = before;
+                    }
+                    let name = state.slots.get(id).map(|s| s.record.id.clone());
+                    drop(state);
+                    let reason = format!("the workspace was not renamed: {e}; {SAVE_HINT}");
+                    if let Some(name) = name {
+                        self.record_op(
+                            WorkspaceOpKind::Rename,
+                            &name,
+                            WorkspaceOpOutcome::Failed,
+                            Some(reason.clone()),
+                        );
+                    }
+                    return Err(WorkspaceError::Unavailable(reason));
+                }
+                let record = state
+                    .slots
+                    .get(id)
+                    .map(|s| s.record.clone())
+                    .ok_or_else(|| not_found(id))?;
                 drop(state);
-                let reason = format!("the workspace was not renamed: {e}; {SAVE_HINT}");
-                if let Some(name) = name {
-                    self.record_op(
-                        WorkspaceOpKind::Rename,
-                        &name,
-                        WorkspaceOpOutcome::Failed,
-                        Some(reason.clone()),
-                    );
-                }
-                return Err(WorkspaceError::Unavailable(reason));
-            }
-            let record = state
-                .slots
-                .get(id)
-                .map(|s| s.record.clone())
-                .ok_or_else(|| not_found(id))?;
-            drop(state);
-            let detail = format!("renamed to {}", record.name);
-            self.record_op(
-                WorkspaceOpKind::Rename,
-                &record.id,
-                WorkspaceOpOutcome::Succeeded,
-                Some(detail),
-            );
+                let detail = format!("renamed to {}", record.name);
+                self.record_op(
+                    WorkspaceOpKind::Rename,
+                    &record.id,
+                    WorkspaceOpOutcome::Succeeded,
+                    Some(detail),
+                );
+                record
+            };
+            self.follow_rename(&record).await;
             Ok(record)
         })
     }
@@ -584,12 +583,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
     ) -> BoxFuture<'a, Result<Attached, WorkspaceError>> {
         Box::pin(async move {
             let record = self.get(id).await?;
-            if record.busy.is_some() || record.status != WorkspaceStatus::Running {
-                return Err(WorkspaceError::Conflict(format!(
-                    "{} is not running; start it first",
-                    record.name
-                )));
-            }
+            admit(&record, Action::Attach)?;
             self.refresh_editor_file(&record).await;
             match mode {
                 AttachMode::Browser => Ok(self.attach_browser(&record).await),
@@ -680,6 +674,10 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         git: &'a dyn GitSetup,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move { self.restore_orphan_volume(id, owner, repository, git).await })
+    }
+
+    fn known_branches(&self, id: &WorkspaceId) -> std::collections::BTreeMap<String, String> {
+        self.known_branches_of(id)
     }
 
     fn checkouts<'a>(

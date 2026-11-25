@@ -2,12 +2,15 @@
 //! Starting, stopping and deleting a workspace.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use puddle_api::EndReason;
 use puddle_api::{DisplayName, WorkspaceError, WorkspaceRecord};
 use puddle_boot::{BootError, Gate, GatedSandbox};
+use puddle_compute::SandboxInfo;
 use puddle_compute::{ComputeError, Runtime, Sandbox as _, StartRefusal, VsockRoute};
 use puddle_types::{GuestEnv, ImageRef, Problem, WorkspaceId, WorkspaceStep};
+use puddle_workspace::WORKSPACE_DIR;
 
 use super::access::Undo;
 use super::boot::BootFor;
@@ -19,6 +22,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     pub(super) async fn start_work(&self, record: WorkspaceRecord) -> Result<(), OpError> {
         let inner = &self.inner;
         let name = &record.id;
+        let began = Instant::now();
         self.progress(name, WorkspaceStep::Starting, None);
         inner.problems.clear(&problem_key("forced-stop", name));
         inner.problems.clear(&problem_key("start-refused", name));
@@ -30,13 +34,26 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .into_iter()
             .find(|s| s.name == name.as_str());
         let exists = sandbox.is_some();
+        let moved = sandbox.as_ref().is_some_and(mounts_the_volume_elsewhere);
         let mut route_alive = inner.live.lock().await.contains_key(name);
-        if let Some(sandbox) = sandbox.filter(|_| !route_alive) {
+        if let Some(sandbox) = sandbox.filter(|_| !route_alive && !moved) {
             // An earlier run of Puddle made it: it is kept when this run can serve its route.
             route_alive = self.adopt_sandbox(name, &sandbox.routes).await;
         }
-        let restarted = exists && route_alive && self.restart_in_place(&record).await?;
-        if exists && route_alive && !restarted {
+        let looked = began.elapsed();
+        let restarted = exists && route_alive && !moved && self.restart_in_place(&record).await?;
+        if moved {
+            // A runtime cannot move the mount of a sandbox it already made.
+            self.progress(
+                name,
+                WorkspaceStep::Starting,
+                Some(format!(
+                    "the workspace's sandbox mounts its volume at an older folder, so it is made \
+                     again with the volume at {WORKSPACE_DIR}; the volume with your work is kept, \
+                     what was installed outside it is not"
+                )),
+            );
+        } else if exists && route_alive && !restarted {
             // The root disk goes with the old sandbox (home directory, installed packages); the
             // volume with the work stays. Say so: this is Puddle's own doing.
             self.progress(
@@ -60,9 +77,18 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             self.boot_new(&record, &mut created_volume, BootFor::Start)
                 .await?;
         }
+        let booted = began.elapsed();
         if let Err(reason) = self.settle(&record).await {
             return Err(self.undo_boot(&record, Undo::Keep, reason).await);
         }
+        // Where a slow start went (a restart took 128 s in a first-day walk, with nothing to say
+        // which part): the boot of the virtual machine, or what runs after it.
+        let (look_ms, boot_ms) = (millis(looked), millis(booted.saturating_sub(looked)));
+        let (settle_ms, total_ms) = (
+            millis(began.elapsed().saturating_sub(booted)),
+            millis(began.elapsed()),
+        );
+        tracing::info!(workspace = %name, restarted_in_place = restarted, look_ms, boot_ms, settle_ms, total_ms, "workspace start timings");
         self.refresh_checkouts_later(&record.id);
         Ok(())
     }
@@ -200,9 +226,20 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         inner
             .kit
             .hook()
-            .start(&inner.runtime, &name.sandbox_name(), plan, &gate)
+            .start_kept(
+                &inner.runtime,
+                &name.sandbox_name(),
+                plan,
+                &gate,
+                &self.keeper(),
+            )
             .await
             .map_err(|e| {
+                // A sandbox the hook stopped again leaves the lifecycle; one it could not stop
+                // stays, so the shutdown stops it.
+                if !e.left_running() {
+                    inner.lifecycle.release(&name.sandbox_name());
+                }
                 if let BootError::Compute(ComputeError::StartRefused { cause, .. }) = &e {
                     self.raise_start_refused(name, *cause);
                 }
@@ -232,6 +269,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         // The windows go first, so the editor can disconnect and the guest end its extension hosts
         // before the stop (best effort: the close is asked for, not waited for).
         self.inner.launcher.close_browser(name).await;
+        let _guest = self.hold_guest(name).await;
         let gated = self.gated(name).await?;
         self.progress(name, WorkspaceStep::Reclaiming, None);
         // A failed trim only costs disk space; the VM still stops, and the user is told.
@@ -426,6 +464,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let inner = &self.inner;
         self.progress(&record.id, WorkspaceStep::Checking, None);
         inner.launcher.close_browser(&record.id).await;
+        let _guest = self.hold_guest(&record.id).await;
         self.progress(&record.id, WorkspaceStep::Removing, None);
         inner
             .workspaces
@@ -502,4 +541,19 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }
         }
     }
+}
+
+/// `d` in whole milliseconds, for a log line.
+fn millis(d: Duration) -> u64 {
+    u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// Whether `sandbox` mounts its volume somewhere other than [`WORKSPACE_DIR`], as one made by an
+/// earlier version does. A runtime that cannot tell says no.
+fn mounts_the_volume_elsewhere(sandbox: &SandboxInfo) -> bool {
+    !sandbox.volume_mounts.is_empty()
+        && !sandbox
+            .volume_mounts
+            .iter()
+            .any(|m| m.as_str() == WORKSPACE_DIR)
 }

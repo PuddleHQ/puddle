@@ -65,10 +65,22 @@ jobs:
           PUDDLE_VM_PREFIX="r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             cargo nextest run -p puddle-host --profile vm --locked --no-fail-fast --no-tests=fail \
               -E 'test(/(^|::)vm_radar_(private_feeds|artifacts_credential_provider|token_placements)_/)'
+      - name: Squid (the company proxy of the tools-through-a-proxy radar test)
+        run: |
+          ci/apt-setup.sh
+          ci/apt-retry.sh sudo apt-get update
+          ci/apt-retry.sh sudo apt-get install -y --no-install-recommends squid
+          # The package starts its own daemon; the test runs its own Squid on a free port.
+          sudo systemctl stop squid || true
+          test -x /usr/sbin/squid
+          echo "PUDDLE_SQUID_BIN=/usr/sbin/squid" >> "$GITHUB_ENV"
+          echo "PUDDLE_REQUIRE_SQUID=1" >> "$GITHUB_ENV"
       - name: the radar (one test at a time, never retried)
+        # puddle-settings/mise: the managed tools layer is a cargo feature, off in a bare -p build, where every
+        # mise and tools radar test waited for a download that never started (full-test run 45022467093).
         run: |
           PUDDLE_VM_PREFIX="r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
-            cargo nextest run -p puddle-host --profile vm --locked --no-fail-fast \
+            cargo nextest run -p puddle-host --features puddle-settings/mise --profile vm --locked --no-fail-fast \
               -E 'test(/(^|::)vm_radar_/) & not test(/(^|::)vm_radar_forgejo_/) & not (test(/(^|::)vm_radar_(private_feeds|artifacts_credential_provider|token_placements)_/))'
       - name: stage msb logs that still exist
         if: ${{ !cancelled() }}

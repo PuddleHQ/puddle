@@ -70,9 +70,15 @@ pub(crate) fn spec(settings: &Settings, tag: &str) -> SandboxSpec {
 
 /// Runs `script` in the guest as root.
 pub(crate) async fn sh<S: Sandbox>(sb: &S, script: &str) -> ExecOutput {
-    sb.exec(ExecRequest::sh(script).as_user("root"))
+    let out = sb
+        .exec(ExecRequest::sh(script).as_user("root"))
         .await
-        .expect("exec")
+        .expect("exec");
+    assert!(
+        !out.stdout_truncated && !out.stderr_truncated,
+        "the guest script's output was cut at the exec output cap:\n{script}"
+    );
+    out
 }
 
 /// Accepts connections on `listener` and returns the first line of each.

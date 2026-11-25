@@ -16,7 +16,6 @@
 )]
 
 use std::collections::BTreeSet;
-use std::fmt::Write as _;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -76,19 +75,15 @@ fn pki() -> (String, String, Option<String>) {
     let mut params = rcgen::CertificateParams::new(vec![HOST.to_owned()]).unwrap();
     let mut name = [0_u8; 6];
     getrandom::fill(&mut name).unwrap();
-    let cn = format!("Puddle real-tools stand-in {}", hex(&name));
+    let cn = format!(
+        "Puddle real-tools stand-in {}",
+        puddle_types::hex_lower(&name)
+    );
     params
         .distinguished_name
         .push(rcgen::DnType::CommonName, cn.clone());
     let cert = params.self_signed(&key).unwrap();
     (cert.pem(), key.serialize_pem(), Some(cn))
-}
-
-pub(crate) fn hex(bytes: &[u8]) -> String {
-    bytes.iter().fold(String::new(), |mut out, b| {
-        let _ = write!(out, "{b:02x}");
-        out
-    })
 }
 
 impl StandIn {

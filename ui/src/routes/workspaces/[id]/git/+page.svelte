@@ -307,11 +307,11 @@
               void setSwitch("only_push_listed", next);
             }}
           />
-          Only push to listed repos
+          Only push to allowed repositories
         </label>
         <p class="muted">
           {git.only_push_listed
-            ? "A push is allowed only to a repository whose Push box is ticked. This checks Git pushes only: a token in the workspace can still change a repository through the GitHub API."
+            ? "A push is allowed only to a repository whose Push box is ticked. This checks Git pushes only: a token in the workspace can still change a repository through the GitHub API. Turning this off lets the workspace push to any repository its credential can write to, which is less safe."
             : "Off: a push may go to any repository the credential can write to, and the Push boxes change nothing."}
           {#if git.push_from === "default"}
             It follows the default for new workspaces.
@@ -319,7 +319,7 @@
             <button
               type="button"
               class="btn"
-              aria-label="Use the default again for Only push to listed repos"
+              aria-label="Use the default again for Only push to allowed repositories"
               onclick={() => void useDefault("use_default_push")}
               >Use the default again</button
             >
@@ -338,7 +338,7 @@
               void setSwitch("only_pull_listed", next);
             }}
           />
-          Only pull from listed repos
+          Only pull from allowed repositories
         </label>
         <p class="muted">
           {git.only_pull_listed
@@ -350,7 +350,7 @@
             <button
               type="button"
               class="btn"
-              aria-label="Use the default again for Only pull from listed repos"
+              aria-label="Use the default again for Only pull from allowed repositories"
               onclick={() => void useDefault("use_default_pull")}
               >Use the default again</button
             >
@@ -365,7 +365,7 @@
     {#if git.repos.length === 0}
       <p class="muted">
         No repository is listed.{git.only_push_listed
-          ? " With Only push to listed repos on, nothing can be pushed."
+          ? " With Only push to allowed repositories on, nothing can be pushed."
           : ""}
       </p>
     {:else}
@@ -478,10 +478,10 @@
 
 <style>
   section {
+    max-width: var(--page-reading-width);
     display: grid;
     gap: var(--space-3);
     margin-bottom: var(--space-6);
-    max-width: 60rem;
   }
   h2 {
     font-size: var(--text-lg);
@@ -496,7 +496,7 @@
     color: var(--color-text-muted);
   }
   .note {
-    max-width: 60rem;
+    max-width: var(--page-reading-width);
     font-size: var(--text-sm);
   }
   .none {

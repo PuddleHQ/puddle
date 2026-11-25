@@ -352,7 +352,8 @@ fn the_settings_screen_shows_the_terms_version_the_gate_checks() {
 
 #[test]
 fn the_global_mise_switch_defaults_on_and_round_trips() {
-    assert!(GlobalSettings::default().tools.mise());
+    // on by default where the layer is built in; a build without the `mise` feature never has it
+    assert_eq!(GlobalSettings::default().tools.mise(), Tools::AVAILABLE);
     assert_eq!(
         GlobalSettings::default()
             .to_document()

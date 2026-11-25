@@ -10,14 +10,8 @@ import {
 import {
   MAX_NAME_LENGTH,
   MAX_ROOT_DISK_GIB,
-  canAttach,
+  allows,
   cleanRepoUrl,
-  canDelete,
-  canGrowRootDisk,
-  canReclaim,
-  canStart,
-  canStop,
-  canResetRootDisk,
   diskLabel,
   diskPercent,
   diskWarned,
@@ -32,10 +26,12 @@ import {
   parseMemoryGib,
   repoUrlProblem,
   resolveRepoAddress,
+  SSH_HOSTS,
   sshAsHttps,
   sortWorkspaces,
   canRename,
   statusLabel,
+  byteCountText,
   operationOfStep,
   statusTone,
   stepLabel,
@@ -57,47 +53,25 @@ const STATUSES: Status[] = [
 ];
 
 describe("what can be done in each state", () => {
-  it("down states can start and delete, running can stop and attach, nothing else", () => {
-    const table = STATUSES.map((status) => {
-      const w = workspace("w", { status });
-      return [
-        status,
-        canStart(w),
-        canStop(w),
-        canAttach(w),
-        canDelete(w),
-        canReclaim(w),
-      ];
+  it("is what the server listed, and nothing it did not", () => {
+    const w = workspace("w", {
+      status: "running",
+      actions: ["stop", "attach"],
     });
-    expect(table).toEqual([
-      ["created", true, false, false, true, false],
-      ["starting", false, false, false, false, false],
-      ["running", false, true, true, false, true],
-      ["draining", false, false, false, false, false],
-      ["paused", false, false, false, false, false],
-      ["stopped", true, false, false, true, true],
-      ["crashed", true, false, false, true, false],
-      ["volume_missing", true, false, false, true, false],
-    ]);
+    expect(allows(w, "stop")).toBe(true);
+    expect(allows(w, "attach")).toBe(true);
+    // The status alone would admit more; the screens offer only what the server listed.
+    expect(allows(w, "reclaim")).toBe(false);
+    expect(allows({ ...w, actions: [] }, "stop")).toBe(false);
+  });
+
+  it("knows the states with no VM", () => {
     expect(STATUSES.filter(isDown)).toEqual([
       "created",
       "stopped",
       "crashed",
       "volume_missing",
     ]);
-  });
-
-  it("nothing is allowed while an operation runs", () => {
-    for (const status of STATUSES) {
-      const w = workspace("w", { status, busy: "reclaiming" });
-      expect([
-        canStart(w),
-        canStop(w),
-        canAttach(w),
-        canDelete(w),
-        canReclaim(w),
-      ]).toEqual([false, false, false, false, false]);
-    }
   });
 });
 
@@ -118,6 +92,7 @@ describe("words", () => {
     const steps: Step[] = [
       "preparing_volume",
       "pulling_image",
+      "unpacking_image",
       "cloning",
       "starting",
       "syncing",
@@ -134,6 +109,7 @@ describe("words", () => {
 
   it("tells the operation from a step alone", () => {
     expect(operationOfStep("cloning")).toBe("creating");
+    expect(operationOfStep("unpacking_image")).toBe("creating");
     expect(operationOfStep("syncing")).toBe("starting");
     expect(operationOfStep("stopping")).toBe("stopping");
     expect(operationOfStep("removing")).toBe("deleting");
@@ -151,6 +127,26 @@ describe("words", () => {
       of: 1,
     });
     expect(stepPosition("creating", "stopping")).toBeNull();
+  });
+});
+
+describe("image download counts", () => {
+  it("prints bytes done of the total with a whole percent, and just the bytes without a total", () => {
+    const mib = 1024 * 1024;
+    expect(byteCountText({ done: 120 * mib, total: 480 * mib })).toBe(
+      "120 MB of 480 MB, 25 %",
+    );
+    expect(byteCountText({ done: 0, total: 480 * mib })).toBe(
+      "0 B of 480 MB, 0 %",
+    );
+    expect(byteCountText({ done: 3 * mib, total: null })).toBe("3.0 MB");
+    expect(byteCountText(null)).toBeNull();
+  });
+
+  it("never reads past 100 % when the count overshoots", () => {
+    expect(byteCountText({ done: 2048, total: 1024 })).toBe(
+      "2.0 KB of 1.0 KB, 100 %",
+    );
   });
 });
 
@@ -304,6 +300,24 @@ describe("repository URLs", () => {
         }
       },
     );
+
+    it("knows the Git hosts the proxy ends SSH for, and no others", () => {
+      // The same list drives the proxy's table and the host's reader.
+      const listed = (
+        JSON.parse(
+          readFileSync(
+            resolve(
+              process.cwd(),
+              "../crates/puddle-store/tests/data/repo-urls.json",
+            ),
+            "utf8",
+          ),
+        ) as { ssh_hosts: { ssh: string; https: string }[] }
+      ).ssh_hosts;
+      expect(SSH_HOSTS).toEqual(
+        Object.fromEntries(listed.map(({ ssh, https }) => [ssh, https])),
+      );
+    });
 
     it("names what to use when the address cannot be read", () => {
       expect(repoUrlProblem("git@github.com:")).toBe(
@@ -492,40 +506,14 @@ describe("memory", () => {
     ).toBeNull();
   });
 
-  it("flags the disks the host listed and offers a reset only to a stopped, idle workspace", () => {
+  it("flags the disks the host listed", () => {
     const w = workspace("w", { disk_warnings: ["volume"] });
     expect(diskWarned(w, "volume")).toBe(true);
     expect(diskWarned(w, "root")).toBe(false);
-    for (const status of ["stopped", "crashed"] as const)
-      expect(canResetRootDisk(workspace("w", { status }))).toBe(true);
-    for (const status of [
-      "running",
-      "starting",
-      "draining",
-      "created",
-    ] as const)
-      expect(canResetRootDisk(workspace("w", { status }))).toBe(false);
-    expect(
-      canResetRootDisk(workspace("w", { status: "stopped", busy: "starting" })),
-    ).toBe(false);
   });
 });
 
 describe("growing the root disk", () => {
-  it("is offered to an idle workspace with a root disk, running or down, but not while it starts or stops", () => {
-    const base = { root_disk_size_mib: 10_240 };
-    for (const status of ["running", "stopped", "crashed", "created"] as const)
-      expect(canGrowRootDisk(workspace("w", { ...base, status }))).toBe(true);
-    for (const status of ["starting", "draining", "volume_missing"] as const)
-      expect(canGrowRootDisk(workspace("w", { ...base, status }))).toBe(false);
-    expect(
-      canGrowRootDisk(workspace("w", { ...base, busy: "reclaiming" })),
-    ).toBe(false);
-    expect(canGrowRootDisk(workspace("w", { root_disk_size_mib: null }))).toBe(
-      false,
-    );
-  });
-
   it("suggests ten GiB more, never past what the API takes", () => {
     expect(
       suggestedRootDiskGib(workspace("w", { root_disk_size_mib: 10_240 })),

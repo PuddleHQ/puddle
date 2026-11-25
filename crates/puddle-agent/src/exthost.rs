@@ -67,6 +67,8 @@ pub struct Ended {
     pub processes: u32,
     /// Orphaned debuggees ended.
     pub orphans: u32,
+    /// Processes that ignored `TERM` for the whole grace and got `KILL`.
+    pub killed: u32,
 }
 
 /// The ids of the extension hosts of the servers installed in `servers`.
@@ -171,6 +173,7 @@ async fn end_extension_hosts_within(servers: &[PathBuf], grace: Duration) -> End
             // A process a host started while it was ending is part of the tree too.
             absorb(&mut members, &now, &alive);
             if tokio::time::Instant::now() >= deadline {
+                ended.killed = u32::try_from(alive.len()).unwrap_or(u32::MAX);
                 signal_all(&alive, Signal::Kill);
                 kill_settle(&members).await;
                 break;

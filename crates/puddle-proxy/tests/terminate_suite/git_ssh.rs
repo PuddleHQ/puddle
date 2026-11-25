@@ -194,7 +194,10 @@ impl SshRig {
         let world = GitRig::world();
         let pki = Pki::new();
         let server = crate::terminate_support::FakeServer::tls(
-            pki.server_config("bound.test", crate::terminate_support::Flaw::None),
+            pki.server_config(
+                "bound.test,github.com,gitlab.com,elsewhere.test",
+                crate::terminate_support::Flaw::None,
+            ),
             host,
         )
         .await;
@@ -435,6 +438,7 @@ async fn a_listed_repository_is_read_and_written_and_the_record_says_who_with_wh
         (line.method(), line.path()),
         ("git-upload-pack", "/acme/web")
     );
+    assert_eq!(line.protocol(), puddle_types::ConnectionProtocol::Ssh);
     assert!(event.injected);
     assert!(event.binding_id.is_some());
     assert!(event.bytes_up > 0 && event.bytes_down > 0);
@@ -454,7 +458,7 @@ async fn a_push_to_a_repository_off_the_list_ends_before_anything_goes_upstream(
     assert_eq!(refused.exit, Some(1), "{refused:?}");
     assert!(
         refused.err.starts_with(
-            "puddle: push to bound.test/acme/other is not on this workspace's push list"
+            "puddle: Blocked this push: bound.test/acme/other is not in this workspace's allowed repositories for push"
         ),
         "{refused:?}"
     );
@@ -622,7 +626,10 @@ async fn git_lfs_falls_back_to_https_with_no_token_in_the_answer() {
     )
     .await;
     assert_eq!(off.exit, Some(1));
-    assert!(off.err.contains("push to bound.test/acme/other"), "{off:?}");
+    assert!(
+        off.err.contains("Blocked this push: bound.test/acme/other"),
+        "{off:?}"
+    );
     assert_eq!(t.upstream.calls().len(), 0);
 }
 
@@ -981,7 +988,7 @@ async fn a_busy_connection_is_not_closed_by_the_idle_limit_and_channels_are_capp
         ssh.channel_open_session().await.is_err(),
         "a third channel is over the cap"
     );
-    // flake-ok: an absence window; the idle limit is 300 ms and nothing signals that it did not fire.
+    // flake-ok: an absence window; the idle limit is 200 ms and nothing signals that it did not fire.
     tokio::time::sleep(Duration::from_millis(600)).await;
     assert!(!ssh.is_closed(), "busy, so not idle");
     first.eof().await.unwrap();
@@ -1165,7 +1172,8 @@ async fn a_download_of_lfs_objects_asks_the_table_about_a_fetch() {
     .await;
     assert_eq!(off.exit, Some(1), "{off:?}");
     assert!(
-        off.err.contains("pull from bound.test/acme/other"),
+        off.err
+            .contains("Blocked this fetch: bound.test/acme/other"),
         "{off:?}"
     );
     let on = exec(
@@ -1394,6 +1402,31 @@ async fn the_https_leg_sends_a_v2_command_as_gits_requests_with_the_identitys_cr
 }
 
 #[tokio::test]
+async fn a_clone_of_a_public_repository_over_ssh_needs_no_identity() {
+    let (t, _) = SshRig::https(smart_host(), GitSshAccount::NoIdentity, &["github.com"]).await;
+    let mut guest = t.git.rig.guest();
+    let mut ssh = t.client(&mut guest, "github.com:22").await;
+    login(&mut ssh).await;
+    let ran = exec(
+        &ssh,
+        &[("GIT_PROTOCOL", "version=2")],
+        "git-upload-pack 'acme/web.git'",
+        b"0014command=ls-refs\n00000000",
+    )
+    .await;
+    assert_eq!(ran.exit, Some(0), "{ran:?}");
+    assert_eq!(ran.err, "", "{ran:?}");
+    let seen = t.git.server.recorded();
+    assert_eq!(seen.len(), 2, "{seen:?}");
+    for request in &seen {
+        assert!(
+            request.headers_named("authorization").is_empty(),
+            "no credential goes out without an identity"
+        );
+    }
+}
+
+#[tokio::test]
 async fn a_push_a_rule_on_method_and_path_refuses_inside_the_https_leg_is_recorded_as_refused() {
     let rules = puddle_proxy::RequestRules::new(vec![
         puddle_proxy::RequestRule::new(
@@ -1479,23 +1512,9 @@ async fn a_host_that_answers_with_a_refusal_ends_the_command_with_its_status() {
 }
 
 #[tokio::test]
-async fn the_https_leg_reaches_only_a_host_the_rules_allow_and_puddle_decrypts() {
-    let (t, _) = SshRig::https(
-        smart_host(),
-        GitSshAccount::Unnamed,
-        &["gitlab.com", "ssh.github.com"],
-    )
-    .await;
+async fn the_https_leg_reaches_only_a_host_the_rules_allow() {
+    let (t, _) = SshRig::https(smart_host(), GitSshAccount::Unnamed, &["ssh.github.com"]).await;
     let mut guest = t.git.rig.guest();
-    // gitlab.com is allowed but not decrypted for the workspace.
-    let mut ssh = t.client(&mut guest, "gitlab.com:22").await;
-    login(&mut ssh).await;
-    let ran = exec(&ssh, &[], "git-upload-pack 'acme/web.git'", b"").await;
-    assert_eq!(ran.exit, Some(1));
-    assert_eq!(
-        ran.err,
-        "puddle: Puddle does not decrypt gitlab.com for this workspace, so it cannot carry Git over SSH there\n"
-    );
     // ssh.github.com is allowed, github.com (its HTTPS host) is not.
     let mut ssh = t.client(&mut guest, "ssh.github.com:443").await;
     login(&mut ssh).await;

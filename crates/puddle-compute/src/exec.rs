@@ -33,6 +33,10 @@ pub struct ExecRequest {
     /// How long the command may run. On expiry the runtime returns
     /// [`crate::ComputeError::ExecTimeout`].
     pub timeout: Duration,
+    /// The most bytes of each of stdout and stderr the host keeps; the rest is read and dropped,
+    /// so a chatty guest cannot grow host memory, and [`ExecOutput::stdout_truncated`] says it
+    /// was cut. `None` keeps everything.
+    pub max_output: Option<usize>,
 }
 
 /// `stdin` shows as a length: the boot hook feeds its plan (and so any private key in it) there.
@@ -46,6 +50,7 @@ impl std::fmt::Debug for ExecRequest {
             .field("user", &self.user)
             .field("stdin", &format_args!("<{} bytes>", self.stdin.len()))
             .field("timeout", &self.timeout)
+            .field("max_output", &self.max_output)
             .finish()
     }
 }
@@ -53,6 +58,13 @@ impl std::fmt::Debug for ExecRequest {
 impl ExecRequest {
     /// Default [`ExecRequest::timeout`]: 5 minutes.
     pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(300);
+
+    /// Default [`ExecRequest::max_output`]: 256 KiB per stream, so a call that names no cap is
+    /// still bounded against a hostile guest.
+    pub const DEFAULT_MAX_OUTPUT: usize = 256 * 1024;
+
+    /// [`ExecRequest::max_output`] of a probe, whose answer is a few lines: 16 KiB.
+    pub const PROBE_MAX_OUTPUT: usize = 16 * 1024;
 
     /// `program` with `args`, default timeout, nothing else set.
     #[must_use]
@@ -69,6 +81,7 @@ impl ExecRequest {
             user: None,
             stdin: Vec::new(),
             timeout: Self::DEFAULT_TIMEOUT,
+            max_output: Some(Self::DEFAULT_MAX_OUTPUT),
         }
     }
 
@@ -110,6 +123,20 @@ impl ExecRequest {
     #[must_use]
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    /// Keeps at most `bytes` of each of stdout and stderr.
+    #[must_use]
+    pub fn with_max_output(mut self, bytes: usize) -> Self {
+        self.max_output = Some(bytes);
+        self
+    }
+
+    /// Keeps all the output: only for a command whose output the host must read whole.
+    #[must_use]
+    pub fn uncapped(mut self) -> Self {
+        self.max_output = None;
         self
     }
 }
@@ -156,7 +183,16 @@ pub struct ExecOutput {
     pub stdout: Vec<u8>,
     /// Everything it wrote to stderr.
     pub stderr: Vec<u8>,
+    /// Whether stdout had more bytes than [`ExecRequest::max_output`] and was cut.
+    pub stdout_truncated: bool,
+    /// Whether stderr had more bytes than [`ExecRequest::max_output`] and was cut.
+    pub stderr_truncated: bool,
 }
+
+/// A command wrote more than [`ExecRequest::max_output`] and the runtime kept only the start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("the command wrote more than the output cap allows and its output was cut")]
+pub struct OutputCut;
 
 impl ExecOutput {
     /// An output with `code` and the given streams.
@@ -166,6 +202,34 @@ impl ExecOutput {
             status: ExitStatus::code(code),
             stdout: stdout.into(),
             stderr: stderr.into(),
+            stdout_truncated: false,
+            stderr_truncated: false,
+        }
+    }
+
+    /// Cuts each stream to `cap` bytes (when set) and records which were cut.
+    #[must_use]
+    pub fn capped(mut self, cap: Option<usize>) -> Self {
+        if let Some(cap) = cap {
+            self.stdout_truncated |= self.stdout.len() > cap;
+            self.stderr_truncated |= self.stderr.len() > cap;
+            self.stdout.truncate(cap);
+            self.stderr.truncate(cap);
+        }
+        self
+    }
+
+    /// stdout as text for a caller that parses it: an error when the command wrote more than
+    /// [`ExecRequest::max_output`], so a cut answer is named, never read as a short one.
+    ///
+    /// # Errors
+    ///
+    /// [`OutputCut`] when stdout was cut.
+    pub fn whole_stdout_text(&self) -> Result<Cow<'_, str>, OutputCut> {
+        if self.stdout_truncated {
+            Err(OutputCut)
+        } else {
+            Ok(self.stdout_text())
         }
     }
 

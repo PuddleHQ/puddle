@@ -363,7 +363,10 @@ async fn vm_git_clones_and_pushes_with_two_identities_and_the_guest_never_holds_
          git push origin HEAD:main 2>&1 || true",
     )
     .await;
-    assert!(out.contains("not on this workspace's push list"), "{out}");
+    assert!(
+        out.contains("not in this workspace's allowed repositories"),
+        "{out}"
+    );
     assert!(
         fake.seen()
             .iter()

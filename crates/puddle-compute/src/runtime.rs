@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::future::Future;
 
 use puddle_types::{
-    CpuCount, GuestEnv, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus,
+    CpuCount, GuestEnv, GuestPath, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus,
 };
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -19,6 +19,31 @@ pub struct Capabilities {
     /// The runtime's version (`0.7.7`, `0.7.7-puddle.1`, `fake`).
     pub runtime_version: String,
 }
+
+/// What part of an image pull a [`PullProgress`] counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PullPhase {
+    /// Bytes coming from the registry.
+    Downloading,
+    /// Bytes of the downloaded layers being turned into disk images the sandbox boots from.
+    Unpacking,
+}
+
+/// How far an image pull is, as [`Runtime::pull_image_reporting`] reports it. The counts cover the
+/// whole image (every layer), and only grow within a phase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PullProgress {
+    /// What is being counted.
+    pub phase: PullPhase,
+    /// Bytes done so far.
+    pub done: u64,
+    /// Bytes in all, when the registry or the layers say.
+    pub total: Option<u64>,
+}
+
+/// Where [`Runtime::pull_image_reporting`] sends its progress. Called from the pulling task, so it
+/// must not block.
+pub type PullReport<'a> = &'a (dyn Fn(PullProgress) + Send + Sync);
 
 /// A sandbox as [`Runtime::list`] sees it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,6 +61,9 @@ pub struct SandboxInfo {
     /// host can start it again only when it serves each of them. Empty when the runtime can't
     /// tell.
     pub routes: Vec<VsockRoute>,
+    /// Where it mounts its named volumes in the guest, as it was made. Empty when the runtime
+    /// can't tell.
+    pub volume_mounts: Vec<GuestPath>,
 }
 
 /// The root disk of a sandbox (home directory, tool caches, installed packages): its capacity and
@@ -185,6 +213,22 @@ pub trait Runtime: Send + Sync + 'static {
         image: &ImageRef,
     ) -> impl Future<Output = Result<ImageConfig, ComputeError>> + Send;
 
+    /// [`Runtime::pull_image`] that also tells `report` how far the pull is while it downloads.
+    /// An image that is already local reports nothing. A runtime that cannot measure a pull keeps
+    /// this default, which reports nothing.
+    ///
+    /// # Errors
+    ///
+    /// As [`Runtime::pull_image`].
+    fn pull_image_reporting<'a>(
+        &'a self,
+        image: &'a ImageRef,
+        report: PullReport<'a>,
+    ) -> impl Future<Output = Result<ImageConfig, ComputeError>> + Send + 'a {
+        let _ = report;
+        self.pull_image(image)
+    }
+
     /// Creates a sandbox and boots it; returns an **owning** handle (`Running`). Dropping that
     /// handle without [`Sandbox::stop`] shuts the VM down: the record reads `Stopped` on msb 0.7.7
     /// and read `Crashed` on 0.7.6. Puddle still stops every sandbox itself at
@@ -299,6 +343,16 @@ pub trait Runtime: Send + Sync + 'static {
     ///
     /// [`ComputeError::NotFound`]; [`ComputeError::InvalidState`] when it is running.
     fn remove(&self, name: &SandboxName) -> impl Future<Output = Result<(), ComputeError>> + Send;
+
+    /// Ends the VM of a sandbox by name, without connecting to it and without a graceful stop:
+    /// the way out for a sandbox in a state [`Runtime::get`] refuses (`Starting`, `Draining`,
+    /// `Paused`), such as one a dead Puddle left behind. Returns once the sandbox is down;
+    /// a sandbox that is already down is not an error.
+    ///
+    /// # Errors
+    ///
+    /// [`ComputeError::NotFound`]; [`ComputeError::Runtime`] when the VM did not end.
+    fn kill(&self, name: &SandboxName) -> impl Future<Output = Result<(), ComputeError>> + Send;
 
     /// Names whose sandbox directory exists without a sandbox record (left by a failed create
     /// while the upstream msb bug is unfixed), in name order. May include names Puddle didn't

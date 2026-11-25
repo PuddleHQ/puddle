@@ -51,7 +51,13 @@
   const sources = $derived(listing?.sources ?? []);
   const repos = $derived(listing?.repos ?? []);
   const noCredentials = $derived(
-    store.status === "ready" && sources.length === 0,
+    store.status === "ready" && identity.credentials.length === 0,
+  );
+  // The identity has credentials but no list was read for any of them.
+  const noLists = $derived(
+    store.status === "ready" &&
+      identity.credentials.length > 0 &&
+      sources.length === 0,
   );
   // Every list was read and holds nothing: say so, so an empty table is never a silent answer.
   const empty = $derived(
@@ -114,6 +120,11 @@
   <p class="muted" data-testid="repo-no-credentials">
     This identity has no credential, so there is nothing to list. Edit the
     identity and add a sign-in or a token.
+  </p>
+{:else if noLists}
+  <p class="muted" data-testid="repo-no-lists">
+    Puddle has no repository list for this identity's credentials yet. Check
+    them with Test, above.
   </p>
 {:else if empty}
   <p class="muted" data-testid="repo-empty">
@@ -251,9 +262,6 @@
     gap: var(--space-1);
   }
   .trait {
-    padding: 0 var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-pill);
     font-size: var(--text-sm);
     color: var(--color-text-muted);
   }

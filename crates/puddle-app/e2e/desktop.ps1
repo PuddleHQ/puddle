@@ -110,8 +110,8 @@ switch ($Action) {
   }
   'tray-quit' {
     # The tray icon's menu: a disabled count line, Open Puddle, Quit Puddle. The popup is a native menu UI
-    # Automation does not list, so it is opened with a real right click and the last entry is picked with
-    # the keyboard (Up from nothing selected lands on it).
+    # Automation lists only once it is open, so it is opened with a real right click, waited on, and the
+    # entry is invoked by its name.
     Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Windows.Forms
     [void][Shell]::SetProcessDPIAware()
     $A = [System.Windows.Automation.AutomationElement]
@@ -135,10 +135,19 @@ switch ($Action) {
     [void][Shell]::SetCursorPos([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2))
     Start-Sleep -Milliseconds 400
     [Shell]::mouse_event(8, 0, 0, 0, 0); [Shell]::mouse_event(16, 0, 0, 0, 0)
-    Start-Sleep -Seconds 2
-    [System.Windows.Forms.SendKeys]::SendWait('{UP}')
-    Start-Sleep -Milliseconds 300
-    [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+    # Wait (up to 10 s) for the popup menu window, then invoke the entry by its accessible name, so a
+    # reordered menu or a slow tray does not pick the wrong entry.
+    $menu = $null
+    $nameIs = New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, 'Quit Puddle')
+    $popup = New-Object System.Windows.Automation.PropertyCondition($A::ClassNameProperty, '#32768')
+    for ($i = 0; $i -lt 40 -and -not $menu; $i++) {
+      $menu = $root.FindFirst('Children', $popup)
+      if (-not $menu) { Start-Sleep -Milliseconds 250 }
+    }
+    if (-not $menu) { 'tray menu did not open'; exit 1 }
+    $item = $menu.FindFirst('Descendants', $nameIs)
+    if (-not $item) { 'no Quit Puddle entry in the tray menu'; exit 1 }
+    $item.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
     'quit chosen'
   }
   default { throw "unknown action $Action" }

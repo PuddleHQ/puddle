@@ -26,6 +26,12 @@ pub trait Space: Send + Sync + 'static {
     fn free_bytes(&self) -> io::Result<u64>;
 }
 
+impl Space for Arc<dyn Space> {
+    fn free_bytes(&self) -> io::Result<u64> {
+        (**self).free_bytes()
+    }
+}
+
 /// The drive that holds one folder.
 #[derive(Debug, Clone)]
 pub(crate) struct DriveOf(pub(crate) PathBuf);

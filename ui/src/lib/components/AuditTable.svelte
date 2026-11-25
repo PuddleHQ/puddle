@@ -6,6 +6,8 @@
   import {
     describe,
     rawJson,
+    ruleLink,
+    sentence,
     splitDetail,
     type AuditEntry,
   } from "#lib/audit/model.ts";
@@ -48,6 +50,7 @@
   let viewport = $state(0);
   let scrollTop = $state(0);
   let openId = $state<number | null>(null);
+  let rawOpen = $state(false);
   let frame = 0;
 
   const dayStart = $derived(startOfDay(now));
@@ -101,6 +104,7 @@
 
   function toggle(id: number) {
     openId = openId === id ? null : id;
+    rawOpen = false;
   }
 </script>
 
@@ -145,6 +149,10 @@
       {#each drawn as entry, i (entry.id)}
         {@const row = describe(entry.record)}
         {@const open = entry.id === openId}
+        {@const link = ruleLink(
+          entry.record,
+          row.workspace === null ? null : workspaces.labelOf(row.workspace),
+        )}
         <!-- The toggle button is the keyboard route; the row click is for the pointer. -->
         <tr
           class="row"
@@ -161,7 +169,7 @@
               aria-controls="raw-{entry.id}"
               aria-label="{open
                 ? 'Hide'
-                : 'Show'} the raw record of {row.type} at {clockTime(
+                : 'Show'} the details of {row.type} at {clockTime(
                 row.ts,
                 dayStart,
               )}"
@@ -193,7 +201,7 @@
               <span class="chip {row.outcome.tone}">{row.outcome.label}</span>
             {/if}
             {#if row.company}
-              <span class="chip neutral" title={row.company.title}
+              <span class="meta" title={row.company.title}
                 >{row.company.label}</span
               >
             {/if}
@@ -218,9 +226,23 @@
           <tr class="detail" aria-rowindex={range.start + i + 2}>
             <td colspan="6">
               <div class="raw" id="raw-{entry.id}">
-                <pre tabindex="0" aria-label="Raw record {entry.id}">{rawJson(
-                    entry.record,
-                  )}</pre>
+                <p class="said">{sentence(row)}</p>
+                <p class="acts">
+                  {#if link !== null}<a href={link}>Make a rule from this</a
+                    >{/if}
+                  <button
+                    type="button"
+                    class="linkish"
+                    aria-expanded={rawOpen}
+                    onclick={() => (rawOpen = !rawOpen)}
+                    >{rawOpen ? "Hide" : "Show"} raw record</button
+                  >
+                </p>
+                {#if rawOpen}
+                  <pre tabindex="0" aria-label="Raw record {entry.id}">{rawJson(
+                      entry.record,
+                    )}</pre>
+                {/if}
               </div>
             </td>
           </tr>
@@ -333,9 +355,27 @@
     height: calc(var(--detail-h) - 1px);
     padding: var(--space-2) var(--space-3);
   }
+  .said {
+    margin: 0 0 var(--space-2);
+    overflow-wrap: anywhere;
+  }
+  .acts {
+    display: flex;
+    gap: var(--space-4);
+    margin: 0 0 var(--space-2);
+  }
+  .linkish {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--color-accent);
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+  }
   pre {
     box-sizing: border-box;
-    height: 100%;
+    height: calc(100% - 4.5rem);
     margin: 0;
     padding: var(--space-2) var(--space-3);
     overflow: auto;

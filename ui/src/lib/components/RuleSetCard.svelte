@@ -1,6 +1,5 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  import { workspaceNameError } from "#lib/rules/model.ts";
   import {
     entryPattern,
     globalState,
@@ -11,7 +10,7 @@
   } from "#lib/rules/sets.ts";
   import { workspaces as workspaceStore } from "#lib/stores/workspaces.svelte.ts";
   import SetChip from "./SetChip.svelte";
-  import WorkspaceSelect from "./WorkspaceSelect.svelte";
+  import ThreeWaySwitch from "./ThreeWaySwitch.svelte";
   import "#lib/theme/controls.css";
 
   // One rule set: what it is, its switch for every workspace and the workspaces that switch it
@@ -27,7 +26,7 @@
     loadEntries,
   }: {
     set: RuleSet;
-    /** Workspace names to suggest for a per-workspace switch. */
+    /** Workspace ids a rule names, listed with the live ones for a per-workspace switch. */
     workspaces: string[];
     onSwitch: (
       set: RuleSet,
@@ -60,8 +59,21 @@
         ? "Allows"
         : null,
   );
-  let workspace = $state("");
-  let problem = $state<string | null>(null);
+  // Every workspace there is, plus any a switch or a rule still names after it was deleted.
+  const rows = $derived(
+    [
+      ...workspaceStore.list.map((w) => w.id as string),
+      ...set.overrides.map((o) => o.workspace as string),
+      ...workspaces,
+    ]
+      .filter((one, at, all) => all.indexOf(one) === at)
+      .map((one) => ({
+        id: one,
+        label: workspaceStore.spokenLabelOf(one),
+        own: set.overrides.find((o) => o.workspace === one)?.enabled ?? null,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label)),
+  );
 
   // A big built-in set lists only its first entries; the rest is searched and paged in.
   const paged = $derived(set.entry_count > set.entries.length);
@@ -89,13 +101,6 @@
     }
   }
 
-  function switchHere(enabled: boolean) {
-    problem = workspaceNameError(workspace.trim());
-    if (problem) return;
-    onSwitch(set, workspace.trim(), enabled);
-    workspace = "";
-  }
-
   function changed(at: number): string {
     return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(
       at,
@@ -108,15 +113,9 @@
     <h3 id="{id}-name">
       <SetChip name={set.name} fill={set.fill} variant="chip" />
     </h3>
-    <span class="chip">{mine ? "Yours" : "Built in"}</span>
-    {#if does !== null}
-      <span class="chip {does === 'Allows' ? 'allow' : 'deny'}">{does}</span>
-    {/if}
-    <span class="muted mono" title="The id refusals and the activity log use"
-      >{set.id}</span
-    >
+    {#if does !== null}<span class="meta wrap">{does}</span>{/if}
     {#if set.changed_at !== null}
-      <span class="chip warn">Updated by Puddle {changed(set.changed_at)}</span>
+      <span class="meta">Updated by Puddle {changed(set.changed_at)}</span>
     {/if}
   </header>
   {#if set.description !== ""}<p class="desc">{set.description}</p>{/if}
@@ -146,51 +145,30 @@
     {/if}
   </div>
 
-  {#if set.overrides.length > 0}
-    <ul class="overrides" aria-label="Workspaces that switch {set.name}">
-      {#each set.overrides as o (o.workspace)}
-        <li>
-          <span
-            ><b>{o.enabled ? "On" : "Off"}</b> in
-            <b>{workspaceStore.labelOf(o.workspace)}</b></span
-          >
-          <button
-            type="button"
-            class="btn"
-            onclick={() => onSwitch(set, o.workspace, null)}
-            >Follow every workspace</button
-          >
-        </li>
-      {/each}
-    </ul>
-  {/if}
-
-  <form
-    class="row"
-    aria-label="Switch {set.name} for one workspace"
-    onsubmit={(e) => e.preventDefault()}
-    novalidate
-  >
-    <div class="field">
-      <label for="{id}-ws">Workspace</label>
-      <WorkspaceSelect
-        id="{id}-ws"
-        bind:value={workspace}
-        known={workspaces}
-        invalid={problem !== null}
-        describedby={problem ? `${id}-ws-error` : undefined}
-      />
-    </div>
-    <button type="button" class="btn" onclick={() => switchHere(true)}
-      >On there</button
+  <details class="per-workspace">
+    <summary
+      >Per workspace{set.overrides.length > 0
+        ? ` (${set.overrides.length} differ${set.overrides.length === 1 ? "s" : ""})`
+        : ""}</summary
     >
-    <button type="button" class="btn" onclick={() => switchHere(false)}
-      >Off there</button
-    >
-    {#if problem}
-      <p class="error" id="{id}-ws-error" role="alert">{problem}</p>
+    {#if rows.length === 0}
+      <p class="muted">There are no workspaces yet.</p>
+    {:else}
+      <ul class="overrides" aria-label="Switch {set.name} per workspace">
+        {#each rows as row (row.id)}
+          <li>
+            <span class="ws">{row.label}</span>
+            <ThreeWaySwitch
+              label="{set.name} in {row.label}"
+              value={row.own}
+              inherited={everywhere}
+              onChange={(next) => onSwitch(set, row.id, next)}
+            />
+          </li>
+        {/each}
+      </ul>
     {/if}
-  </form>
+  </details>
 
   <details>
     <summary
@@ -320,6 +298,10 @@
     font-size: var(--text-sm);
     color: var(--color-text-muted);
   }
+  .ws {
+    min-width: 10rem;
+    overflow-wrap: anywhere;
+  }
 
   .overrides,
   .entries {
@@ -364,9 +346,5 @@
   .chip.deny {
     color: var(--color-danger);
     border-color: var(--color-danger);
-  }
-  .chip.warn {
-    color: var(--color-warning);
-    border-color: var(--color-warning);
   }
 </style>

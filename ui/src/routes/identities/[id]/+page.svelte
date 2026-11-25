@@ -302,13 +302,6 @@
     font-size: var(--text-sm);
     color: var(--color-text-muted);
   }
-  h1 {
-    font-size: var(--text-xl);
-    overflow-wrap: anywhere;
-  }
-  h1:focus {
-    outline: none;
-  }
   h2 {
     font-size: var(--text-lg);
     margin-bottom: var(--space-2);
@@ -337,6 +330,8 @@
     list-style: none;
   }
   .cred {
+    min-width: 0;
+    overflow-wrap: anywhere;
     display: flex;
     flex-wrap: wrap;
     justify-content: space-between;

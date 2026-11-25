@@ -159,7 +159,8 @@ impl PackageKit {
         );
         if self.bytes.lock().unwrap().is_some() {
             let (code, out, err) = self.unpack_and_install(vm, workspace).await;
-            let (checked, said, _) = exec(vm, workspace, check, Duration::from_secs(60)).await;
+            let (checked, said, _) =
+                exec(vm, workspace, check, Duration::from_secs(60), false).await;
             if code == 0 && checked == 0 {
                 return said;
             }
@@ -174,6 +175,7 @@ impl PackageKit {
             workspace,
             &self.flavour.build(self.packages),
             Duration::from_secs(300),
+            true,
         )
         .await;
         assert_eq!(
@@ -189,7 +191,7 @@ impl PackageKit {
         *self.bytes.lock().unwrap() = Some(Arc::new(bytes));
         let (code, out, err) = self.unpack_and_install(vm, workspace).await;
         assert_eq!(code, 0, "the packages did not install{note}: {out}{err}");
-        let (code, said, err) = exec(vm, workspace, check, Duration::from_secs(60)).await;
+        let (code, said, err) = exec(vm, workspace, check, Duration::from_secs(60), false).await;
         assert_eq!(code, 0, "the packages are not usable{note}: {said}{err}");
         said
     }
@@ -203,11 +205,11 @@ impl PackageKit {
             "rm -rf /root/kit && mkdir -p /root/kit && cd /root/kit
              {{ curl -fsS --max-time 120 -o kit.tar http://{KIT_HOST}/kit.tar 2>/dev/null \
                 || wget -qO kit.tar http://{KIT_HOST}/kit.tar; }} || {{ echo 'kit download failed'; exit 1; }}
-             tar -xf kit.tar && rm kit.tar
+             tar -xf kit.tar && rm kit.tar || {{ echo 'kit unpack failed'; exit 1; }}
              {}",
             self.flavour.install()
         );
-        exec(vm, workspace, &script, Duration::from_secs(180)).await
+        exec(vm, workspace, &script, Duration::from_secs(180), false).await
     }
 }
 
@@ -230,19 +232,28 @@ async fn exec(
     workspace: &WorkspaceId,
     script: &str,
     timeout: Duration,
+    whole: bool,
 ) -> (i32, String, String) {
     let handle = vm.runtime.get(&workspace.sandbox_name()).await.unwrap();
+    let mut request = ExecRequest::sh(format!(
+        "cd && exec sh -l -c '{}'",
+        script.replace('\'', "'\\''")
+    ))
+    .as_user("root")
+    .with_timeout(timeout);
+    if whole {
+        // The kit comes out of the guest as one base64 stdout of tens of MiB; the default cap
+        // (256 KiB) would cut it and `apt` would then read a truncated .deb.
+        request = request.uncapped();
+    }
     let out = handle
-        .exec(
-            ExecRequest::sh(format!(
-                "cd && exec sh -l -c '{}'",
-                script.replace('\'', "'\\''")
-            ))
-            .as_user("root")
-            .with_timeout(timeout),
-        )
+        .exec(request)
         .await
         .unwrap_or_else(|e| panic!("the guest script did not finish: {e}\n{script}"));
+    assert!(
+        !out.stdout_truncated,
+        "the guest's stdout was cut at the exec cap: {script}"
+    );
     (
         out.status.code,
         out.stdout_text().to_string(),

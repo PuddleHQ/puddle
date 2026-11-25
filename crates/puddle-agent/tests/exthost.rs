@@ -117,20 +117,18 @@ async fn settled(server: &Server) {
 }
 
 #[tokio::test]
-async fn the_extension_host_and_everything_below_it_end_in_under_a_second_and_the_pty_host_stays() {
+async fn the_extension_host_and_everything_below_it_end_without_a_kill_and_the_pty_host_stays() {
     let server = Server::new();
     let host = server.start("host", "--type=extensionHost", false);
     let pty = server.start("pty", "--type=ptyHost", false);
     settled(&server).await;
     let (host_id, pty_id) = (host.id().unwrap(), pty.id().unwrap());
 
-    let started = Instant::now();
     let ended = exthost::end_extension_hosts(&server.folders()).await;
-    let took = started.elapsed();
 
-    // flake-ok: the bar sits between ending on `TERM` (the agent polls `/proc` every 50 ms: 61 ms
-    // measured under 16 busy loops on 4 cores) and the 3 s `TERM_GRACE` a `KILL` escalation waits.
-    assert!(took < Duration::from_secs(1), "took {took:?}");
+    // `TERM` was enough: nothing waited out the grace for a `KILL`. Counts the work, not the wall
+    // clock, so host load cannot fail it.
+    assert_eq!(ended.killed, 0, "{ended:?}");
     assert_eq!(ended.hosts, 1);
     assert!(ended.processes >= 2, "{ended:?}");
     assert!(!alive(host_id), "the extension host is still running");
@@ -166,18 +164,24 @@ async fn a_process_that_ignores_term_is_killed_after_the_grace() {
     );
 
     let started = Instant::now();
-    let ended = exthost::end_extension_hosts(&server.folders()).await;
+    // A guard against a hang, not an assertion on speed.
+    let ended = tokio::time::timeout(
+        Duration::from_secs(120),
+        exthost::end_extension_hosts(&server.folders()),
+    )
+    .await
+    .expect("the extension host was never ended");
     let took = started.elapsed();
 
     assert!(
         took >= exthost::TERM_GRACE,
         "ended before the grace: {took:?}"
     );
-    assert!(
-        took < exthost::TERM_GRACE + Duration::from_secs(3),
-        "took {took:?}"
-    );
+    // No upper bound on `took`: it counts /proc snapshots, whose cost grows with host load (6.4 s on a
+    // loaded lane). That the `KILL` came is shown below: the child ignores `TERM`, so only the
+    // `KILL` after the grace can have ended it.
     assert!(ended.processes >= 3, "{ended:?}");
+    assert!(ended.killed >= 1, "{ended:?}");
     assert!(!alive(host_id));
     assert!(before.iter().all(|pid| {
         !exthost::snapshot()

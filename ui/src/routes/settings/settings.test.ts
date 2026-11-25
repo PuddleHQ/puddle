@@ -26,23 +26,30 @@ import { report } from "#lib/testing/fake-network.ts";
 import SettingsHost from "#lib/testing/SettingsHost.svelte";
 import { microsoftChosenToast, MS_TERMS_VERSION } from "#lib/settings/model.ts";
 import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
+import { identities } from "#lib/stores/identities.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
 import { density } from "#lib/theme/density.svelte.ts";
 import { palette } from "#lib/theme/palette.svelte.ts";
 import { NO_CUSTOM } from "#lib/theme/palette.ts";
 import { theme } from "#lib/theme/theme.svelte.ts";
 import Appearance from "./(pages)/appearance/+page.svelte";
+import Editor from "./(pages)/editor/+page.svelte";
 import EditorAndGit from "./(pages)/editor-and-git/+page.svelte";
 import Network from "./(pages)/network/+page.svelte";
 import Notifications from "./(pages)/notifications/+page.svelte";
 import ThisComputer from "./(pages)/this-computer/+page.svelte";
 import Workspaces from "./(pages)/workspaces/+page.svelte";
 
+// Every test here mounts all seven pages of Settings, so one test costs about a second on an idle
+// host and several times that on a loaded one; the default 5 s limit is under the loaded cost.
+vi.setConfig({ testTimeout: 30_000 });
+
 const ALL = [
   Appearance,
   Notifications,
   Workspaces,
   Network,
+  Editor,
   EditorAndGit,
   ThisComputer,
 ];
@@ -202,11 +209,12 @@ describe("the screen", () => {
       "Proxy",
       "Local destinations",
       "Decrypting traffic",
+      "Editor defaults",
       "Browser VS Code",
       "Git and SSH",
       "Startup and window",
       "Devices and sign-in",
-      "Back up",
+      "Back up and restore",
       "Activity log",
       "Checks and errors",
       "Privacy and about",
@@ -1027,6 +1035,75 @@ describe("disk space lines", () => {
   });
 });
 
+describe("the Git defaults for new workspaces", () => {
+  const push = () =>
+    screen.getByRole("switch", { name: "Only push to allowed repositories" });
+
+  it("show the stored values and save a change through the identities service", async () => {
+    identities.gitDefaults = {
+      only_push_listed: true,
+      only_pull_listed: false,
+    };
+    const saved = vi
+      .spyOn(identities, "setGitDefaults")
+      .mockResolvedValue({ ok: true });
+    await open();
+    await waitFor(() => expect(push()).toBeChecked());
+    expect(
+      screen.getByRole("switch", {
+        name: "Only pull from allowed repositories",
+      }),
+    ).not.toBeChecked();
+    await fireEvent.click(push());
+    await waitFor(() =>
+      expect(saved).toHaveBeenCalledWith({ only_push_listed: false }),
+    );
+    saved.mockRestore();
+  });
+
+  it("explain each switch by its state, and save the pull switch by its own name", async () => {
+    identities.gitDefaults = {
+      only_push_listed: false,
+      only_pull_listed: true,
+    };
+    const saved = vi
+      .spyOn(identities, "setGitDefaults")
+      .mockResolvedValue({ ok: true });
+    await open();
+    const pull = await screen.findByRole("switch", {
+      name: "Only pull from allowed repositories",
+    });
+    await waitFor(() => expect(pull).toBeChecked());
+    expect(
+      screen.getByText(/Off: a push may go to any repository/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/may fetch only from a repository/),
+    ).toBeInTheDocument();
+    await fireEvent.click(pull);
+    await waitFor(() =>
+      expect(saved).toHaveBeenCalledWith({ only_pull_listed: false }),
+    );
+    saved.mockRestore();
+  });
+
+  it("put a refused change back and say why", async () => {
+    identities.gitDefaults = {
+      only_push_listed: true,
+      only_pull_listed: false,
+    };
+    const refused = vi
+      .spyOn(identities, "setGitDefaults")
+      .mockResolvedValue({ ok: false, message: "Nope." });
+    await open();
+    await waitFor(() => expect(push()).toBeChecked());
+    await fireEvent.click(push());
+    await waitFor(() => expect(toasts.items.at(-1)?.message).toBe("Nope."));
+    expect(push()).toBeChecked();
+    refused.mockRestore();
+  });
+});
+
 describe("SSH agent pipe", () => {
   const field = () => screen.getByLabelText("SSH agent pipe or socket");
   const type = async (box: HTMLElement, text: string) => {
@@ -1281,7 +1358,10 @@ describe("Microsoft's server", () => {
     await fireEvent.click(
       screen.getByRole("button", { name: "Withdraw consent" }),
     );
-    expect(await screen.findByText(/service isn't answering/)).toBeVisible();
+    // The restore card, which also reads from the service, may say the same: several places do.
+    const said = await screen.findAllByText(/service isn't answering/);
+    expect(said[0]).toBeVisible();
+    expect(api.consent.state).toBe("granted");
   });
 
   it("asks again when the terms changed since the user agreed", async () => {
@@ -1298,5 +1378,79 @@ describe("Microsoft's server", () => {
     );
     await save();
     expect(api.vscode.auto_update).toBe(false);
+  });
+});
+
+describe("the editor defaults", () => {
+  it("shows them unset, saves each one and sends the group whole", async () => {
+    await open();
+    expect(screen.getByLabelText("Editor colour theme")).toHaveValue("");
+    await fireEvent.input(screen.getByLabelText("Editor colour theme"), {
+      target: { value: "Default Dark Modern" },
+    });
+    await save();
+    expect(api.layer.editor.colour_theme).toBe("Default Dark Modern");
+
+    await fireEvent.input(screen.getByLabelText("Font size (pixels)"), {
+      target: { value: "16" },
+    });
+    await save();
+    expect(api.layer.editor).toMatchObject({
+      colour_theme: "Default Dark Modern",
+      font_size: 16,
+    });
+
+    await fireEvent.input(screen.getByLabelText("Extensions to install"), {
+      target: { value: "Rust-Lang.Rust-Analyzer\nesbenp.prettier-vscode" },
+    });
+    await save();
+    expect(api.layer.editor.extensions).toEqual([
+      "esbenp.prettier-vscode",
+      "rust-lang.rust-analyzer",
+    ]);
+
+    const bindings =
+      '[{"key":"ctrl+alt+t","command":"workbench.action.terminal.toggleTerminal"}]';
+    await fireEvent.input(screen.getByLabelText("Key bindings"), {
+      target: { value: bindings },
+    });
+    await save();
+    expect(api.layer.editor.keybindings).toBe(bindings);
+  });
+
+  it("clears a field when its box is emptied", async () => {
+    api.layer.editor.font_size = 18;
+    api.layer.editor.extensions = ["a.b"];
+    await open();
+    expect(screen.getByLabelText("Font size (pixels)")).toHaveValue("18");
+    await fireEvent.input(screen.getByLabelText("Font size (pixels)"), {
+      target: { value: "" },
+    });
+    await fireEvent.input(screen.getByLabelText("Extensions to install"), {
+      target: { value: "" },
+    });
+    await save();
+    expect(api.layer.editor.font_size).toBeNull();
+    expect(api.layer.editor.extensions).toBeNull();
+  });
+
+  it("says why a value cannot be saved and sends nothing", async () => {
+    await open();
+    await fireEvent.input(screen.getByLabelText("Font size (pixels)"), {
+      target: { value: "4" },
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent("8 to 40");
+    expect(
+      screen.getByRole("button", { name: "Save Font size (pixels)" }),
+    ).toBeDisabled();
+    await fireEvent.input(screen.getByLabelText("Key bindings"), {
+      target: { value: "{}" },
+    });
+    await waitFor(() =>
+      expect(screen.getAllByRole("alert").at(-1)).toHaveTextContent(
+        "JSON array",
+      ),
+    );
+    expect(putBodies()).toHaveLength(0);
   });
 });

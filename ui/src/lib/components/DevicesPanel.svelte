@@ -83,7 +83,7 @@
       {#each store.devices as device (device.id)}
         <li>
           <span class="name">{device.name}</span>
-          {#if device.current}<span class="tag">This browser</span>{/if}
+          {#if device.current}<span class="meta">This browser</span>{/if}
           <span class="muted" title={absoluteTime(device.last_seen_at)}
             >last used {relativeTime(device.last_seen_at, Date.now())}</span
           >
@@ -183,12 +183,6 @@
   }
   .name {
     font-weight: 600;
-  }
-  .tag {
-    padding: 0 var(--space-2);
-    border: 1px solid var(--color-border-subtle);
-    border-radius: var(--radius-pill);
-    font-size: var(--text-sm);
   }
   form,
   .fields {

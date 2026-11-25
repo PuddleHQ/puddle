@@ -97,10 +97,6 @@ impl<R: Runtime + Clone> crate::changes::Changes for HostWorkspaces<R> {
         Self::rewrite_authors(self, &workspace).await;
     }
 
-    async fn all_git_changed(&self) {
-        Self::all_git_changed(self).await;
-    }
-
     fn all_request_rules_changed(&self) {
         for name in self.inner.injection.running_workspaces() {
             Self::decrypt_changed(self, &name);
@@ -111,16 +107,8 @@ impl<R: Runtime + Clone> crate::changes::Changes for HostWorkspaces<R> {
         Self::environment_changed(self, &workspace).await;
     }
 
-    async fn all_environments_changed(&self) {
-        // Together: a credential store that is slow for one workspace's secrets holds up no other.
-        futures_util::future::join_all(
-            self.inner
-                .injection
-                .running_workspaces()
-                .iter()
-                .map(|name| Self::environment_changed(self, name)),
-        )
-        .await;
+    fn running(&self) -> Vec<WorkspaceId> {
+        self.inner.injection.running_workspaces()
     }
 
     fn shell_init_changed(&self, workspace: WorkspaceId) -> impl Future<Output = ()> + Send {
@@ -131,25 +119,12 @@ impl<R: Runtime + Clone> crate::changes::Changes for HostWorkspaces<R> {
     fn pending_closed(&self, workspace: &WorkspaceId, id: i64, allowed: bool) {
         self.tools_pending_closed(workspace, id, allowed);
     }
-
-    fn all_shell_inits_changed(&self) -> impl Future<Output = ()> + Send {
-        let names: Vec<WorkspaceId> = self
-            .state()
-            .slots
-            .values()
-            .map(|slot| slot.record.id.clone())
-            .collect();
-        for name in names {
-            Self::shell_init_changed(self, &name);
-        }
-        std::future::ready(())
-    }
 }
 
-/// Runs when an author rewrite starts, before it waits for its workspace's rewrite lock, and
+/// Runs when an author rewrite holds its guest's rewrite lock, before it looks at the guest, and
 /// returns once the rewrite may go on; the value it returns is dropped when the rewrite ends. Tests
-/// use it to hold one rewrite back and see the rewrites of a workspace run out of order. A host
-/// without one lets every rewrite go on at once.
+/// use it to hold one rewrite back and see what waits behind it (the next change, a stop). A host without one lets every
+/// rewrite go on at once.
 pub type RewriteGate = Arc<dyn Fn(&WorkspaceId) -> BoxFuture<'static, Box<dyn Send>> + Send + Sync>;
 
 /// What the service is built from.
@@ -290,6 +265,8 @@ struct State {
 /// What the running guest was set up with, kept to set it up again with one thing changed.
 #[derive(Clone)]
 struct GuestState {
+    /// The workspace's name as the prompt in the guest shows it now.
+    label: String,
     /// The image's config, so a plan can be rebuilt without pulling.
     image: ImageConfig,
     /// This start's CA certificate.
@@ -307,14 +284,16 @@ struct GuestState {
     editor: Option<EditorServer>,
     /// The development certificate this start gave the guest, so a re-planned boot keeps it.
     dev_cert: Option<puddle_certs::devcert::GuestDevCert>,
-    /// Where login shells land: what the saved start folder was at this start, or when it last
-    /// changed.
+    /// Where login shells land ([`crate::editor_file::terminal_folder`]) at this start, or when
+    /// the start folder last changed.
     start_folder: Option<StartFolder>,
-    /// The volume's mount point, `/workspaces/<id>`.
+    /// The volume's mount point, `/workspace`.
     root: GuestPath,
     /// The multi-root file the editor opens when the workspace has two or more checkouts, as the
     /// last attach wrote it; `None` has the hook take Puddle's lines out of it.
     editor_file: Option<GuestFile>,
+    /// The editor defaults file as of this start; `None` has the hook delete the file.
+    editor_defaults: Option<GuestFile>,
     /// The user sessions, clones and checks run as until the next start: the setting as of this
     /// start (a later change waits for the next one).
     session_user: SessionUser,
@@ -391,6 +370,8 @@ struct Inner<R: Runtime + Clone> {
     running: watch::Sender<usize>,
     /// Whether the image the delete check boots is in the cache; see [`HostWorkspaces::maintenance_ready`].
     maintenance_image: watch::Sender<Warmth>,
+    /// The default image's description from its labels, once read; see [`HostWorkspaces::default_image_description`].
+    default_image_note: Mutex<ImageNote>,
     /// Workspaces whose start found their shell-init folder changed from inside, until `settle`
     /// has said so (with what the boot hook found, as one notice).
     shell_init_changed_inside: Mutex<BTreeSet<WorkspaceId>>,
@@ -538,6 +519,17 @@ fn listing(l: &puddle_workspace::Listing) -> Listing {
 /// How long a delete or its check waits for the image it boots to be downloaded before it asks
 /// the user to try again: under the API's 30 s request limit, so the answer is ours and not a 408.
 const MAINTENANCE_WAIT: Duration = Duration::from_secs(15);
+
+/// Where reading the default image's labels stands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ImageNote {
+    /// Not asked for yet.
+    Cold,
+    /// A task of the service is downloading the image to read them.
+    Reading,
+    /// Read: the one line they give, or none when they say nothing.
+    Read(Option<String>),
+}
 
 /// Where the download of the image the delete check boots stands.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -743,13 +735,13 @@ fn kept_login_row(login: &puddle_logins::KeptLogin) -> KeptLogin {
 }
 
 #[cfg(test)]
-mod room_for_a_grow;
+mod room_for_a_grow_tests;
 
 #[cfg(test)]
-mod kept_login_rows;
+mod kept_login_rows_tests;
 
 #[cfg(test)]
-mod no_link_words;
+mod no_link_words_tests;
 
 /// Why the runtime refuses a checkout, as the user is told: the reason of a refused spec as it is
 /// (the runtime's own wording names the folder), any other failure by its message.
@@ -771,3 +763,6 @@ mod checkout_refusal_tests;
 
 #[cfg(test)]
 mod workspace_error_tests;
+
+#[cfg(test)]
+mod pull_throttle_tests;

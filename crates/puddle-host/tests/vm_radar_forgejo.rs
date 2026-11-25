@@ -31,49 +31,11 @@ use puddle_types::WorkspaceId;
 use serde_json::json;
 use support::{Api, ended};
 use vm_support::{
-    VmHost, guest, guest_within, platform_trusting, start_vm_host_platform, through_company_proxy,
-    with_fake_names,
+    assert_guest_holds_no_token, guest, platform_trusting, start_vm_host_platform,
+    through_company_proxy, with_fake_names,
 };
 
 const NAME: &str = "bound.invalid";
-
-/// `"first""second"`: the shell joins them, the script text never holds the value.
-fn split(value: &str) -> String {
-    let (head, tail) = value.split_at(value.len() / 2);
-    format!("\"{head}\"\"{tail}\"")
-}
-
-/// The guest holds no token: not in any process's environment or command line, not in any file of
-/// the disk. The control comes first: a token planted in a file and in a process's environment
-/// must be found, or the search proves nothing.
-async fn assert_guest_holds_no_token(vm: &VmHost, sandbox: &WorkspaceId, token: &str) {
-    let search = format!(
-        "w={w}; printf '%s\\n' \"$w\" \"$(printf 'x-access-token:%s' \"$w\" | base64 -w0)\" \"$(printf '%s' \"$w\" | base64 -w0)\" > /dev/shm/.p; \
-         echo procs=$(cat /proc/[0-9]*/environ /proc/[0-9]*/cmdline 2>/dev/null | tr '\\0' '\\n' | grep -cFf /dev/shm/.p); \
-         echo files=$(grep -rlaFf /dev/shm/.p --exclude-dir=proc --exclude-dir=sys --exclude-dir=dev --exclude=.p / 2>/dev/null | grep -v '^/dev/shm/.p$' | tr '\\n' ' '); \
-         rm -f /dev/shm/.p; echo done",
-        w = split(token)
-    );
-    let planted = format!(
-        "w={w}; printf '%s\\n' \"$w\" > /root/planted.txt; \
-         env PLANTED=\"$w\" sleep 120 & pid=$!; sleep 1; {search}; kill $pid; rm -f /root/planted.txt",
-        w = split(token)
-    );
-    let control = guest_within(&vm.runtime, sandbox, &planted, Duration::from_secs(600)).await;
-    assert!(
-        !control.contains("procs=0") && control.contains("/root/planted.txt"),
-        "the search must find a planted token in a process and in a file: {control}"
-    );
-    let found = guest_within(&vm.runtime, sandbox, &search, Duration::from_secs(600)).await;
-    assert!(
-        found.contains("procs=0"),
-        "a token is in a process: {found}"
-    );
-    assert!(
-        found.contains("files= done") || found.contains("files=\ndone"),
-        "a token is on the guest's disk: {found}"
-    );
-}
 
 /// Clone, push a branch, delete it, a refused push to an unlisted repository, and the token
 /// search, against a real Forgejo.
@@ -204,14 +166,17 @@ async fn vm_radar_forgejo_clones_pushes_and_deletes_a_branch_and_the_guest_never
          git push origin HEAD:main 2>&1 || true",
     )
     .await;
-    assert!(out.contains("not on this workspace's push list"), "{out}");
+    assert!(
+        out.contains("not in this workspace's allowed repositories"),
+        "{out}"
+    );
     assert_eq!(
         forgejo.branch_head("acme/other", "main").unwrap(),
         other_head,
         "the refused push changed nothing on Forgejo"
     );
 
-    assert_guest_holds_no_token(&vm, &sandbox, &token).await;
+    assert_guest_holds_no_token(&vm, &sandbox, &[&token]).await;
 
     // The audit log holds no token either, and its rows say the connections were injected.
     let audit = api

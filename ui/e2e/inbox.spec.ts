@@ -681,6 +681,7 @@ test.describe("keyboard only", () => {
       const listed = (await page.locator("li.req .host").allTextContents())
         .map((host) => host.replace(/:\d+$/, ""))
         .filter((host) => /^s\d\.example\.com$/.test(host));
+      // flake-ok: the rows were on screen before the shortcuts list opened and nothing changes them
       expect(listed).toHaveLength(3);
       const hosts = listed as unknown as readonly [string, string, string];
       await reach(page, hosts[0]);

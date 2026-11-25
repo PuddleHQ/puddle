@@ -9,7 +9,7 @@ fn workspace(name: &str) -> WorkspaceId {
 }
 
 fn vault(store: &Arc<MemoryStore>, name: &str) -> Vault {
-    Vault::new(Arc::clone(store) as Arc<dyn SecretStore>, &workspace(name))
+    Vault::new(store.clone(), &workspace(name))
 }
 
 #[test]

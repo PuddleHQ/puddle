@@ -13,7 +13,7 @@ use puddle_logins::{
     StandInKind,
 };
 use puddle_proxy::{InjectDecision, StandIns};
-use puddle_secrets::{MemoryStore, SecretStore};
+use puddle_secrets::MemoryStore;
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 use terminate_support::{
@@ -112,8 +112,8 @@ async fn every_jwt_stand_in_given_so_far_reaches_the_api_as_the_real_token_of_it
         true,
         &PROFILE,
         Arc::clone(&registry),
-        Arc::new(MemoryStore::new()) as Arc<dyn SecretStore>,
-        Arc::clone(&notices) as Arc<dyn LoginNotices>,
+        Arc::new(MemoryStore::new()),
+        notices.clone(),
         puddle_logins::Marker::none(),
     );
     let rig = RigBuilder::new(&pki)

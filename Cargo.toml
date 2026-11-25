@@ -226,6 +226,7 @@ unsafe_code = "deny" # each crate root also says #![forbid(unsafe_code)] unless 
 missing_docs = "warn"
 unreachable_pub = "warn"
 unused_qualifications = "warn"
+trivial_casts = "warn"
 rust_2018_idioms = { level = "warn", priority = -1 }
 
 [workspace.lints.clippy]

@@ -118,10 +118,7 @@ async fn a_request_the_server_accepts_is_not_touched_by_the_401_watch() {
 
 #[tokio::test]
 async fn any_other_401_is_the_servers_answer_unchanged() {
-    for decision in [
-        (|| InjectDecision::PassThrough) as fn() -> InjectDecision,
-        || inject(CANARY),
-    ] {
+    for decision in [(|| InjectDecision::PassThrough), || inject(CANARY)] {
         let (_server, rig, _injector) = h1_rig(Box::new(decision)).await;
         let mut guest = rig.guest();
         let mut client = guest.tls("bound.test:443", None).await.unwrap();

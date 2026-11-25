@@ -48,7 +48,9 @@ impl std::fmt::Display for Layer {
 
 impl std::error::Error for Layer {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        self.1.as_deref().map(|l| l as _)
+        self.1
+            .as_deref()
+            .map(|l| -> &(dyn std::error::Error + 'static) { l })
     }
 }
 

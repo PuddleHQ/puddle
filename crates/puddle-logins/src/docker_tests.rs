@@ -3,8 +3,6 @@
 //! personal access token `desktop-generate` mints from the access token (a nested field), and the
 //! revoke request that carries the refresh token back.
 
-use std::sync::Arc;
-
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use puddle_proxy::ExchangeRewriter as _;
@@ -42,13 +40,10 @@ fn access_token() -> String {
 }
 
 fn kept(rig: &Rig, role: impl Into<Slot>) -> Option<(String, String)> {
-    Vault::new(
-        Arc::clone(&rig.store) as _,
-        &WorkspaceId::new("alpha").unwrap(),
-    )
-    .read(&DOCKER, role)
-    .unwrap()
-    .map(|saved| (saved.stand_in.clone(), saved.real.to_string()))
+    Vault::new(rig.store.clone(), &WorkspaceId::new("alpha").unwrap())
+        .read(&DOCKER, role)
+        .unwrap()
+        .map(|saved| (saved.stand_in.clone(), saved.real.to_string()))
 }
 
 async fn poll(rig: &Rig, access: &str) -> Value {
@@ -136,7 +131,7 @@ fn a_refresh_and_a_revoke_swap_the_refresh_token_and_the_pat_request_swaps_nothi
             "/v2/access-tokens/desktop-generate",
         )
         .unwrap();
-    assert_eq!(pat.swap_fields(), [] as [&str; 0]);
+    assert_eq!(pat.swap_fields(), <[&str; 0]>::default());
     assert!(pat.answer_mut().is_some());
     // Creating an access token through Docker Hub's API, and asking the registry's token server
     // for a bearer token (`GET`, or `POST` in the `OAuth2` form), are read too; none swaps a field.
@@ -150,7 +145,7 @@ fn a_refresh_and_a_revoke_swap_the_refresh_token_and_the_pat_request_swaps_nothi
             .logins
             .begin(&host(host_name), method, path)
             .unwrap_or_else(|| panic!("{host_name} {method} {path}"));
-        assert_eq!(read.swap_fields(), [] as [&str; 0]);
+        assert_eq!(read.swap_fields(), <[&str; 0]>::default());
         assert!(read.answer_mut().is_some(), "{host_name} {path}");
     }
     for (method, path) in [
@@ -325,7 +320,7 @@ async fn a_registry_token_is_replaced_held_in_memory_and_swapped_toward_the_regi
     // Not a login: nothing is listed as kept and nothing is in the store.
     assert_eq!(rig.logins.kept(), []);
     rig.store.heal();
-    assert_eq!(rig.store.ids(), [] as [String; 0]);
+    assert_eq!(rig.store.ids(), <[String; 0]>::default());
     assert!(
         kept(
             &rig,

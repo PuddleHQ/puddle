@@ -458,7 +458,7 @@ async fn a_push_to_a_repository_off_the_list_ends_before_anything_goes_upstream(
     assert_eq!(refused.exit, Some(1), "{refused:?}");
     assert!(
         refused.err.starts_with(
-            "puddle: push to bound.test/acme/other is not on this workspace's push list"
+            "puddle: Blocked this push: bound.test/acme/other is not in this workspace's allowed repositories for push"
         ),
         "{refused:?}"
     );
@@ -626,7 +626,10 @@ async fn git_lfs_falls_back_to_https_with_no_token_in_the_answer() {
     )
     .await;
     assert_eq!(off.exit, Some(1));
-    assert!(off.err.contains("push to bound.test/acme/other"), "{off:?}");
+    assert!(
+        off.err.contains("Blocked this push: bound.test/acme/other"),
+        "{off:?}"
+    );
     assert_eq!(t.upstream.calls().len(), 0);
 }
 
@@ -1169,7 +1172,8 @@ async fn a_download_of_lfs_objects_asks_the_table_about_a_fetch() {
     .await;
     assert_eq!(off.exit, Some(1), "{off:?}");
     assert!(
-        off.err.contains("pull from bound.test/acme/other"),
+        off.err
+            .contains("Blocked this fetch: bound.test/acme/other"),
         "{off:?}"
     );
     let on = exec(

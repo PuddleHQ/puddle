@@ -10117,7 +10117,7 @@
         "tags": [
           "identities"
         ],
-        "summary": "Sets \"only push to listed repos\" and \"only pull from listed repos\"; a switch left out stays. `use_default_push` or `use_default_pull` drops the workspace's own\nvalue, so that switch follows the default again.",
+        "summary": "Sets \"only push to allowed repositories\" and \"only pull from allowed repositories\"; a switch left out stays. `use_default_push` or `use_default_pull` drops the workspace's own\nvalue, so that switch follows the default again.",
         "operationId": "set_git_switches",
         "parameters": [
           {
@@ -19003,14 +19003,14 @@
               "boolean",
               "null"
             ],
-            "description": "\"Only pull from listed repos\"."
+            "description": "\"Only pull from allowed repositories\"."
           },
           "only_push_listed": {
             "type": [
               "boolean",
               "null"
             ],
-            "description": "\"Only push to listed repos\"."
+            "description": "\"Only push to allowed repositories\"."
           }
         },
         "additionalProperties": false
@@ -25111,14 +25111,14 @@
               "boolean",
               "null"
             ],
-            "description": "\"Only pull from listed repos\": the workspace's own value."
+            "description": "\"Only pull from allowed repositories\": the workspace's own value."
           },
           "only_push_listed": {
             "type": [
               "boolean",
               "null"
             ],
-            "description": "\"Only push to listed repos\": the workspace's own value."
+            "description": "\"Only push to allowed repositories\": the workspace's own value."
           },
           "use_default_pull": {
             "type": "boolean",

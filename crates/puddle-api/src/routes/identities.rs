@@ -535,7 +535,7 @@ pub(crate) async fn detach_identity(
     Ok(Json(set))
 }
 
-/// Sets "only push to listed repos" and "only pull from listed repos"; a switch left out stays. `use_default_push` or `use_default_pull` drops the workspace's own
+/// Sets "only push to allowed repositories" and "only pull from allowed repositories"; a switch left out stays. `use_default_push` or `use_default_pull` drops the workspace's own
 /// value, so that switch follows the default again.
 #[utoipa::path(
     put,

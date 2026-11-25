@@ -53,25 +53,25 @@ Clients that work: OpenSSH's `git`, protocol versions 0, 1 and 2, a connection s
 `ControlMaster`, and libgit2 (so Cargo's built-in Git). A key you put in the workspace is not used
 toward these hosts, and it does not need to be.
 
-## Pushes follow the push list
+## Pushes follow the allowed repositories
 
-The repository list on the workspace's Git tab decides pushes over SSH as it does over HTTPS. A push
-to a repository off the list is refused before anything reaches the host. Git prints:
+The allowed repositories on the workspace's Git tab decide pushes over SSH as it does over HTTPS. A push
+to a repository that is not allowed is refused before anything reaches the host. Git prints:
 
 ```text
 puddle: <the reason>
 fatal: Could not read from remote repository.
 ```
 
-The list covers pushes made with Git, over HTTPS or SSH, and nothing else. It does not see GitHub's
+This covers pushes made with Git, over HTTPS or SSH, and nothing else. It does not see GitHub's
 REST API: a Git push and an API call that creates a file or opens a pull request are different
-requests, and the list only reads the first kind. With a token in the workspace, or a `gh` login
+requests, and the check only reads the first kind. With a token in the workspace, or a `gh` login
 captured while login capture is on, an agent can change a repository through `api.github.com`,
-whether or not the list names it. Keep tokens out of the workspace for that reason: the credentials
+whether or not the Git tab allows it. Keep tokens out of the workspace for that reason: the credentials
 Puddle holds on your computer never reach it.
 
 To block API writes, add your own request rule on method and path for `api.github.com`, for example
-refusing `POST`, `PUT`, `PATCH` and `DELETE`. The push list does not do this for you.
+refusing `POST`, `PUT`, `PATCH` and `DELETE`. The allowed repositories do not do this for you.
 
 An SSH address on the Git tab's add form is listed as the same repository as its HTTPS address.
 The create-workspace form and the add-repository form take an SSH address too and clone the

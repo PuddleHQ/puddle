@@ -116,6 +116,7 @@ fn within_as(path: &Path, root: &Path, fold: bool) -> bool {
 /// On Unix the checkout must belong to the user Puddle runs as, as git itself asks of a
 /// repository before it reads its config (`safe.directory`).
 #[cfg(unix)]
+// string-error-ok: the text is spliced into one user-facing refusal; no caller branches on a kind
 fn owned_by(meta: &Metadata, uid: u32) -> Result<(), String> {
     use std::os::unix::fs::MetadataExt;
     if meta.uid() == uid {

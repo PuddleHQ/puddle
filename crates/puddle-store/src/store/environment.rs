@@ -328,6 +328,7 @@ impl Store {
     pub fn env_for_start(
         &self,
         workspace: &WorkspaceId,
+        // string-error-ok: the minting closure is the caller's: its message is wrapped once into the store error, nothing matches on a kind
         mint: &mut dyn FnMut(&EnvName) -> Result<String, String>,
     ) -> Result<Vec<StartVar>, StoreError> {
         self.change(|tx, _now, _fx| {
@@ -366,6 +367,7 @@ fn stand_in(
     workspace: &WorkspaceId,
     env_id: i64,
     name: &EnvName,
+    // string-error-ok: the minting closure is the caller's: its message is wrapped once into the store error, nothing matches on a kind
     mint: &mut dyn FnMut(&EnvName) -> Result<String, String>,
 ) -> Result<String, StoreError> {
     let held: Option<String> = tx

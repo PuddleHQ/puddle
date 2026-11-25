@@ -275,7 +275,7 @@ fn a_stand_in_inside_basic_credentials_is_not_reported_as_foreign() {
         STANDARD.encode(format!("x-access-token:{token}"))
     );
     let map = headers(&[("authorization", &basic)]);
-    let own = token.clone();
+    let own = token;
     let held = |part: &[u8]| part == own.as_bytes();
     for git in [false, true] {
         assert_eq!(kinds_in_headers(&map, &[], git, &held), NONE, "git: {git}");

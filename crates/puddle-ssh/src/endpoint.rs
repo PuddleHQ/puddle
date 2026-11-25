@@ -41,6 +41,7 @@ pub trait SshTarget: Send + Sync + 'static {
 
     /// Decides whether a new client is served, waiting while that isn't known yet. `Err` holds
     /// the reason the client is shown.
+    // string-error-ok: `Err` is the reason shown to the refused SSH client, a message and nothing a caller matches on
     fn admit(&self) -> impl Future<Output = Result<(), String>> + Send;
 
     /// Tells the owner that the endpoint, or one client's session, failed in a way the client
@@ -72,6 +73,7 @@ impl<S: Sandbox> SshTarget for GatedSandbox<S> {
         self.name().to_string()
     }
 
+    // string-error-ok: `Err` is the reason shown to the refused SSH client, a message and nothing a caller matches on
     async fn admit(&self) -> Result<(), String> {
         self.gate()
             .wait_ready(BootHook::DEFAULT_READY_WAIT)

@@ -1,9 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    reason = "test code: a panic is how a test fails"
-)]
+#![expect(clippy::unwrap_used, reason = "test code: a panic is how a test fails")]
 //! Its own test binary: the log capture is the process-wide default, which the other tests must not share.
 
 #[path = "integration/common/mod.rs"]

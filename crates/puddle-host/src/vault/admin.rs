@@ -487,7 +487,7 @@ pub fn vault_reset(
     let keys = home
         .as_deref()
         .map(|home| VaultKeys::new(home, &vault, tools(setup)))
-        .ok_or(VaultAdminError::from(failure))?;
+        .ok_or_else(|| VaultAdminError::from(failure))?;
     if !yes {
         return Ok(ResetOutcome::Plan {
             key_files: keys.keys_to_set_aside(),

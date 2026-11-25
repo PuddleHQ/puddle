@@ -152,9 +152,9 @@ async fn admit_into(
             }
             AddressVerdict::Block(reason) => {
                 if matches!(reason, BlockReason::CompanyNetwork(_)) {
-                    company_ip.get_or_insert(addr.ip());
+                    company_ip.get_or_insert_with(|| addr.ip());
                 }
-                refused_first.get_or_insert((addr.ip(), RefusedReason::Guard(reason)));
+                refused_first.get_or_insert_with(|| (addr.ip(), RefusedReason::Guard(reason)));
                 blocked.push(reason);
             }
         }

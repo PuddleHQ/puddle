@@ -70,7 +70,7 @@ struct Args {
 fn parse(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
     let (mut name, mut port, mut info, mut stop) = (None, 443, None, None);
     while let Some(flag) = args.next() {
-        let mut value = || args.next().ok_or(format!("{flag} needs a value"));
+        let mut value = || args.next().ok_or_else(|| format!("{flag} needs a value"));
         match flag.as_str() {
             "--name" => name = Some(value()?),
             "--port" => port = value()?.parse().map_err(|e| format!("--port: {e}"))?,

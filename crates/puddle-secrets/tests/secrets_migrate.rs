@@ -3,11 +3,7 @@
 //! both directions, with values of the sizes and kinds the keyring has trouble with. A computer
 //! without a credential store that works skips the run and says so, unless
 //! `PUDDLE_REQUIRE_OS_CREDENTIAL_STORE` is set (the CI job that starts gnome-keyring sets it).
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    reason = "test code: a panic is how a test fails"
-)]
+#![expect(clippy::unwrap_used, reason = "test code: a panic is how a test fails")]
 
 use std::fmt::Write as _;
 

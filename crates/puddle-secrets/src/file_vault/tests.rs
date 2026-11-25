@@ -1,11 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The format and the crash safety of the vault. The behaviour every store shares is in
 //! `tests/store_contract.rs`.
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    reason = "test code: a panic is how a test fails"
-)]
 
 use super::*;
 

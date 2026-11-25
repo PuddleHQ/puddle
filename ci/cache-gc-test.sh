@@ -39,9 +39,9 @@ cat >"$tmp/bin/gh" <<'GH'
 case "$*" in
 *"-X DELETE"*) echo "${4##*/}" >>"$FAKE_DELETED" ;;
 *actions/caches*)
-    while IFS=$'\t' read -r id ref key created used; do
-        jq -cn --argjson id "$id" --arg ref "$ref" --arg key "$key" --arg c "$created" --arg u "$used" \
-            '{id: $id, ref: $ref, key: $key, created_at: $c, last_accessed_at: $u, size_in_bytes: 1000000}'
+    while IFS=$'\t' read -r id ref key created used size; do
+        jq -cn --argjson id "$id" --arg ref "$ref" --arg key "$key" --arg c "$created" --arg u "$used" --arg s "$size" \
+            '{id: $id, ref: $ref, key: $key, created_at: $c, last_accessed_at: $u, size_in_bytes: (if $s == "" then 1000000 else ($s | tonumber) end)}'
     done <"$FAKE_CACHES"
     ;;
 *cache/usage*) echo "cache total: 0 MB" ;;
@@ -71,6 +71,25 @@ grep -q 'gh-readonly-queue/develop/pr-7-abc' "$tmp/out" || bad "DRY_RUN=1 does n
 # The inventory lists every entry, deleted or kept, with ref, size and times.
 grep -q '^  cargo-xwin-0.23.1-x86_64  refs/heads/develop  1  ' "$tmp/out" || bad "the inventory lacks the develop cargo-xwin entry"
 [ "$(grep -c '^  ' "$tmp/out")" = 15 ] || bad "the inventory should list all 15 entries: $(cat "$tmp/out")"
+
+# The budget: over BUDGET_MB the cheapest-to-rebuild trunk entries go first (clippy, windows, gates, linux); small
+# ones (node, playwright) never. The sixth column of the fake list is the size in bytes.
+cat >"$tmp/big.tsv" <<EOF
+21	refs/heads/develop	v0-rust-linux-0123abcd-4567ef01	$now	$now	2000000000
+22	refs/heads/develop	v0-rust-gates-0123abcd-4567ef01	$now	$now	3000000000
+23	refs/heads/develop	v0-rust-windows-clippy-0123abcd-4567ef01	$now	$now	3000000000
+24	refs/heads/develop	v0-rust-windows-0123abcd-4567ef01	$now	$now	3000000000
+25	refs/heads/develop	node-cache-Linux-x64-npm-9	$now	$now	50000000
+EOF
+budget_run() { # budget -> the deleted ids, sorted
+    : >"$tmp/deleted"
+    PATH="$tmp/bin:$PATH" GITHUB_REPOSITORY=o/r FAKE_CACHES="$tmp/big.tsv" FAKE_DELETED="$tmp/deleted" BUDGET_MB="$1" \
+        "$here/cache-gc.sh" >"$tmp/out" 2>&1 || bad "budget run failed: $(cat "$tmp/out")"
+    sort -n "$tmp/deleted" | tr '\n' ' '
+}
+got=$(budget_run 9000); [ "$got" = "23 " ] || bad "budget 9000: deleted '$got', want '23 '"
+got=$(budget_run 4000); [ "$got" = "22 23 24 " ] || bad "budget 4000: deleted '$got', want '22 23 24 '"
+got=$(budget_run 20000); [ -z "$got" ] || bad "budget 20000: deleted '$got', want nothing"
 
 if [ "$fail" = 0 ]; then
     echo "cache-gc-test: ok"

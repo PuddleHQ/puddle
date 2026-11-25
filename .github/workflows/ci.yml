@@ -341,7 +341,7 @@ jobs:
           "$RUNNER_TEMP/forgejo/forgejo" --version
           echo "PUDDLE_FORGEJO_BIN=$RUNNER_TEMP/forgejo/forgejo" >> "$GITHUB_ENV"
       - name: Forgejo download cache (save on a miss)
-        if: ${{ !cancelled() && steps.forgejo.outcome == 'success' && steps.forgejo-cache.outputs.cache-hit != 'true' }}
+        if: ${{ !cancelled() && github.ref == 'refs/heads/develop' && steps.forgejo.outcome == 'success' && steps.forgejo-cache.outputs.cache-hit != 'true' }}
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

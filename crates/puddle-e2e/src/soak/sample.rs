@@ -152,10 +152,19 @@ async fn open_stream(target: &Target) -> io::Result<TcpStream> {
     Ok(stream)
 }
 
+/// Where the API is now: a restart of `puddle serve` gives it a new token, and the soak run moves
+/// its sampler there with [`Sampler::retarget`].
+pub type ApiSlot = Arc<Mutex<Target>>;
+
 /// Reads `GET /api/events` for ever, counting each `data:` or `event:` line as an event (a comment
 /// line, the keep-alive, is not one) and reconnecting after a second when the stream ends. Ends
 /// only when the task is dropped.
 pub async fn read_events(target: Target, state: Arc<SseState>) {
+    read_events_at(Arc::new(Mutex::new(target)), state).await;
+}
+
+/// [`read_events`] against whatever `slot` holds at each connect.
+pub async fn read_events_at(slot: ApiSlot, state: Arc<SseState>) {
     let mut first = true;
     // flake-ok: a reader that reconnects for ever until stopped, not a wait for a condition
     loop {
@@ -164,6 +173,7 @@ pub async fn read_events(target: Target, state: Arc<SseState>) {
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
         first = false;
+        let target = slot.lock().unwrap().clone();
         let Ok(stream) = open_stream(&target).await else {
             continue;
         };
@@ -224,8 +234,10 @@ pub async fn probe_web_app(
 }
 
 /// RSS in KiB, threads and open file descriptors of one process, from `proc_dir` (`/proc/<pid>`).
+/// The descriptors are left out when their folder cannot be read: `puddle serve` makes itself
+/// non-dumpable, which gives `/proc/<pid>/fd` to root, while `status` stays readable.
 #[must_use]
-pub fn read_process(proc_dir: &Path) -> Option<[(&'static str, f64); 3]> {
+pub fn read_process(proc_dir: &Path) -> Option<Vec<(&'static str, f64)>> {
     let status = std::fs::read_to_string(proc_dir.join("status")).ok()?;
     let field = |name: &str| -> Option<f64> {
         status.lines().find_map(|l| {
@@ -236,17 +248,20 @@ pub fn read_process(proc_dir: &Path) -> Option<[(&'static str, f64); 3]> {
                 .ok()
         })
     };
-    let fds = std::fs::read_dir(proc_dir.join("fd")).ok()?.count();
-    #[expect(clippy::cast_precision_loss, reason = "descriptor counts are small")]
-    Some([
+    let mut got = vec![
         ("rss_kb", field("VmRSS:")?),
         ("threads", field("Threads:")?),
-        ("handles", fds as f64),
-    ])
+    ];
+    if let Ok(fds) = std::fs::read_dir(proc_dir.join("fd")) {
+        #[expect(clippy::cast_precision_loss, reason = "descriptor counts are small")]
+        got.push(("handles", fds.count() as f64));
+    }
+    Some(got)
 }
 
 /// Every process under `proc_root` whose command name starts with one of `prefixes`, as
-/// `(comm, pid)`.
+/// `(comm, pid)`. A prefix that ends in `$` is a whole name: `puddle$` finds `puddle` and not
+/// `puddle-soak`.
 #[must_use]
 pub fn find_processes(proc_root: &Path, prefixes: &[String]) -> Vec<(String, u32)> {
     let mut found = Vec::new();
@@ -265,11 +280,51 @@ pub fn find_processes(proc_root: &Path, prefixes: &[String]) -> Vec<(String, u32
             continue;
         };
         let comm = comm.trim().to_owned();
-        if prefixes.iter().any(|p| comm.starts_with(p.as_str())) {
+        if prefixes.iter().any(|p| {
+            p.strip_suffix('$')
+                .map_or_else(|| comm.starts_with(p.as_str()), |exact| comm == exact)
+        }) {
             found.push((comm, pid));
         }
     }
     found.sort();
+    found
+}
+
+/// Every process below `root` (children, their children, ...), from `/proc`; not `root` itself.
+#[must_use]
+pub fn descendants(root: u32) -> Vec<u32> {
+    let mut parent_of = Vec::new();
+    for entry in std::fs::read_dir("/proc").into_iter().flatten().flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|s| s.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let stat = std::fs::read_to_string(entry.path().join("stat")).unwrap_or_default();
+        // The parent is the second field after the command, which is in parentheses.
+        let parent = stat
+            .rsplit_once(')')
+            .and_then(|(_, rest)| rest.split_whitespace().nth(1))
+            .and_then(|s| s.parse::<u32>().ok());
+        if let Some(parent) = parent {
+            parent_of.push((pid, parent));
+        }
+    }
+    let mut found = vec![root];
+    let mut i = 0;
+    while let Some(&p) = found.get(i) {
+        found.extend(
+            parent_of
+                .iter()
+                .filter(|&&(_, pp)| pp == p)
+                .map(|&(c, _)| c),
+        );
+        i += 1;
+    }
+    found.retain(|&p| p != root);
     found
 }
 
@@ -336,6 +391,8 @@ pub struct Config {
 #[derive(Debug)]
 pub struct Sampler {
     cfg: Config,
+    api: ApiSlot,
+    root: Arc<Mutex<Option<u32>>>,
     sse: Arc<SseState>,
     w4: Arc<Mutex<W4Window>>,
     cpu_before: Option<(u64, u64)>,
@@ -349,7 +406,8 @@ impl Sampler {
     #[must_use]
     pub fn start(cfg: Config, now: fn() -> u64) -> Self {
         let sse = SseState::new();
-        tokio::spawn(read_events(cfg.api.clone(), sse.clone()));
+        let api = Arc::new(Mutex::new(cfg.api.clone()));
+        tokio::spawn(read_events_at(api.clone(), sse.clone()));
         let w4 = Arc::new(Mutex::new(W4Window::default()));
         if let Some(target) = cfg.w4.clone() {
             tokio::spawn(probe_web_app(
@@ -362,17 +420,34 @@ impl Sampler {
         }
         Self {
             cfg,
+            api,
+            root: Arc::new(Mutex::new(None)),
             sse,
             w4,
             cpu_before: None,
         }
     }
 
+    /// Measures only the processes `root` is or started (from the next sample on), so another
+    /// program of the same name on the machine is left out; a restart passes the new server.
+    pub fn only_below(&self, root: Option<u32>) {
+        *self.root.lock().unwrap() = root;
+    }
+
+    /// Points the API reads and the event reader at `api` from the next request or reconnect on.
+    pub fn retarget(&self, api: Target) {
+        *self.api.lock().unwrap() = api;
+    }
+
     /// One sample at `now`: every reading that works goes into `into`; one that fails is left out
     /// (a missing line is a gap in the series, never a made-up zero).
     pub async fn sample(&mut self, now: u64, into: &mut Series) {
         self.host(now, into);
-        let procs = find_processes(Path::new("/proc"), &self.cfg.process_prefixes);
+        let mut procs = find_processes(Path::new("/proc"), &self.cfg.process_prefixes);
+        if let Some(root) = *self.root.lock().unwrap() {
+            let ours = descendants(root);
+            procs.retain(|&(_, pid)| pid == root || ours.contains(&pid));
+        }
         for (comm, pid) in procs {
             let readings = read_process(&Path::new("/proc").join(pid.to_string()));
             for (field, v) in readings.into_iter().flatten() {
@@ -435,12 +510,9 @@ impl Sampler {
     }
 
     async fn api(&self, now: u64, into: &mut Series) {
+        let api = self.api.lock().unwrap().clone();
         for (name, path) in API_CALLS {
-            let Some(reply) = get(&self.cfg.api, path)
-                .await
-                .ok()
-                .filter(|r| r.status == 200)
-            else {
+            let Some(reply) = get(&api, path).await.ok().filter(|r| r.status == 200) else {
                 continue;
             };
             into.push(
@@ -457,7 +529,7 @@ impl Sampler {
                 into.push(now, &format!("count.{what}"), c);
             }
         }
-        if let Ok(reply) = get(&self.cfg.api, "/api/problems").await
+        if let Ok(reply) = get(&api, "/api/problems").await
             && reply.status == 200
             && let Ok(c) = count_in(&reply.body, "problems")
         {

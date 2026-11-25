@@ -53,6 +53,12 @@ if [ "${1:-}" != "--only-doctor" ]; then
         echo "check-test-hooks: the feature \`test-lookup\` of puddle-agent is on in a build without dev-dependencies" >&2
         status=1
     fi
+    # The soak canary's planted leak (puddle-api `soak-planted-leak`) is turned on only on the
+    # command line of soak.yml's canary build, never by a manifest.
+    if printf '%s\n' "$release_tree" | grep -c 'puddle-api feature "soak-planted-leak"' >/dev/null; then
+        echo "check-test-hooks: the feature \`soak-planted-leak\` of puddle-api is on in a build without dev-dependencies" >&2
+        status=1
+    fi
     test_tree=$(cargo tree --locked -p puddle-agent -e dev,features --prefix none 2>/dev/null) || {
         echo "check-test-hooks: cargo tree failed" >&2
         exit 1

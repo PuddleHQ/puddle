@@ -135,6 +135,7 @@ pub use token::{ApiToken, ConnectionFileError, ConnectionInfo};
 #[cfg(feature = "embedded-ui")]
 pub use ui::EmbeddedUi;
 pub use ui::{UiAssets, UiFile};
+pub use workspaces::phase;
 pub use workspaces::{
     AttachMode, Attached, BrowserTarget, CONNECTION_TOKEN_COOKIE, CheckoutProblem,
     DEFAULT_DISK_MIB, DEFAULT_IMAGE, DEFAULT_ROOT_DISK_MIB, DeleteCheck, DesktopTarget,
@@ -144,9 +145,7 @@ pub use workspaces::{
     NewWorkspace, NoFreeEntryId, NoFreeId, NoGitSetup, NoWorkspaces, OpenTarget, Operation,
     RandomIds, RepoFindings, RepoUrl, RepoUrlError, Repository, RepositoryDraft,
     RepositoryListError, ShellInitCheck, StartFolder, StartFolderChange, StartFolderError,
-    WorkspaceError, WorkspaceRecord, WorkspaceService, admit_delete_fingerprint,
-    admit_delete_status, admit_grow_size, admit_idle, admit_reset_root_disk, admit_settled,
-    admit_start, admit_stop, check_rename, check_repositories, check_repositories_with,
-    check_session_user_change, check_start_folder_change, entry_id_from_text, label_taken,
-    new_entry_id, not_found,
+    WorkspaceError, WorkspaceRecord, WorkspaceService, admit_delete_fingerprint, admit_grow_size,
+    check_rename, check_repositories, check_repositories_with, check_session_user_change,
+    check_start_folder_change, entry_id_from_text, label_taken, new_entry_id, not_found,
 };

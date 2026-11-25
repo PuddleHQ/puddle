@@ -150,8 +150,8 @@ pub use ui_errors::{UiError, UiErrorKind, UiErrorList, UiErrorReport};
 pub use workspaces::{
     AttachMode, AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest, FindingList,
     GrowRootDiskRequest, NewRepositoryRequest, NewWorkspaceRequest, RenameWorkspaceRequest,
-    RepoFindings, SessionUserRequest, Workspace, WorkspaceList, WorkspaceLookupConflict,
-    WorkspaceMatch, WorkspaceOperation, WorkspaceRepository,
+    RepoFindings, SessionUserRequest, Workspace, WorkspaceAction, WorkspaceList,
+    WorkspaceLookupConflict, WorkspaceMatch, WorkspaceOperation, WorkspaceRepository,
 };
 
 // ---------------------------------------------------------------------------------------------

@@ -256,7 +256,7 @@ pub struct OwnedDisk {
 /// .with_route(VsockRoute::new(5000, r"\\.\pipe\puddle-acme-proxy"))
 /// .with_file_mount(FileMount::read_only("/opt/puddle/boot.sh", GuestPath::new("/puddle/boot.sh").unwrap()))
 /// .with_volume(
-///     VolumeMount::named(ws.volume_name(), GuestPath::new("/workspaces/acme").unwrap())
+///     VolumeMount::named(ws.volume_name(), GuestPath::new("/workspace").unwrap())
 ///         .ensure_size(DiskSize::gib(20)),
 /// );
 /// spec.validate().unwrap();

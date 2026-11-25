@@ -57,7 +57,7 @@ async fn the_install_begins_after_the_start_is_done_and_a_second_start_installs_
     let runs = rig.guest.tools_runs.lock().unwrap().clone();
     assert_eq!(
         runs.first().unwrap().0,
-        ["mise-install", "/workspaces/acme", "--missing"]
+        ["mise-install", "/workspace", "--missing"]
     );
     assert!(
         runs.iter()

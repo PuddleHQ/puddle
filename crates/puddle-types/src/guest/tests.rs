@@ -41,14 +41,7 @@ fn a_plain_file_replaces_and_a_merged_file_starts_from_the_specs_fresh_text() {
 
 #[test]
 fn guest_path_accepts_normalised_absolute_paths() {
-    for ok in [
-        "/",
-        "/a",
-        "/a/b.c",
-        "/.hidden",
-        "/a/..b",
-        "/workspaces/acme",
-    ] {
+    for ok in ["/", "/a", "/a/b.c", "/.hidden", "/a/..b", "/workspace"] {
         assert_eq!(p(ok).as_str(), ok);
         assert_eq!(p(ok).to_string(), ok);
     }

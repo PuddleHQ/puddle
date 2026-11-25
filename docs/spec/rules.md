@@ -45,7 +45,9 @@ a binding never allows a host, and a toggle never allows a destination (R-14).
   from the user's own setup choices and shown with a reason for every host (R-40, R-41).
   *Note added 2026-10-08, reworded 2026-11-14.*
 - **R-2 Exact rules** match the identical normalised host or IP literal, on any port. Port rules are
-  later; the port is still recorded on pending rows and in the audit.
+  later; the port is still recorded on pending rows and in the audit. So an allow of a host also
+  lets TCP port 22 (or any other port) of that host through; to stop SSH to it, a deny of the host
+  is the only rule, and it stops every port.
 - **R-3 Suffix rules** `.example.com` match every name ending in `.example.com` at any depth, and
   not `example.com` itself *(default)*. Input `*.example.com` is accepted and stored as
   `.example.com`. A suffix rule never matches an IP literal.

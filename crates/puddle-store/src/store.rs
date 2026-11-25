@@ -1088,6 +1088,10 @@ impl Policy for Store {
                 reason: err.to_string(),
             })
     }
+
+    fn workspace_name(&self, workspace: &WorkspaceId) -> Option<String> {
+        self.current_workspace_name(workspace)
+    }
 }
 
 #[cfg(test)]

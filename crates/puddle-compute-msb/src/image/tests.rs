@@ -172,3 +172,27 @@ fn events_that_move_no_count_report_nothing() {
         None
     );
 }
+
+#[test]
+fn a_finished_layer_counts_as_fully_downloaded_and_gives_its_size() {
+    let mut tally = Tally::default();
+    tally.apply(&resolved(1, None));
+    let done = tally
+        .apply(&MsbPull::LayerDownloadComplete {
+            layer_index: 0,
+            digest: "sha256:l".into(),
+            downloaded_bytes: 300,
+        })
+        .unwrap();
+    assert_eq!((done.done, done.total), (300, Some(300)));
+}
+
+#[tokio::test]
+async fn dropping_the_guard_ends_a_task_that_has_not_finished() {
+    let task = tokio::spawn(std::future::pending::<()>());
+    let probe = task.abort_handle();
+    drop(EndsOnDrop(task));
+    tokio::task::yield_now().await;
+    tokio::task::yield_now().await;
+    assert!(probe.is_finished());
+}

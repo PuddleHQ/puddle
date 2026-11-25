@@ -8,6 +8,7 @@
   } from "#lib/decision/model.ts";
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import "#lib/theme/controls.css";
+  import AllowDenyPair from "./AllowDenyPair.svelte";
 
   // Ctrl+click (Cmd+click on a Mac) decides for every workspace and skips the options.
   const choose = (effect: "allow" | "deny", event: MouseEvent) =>
@@ -43,24 +44,13 @@
 </script>
 
 <div class="control">
-  {#if !denyOnly}
-    <button
-      type="button"
-      class="btn allow"
-      aria-label="Allow {target.host} for {spoken}"
-      onclick={(event) => choose("allow", event)}
-    >
-      Allow
-    </button>
-  {/if}
-  <button
-    type="button"
-    class="btn deny"
-    aria-label="Deny {target.host} for {spoken}"
-    onclick={(event) => choose("deny", event)}
-  >
-    Deny
-  </button>
+  <AllowDenyPair
+    {denyOnly}
+    allowAria="Allow {target.host} for {spoken}"
+    denyAria="Deny {target.host} for {spoken}"
+    onAllow={(event) => choose("allow", event)}
+    onDeny={(event) => choose("deny", event)}
+  />
   {#if !denyOnly}
     <button
       type="button"

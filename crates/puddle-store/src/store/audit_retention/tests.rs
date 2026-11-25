@@ -176,3 +176,48 @@ fn an_open_whose_rebuild_fails_logs_it_and_goes_on() {
         "{lines:?}"
     );
 }
+
+fn wal_bytes(path: &std::path::Path) -> u64 {
+    let mut wal = path.as_os_str().to_owned();
+    wal.push("-wal");
+    std::fs::metadata(wal).map_or(0, |meta| meta.len())
+}
+
+#[test]
+fn a_sweep_empties_a_write_ahead_log_that_a_long_reader_let_grow() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    let clock = Arc::new(ManualClock::new(1_800_000_000_000));
+    let limits = Limits {
+        max_open_rows: 100_000,
+        ..Limits::default()
+    };
+    let store = Store::open(&path, clock, limits).unwrap();
+    let workspace = WorkspaceId::new("a").unwrap();
+    crate::testing::own(&store, &workspace);
+    // A reader that holds one snapshot open keeps every checkpoint from reaching the log's end,
+    // so a burst of commits grows the log instead of reusing it.
+    let reader = Connection::open(&path).unwrap();
+    reader.execute_batch("BEGIN").unwrap();
+    reader
+        .query_row("SELECT count(*) FROM audit", [], |row| row.get::<_, i64>(0))
+        .unwrap();
+    for n in 0..3000 {
+        let host = Host::parse_normalised(&format!("burst{n}.example")).unwrap();
+        let request = EgressRequest::new(workspace.clone(), host, 443);
+        store.decide(&request, SuffixAllows::Count).unwrap();
+    }
+    let peak = wal_bytes(&path);
+    assert!(
+        peak > 2 * WAL_LIMIT_BYTES as u64,
+        "the burst must outgrow the cap: {peak}"
+    );
+    reader.execute_batch("COMMIT").unwrap();
+    store.sweep().unwrap();
+    let after = wal_bytes(&path);
+    assert!(
+        after < peak,
+        "the sweep left the log at {after}, its peak was {peak}"
+    );
+    assert!(after < WAL_LIMIT_BYTES as u64, "{after}");
+}

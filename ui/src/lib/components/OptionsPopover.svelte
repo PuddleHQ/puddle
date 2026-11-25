@@ -1,8 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { Popover } from "bits-ui";
-  import Check from "@lucide/svelte/icons/check";
-  import X from "@lucide/svelte/icons/x";
   import {
     DURATIONS,
     suffixFor,
@@ -12,6 +10,7 @@
     type RuleSetChoice,
     type Target,
   } from "#lib/decision/model.ts";
+  import AllowDenyPair from "./AllowDenyPair.svelte";
   import SetChip from "./SetChip.svelte";
   import "#lib/theme/controls.css";
 
@@ -192,12 +191,11 @@
       {#if stale}<p class="error" role="alert">{stale}</p>{/if}
       <div class="actions">
         <Popover.Close class="btn">Cancel</Popover.Close>
-        <button type="button" class="btn deny" onclick={() => decide("deny")}>
-          <X aria-hidden="true" size={16} />Deny
-        </button>
-        <button type="button" class="btn allow" onclick={() => decide("allow")}>
-          <Check aria-hidden="true" size={16} />Allow
-        </button>
+        <AllowDenyPair
+          icons
+          onAllow={() => decide("allow")}
+          onDeny={() => decide("deny")}
+        />
       </div>
     </Popover.Content>
   </Popover.Portal>

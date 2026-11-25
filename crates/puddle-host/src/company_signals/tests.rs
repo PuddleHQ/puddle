@@ -385,14 +385,79 @@ fn a_read_is_reused_for_the_snapshot_lifetime_and_renewed_after_it() {
     assert_eq!(network.reads(), 1);
 
     let network = FakeNetwork::new(home());
-    let signals = HostSignals::new(network.clone(), None).with_snapshot_ttl(Duration::ZERO);
+    let signals = HostSignals::new(network.clone(), None)
+        .with_snapshot_ttl(Duration::ZERO)
+        .with_network_spawn(Arc::new(|job| job()));
     assert!(!signals.vpn_routed(ip("10.20.3.4")));
     network.set(with_vpn());
     assert!(
-        signals.vpn_routed(ip("10.20.3.4")),
-        "the next read sees the VPN"
+        !signals.vpn_routed(ip("10.20.3.4")),
+        "an old read is served while the new one is taken"
     );
-    assert_eq!(network.reads(), 2);
+    assert!(
+        signals.vpn_routed(ip("10.20.3.4")),
+        "the next answer sees the VPN"
+    );
+    assert_eq!(network.reads(), 3);
+}
+
+/// A network whose reads wait for the test, as the operating system's can.
+#[derive(Debug)]
+struct SlowNetwork {
+    snapshot: Mutex<NetworkSnapshot>,
+    started: std::sync::mpsc::SyncSender<()>,
+    release: Mutex<std::sync::mpsc::Receiver<()>>,
+    slow: std::sync::atomic::AtomicBool,
+}
+
+impl NetworkOs for SlowNetwork {
+    fn read(&self) -> Result<NetworkSnapshot, puddle_upstream::NetworkError> {
+        if self.slow.load(Ordering::SeqCst) {
+            let _ = self.started.try_send(());
+            let _ = self.release.lock().unwrap().recv();
+        }
+        Ok(self.snapshot.lock().unwrap().clone())
+    }
+}
+
+#[test]
+fn an_asker_never_waits_for_a_renewed_read_of_the_network() {
+    let (started, started_rx) = std::sync::mpsc::sync_channel(1);
+    let (release_tx, release) = std::sync::mpsc::channel();
+    let network = Arc::new(SlowNetwork {
+        snapshot: Mutex::new(home()),
+        started,
+        release: Mutex::new(release),
+        slow: false.into(),
+    });
+    let signals =
+        Arc::new(HostSignals::new(network.clone(), None).with_snapshot_ttl(Duration::ZERO));
+    assert!(!signals.vpn_routed(ip("10.20.3.4")), "the first read");
+    *network.snapshot.lock().unwrap() = with_vpn();
+    network.slow.store(true, Ordering::SeqCst);
+
+    let (answered, answered_rx) = std::sync::mpsc::channel();
+    let asking = signals.clone();
+    std::thread::spawn(move || {
+        let first = asking.vpn_routed(ip("10.20.3.4"));
+        let second = asking.vpn_routed(ip("10.20.3.4"));
+        let _ = answered.send((first, second));
+    });
+    let answers = answered_rx.recv_timeout(Duration::from_secs(5));
+    assert_eq!(
+        answers,
+        Ok((false, false)),
+        "both askers were served the last read while the renewal is still reading"
+    );
+    started_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the renewal started");
+    release_tx.send(()).unwrap();
+    puddle_test_kit::eventually_blocking(
+        "the renewed read is served",
+        Duration::from_secs(5),
+        || signals.vpn_routed(ip("10.20.3.4")),
+    );
 }
 
 #[test]

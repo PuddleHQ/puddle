@@ -7,6 +7,8 @@
 //! guest says about a checkout is hostile input (`puddle-workspace` parses it) and is only shown,
 //! or used when the user picks "Manage this", and then it is read again at that moment.
 
+use std::collections::BTreeMap;
+
 use puddle_api::phase::begin;
 use puddle_api::{
     AddRepository, Checkouts, Found, FoundList, NewRepository, RemoteNote, RepoUrl, check_addition,
@@ -62,6 +64,51 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 .entry(id.clone())
                 .or_default(),
         )
+    }
+
+    /// The branch of each checkout of `id` at the last listing, by directory. A listing that is
+    /// running holds the lock, so it counts as none yet.
+    pub(super) fn known_branches_of(&self, id: &WorkspaceId) -> BTreeMap<String, String> {
+        let cache = self
+            .inner
+            .listings
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(id)
+            .map(Arc::clone);
+        let Some(cache) = cache else {
+            return BTreeMap::new();
+        };
+        let Ok(cached) = cache.try_lock() else {
+            return BTreeMap::new();
+        };
+        cached
+            .as_ref()
+            .map(|(_, _, list)| {
+                list.checkouts
+                    .iter()
+                    .filter_map(|c| Some((c.directory.clone(), c.branch.clone()?)))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Keeps `list` as the last listing of `id` when it is newer than the one kept, so the
+    /// workspaces list shows its branches.
+    pub(super) async fn keep_listing(
+        &self,
+        id: &WorkspaceId,
+        began: u64,
+        list: &puddle_workspace::CheckoutList,
+    ) {
+        let cache = self.listing_cache(id);
+        let mut cached = cache.lock().await;
+        if cached
+            .as_ref()
+            .is_none_or(|(started, _, _)| *started < began)
+        {
+            *cached = Some((began, self.inner.clock.now_ms(), found(list)));
+        }
     }
 
     /// The checkouts of workspace `id`: listed now when it runs, else the last listing.

@@ -112,6 +112,14 @@ import Network from "./network/+page.svelte";
 import Settings from "./settings/+page.svelte";
 import { hasUnsavedEdits } from "#lib/stores/unsaved-edits.ts";
 
+// A host is drawn in pieces (HostName), so it is found by its whole text, without the port.
+const hostMatcher = (host: string) => (_: string, el: Element | null) =>
+  el?.classList.contains("host") === true &&
+  el.textContent?.replace(/:\d+$/, "") === host;
+const findHost = (host: string) => screen.findByText(hostMatcher(host));
+const getHost = (host: string) => screen.getByText(hostMatcher(host));
+const queryHost = (host: string) => screen.queryByText(hostMatcher(host));
+
 const {
   inbox,
   api,
@@ -360,11 +368,13 @@ describe("the detail layout", () => {
             entry: "e-web",
             url: "https://github.com/acme/web.git",
             directory: "web",
+            branch: null,
           },
           {
             entry: "e-api",
             url: "https://github.com/acme/api.git",
             directory: "api",
+            branch: null,
           },
         ],
       }),
@@ -447,6 +457,7 @@ describe("the overview", () => {
       entry: "e-demo",
       url: "https://github.com/acme/demo.git",
       directory: "demo",
+      branch: null,
     };
     api.checkouts["w-demo"] = listing([checkout("demo", { entry })]);
     await load();
@@ -485,14 +496,12 @@ describe("the overview", () => {
     );
     await load();
     render(Overview);
-    await screen.findByText("a.example.com");
-    expect(screen.queryByText("c.example.org")).toBeNull();
-    const row = screen.getByText("a.example.com").closest("li") as HTMLElement;
+    await findHost("a.example.com");
+    expect(queryHost("c.example.org")).toBeNull();
+    const row = getHost("a.example.com").closest("li") as HTMLElement;
     await fireEvent.click(within(row).getByRole("button", { name: /^Allow/ }));
-    await vi.waitFor(() =>
-      expect(screen.queryByText("a.example.com")).toBeNull(),
-    );
-    expect(screen.getByText("b.example.com")).toBeInTheDocument();
+    await vi.waitFor(() => expect(queryHost("a.example.com")).toBeNull());
+    expect(getHost("b.example.com")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Allow all" })).toBeNull();
   });
 
@@ -519,10 +528,8 @@ describe("the overview", () => {
     await fireEvent.click(
       within(dialog).getByRole("button", { name: "Allow all" }),
     );
-    await vi.waitFor(() =>
-      expect(screen.queryByText("a.example.com")).toBeNull(),
-    );
-    expect(screen.queryByText("b.example.com")).toBeNull();
+    await vi.waitFor(() => expect(queryHost("a.example.com")).toBeNull());
+    expect(queryHost("b.example.com")).toBeNull();
     expect(inbox.calls.filter((c) => c.includes("approve"))).toHaveLength(2);
     expect(inbox.calls.filter((c) => c.includes("deny"))).toHaveLength(0);
     expect(toasts.items.at(-1)?.message).toBe("Allowed 2 requests for demo.");
@@ -604,7 +611,7 @@ describe("the overview", () => {
         "Allowed 0 requests for demo; 2 requests could not be decided.",
       ),
     );
-    expect(screen.getByText("a.example.com")).toBeInTheDocument();
+    expect(getHost("a.example.com")).toBeInTheDocument();
   });
 
   it("keeps the times on waiting requests current as the minutes pass", async () => {
@@ -622,7 +629,7 @@ describe("the overview", () => {
       await load();
       render(Overview);
       render(Network);
-      await screen.findByText("a.example.com");
+      await findHost("a.example.com");
       const before = document.querySelector("li.req time")?.textContent;
       await vi.advanceTimersByTimeAsync(31 * 60_000);
       expect(document.querySelector("li.req time")?.textContent).not.toBe(
@@ -1114,12 +1121,12 @@ describe("the network tab", () => {
     );
     await load();
     render(Overview);
-    await screen.findByText("new.example.com");
-    const hosts = [...document.querySelectorAll("li.req .host")].map(
-      (e) => e.textContent,
+    await findHost("new.example.com");
+    const hosts = [...document.querySelectorAll("li.req .host")].map((e) =>
+      e.textContent?.replace(/:\d+$/, ""),
     );
     expect(hosts).toEqual(["new.example.com", "old.example.com"]);
-    expect(screen.queryByText("theirs.example.org")).toBeNull();
+    expect(queryHost("theirs.example.org")).toBeNull();
     expect(
       screen.getByRole("heading", { name: /Waiting for you/ }),
     ).toHaveTextContent("2");
@@ -1139,7 +1146,7 @@ describe("the network tab", () => {
     expect(
       within(note).getByRole("link", { name: "Decide on the Overview" }),
     ).toHaveAttribute("href", "/workspaces/w-demo");
-    expect(screen.queryByText("a.example.com")).toBeNull();
+    expect(queryHost("a.example.com")).toBeNull();
   });
 
   it("says when nothing waits, and when requests are still loading", async () => {
@@ -1195,7 +1202,7 @@ describe("the network tab", () => {
     await load();
     render(Overview);
     render(Network);
-    await screen.findByText("a.example.com");
+    await findHost("a.example.com");
     inbox.down = true;
     rules.down = true;
     await pending.refresh();

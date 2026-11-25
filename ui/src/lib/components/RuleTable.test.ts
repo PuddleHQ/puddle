@@ -45,7 +45,7 @@ describe("RuleTable", () => {
     render(RuleTable, { props: { rules, sort: DEFAULT_SORT, now: 5_000_000 } });
     expect(screen.getAllByRole("columnheader")).toHaveLength(5);
     expect(screen.queryAllByRole("button")).toHaveLength(0);
-    expect(screen.getByText("a.example.com")).toBeInTheDocument();
+    expect(screen.getAllByRole("row")[1]).toHaveTextContent("a.example.com");
   });
 
   it("sorts, changes expiry and deletes through its handlers when it has them", async () => {

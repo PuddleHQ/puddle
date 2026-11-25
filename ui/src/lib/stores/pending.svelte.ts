@@ -389,8 +389,26 @@ export class PendingStore {
     if (unknown) void this.refresh();
   }
 
-  /** Starts listening and polling; returns the function that stops both. */
+  /**
+   * Starts listening and polling; returns the function that stops both. The shell's strip and the
+   * Inbox both start it: one listener and one poll run while any caller holds it.
+   */
   start(): () => void {
+    this.#holders += 1;
+    if (this.#holders === 1) this.#stopRun = this.#run();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.#holders -= 1;
+      if (this.#holders === 0) this.#stopRun?.();
+    };
+  }
+
+  #holders = 0;
+  #stopRun: (() => void) | undefined;
+
+  #run(): () => void {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const unsubscribe = this.#source?.subscribe({

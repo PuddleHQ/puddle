@@ -113,13 +113,19 @@ async fn an_allowed_name_is_resolved_and_its_public_addresses_returned() {
     );
 }
 
+/// The status line of every "waiting for approval" refusal: the words a client that prints only the
+/// reason phrase shows its user.
+const WAITING_STATUS: &str = "403 Forbidden, waiting for approval in Puddle";
+
 #[tokio::test]
 async fn an_unmatched_name_is_pending_and_never_resolved() {
     let policy = Arc::new(StaticPolicy::new());
     // The resolver knows nothing: if the proxy resolved, the refusal would be a 502.
     let p = proxy(policy.clone(), StaticResolver::new());
     let first = admit(&p, &request("unknown.example")).await.unwrap_err();
-    assert_eq!(first.status, "403 Forbidden");
+    // The reason phrase carries the meaning too: curl shows neither the body nor the headers of a
+    // refused `CONNECT`, but Python, npm, Go and apt print the phrase.
+    assert_eq!(first.status, WAITING_STATUS);
     assert_eq!(header(&first, "x-puddle-decision"), Some("pending"));
     assert_eq!(header(&first, "x-puddle-pending"), Some("1"));
     assert!(
@@ -135,6 +141,29 @@ async fn an_unmatched_name_is_pending_and_never_resolved() {
     assert_eq!(items[0].workspace, workspace());
 }
 
+/// A tool that calls its own vendor's API unprompted (an installed Claude Code reaches
+/// `api.anthropic.com` on its first run) raises a pending row like any other tool: a login
+/// profile names the hosts whose stand-ins Puddle swaps, it is no allow rule for them.
+#[tokio::test]
+async fn a_login_profile_host_with_no_rule_is_pending_like_any_other() {
+    let claude = puddle_logins::builtin()
+        .iter()
+        .find(|profile| profile.id == "claude")
+        .unwrap();
+    let api = host("api.anthropic.com");
+    assert!(
+        claude.hosts().contains(&api),
+        "the profile no longer names the API host"
+    );
+    let policy = Arc::new(StaticPolicy::new());
+    let p = proxy(policy.clone(), StaticResolver::new());
+    let refusal = admit(&p, &request("api.anthropic.com")).await.unwrap_err();
+    assert_eq!(refusal.status, WAITING_STATUS);
+    assert_eq!(header(&refusal, "x-puddle-decision"), Some("pending"));
+    assert_eq!(policy.pending().len(), 1);
+    assert_eq!(policy.pending()[0].host, api);
+}
+
 #[tokio::test]
 async fn an_unlisted_request_still_says_it_is_waiting() {
     let p = proxy(
@@ -142,6 +171,7 @@ async fn an_unlisted_request_still_says_it_is_waiting() {
         StaticResolver::new(),
     );
     let refusal = admit(&p, &request("a.example")).await.unwrap_err();
+    assert_eq!(refusal.status, WAITING_STATUS);
     assert_eq!(header(&refusal, "x-puddle-decision"), Some("pending"));
     assert_eq!(header(&refusal, "x-puddle-pending"), None);
     assert!(
@@ -1798,7 +1828,7 @@ mod company_network {
         policy.allow_as_suffix(&host("corp.example"));
         let p = proxy(policy.clone(), nexus()).with_address_check(guard(on));
         let (admitted, event) = super::super::admit(&p, &request("intranet.corp.example")).await;
-        assert_eq!(admitted.unwrap_err().status, "403 Forbidden");
+        assert_eq!(admitted.unwrap_err().status, WAITING_STATUS);
         assert_eq!(event.decision, ConnectionDecision::Pending);
         assert_eq!(policy.pending().len(), 1);
     }

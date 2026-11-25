@@ -201,12 +201,26 @@ fn echo_payload(i: usize) -> &'static [u8] {
 
 /// Sends connection `i`'s payload to `authority` through the agent and times its echo.
 pub async fn round_trip(agent: SocketAddr, authority: &str, i: usize) -> io::Result<Duration> {
-    let payload = echo_payload(i);
     let started = Instant::now();
-    let (code, mut conn) = connect_via(agent, authority).await?;
+    let (code, conn) = connect_via(agent, authority).await?;
     if code != 200 {
         return Err(io::Error::other(format!("connection {i}: status {code}")));
     }
+    echo(conn, i).await?;
+    Ok(started.elapsed())
+}
+
+/// The same round trip as [`round_trip`] straight to the echo server `server`, no Puddle on the
+/// path: what the host alone costs for the same burst.
+pub async fn plain_round_trip(server: SocketAddr, i: usize) -> io::Result<Duration> {
+    let started = Instant::now();
+    echo(BufReader::new(TcpStream::connect(server).await?), i).await?;
+    Ok(started.elapsed())
+}
+
+/// Sends connection `i`'s payload on `conn`, closes its write side and checks the echo.
+async fn echo(mut conn: BufReader<TcpStream>, i: usize) -> io::Result<()> {
+    let payload = echo_payload(i);
     let (mut rd, mut wr) = tokio::io::split(&mut conn);
     let upload = async {
         wr.write_all(payload).await?;
@@ -220,5 +234,5 @@ pub async fn round_trip(agent: SocketAddr, authority: &str, i: usize) -> io::Res
     if back != payload {
         return Err(io::Error::other(format!("connection {i}: echo mismatch")));
     }
-    Ok(started.elapsed())
+    Ok(())
 }

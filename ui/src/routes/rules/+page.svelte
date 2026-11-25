@@ -58,6 +58,7 @@
   let addDialog = $state<{
     clear: () => void;
     intoSet: (set: number) => void;
+    prefill: (host: string, workspaceId: string | null) => void;
     edit: (rule: Rule) => void;
   }>();
   let draft = $state<NewRule | null>(null);
@@ -99,6 +100,12 @@
     );
     if (named !== null && /^\d+$/.test(named)) {
       selectedRequestRule = Number(named);
+    }
+    const query = new URLSearchParams(window.location.search);
+    const newHost = query.get("new-rule");
+    if (newHost !== null && newHost !== "") {
+      addDialog?.prefill(newHost, query.get("workspace"));
+      addOpen = true;
     }
     const stop = store.start();
     const stopSets = ruleSets.start();

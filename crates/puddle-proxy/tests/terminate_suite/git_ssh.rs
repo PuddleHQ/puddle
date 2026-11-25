@@ -438,6 +438,7 @@ async fn a_listed_repository_is_read_and_written_and_the_record_says_who_with_wh
         (line.method(), line.path()),
         ("git-upload-pack", "/acme/web")
     );
+    assert_eq!(line.protocol(), puddle_types::ConnectionProtocol::Ssh);
     assert!(event.injected);
     assert!(event.binding_id.is_some());
     assert!(event.bytes_up > 0 && event.bytes_down > 0);

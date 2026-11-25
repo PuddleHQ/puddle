@@ -31,6 +31,9 @@ where
     })
 }
 
+/// When set, `run` prints how the session ended (the VM tests read it from the client's stderr).
+const REPORT_VAR: &str = "PUDDLE_SSH_BRIDGE_REPORT";
+
 /// Relays this process's stdin and stdout to `endpoint` until the session ends.
 #[must_use]
 #[expect(
@@ -56,10 +59,31 @@ pub fn run(endpoint: &Path) -> ExitCode {
     // tokio reads stdin on a blocking thread that may sit in a read nobody will finish (ssh can
     // keep the pipe open): don't wait for it.
     rt.shutdown_background();
+    finish(
+        &result,
+        std::env::var_os(REPORT_VAR).is_some(),
+        &mut std::io::stderr(),
+    )
+}
+
+/// Turns the relay's result into the exit code, telling `err` how it ended: a failure always, a
+/// finished session only when `report` is set (a line on every session would show in every
+/// user's ssh).
+fn finish(
+    result: &Result<impl std::fmt::Debug, puddle_ssh::bridge::BridgeError>,
+    report: bool,
+    err: &mut impl std::io::Write,
+) -> ExitCode {
     match result {
-        Ok(_) => ExitCode::SUCCESS,
+        Ok(done) => {
+            if report {
+                // Nobody is left to tell if stderr is gone.
+                let _ignored = writeln!(err, "puddle: ssh bridge ended: {done:?}");
+            }
+            ExitCode::SUCCESS
+        }
         Err(e) => {
-            eprintln!("puddle: {}", with_causes(&e));
+            let _ignored = writeln!(err, "puddle: {}", with_causes(e));
             ExitCode::FAILURE
         }
     }

@@ -535,7 +535,9 @@ request (`Reverts #<number>` or the commit's 8-character SHA).
   crate's coverage says why in the commit.
 - Code that can't run in CI (Windows-only code on Linux, VM paths) is covered by its own tier
   (Windows job, L3/L4), not excluded from the report. Exclusions from the report
-  (`--ignore-filename-regex`) only for generated code, listed in `scripts/check.sh` with a comment;
+  (`--ignore-filename-regex`) only for generated code and the soak runner (`puddle-e2e/src/soak/run.rs`, 890 lines that
+  drive a real `puddle serve` for hours and run only in the soak workflow, whose own judge checks them), listed in
+  `scripts/check.sh` with a comment;
   exclusions from the diff gate are the file above.
 
 ### Mutation testing

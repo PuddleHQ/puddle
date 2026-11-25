@@ -451,8 +451,10 @@ run_gate() {
         scripts/coverage-run.sh "$plain_cargo" --workspace $skip_app --all-features --locked \
             --profile "${NEXTEST_PROFILE:-default}"
         "$plain_cargo" llvm-cov report --lcov --output-path "$target/lcov.info"
-        "$plain_cargo" llvm-cov report --summary-only
-        "$plain_cargo" llvm-cov report --json --summary-only --output-path "$target/coverage-summary.json"
+        # The totals leave out the soak runner (docs/STANDARDS.md, "Coverage"); the lcov report above keeps it for the diff gate.
+        "$plain_cargo" llvm-cov report --summary-only --ignore-filename-regex 'puddle-e2e/src/soak/run\.rs$'
+        "$plain_cargo" llvm-cov report --json --summary-only --ignore-filename-regex 'puddle-e2e/src/soak/run\.rs$' \
+            --output-path "$target/coverage-summary.json"
         ratchet="--summary $target/coverage-summary.json --baseline scripts/coverage-baseline.json"
         ratchet="$ratchet --floor-lines $COV_LINES --floor-regions $COV_REGIONS"
         [ -n "${CI:-}" ] || ratchet="$ratchet --write"

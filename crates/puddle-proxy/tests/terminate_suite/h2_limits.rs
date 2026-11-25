@@ -825,9 +825,9 @@ async fn a_header_block_left_open_is_recorded_as_the_limit_that_ended_the_connec
 async fn the_upstream_leg_announces_fixed_windows_and_never_adapts_them() {
     let pki = Pki::new();
     let mut config =
-        std::sync::Arc::into_inner(pki.server_config("bound.test", Flaw::None)).unwrap();
+        Arc::into_inner(pki.server_config("bound.test", Flaw::None)).unwrap();
     config.alpn_protocols = vec![b"h2".to_vec()];
-    let acceptor = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(config));
+    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
         .unwrap();
@@ -869,7 +869,7 @@ async fn the_upstream_leg_announces_fixed_windows_and_never_adapts_them() {
     let mut sender = client.sender.clone();
     let request = http::Request::builder()
         .uri("https://bound.test/")
-        .body(terminate_support::h2_rig::full(bytes::Bytes::new()))
+        .body(full(Bytes::new()))
         .unwrap();
     tokio::spawn(async move {
         let _ = sender.send_request(request).await;

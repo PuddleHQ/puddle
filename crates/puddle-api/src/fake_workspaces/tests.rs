@@ -14,7 +14,7 @@ fn the_fake_finds_a_checkout_by_its_head_and_its_origin_by_a_url_line() {
         .unwrap();
     assert_eq!(found.folder_name, "Shop");
     assert_eq!(found.git_dir, shop.join(".git"));
-    assert_eq!(found.origin, Err("it has no origin remote".to_owned()));
+    assert_eq!(found.origin, Err(OriginRefusal::NoOrigin));
     std::fs::write(
         shop.join(".git").join("config"),
         "[remote \"origin\"]\n\turl = https://github.com/acme/shop.git\n",

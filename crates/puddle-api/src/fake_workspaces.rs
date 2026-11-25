@@ -14,8 +14,8 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 use puddle_store::{Clock, UserId};
 use puddle_types::{
-    CheckoutDir, EntryId, Event, EventSink, SessionUser, ToolName, ToolVersion, ToolsFileHash,
-    WorkspaceId, WorkspaceStatus, WorkspaceStep,
+    CheckoutDir, EntryId, Event, EventSink, OriginRefusal, SessionUser, ToolName, ToolVersion,
+    ToolsFileHash, WorkspaceId, WorkspaceStatus, WorkspaceStep,
 };
 use tokio::sync::watch;
 
@@ -736,7 +736,7 @@ fn fake_local_checkout(path: &str) -> Result<LocalSource, LocalCheckoutError> {
             text.lines()
                 .find_map(|l| l.trim().strip_prefix("url = ").map(str::to_owned))
         })
-        .ok_or_else(|| "it has no origin remote".to_owned());
+        .ok_or(OriginRefusal::NoOrigin);
     Ok(LocalSource {
         folder_name: folder
             .file_name()

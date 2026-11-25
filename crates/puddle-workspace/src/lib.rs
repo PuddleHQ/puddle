@@ -45,6 +45,7 @@
 mod check;
 mod checkouts;
 mod error;
+mod guest_output;
 mod guest_text;
 mod import;
 mod layout;
@@ -62,7 +63,9 @@ pub use checkouts::{
     RemoteNote,
 };
 pub use error::WorkspaceError;
-pub use import::{FINISH_IMPORT_SH, Import, LocalCheckout, https_form, import_mount};
+pub use import::{
+    CheckoutRefusal, FINISH_IMPORT_SH, Import, LocalCheckout, https_form, import_mount,
+};
 pub use layout::{CLONE_SH, LOST_AND_FOUND, Layout, PREPARE_SH, PUDDLE_DIR, WORKSPACE_DIR};
 pub use locks::{CLEAR_LOCKS_SH, CLEAR_LOCKS_TIMEOUT, LockReport, MAX_LOCKS};
 pub use registry::{HoldKind, Holder};

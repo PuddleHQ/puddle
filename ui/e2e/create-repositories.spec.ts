@@ -61,7 +61,7 @@ async function openList(page: Page, backend: Backend) {
 const card = (page: Page, name: string): Locator =>
   page.getByRole("article", { name, exact: true });
 const dialogOf = (page: Page): Locator =>
-  page.getByRole("dialog", { name: "New workspace" });
+  page.getByRole("region", { name: "New workspace" });
 const rowOf = (page: Page, n: number): Locator =>
   dialogOf(page).getByRole("group", { name: `Repository ${n}` });
 const addrOf = (page: Page, n: number): Locator =>
@@ -338,7 +338,6 @@ test.describe("the list of repositories", () => {
       "This is the same repository as repository 1. List it once.",
     );
     await dialog.getByRole("button", { name: "Remove repository 2" }).click();
-    await dialog.getByText("Start folder, image, memory and CPUs").click();
     await dialog.getByLabel("Start folder").fill("../outside");
     await expect(dialog.getByLabel("Start folder")).toHaveAttribute(
       "aria-invalid",
@@ -367,7 +366,6 @@ test.describe("the list of repositories", () => {
       rowOf(page, 2).getByLabel("Git identity").locator("option:checked"),
     ).toHaveText("Personal");
     await rowOf(page, 2).getByRole("checkbox", { name: "Push" }).uncheck();
-    await dialog.getByText("Start folder, image, memory and CPUs").click();
     await dialog.getByLabel("Start folder").fill("ledger");
     await dialog.getByRole("button", { name: "Create workspace" }).click();
     await expect(dialog).toHaveCount(0);

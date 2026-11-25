@@ -723,7 +723,7 @@ fn the_preview_lists_the_pasted_tokens_of_the_backups_identities_and_no_other_so
     sql(
         &there,
         &[
-            insert("work", &[gh.clone(), pasted.clone()]),
+            insert("work", &[gh.clone(), pasted]),
             insert("plain", &[gh]),
             // Not the shape this build writes: no token is claimed, and nothing fails.
             "INSERT INTO identities (user_id, label, author_name, author_email, credentials, position, is_default, created_at, changed_at) \

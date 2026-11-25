@@ -1196,7 +1196,7 @@ pub(crate) fn remove_stale_partial_copies(db: &Path) {
     let dir = db
         .parent()
         .filter(|d| !d.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
+        .unwrap_or_else(|| Path::new("."));
     let prefix = format!(
         "{}.pre-v",
         db.file_name().unwrap_or_default().to_string_lossy()
@@ -1225,7 +1225,7 @@ fn prune_backups(db: &Path) -> std::io::Result<()> {
     let dir = db
         .parent()
         .filter(|d| !d.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
+        .unwrap_or_else(|| Path::new("."));
     let file = db.file_name().unwrap_or_default();
     let prefix = format!("{}.pre-v", file.to_string_lossy());
     let mut copies: Vec<(u32, PathBuf)> = std::fs::read_dir(dir)?

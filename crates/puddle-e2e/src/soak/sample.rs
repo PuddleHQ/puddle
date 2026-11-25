@@ -463,7 +463,8 @@ impl Sampler {
     #[cfg(not(windows))]
     fn processes(&self, now: u64, into: &mut Series) {
         let mut procs = find_processes(Path::new("/proc"), &self.cfg.process_prefixes);
-        if let Some(root) = *self.root.lock().unwrap() {
+        let root = *self.root.lock().unwrap();
+        if let Some(root) = root {
             let ours = descendants(root);
             procs.retain(|&(_, pid)| pid == root || ours.contains(&pid));
         }

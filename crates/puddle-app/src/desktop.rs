@@ -46,6 +46,7 @@ const NOTICE_MARKER: &str = "tray-notice-shown";
 /// # Errors
 ///
 /// What is wrong with the stored settings, in words; the caller falls back to the defaults.
+// string-error-ok: the text only goes to a log, then the caller falls back to the defaults whatever the cause
 pub fn read_prefs(repo: &dyn SettingsRepo) -> Result<UiPrefs, String> {
     let Some(document) = repo
         .load_global()

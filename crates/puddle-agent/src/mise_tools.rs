@@ -89,6 +89,7 @@ impl Request {
     /// # Errors
     ///
     /// The usage text for anything else, with the refused value named.
+    // string-error-ok: the usage text is the whole contract: main prints it to stderr and exits 2, nothing matches on a kind
     pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<Self, String> {
         let args: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
         let refuse = |why: String| format!("{why}\n{USAGE}");

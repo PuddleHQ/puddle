@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-#![allow(clippy::unwrap_used, reason = "test code: a panic is how a test fails")]
 //! The login-session read, against a fake `loginctl` that answers the way `loginctl show-user
 //! --property=Display --value` and `show-session --property=Type --value` do.
 #![cfg(target_os = "linux")]

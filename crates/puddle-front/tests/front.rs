@@ -137,7 +137,8 @@ impl Editor for Reach {
             let addr = self
                 .0
                 .ok_or_else(|| Unreachable("nothing listens in the workspace".into()))?;
-            Ok(Box::new(TcpStream::connect(addr).await.unwrap()) as Io)
+            let io: Io = Box::new(TcpStream::connect(addr).await.unwrap());
+            Ok(io)
         })
     }
 
@@ -149,7 +150,8 @@ impl Editor for Reach {
             let addr = self.1.get(&port).ok_or_else(|| {
                 Unreachable(format!("nothing in the workspace listens on port {port}"))
             })?;
-            Ok(Box::new(TcpStream::connect(addr).await.unwrap()) as Io)
+            let io: Io = Box::new(TcpStream::connect(addr).await.unwrap());
+            Ok(io)
         })
     }
 
@@ -992,13 +994,14 @@ impl Editor for Cut {
     fn connect(&self) -> puddle_front::editor::BoxFuture<'_, Result<Io, Unreachable>> {
         Box::pin(async {
             let gone = std::io::Error::from(std::io::ErrorKind::ConnectionReset);
-            Ok(Box::new(
+            let io: Io = Box::new(
                 Builder::new()
                     .write(self.request.as_bytes())
                     .read(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok")
                     .read_error(gone)
                     .build(),
-            ) as Io)
+            );
+            Ok(io)
         })
     }
 
@@ -1021,7 +1024,8 @@ impl Editor for Refuses {
     fn connect(&self) -> puddle_front::editor::BoxFuture<'_, Result<Io, Unreachable>> {
         Box::pin(async {
             let gone = std::io::Error::from(std::io::ErrorKind::BrokenPipe);
-            Ok(Box::new(Builder::new().write_error(gone).build()) as Io)
+            let io: Io = Box::new(Builder::new().write_error(gone).build());
+            Ok(io)
         })
     }
 

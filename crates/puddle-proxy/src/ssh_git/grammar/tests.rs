@@ -2,7 +2,7 @@
 use super::*;
 
 fn host(name: &str) -> GitHost {
-    built_in(&Host::parse_normalised(name).unwrap()).unwrap_or(GitHost {
+    built_in(&Host::parse_normalised(name).unwrap()).unwrap_or_else(|| GitHost {
         https: Host::parse_normalised(name).unwrap(),
         form: PathForm::Plain,
     })

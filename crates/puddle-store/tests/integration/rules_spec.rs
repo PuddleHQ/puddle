@@ -472,8 +472,8 @@ fn r11_undoing_a_decision_deletes_its_rule_and_reopens_the_requests_it_closed() 
     assert_eq!(
         back,
         vec![
-            ("one.example.com".to_string(), T0, 2, true),
-            ("two.example.com".to_string(), T0 + 1_000, 1, true),
+            ("one.example.com".to_owned(), T0, 2, true),
+            ("two.example.com".to_owned(), T0 + 1_000, 1, true),
         ]
     );
     assert!(reopened.iter().all(|r| r.id > second));

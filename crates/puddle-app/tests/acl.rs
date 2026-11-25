@@ -138,7 +138,7 @@ fn invoke(cmd: &str, origin: &str) -> InvokeRequest {
         url: Url::parse(origin).unwrap(),
         body: InvokeBody::default(),
         headers: http::HeaderMap::default(),
-        invoke_key: INVOKE_KEY.to_string(),
+        invoke_key: INVOKE_KEY.to_owned(),
     }
 }
 

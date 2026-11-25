@@ -27,6 +27,7 @@ pub(crate) fn disk_encryption(dir: Option<&Path>) -> DiskEncryptionFacts {
 fn facts_from(
     sys: &Path,
     dir: Option<&Path>,
+    // string-error-ok: the text becomes one finding's detail line; no caller branches on a kind
     mounts: &Result<Vec<Mount>, String>,
     swaps: &Result<String, String>,
     wsl: bool,

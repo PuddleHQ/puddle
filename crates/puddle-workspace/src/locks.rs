@@ -112,6 +112,7 @@ fn push_bounded(list: &mut Vec<String>, path: &str, note: &str) {
 }
 
 /// Parses the script's output.
+// string-error-ok: the text is the message shown to the user for a guest or folder answer it cannot use; no caller branches on a kind
 pub(crate) fn parse(stdout: &str) -> Result<LockReport, String> {
     let mut report = LockReport::default();
     let mut done = false;

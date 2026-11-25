@@ -7,7 +7,7 @@ import { PALETTES, PRESETS } from "./palette.ts";
 // A status colour (the green of a finished check, the red of an error, the amber of a warning)
 // comes from --color-success, --color-danger and --color-warning, which every palette sets. A
 // literal one in a component or stylesheet is the same colour on every theme, and on a theme
-// whose palette it does not match it looks wrong (T-1951: the completed checks of the first-run
+// whose palette it does not match it looks wrong (the completed checks of the first-run
 // screens stayed green).
 const SRC = join(import.meta.dirname, "..", "..");
 /** The files that define colours. */

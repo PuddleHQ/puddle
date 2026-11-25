@@ -30,7 +30,10 @@ impl Holdings {
 
     /// What `self` holds beyond `baseline` plus [`DRIFT`], worded for a failure; `None` when back.
     fn drift_from(self, baseline: Self) -> Option<String> {
-        let (fds, threads) = (self.fds > baseline.fds + DRIFT, self.threads > baseline.threads + DRIFT);
+        let (fds, threads) = (
+            self.fds > baseline.fds + DRIFT,
+            self.threads > baseline.threads + DRIFT,
+        );
         (fds || threads).then(|| format!("{baseline:?} before, {self:?} after"))
     }
 }
@@ -116,10 +119,13 @@ async fn a_cycle_that_leaks_one_descriptor_is_reported() {
     let host = rig.start().await;
     let api = api(&host);
     let (before, after) = churn(20, || async {
-        std::mem::forget(std::fs::File::open("/proc/self/status").unwrap());
+        Box::leak(Box::new(std::fs::File::open("/proc/self/status").unwrap()));
         drop(api.events().await);
     })
     .await;
-    assert!(after.drift_from(before).is_some(), "{before:?} then {after:?}");
+    assert!(
+        after.drift_from(before).is_some(),
+        "{before:?} then {after:?}"
+    );
     host.shutdown().await;
 }

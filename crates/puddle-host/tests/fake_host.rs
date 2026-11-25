@@ -11,6 +11,9 @@
 
 mod support;
 
+#[cfg(target_os = "linux")]
+#[path = "fake_host/api_latency.rs"]
+mod api_latency;
 #[path = "fake_host/attach_places.rs"]
 mod attach_places;
 #[path = "fake_host/backup_restore.rs"]

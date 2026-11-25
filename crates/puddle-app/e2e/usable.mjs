@@ -619,7 +619,10 @@ async function terminalTab(startFolder) {
 async function closeOnABrokenPage() {
   mainWindow("front");
   const broken = await breakThePage(DEBUG_PORT);
-  check("the main window's page failed to load on purpose (the control)", true, broken.url);
+  // The control: Puddle's own navigation is gone from the window, so the close below is pressed on a page
+  // that is not Puddle's.
+  const gone = await until("Puddle's navigation to be gone", async () => (await uia.find(inMain("link", "Workspaces"))).length === 0, 30_000, 1000).then(() => true, () => false);
+  check("the main window's page failed to load on purpose (the control)", gone && broken.refused.length > 0, `refused: ${broken.refused.join(", ")}; navigation gone: ${gone}`);
   try {
     const hidden = [];
     for (const round of [1, 2]) {

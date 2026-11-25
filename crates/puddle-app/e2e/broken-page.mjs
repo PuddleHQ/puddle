@@ -13,25 +13,25 @@ async function pages(port) {
   return list.filter((t) => t.type === "page" && t.webSocketDebuggerUrl);
 }
 
-/** Whether a page URL is the browser's own error page (what a document that failed to load shows). */
-export const isErrorPage = (url) => String(url).startsWith("chrome-error:");
-
 /**
- * Refuses every request of the first page and reloads it. Resolves once the page shows the error page,
- * with `{ url, restore }`: `restore()` lets requests through again and reloads, then closes the session.
+ * Refuses every request of the first page and reloads it. Resolves once the page's own document was
+ * refused, with `{ refused, restore }`: `refused` is the list of refused document URLs, `restore()` lets
+ * requests through again and reloads, then closes the session.
  */
 export async function breakThePage(port) {
   const target = await until("a DevTools page target", async () => (await pages(port))[0], 30_000, 1000);
   const page = await connect(target.webSocketDebuggerUrl);
-  await page.send("Page.enable");
-  await page.send("Fetch.enable", { patterns: [{ urlPattern: "*", requestStage: "Request" }] });
+  const refused = [];
   page.on("Fetch.requestPaused", (p) => {
+    if (p.resourceType === "Document") refused.push(p.request.url);
     page.send("Fetch.failRequest", { requestId: p.requestId, errorReason: "Failed" }).catch(() => {});
   });
+  await page.send("Page.enable");
+  await page.send("Fetch.enable", { patterns: [{ urlPattern: "*", requestStage: "Request" }] });
   await page.send("Page.reload", { ignoreCache: true });
-  const shown = await until("the error page", async () => (await pages(port)).find((t) => isErrorPage(t.url)), 30_000, 500);
+  await until("the page's document to be refused", async () => refused.length > 0, 30_000, 500);
   return {
-    url: shown.url,
+    refused,
     async restore() {
       await page.send("Fetch.disable").catch(() => {});
       await page.send("Page.reload", { ignoreCache: true }).catch(() => {});

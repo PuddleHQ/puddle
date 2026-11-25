@@ -94,7 +94,7 @@ fn now() -> u64 {
 /// The run log: one line per step, with the UTC time and the playbook time.
 #[derive(Clone)]
 struct Log {
-    file: Arc<Mutex<std::fs::File>>,
+    sink: Arc<Mutex<std::fs::File>>,
     start: Instant,
     profile: Profile,
 }
@@ -109,7 +109,7 @@ impl Log {
         let minutes = real * 60 / self.profile.hour_secs.max(1);
         let line = format!("{} {}:{:02} {text}", now(), minutes / 60, minutes % 60);
         eprintln!("{line}");
-        if let Ok(mut f) = self.file.lock() {
+        if let Ok(mut f) = self.sink.lock() {
             let _ = writeln!(f, "{line}");
         }
     }
@@ -467,6 +467,8 @@ impl Run {
         let path = format!("/api/workspaces/{}/ports/{WEB_PORT}", web.id);
         let forward = json!({"host_port": WEB_PORT, "pinned": true});
         let mut last = (0, Value::Null);
+        // flake-ok: a bounded retry (12 tries, 5 s apart) of a call that succeeds once the agent
+        // has listed the new listener
         for _ in 0..12 {
             last = call_json(&self.api(), "PUT", &path, Some(&forward)).await;
             if last.0 == 200 {
@@ -615,6 +617,7 @@ impl Run {
                 let pid = self.serve.child.id().unwrap_or_default();
                 let started = descendants(pid);
                 let _ = self.serve.child.kill().await;
+                // The bar itself: whatever still runs 5 s after the kill fails it.
                 tokio::time::sleep(Duration::from_secs(5)).await;
                 let left: Vec<u32> = started
                     .iter()
@@ -744,6 +747,7 @@ impl Run {
         // Events first at the same minute: the baseline before the first rounds, a restart
         // before the rounds it would cut.
         timeline.sort_by_key(|&(m, e, _)| (m, e.is_none()));
+        // flake-ok: the day's timeline, each step at its own time, not a wait for a condition
         for (minute, event, workload) in timeline {
             tokio::time::sleep_until((t0 + profile.at(minute)).into()).await;
             if let Err(e) = self.crash_watch().await {
@@ -982,7 +986,7 @@ pub async fn run(opts: Options) -> Result<Outcome, String> {
     std::fs::create_dir_all(&opts.out).map_err(|e| format!("{}: {e}", opts.out.display()))?;
     preflight(&opts)?;
     let log = Log {
-        file: Arc::new(Mutex::new(
+        sink: Arc::new(Mutex::new(
             std::fs::File::create(opts.out.join("run.log")).map_err(|e| e.to_string())?,
         )),
         start: Instant::now(),

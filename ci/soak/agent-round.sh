@@ -15,6 +15,6 @@ for c in $(git -C ../src-click rev-list --reverse HEAD | sed -n "$((3 * n + 2)),
 done
 ../venv/bin/python -m pytest -q -x -p no:cacheprovider tests >/dev/null 2>&1 || true
 for h in pypi.org files.pythonhosted.org github.com codeload.github.com registry.npmjs.org; do
-  curl -s -o /dev/null --max-time 20 "https://$h/" || true
+  curl --retry 1 -s -o /dev/null --max-time 20 "https://$h/" || true
 done
-curl -s -o /dev/null --max-time 20 "https://qa-soak-$n.example.org/" || true
+curl --retry 1 -s -o /dev/null --max-time 20 "https://qa-soak-$n.example.org/" || true

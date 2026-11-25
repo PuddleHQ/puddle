@@ -6,7 +6,6 @@ fn the_full_day_is_twelve_real_hours_and_the_hosted_one_fits_a_six_hour_job() {
     assert_eq!(FULL.active() + FULL.idle(), Duration::from_hours(12));
     let hosted = HOSTED.active() + HOSTED.idle();
     assert_eq!(hosted, Duration::from_mins(4 * 60 + 30));
-    assert!(hosted < Duration::from_hours(5), "{hosted:?}");
     assert_eq!(SMOKE.active() + SMOKE.idle(), Duration::from_mins(10));
 }
 

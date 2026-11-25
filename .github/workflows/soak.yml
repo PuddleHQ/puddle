@@ -66,7 +66,7 @@ jobs:
         run: ci/fetch-msb.sh "$RUNNER_TEMP/msb"
       - name: guest agent (static musl build)
         run: echo "AGENT=$PWD/$(ci/build-agent.sh --locked)" >> "$GITHUB_ENV"
-      - name: the two builds of puddle and puddle-soak
+      - name: the program twice (with and without the planted leak) and puddle-soak
         run: |
           cargo build --locked -p puddle --features serve,puddle-api/soak-planted-leak
           cp target/debug/puddle "$RUNNER_TEMP/puddle-leak"
@@ -126,7 +126,7 @@ jobs:
         run: ci/fetch-msb.sh "$RUNNER_TEMP/msb"
       - name: guest agent (static musl build)
         run: echo "AGENT=$PWD/$(ci/build-agent.sh --locked)" >> "$GITHUB_ENV"
-      - name: puddle (release, with serve) and puddle-soak
+      - name: the program (release, with serve) and puddle-soak
         run: |
           cargo build --locked --release -p puddle --features serve
           cargo build --locked -p puddle-e2e --bin puddle-soak

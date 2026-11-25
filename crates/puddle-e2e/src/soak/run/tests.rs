@@ -93,7 +93,7 @@ fn the_summary_reads_each_hour_and_the_end() {
 fn a_run_without_the_memory_it_needs_is_blocked() {
     let dir = tempfile::tempdir().unwrap();
     let opts = Options {
-        puddle: PathBuf::from("/nonexistent"),
+        puddle: dir.path().join("no-program"),
         runtime: None,
         agent: None,
         out: dir.path().to_owned(),

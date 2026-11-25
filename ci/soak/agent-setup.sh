@@ -10,4 +10,4 @@ if [ ! -d soak-click ]; then
   git -C soak-click reset -q --hard "$(git -C src-click rev-list --max-parents=0 HEAD | tail -1)"
 fi
 [ -d venv ] || python3 -m venv venv
-./venv/bin/pip install -q pytest
+./venv/bin/pip install -q --retries 3 pytest

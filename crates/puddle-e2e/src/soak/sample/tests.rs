@@ -94,7 +94,7 @@ fn a_process_whose_descriptors_cannot_be_read_still_has_memory_and_threads() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("status"),
-        "Name:\tpuddle\nVmRSS:\t  2048 kB\nThreads:\t7\n",
+        "VmRSS:\t  2048 kB\nThreads:\t7\n",
     )
     .unwrap();
     assert_eq!(
@@ -128,7 +128,7 @@ fn processes_are_found_by_command_name_prefix() {
 #[test]
 fn a_prefix_ending_in_a_dollar_is_a_whole_name() {
     let dir = tempfile::tempdir().unwrap();
-    for (pid, comm) in [("12", "puddle\n"), ("13", "puddle-soak\n")] {
+    for (pid, comm) in [("12", "puddle"), ("13", "puddle-soak")] {
         std::fs::create_dir(dir.path().join(pid)).unwrap();
         std::fs::write(dir.path().join(pid).join("comm"), comm).unwrap();
     }

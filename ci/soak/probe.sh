@@ -4,6 +4,6 @@
 # answer's status code is the result, never the time or the body.
 set -u
 for url in https://pypi.org/simple/ https://registry.npmjs.org/ https://github.com/; do
-  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$url" || true)
+  code=$(curl --retry 1 -s -o /dev/null -w '%{http_code}' --max-time 20 "$url" || true)
   echo "$url $code"
 done

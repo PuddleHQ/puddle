@@ -7,7 +7,7 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-fail() { echo "fetch-tauri-cli-test: FAIL: $1" >&2; exit 1; }
+. "$(dirname "$0")/../scripts/test-fail.sh"
 
 mkdir -p "$tmp/src" "$tmp/site/tauri-cli-v9.9.9"
 printf 'program' >"$tmp/src/cargo-tauri"

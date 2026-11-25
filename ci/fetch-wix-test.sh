@@ -7,7 +7,7 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-fail() { echo "fetch-wix-test: FAIL: $1" >&2; exit 1; }
+. "$(dirname "$0")/../scripts/test-fail.sh"
 
 files="candle.exe candle.exe.config darice.cub light.exe light.exe.config wconsole.dll winterop.dll wix.dll WixUIExtension.dll WixUtilExtension.dll"
 mkdir -p "$tmp/src" "$tmp/site"

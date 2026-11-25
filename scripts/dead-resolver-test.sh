@@ -8,10 +8,7 @@
 # hook) running at the same time does not fail it. Where the namespaces cannot be made (no passwordless sudo) it says so and passes, except in CI.
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
-fail() {
-    echo "dead-resolver-test: $*" >&2
-    exit 1
-}
+. "$(dirname "$0")/../scripts/test-fail.sh"
 sudo=sudo
 [ "$(id -u)" != 0 ] || sudo=
 if { [ -n "$sudo" ] && ! sudo -n true 2>/dev/null; } || ! command -v setpriv >/dev/null; then

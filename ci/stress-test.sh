@@ -12,7 +12,7 @@ cpu=$(taskset -cp $$ | sed 's/.*: //; s/[-,].*//')
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/stress-test.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
-fail() { echo "stress-test: $*" >&2; exit 1; }
+. "$(dirname "$0")/../scripts/test-fail.sh"
 FLAKY="$here/flaky-report.py"
 bt='`' # markdown code ticks, for the patterns below
 

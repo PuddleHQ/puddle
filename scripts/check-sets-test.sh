@@ -7,10 +7,7 @@
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 check="$here/scripts/check.sh"
-fail() {
-    echo "check-sets-test: $*" >&2
-    exit 1
-}
+. "$(dirname "$0")/../scripts/test-fail.sh"
 
 all=$("$check" --list all)
 pre_push=$("$check" --list pre-push)

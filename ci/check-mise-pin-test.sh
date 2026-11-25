@@ -6,7 +6,7 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-fail() { echo "check-mise-pin-test: FAIL: $1" >&2; exit 1; }
+. "$(dirname "$0")/../scripts/test-fail.sh"
 
 asset=mise-v9.9.9-linux-x64-musl.tar.gz
 good=$(printf good | sha256sum | cut -d' ' -f1)

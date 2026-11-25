@@ -6,7 +6,7 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-fail() { echo "fetch-real-tools-test: FAIL: $1" >&2; exit 1; }
+. "$(dirname "$0")/../scripts/test-fail.sh"
 
 # A gh release and a GCM release as the script expects them (Linux archives; the Windows zips are cut the same way).
 mkdir -p "$tmp/gh/v9.9.9" "$tmp/gcm/v8.8.8" "$tmp/stage/gh_9.9.9_linux_amd64/bin" "$tmp/stage/gcm" "$tmp/ci"

@@ -5,7 +5,7 @@ set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/hgt.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
-fail() { echo "hooks-gate-test: $*" >&2; exit 1; }
+. "$(dirname "$0")/../scripts/test-fail.sh"
 
 printf '# a comment\n\necho one\nsleep 1 && echo two\n' >"$tmp/ok.list"
 out=$(HOOKS_GATE_JOBS=2 "$here/scripts/hooks-gate.sh" "$tmp/ok.list" 2>&1) || fail "a list of passing commands failed: $out"

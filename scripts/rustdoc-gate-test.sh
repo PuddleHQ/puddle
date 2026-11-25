@@ -8,10 +8,7 @@ set -eu
 for v in $(git rev-parse --local-env-vars); do unset "$v"; done
 unset CARGO_TARGET_DIR CHECK_TMPDIR
 here=$(cd "$(dirname "$0")" && pwd)
-fail() {
-    echo "rustdoc-gate-test: $*" >&2
-    exit 1
-}
+. "$(dirname "$0")/../scripts/test-fail.sh"
 root=$(mktemp -d /var/tmp/chk-rustdoc.XXXXXX)
 trap 'rm -rf "$root"' EXIT
 repo=$root/repo

@@ -8,13 +8,13 @@ set -eu
 # A git hook runs this with GIT_DIR and friends set; they would point the throwaway repository at the real one.
 for v in $(git rev-parse --local-env-vars); do unset "$v"; done
 here=$(cd "$(dirname "$0")" && pwd)
+. "$here/test-fail.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 cd "$tmp"
 git init -q -b develop .
 git config user.email t@example.invalid && git config user.name t
 mkdir scripts && cp "$here/diff-base.sh" scripts/
-fail() { echo "diff-base-test: FAIL: $1" >&2; exit 1; }
 commit() { echo "$2" >"$1" && git add "$1" && git commit -qm "$1"; }
 
 commit a 1

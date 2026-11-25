@@ -12,10 +12,7 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/advisories-issue-test.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
-fail() {
-    echo "advisories-issue-test: $*" >&2
-    exit 1
-}
+. "$(dirname "$0")/../scripts/test-fail.sh"
 
 cat >"$tmp/deny" <<'STUB'
 #!/bin/sh

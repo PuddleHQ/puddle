@@ -7,7 +7,7 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d)
 trap 'rm -r "$tmp"' EXIT
-fail() { echo "free-disk-test: FAIL: $1" >&2; exit 1; }
+. "$(dirname "$0")/../scripts/test-fail.sh"
 
 mkdir -p "$tmp/a" "$tmp/b" "$tmp/keep"
 head -c 3145728 /dev/zero >"$tmp/a/big"

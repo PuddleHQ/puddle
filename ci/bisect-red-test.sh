@@ -7,7 +7,7 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/bisect-red-test.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
-fail() { echo "bisect-red-test: $*" >&2; exit 1; }
+. "$(dirname "$0")/../scripts/test-fail.sh"
 
 cat >"$tmp/gh" <<'STUB'
 #!/bin/sh

@@ -11,10 +11,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 unset $(git rev-parse --local-env-vars)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/diff-coverage-crates-test.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
-fail() {
-    echo "diff-coverage-crates-test: $*" >&2
-    exit 1
-}
+. "$(dirname "$0")/../scripts/test-fail.sh"
 git init -q "$tmp/repo"
 cd "$tmp/repo"
 git config user.email t@example.org

@@ -11,6 +11,7 @@ set -eu
 # commands at the real one.
 for v in $(git rev-parse --local-env-vars); do unset "$v"; done
 here=$(cd "$(dirname "$0")" && pwd)
+. "$here/test-fail.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 cd "$tmp"
@@ -44,7 +45,6 @@ export CARGO="$tmp/fake-cargo" FAKE_RUNS="$tmp/runs" MUTANTS_OUT="$tmp/out"
 : >"$FAKE_RUNS"
 sweep() { scripts/mutants.sh sweep --cache "$tmp/cache" "$@" 2>&1; }
 runs() { wc -l <"$FAKE_RUNS" | tr -d ' '; }
-fail() { echo "mutants-test: FAIL: $1" >&2; exit 1; }
 
 sweep >/dev/null
 [ "$(runs)" = 1 ] || fail "first sweep must run"

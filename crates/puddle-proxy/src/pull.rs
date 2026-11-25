@@ -63,7 +63,7 @@ use crate::http::{self, Head};
 use crate::proxy::{
     ProxyConfig, Refusal, Unresolved, forward, parse_request, read_request, refuse, tunnel,
 };
-use crate::target::Target;
+use crate::request_target::Target;
 use crate::upstream::{Admitted, Upstream, connect_out};
 
 /// Random bytes in a token (256 bits).

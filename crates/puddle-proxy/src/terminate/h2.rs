@@ -416,7 +416,7 @@ pub(crate) struct Checked {
 /// HTTP/1.1 connection.
 pub(crate) fn check<B>(
     request: &Request<B>,
-    target: &crate::target::Target,
+    target: &crate::request_target::Target,
 ) -> Result<Checked, Refusal> {
     let protocol = request.extensions().get::<hyper::ext::Protocol>().cloned();
     let method = request.method().clone();

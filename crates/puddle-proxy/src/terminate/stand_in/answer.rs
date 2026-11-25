@@ -46,7 +46,7 @@ use zeroize::Zeroizing;
 
 use super::super::exchange::AnswerBody;
 use super::super::leg::BoxError;
-use super::target::{encoded, keeps_in_path, keeps_in_query};
+use super::url_target::{encoded, keeps_in_path, keeps_in_query};
 use super::{LENIENT_BASE64, StandIns, basic_credentials};
 use crate::proxy::Refusal;
 

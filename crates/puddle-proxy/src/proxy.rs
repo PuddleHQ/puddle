@@ -34,8 +34,8 @@ use crate::destination::{AddressCheck, Resolver, SystemResolver};
 use crate::http::{self, Body, Head, HeadError, RawTarget};
 use crate::plain;
 use crate::records::{RecordResolver, SystemRecords};
+use crate::request_target::Target;
 use crate::ssh;
-use crate::target::Target;
 use crate::terminate::{self, TerminationSource};
 use crate::upstream::{Admitted, Upstream};
 

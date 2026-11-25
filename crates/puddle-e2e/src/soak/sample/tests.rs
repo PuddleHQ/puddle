@@ -88,6 +88,21 @@ fn this_process_has_memory_threads_and_descriptors() {
     assert!(read_process(Path::new("/proc/0")).is_none());
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn a_process_whose_descriptors_cannot_be_read_still_has_memory_and_threads() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("status"),
+        "Name:\tpuddle\nVmRSS:\t  2048 kB\nThreads:\t7\n",
+    )
+    .unwrap();
+    assert_eq!(
+        read_process(dir.path()),
+        Some(vec![("rss_kb", 2048.0), ("threads", 7.0)])
+    );
+}
+
 #[test]
 fn processes_are_found_by_command_name_prefix() {
     let dir = tempfile::tempdir().unwrap();

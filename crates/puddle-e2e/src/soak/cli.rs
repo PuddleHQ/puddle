@@ -8,7 +8,7 @@
 //!     [--interval 300] [--count N]
 //! puddle-soak judge metrics.tsv [--start EPOCH_S] [--active-hours 8] [--hour-secs 3600]
 //! puddle-soak run --puddle PATH --out DIR [--profile smoke|hosted|full] [--runtime MSB_DIR]
-//!     [--scripts ci/soak] [--ui CMD] [--port 18080] [--min-ram-gib 8] [--min-disk-gib 20]
+//!     [--agent PUDDLE_AGENT] [--scripts ci/soak] [--ui CMD] [--port 18080] [--min-ram-gib 8] [--min-disk-gib 20]
 //! ```
 //!
 //! `run` exits 0 when the run passes, 1 on a MAJOR finding, and fails (2) when the run could
@@ -124,6 +124,7 @@ async fn run_command(args: &[String], out: &mut impl std::io::Write) -> Result<u
     let opts = Options {
         puddle: PathBuf::from(flag(&flags, "puddle").ok_or("--puddle is required")?),
         runtime: flag(&flags, "runtime").map(PathBuf::from),
+        agent: flag(&flags, "agent").map(PathBuf::from),
         out: PathBuf::from(flag(&flags, "out").ok_or("--out is required")?),
         profile: Profile::named(profile_name)
             .ok_or_else(|| format!("--profile: no profile `{profile_name}`"))?,

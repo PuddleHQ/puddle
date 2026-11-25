@@ -30,6 +30,7 @@ on:
       - lab-forgejo
       - freshness
       - company-network-windows
+      - soak
     types: [completed]
 
 permissions:

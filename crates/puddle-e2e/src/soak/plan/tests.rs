@@ -68,10 +68,10 @@ fn without_workloads_only_the_baseline_and_the_stop_remain() {
 
 #[test]
 fn each_loop_starts_a_round_every_period_while_the_loops_run() {
-    assert_eq!(rounds(FULL, Workload::W1).len(), 24);
-    assert_eq!(rounds(FULL, Workload::W2).len(), 16);
-    let w3 = rounds(FULL, Workload::W3);
-    assert_eq!(w3.len(), 32);
-    assert_eq!(w3.first(), Some(&0));
-    assert_eq!(w3.last(), Some(&465));
+    assert_eq!(rounds(FULL, Workload::Build).len(), 24);
+    assert_eq!(rounds(FULL, Workload::Js).len(), 16);
+    let agent = rounds(FULL, Workload::Agent);
+    assert_eq!(agent.len(), 32);
+    assert_eq!(agent.first(), Some(&0));
+    assert_eq!(agent.last(), Some(&465));
 }

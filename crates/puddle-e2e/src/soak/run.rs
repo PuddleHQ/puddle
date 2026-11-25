@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! `puddle-soak run`: the Linux soak of `docs/qa/soak-8h.md` with no person. It lays out the built
+//! `puddle-soak run`: the Linux soak playbook's day with no person. It lays out the built
 //! `puddle` as an install, starts `puddle serve` over a fresh data folder, runs the sampler alone
-//! (M8), brings up the four workspaces and their loops (W1 to W4), plays the schedule of events
+//! first, brings up the four workspaces and their loops (build, JavaScript, agent, web app), plays the schedule of events
 //! ([`super::plan`]), idles through the night, runs the morning round, collects the artefacts,
 //! tears down, and judges `metrics.tsv` ([`super::judge`]). The run fails on any MAJOR, the
 //! judge's or its own (a crash outside the 5:00 event, a workspace that stopped by itself, a
@@ -34,8 +34,10 @@ use super::series::Series;
 pub struct Options {
     /// The built `puddle` program (with the `serve` feature).
     pub puddle: PathBuf,
-    /// The msb runtime folder; without it the run has no workspaces.
+    /// The msb runtime folder (`ci/fetch-msb.sh`); without it the run has no workspaces.
     pub runtime: Option<PathBuf>,
+    /// The guest agent (`ci/build-agent.sh`), linked into the program's runtime folder.
+    pub agent: Option<PathBuf>,
     /// The run folder: `metrics.tsv`, `run.log`, `serve.log`, `findings.txt`, `summary.md`, ...
     pub out: PathBuf,
     /// How long a playbook hour lasts.
@@ -47,9 +49,9 @@ pub struct Options {
     pub ui: Option<String>,
     /// The loopback port of the API; a fixed one so the address survives a restart.
     pub port: u16,
-    /// Free memory the run needs at the start (Pre2), GiB.
+    /// Free memory the run needs at the start, GiB.
     pub min_ram_gib: u64,
-    /// Free disk the run needs at the start in the run folder (Pre2), GiB.
+    /// Free disk the run needs at the start in the run folder, GiB.
     pub min_disk_gib: u64,
 }
 
@@ -171,16 +173,27 @@ struct Serve {
     api: Target,
 }
 
-/// A program folder laid out as an install: `puddle` and, when there is one, `runtime`.
-fn program_folder(out: &Path, puddle: &Path, runtime: Option<&Path>) -> io::Result<PathBuf> {
+/// A program folder laid out as an install: `puddle`, and `runtime` with a link to each file of
+/// the msb runtime folder and to the guest agent.
+fn program_folder(out: &Path, opts: &Options) -> io::Result<PathBuf> {
     let folder = out.join("program");
-    std::fs::create_dir_all(&folder)?;
+    let runtime = folder.join("runtime");
+    std::fs::create_dir_all(&runtime)?;
     let exe = folder.join("puddle");
-    std::fs::copy(puddle, &exe)?;
-    if let Some(runtime) = runtime {
-        let link = folder.join("runtime");
-        if !link.exists() {
-            std::os::unix::fs::symlink(runtime, link)?;
+    std::fs::copy(&opts.puddle, &exe)?;
+    let mut files: Vec<(PathBuf, std::ffi::OsString)> = Vec::new();
+    if let Some(dir) = &opts.runtime {
+        for entry in std::fs::read_dir(dir)?.flatten() {
+            files.push((entry.path(), entry.file_name()));
+        }
+    }
+    if let Some(agent) = &opts.agent {
+        files.push((agent.clone(), "puddle-agent".into()));
+    }
+    for (from, name) in files {
+        let link = runtime.join(name);
+        if std::fs::symlink_metadata(&link).is_err() {
+            std::os::unix::fs::symlink(std::path::absolute(from)?, link)?;
         }
     }
     Ok(exe)
@@ -280,13 +293,19 @@ struct Space {
     id: String,
 }
 
-/// The playbook's four workspaces; W4's serves the web app on port 3000.
+/// The playbook's four workspaces; the last serves the web app on port 3000.
 const SPACES: [&str; 4] = [
     "qa-soak-build",
     "qa-soak-js",
     "qa-soak-agent",
     "qa-soak-web",
 ];
+
+/// The web app's port, in the guest and forwarded on this computer.
+const WEB_PORT: u16 = 3000;
+
+/// The hosts the loops need that no built-in set covers: the Rust installer's.
+const OUTSIDE_THE_SETS: [&str; 2] = ["sh.rustup.rs", "static.rust-lang.org"];
 
 /// The built-in sets the playbook switches on for all.
 const SETS: [&str; 3] = ["package-registries", "debian-ubuntu", "github"];
@@ -339,7 +358,7 @@ impl Run {
         Ok(())
     }
 
-    /// X2: a `puddle serve` that ended outside a planned event is a crash: MAJOR, one restart; a
+    /// A `puddle serve` that ended outside a planned event is a crash: MAJOR, one restart; a
     /// second ends the run.
     async fn crash_watch(&mut self) -> Result<(), String> {
         let Ok(Some(status)) = self.serve.child.try_wait() else {
@@ -388,6 +407,13 @@ impl Run {
             .await;
             if code != 200 {
                 return Err(format!("switch on {slug}: {code} {body}"));
+            }
+        }
+        for host in OUTSIDE_THE_SETS {
+            let rule = json!({"scope": {"type": "global"}, "pattern": host, "effect": "allow"});
+            let (code, body) = call_json(&self.api(), "POST", "/api/rules", Some(&rule)).await;
+            if code != 201 {
+                return Err(format!("allow {host}: {code} {body}"));
             }
         }
         for name in SPACES {
@@ -463,10 +489,24 @@ impl Run {
         let Some(web) = self.space("qa-soak-web") else {
             return;
         };
-        let (code, out) = self.guest(&web, "w4-setup.sh", &[]).await;
+        let (code, out) = self.guest(&web, "web-setup.sh", &[]).await;
         if code != 0 {
-            self.major(format!("W4's web app did not start: {out}"));
+            self.major(format!("the web app did not start: {out}"));
+            return;
         }
+        // Forwarded from this computer's port 3000, pinned so it stays over a restart; the agent
+        // lists a new listener within seconds, so the forward is tried for a minute.
+        let path = format!("/api/workspaces/{}/ports/{WEB_PORT}", web.id);
+        let forward = json!({"host_port": WEB_PORT, "pinned": true});
+        let mut last = (0, Value::Null);
+        for _ in 0..12 {
+            last = call_json(&self.api(), "PUT", &path, Some(&forward)).await;
+            if last.0 == 200 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+        self.major(format!("forward of port {WEB_PORT}: {} {}", last.0, last.1));
     }
 
     async fn setup(&mut self) -> Result<(), String> {
@@ -571,7 +611,7 @@ impl Run {
         match e {
             Event::Baseline | Event::StopLoops => {}
             Event::InboxBatch => self.inbox_batch().await,
-            Event::RestartW2 => {
+            Event::RestartJs => {
                 if let Some(s) = self.space("qa-soak-js") {
                     let (code, body) = call_json(
                         &self.api(),
@@ -581,12 +621,12 @@ impl Run {
                     )
                     .await;
                     if code != 202 {
-                        self.major(format!("stop W2: {code} {body}"));
+                        self.major(format!("stop the JavaScript workspace: {code} {body}"));
                     } else if let Err(e) = self
                         .wait_status(&s.id, "stopped", Duration::from_mins(5))
                         .await
                     {
-                        self.major(format!("W2 did not stop: {e}"));
+                        self.major(format!("the JavaScript workspace did not stop: {e}"));
                     }
                     self.start_spaces().await;
                 }
@@ -670,7 +710,7 @@ impl Run {
         }
     }
 
-    /// Hour 0 and the morning: the probe set and one W1 and W2 round, as text to compare.
+    /// Hour 0 and the morning: the probe set and one build and one JavaScript round, as text to compare.
     async fn probes(&mut self) -> Vec<(String, String)> {
         let mut out = Vec::new();
         for s in self.spaces.clone() {
@@ -710,12 +750,12 @@ async fn sample_into(sampler: Arc<tokio::sync::Mutex<Sampler>>, metrics: PathBuf
     }
 }
 
-/// Hour 0's probe results and W1 and W2 build times, for the morning to compare against.
+/// Hour 0's probe results and build and JavaScript round times, for the morning to compare against.
 #[derive(Debug, Default)]
 struct Baseline {
     probes: Vec<(String, String)>,
-    w1: Option<u64>,
-    w2: Option<u64>,
+    build: Option<u64>,
+    js: Option<u64>,
 }
 
 impl Run {
@@ -745,7 +785,7 @@ impl Run {
             if let Ok(mut slot) = api_slot.lock() {
                 *slot = self.api();
             }
-            // X1: under 4 GiB free memory the loops stop and the run ends 30 playbook minutes on.
+            // Under 4 GiB free memory the loops stop and the run ends 30 playbook minutes on.
             let meminfo = std::fs::read_to_string("/proc/meminfo").unwrap_or_default();
             if super::sample::available_ram_kb(&meminfo)
                 .is_some_and(|kb| kb < 4.0 * 1024.0 * 1024.0)
@@ -758,8 +798,8 @@ impl Run {
             match (event, workload) {
                 (Some(Event::Baseline), _) if workloads => {
                     baseline.probes = self.probes().await;
-                    baseline.w1 = self.timed_round(Workload::W1, "baseline").await;
-                    baseline.w2 = self.timed_round(Workload::W2, "baseline").await;
+                    baseline.build = self.timed_round(Workload::Build, "baseline").await;
+                    baseline.js = self.timed_round(Workload::Js, "baseline").await;
                 }
                 (Some(Event::StopLoops), _) => self.stop_loops().await,
                 (Some(e), _) => {
@@ -779,7 +819,7 @@ impl Run {
         Some(baseline)
     }
 
-    /// X3 and X4: the artefacts, every workspace deleted, `puddle serve` stopped.
+    /// The artefacts, every workspace deleted, `puddle serve` stopped.
     async fn teardown(&mut self) {
         collect(self).await;
         for s in self.spaces.clone() {
@@ -799,7 +839,7 @@ impl Run {
         let _ = self.serve.child.kill().await;
     }
 
-    /// The night until `end`: the sampler only; every workspace must stay up (I1, F7).
+    /// The night until `end`: the sampler only; every workspace must stay up.
     async fn night(&mut self, end: Instant) {
         self.log.line("the night begins");
         let every = self.opts.profile.sample_every();
@@ -833,7 +873,7 @@ impl Run {
         }
     }
 
-    /// The morning (Mo, F7): the same probe results as hour 0, build times within 20 %.
+    /// The morning the same probe results as hour 0, build times within 20 %.
     async fn morning(&mut self, baseline: &Baseline) {
         self.log.line("the morning round");
         let probes = self.probes().await;
@@ -844,7 +884,10 @@ impl Run {
                 ));
             }
         }
-        for (w, then) in [(Workload::W1, baseline.w1), (Workload::W2, baseline.w2)] {
+        for (w, then) in [
+            (Workload::Build, baseline.build),
+            (Workload::Js, baseline.js),
+        ] {
             let now_secs = self.timed_round(w, "morning").await;
             if let (Some(a), Some(b)) = (then, now_secs)
                 && b * 10 > a * 12
@@ -858,13 +901,13 @@ impl Run {
     }
 }
 
-/// `qa-soak-build` is W1's, and so on; the setup scripts are named by it.
+/// The tag a workspace's scripts are named by: `build-setup.sh` for `qa-soak-build`, ...
 fn workload_tag(space: &str) -> String {
     match space {
-        "qa-soak-build" => "w1",
-        "qa-soak-js" => "w2",
-        "qa-soak-agent" => "w3",
-        _ => "w4",
+        "qa-soak-build" => "build",
+        "qa-soak-js" => "js",
+        "qa-soak-agent" => "agent",
+        _ => "web",
     }
     .to_owned()
 }
@@ -938,7 +981,7 @@ async fn page_loads(api: Arc<Mutex<Target>>, every: Duration) {
     }
 }
 
-/// Pre2: the memory and disk the run needs, from `/proc/meminfo` and `df`.
+/// The memory and disk the run needs, from `/proc/meminfo` and `df`.
 fn preflight(opts: &Options) -> Result<(), String> {
     let meminfo = std::fs::read_to_string("/proc/meminfo").map_err(|e| e.to_string())?;
     let ram_gib = super::sample::available_ram_kb(&meminfo).unwrap_or(0.0) / 1024.0 / 1024.0;
@@ -978,20 +1021,19 @@ pub async fn run(opts: Options) -> Result<Outcome, String> {
         profile: opts.profile,
     };
     let data = opts.out.join("data");
-    let exe = program_folder(&opts.out, &opts.puddle, opts.runtime.as_deref())
-        .map_err(|e| e.to_string())?;
+    let exe = program_folder(&opts.out, &opts).map_err(|e| e.to_string())?;
     let serve = start_serve(&exe, &data, &opts.out.join("serve.log"), opts.port).await?;
     log.line(&format!("puddle serve is up on {}", serve.api.addr));
     let cfg = Config {
         api: serve.api.clone(),
         w4: opts.workloads().then(|| Target {
-            addr: "127.0.0.1:3000".to_owned(),
+            addr: format!("127.0.0.1:{WEB_PORT}"),
             token: None,
         }),
         // `puddle$`: the server alone, not this `puddle-soak`.
         process_prefixes: vec!["puddle$".to_owned(), "msb".to_owned()],
         db: Some(data.join("puddle.db")),
-        files: vec![("db_wal".to_owned(), data.join("puddle.db-wal"))],
+        files: Vec::new(),
         disk: Some(opts.out.clone()),
     };
     let sampler = Arc::new(tokio::sync::Mutex::new(Sampler::start(cfg, now)));
@@ -1012,7 +1054,7 @@ pub async fn run(opts: Options) -> Result<Outcome, String> {
         crashes: 0,
     };
 
-    // M8: the sampler alone first; it must have written rows.
+    // The sampler alone first; it must have written rows.
     tokio::time::sleep(opts.profile.sampler_alone()).await;
     let rows = std::fs::read_to_string(&metrics)
         .unwrap_or_default()
@@ -1020,7 +1062,7 @@ pub async fn run(opts: Options) -> Result<Outcome, String> {
         .count();
     if rows == 0 {
         sampling.abort();
-        return Err("the sampler wrote nothing while it ran alone (M8)".to_owned());
+        return Err("the sampler wrote nothing while it ran alone".to_owned());
     }
     log.line(&format!("the sampler ran alone: {rows} rows"));
 
@@ -1044,7 +1086,7 @@ pub async fn run(opts: Options) -> Result<Outcome, String> {
         }
     }
 
-    // X3 and X4: the artefacts, then down.
+    // The artefacts, then down.
     loads.abort();
     sampling.abort();
     run.teardown().await;
@@ -1092,7 +1134,7 @@ fn verdict(
     Ok(outcome)
 }
 
-/// X3: the audit log as JSON lines and the problems list, beside `serve.log` and `metrics.tsv`.
+/// The audit log as JSON lines and the problems list, beside `serve.log` and `metrics.tsv`.
 async fn collect(run: &Run) {
     let mut after: Option<i64> = None;
     let mut lines = String::new();

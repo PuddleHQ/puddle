@@ -234,8 +234,10 @@ pub async fn probe_web_app(
 }
 
 /// RSS in KiB, threads and open file descriptors of one process, from `proc_dir` (`/proc/<pid>`).
+/// The descriptors are left out when their folder cannot be read: `puddle serve` makes itself
+/// non-dumpable, which gives `/proc/<pid>/fd` to root, while `status` stays readable.
 #[must_use]
-pub fn read_process(proc_dir: &Path) -> Option<[(&'static str, f64); 3]> {
+pub fn read_process(proc_dir: &Path) -> Option<Vec<(&'static str, f64)>> {
     let status = std::fs::read_to_string(proc_dir.join("status")).ok()?;
     let field = |name: &str| -> Option<f64> {
         status.lines().find_map(|l| {
@@ -246,13 +248,15 @@ pub fn read_process(proc_dir: &Path) -> Option<[(&'static str, f64); 3]> {
                 .ok()
         })
     };
-    let fds = std::fs::read_dir(proc_dir.join("fd")).ok()?.count();
-    #[expect(clippy::cast_precision_loss, reason = "descriptor counts are small")]
-    Some([
+    let mut got = vec![
         ("rss_kb", field("VmRSS:")?),
         ("threads", field("Threads:")?),
-        ("handles", fds as f64),
-    ])
+    ];
+    if let Ok(fds) = std::fs::read_dir(proc_dir.join("fd")) {
+        #[expect(clippy::cast_precision_loss, reason = "descriptor counts are small")]
+        got.push(("handles", fds.count() as f64));
+    }
+    Some(got)
 }
 
 /// Every process under `proc_root` whose command name starts with one of `prefixes`, as

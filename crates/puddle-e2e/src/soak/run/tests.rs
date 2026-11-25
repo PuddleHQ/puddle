@@ -60,10 +60,10 @@ fn the_processes_below_a_process_are_found() {
 
 #[test]
 fn each_workspace_has_its_scripts_tag() {
-    assert_eq!(workload_tag("qa-soak-build"), "w1");
-    assert_eq!(workload_tag("qa-soak-js"), "w2");
-    assert_eq!(workload_tag("qa-soak-agent"), "w3");
-    assert_eq!(workload_tag("qa-soak-web"), "w4");
+    assert_eq!(workload_tag("qa-soak-build"), "build");
+    assert_eq!(workload_tag("qa-soak-js"), "js");
+    assert_eq!(workload_tag("qa-soak-agent"), "agent");
+    assert_eq!(workload_tag("qa-soak-web"), "web");
 }
 
 #[test]
@@ -95,6 +95,7 @@ fn a_run_without_the_memory_it_needs_is_blocked() {
     let opts = Options {
         puddle: PathBuf::from("/nonexistent"),
         runtime: None,
+        agent: None,
         out: dir.path().to_owned(),
         profile: super::super::plan::SMOKE,
         scripts: None,

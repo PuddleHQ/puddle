@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! The soak run's timeline: the playbook's day (`docs/qa/soak-8h.md`, "Schedule of events" and
-//! "Workloads") in playbook minutes, and the profiles that fit it into the time a runner has.
+//! The soak run's timeline: the soak playbook's day (its schedule of events and its
+//! workloads) in playbook minutes, and the profiles that fit it into the time a runner has.
 //! A profile only says how many real seconds a playbook hour lasts; the order of the day, the
 //! loops' rounds and the sample count per hour stay the playbook's.
 
@@ -81,7 +81,7 @@ impl Profile {
         self.at(5).max(Duration::from_secs(1))
     }
 
-    /// How long the sampler runs alone before the workloads start (M8): 15 playbook minutes.
+    /// How long the sampler runs alone before the workloads start: 15 playbook minutes.
     #[must_use]
     pub const fn sampler_alone(self) -> Duration {
         self.at(15)
@@ -95,15 +95,15 @@ pub enum Event {
     Baseline,
     /// Once an hour: the Inbox answered in a batch (allow what the loops need, deny the rest).
     InboxBatch,
-    /// 1:00: W2's workspace stopped and started.
-    RestartW2,
+    /// 1:00: the JavaScript workspace stopped and started.
+    RestartJs,
     /// 2:00: Puddle quit and started again.
     RestartPuddle,
     /// 2:30: Activity loaded, scrolled to the end, exported (Playwright).
     Activity,
     /// 3:00: 200 rules added and deleted through the API, 20 through the UI (Playwright).
     Rules,
-    /// 3:30: 500 new hosts from W3 at once, then the Inbox (Playwright).
+    /// 3:30: 500 new hosts from the agent's workspace at once, then the Inbox (Playwright).
     Flood,
     /// 4:30: `puddle backup` while the loops run.
     Backup,
@@ -131,7 +131,7 @@ impl Event {
         match self {
             Self::Baseline => "baseline",
             Self::InboxBatch => "inbox-batch",
-            Self::RestartW2 => "restart-w2",
+            Self::RestartJs => "restart-js",
             Self::RestartPuddle => "restart-puddle",
             Self::Activity => "activity",
             Self::Rules => "rules",
@@ -145,10 +145,10 @@ impl Event {
 }
 
 /// The events at fixed hours, as playbook minute and event. The 1:30, 4:00 and 6:00 events are
-/// settled elsewhere (docs/qa/soak-8h.md "Who runs what"), so they are not here.
+/// settled by other tests (the playbook's table of who runs what), so they are not here.
 const FIXED: [(u64, Event); 10] = [
     (0, Event::Baseline),
-    (60, Event::RestartW2),
+    (60, Event::RestartJs),
     (120, Event::RestartPuddle),
     (150, Event::Activity),
     (180, Event::Rules),
@@ -189,24 +189,24 @@ pub fn events(profile: Profile, workloads: bool) -> Vec<(u64, Event)> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Workload {
     /// The Rust build loop.
-    W1,
+    Build,
     /// The pnpm install and build loop.
-    W2,
+    Js,
     /// The simulated agent's rounds against the lab forge.
-    W3,
+    Agent,
 }
 
 impl Workload {
     /// Every loop.
-    pub const ALL: [Self; 3] = [Self::W1, Self::W2, Self::W3];
+    pub const ALL: [Self; 3] = [Self::Build, Self::Js, Self::Agent];
 
     /// Playbook minutes between rounds.
     #[must_use]
     pub const fn period(self) -> u64 {
         match self {
-            Self::W1 => 20,
-            Self::W2 => 30,
-            Self::W3 => 15,
+            Self::Build => 20,
+            Self::Js => 30,
+            Self::Agent => 15,
         }
     }
 
@@ -214,9 +214,9 @@ impl Workload {
     #[must_use]
     pub const fn workspace(self) -> &'static str {
         match self {
-            Self::W1 => "qa-soak-build",
-            Self::W2 => "qa-soak-js",
-            Self::W3 => "qa-soak-agent",
+            Self::Build => "qa-soak-build",
+            Self::Js => "qa-soak-js",
+            Self::Agent => "qa-soak-agent",
         }
     }
 
@@ -224,9 +224,9 @@ impl Workload {
     #[must_use]
     pub const fn script(self) -> &'static str {
         match self {
-            Self::W1 => "w1-round.sh",
-            Self::W2 => "w2-round.sh",
-            Self::W3 => "w3-round.sh",
+            Self::Build => "build-round.sh",
+            Self::Js => "js-round.sh",
+            Self::Agent => "agent-round.sh",
         }
     }
 }

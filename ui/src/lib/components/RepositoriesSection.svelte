@@ -410,9 +410,11 @@
     flex: 1;
     overflow-wrap: anywhere;
   }
+  /* The global .meta never wraps; here it holds URLs and a sentence, which must wrap at 390 px. */
   .meta {
     color: var(--color-text-muted);
     font-size: var(--text-sm);
+    white-space: normal;
   }
   .acts {
     display: flex;

@@ -100,11 +100,14 @@ test("Activity marks company-network records with a chip and filters on them", a
 }) => {
   await open(page, backend, "/activity");
   const rows = page.locator("tbody tr.row");
-  const chip = page.locator(".chip", { hasText: "Company network" });
+  const chip = rows.locator(".meta", { hasText: "Company network" });
+  const marked = rows.filter({
+    has: page.locator(".meta", { hasText: "Company network" }),
+  });
   await expect(chip).toHaveCount(1);
   await expect(chip).toHaveAttribute("title", /private-access client/);
-  await expect(rows.filter({ has: chip })).toContainText("100.64.3.7");
-  await expect(rows.filter({ has: chip })).toContainText(
+  await expect(marked).toContainText("100.64.3.7");
+  await expect(marked).toContainText(
     "company network destinations are switched off",
   );
 

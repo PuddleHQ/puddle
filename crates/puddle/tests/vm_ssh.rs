@@ -179,6 +179,18 @@ async fn rig(tag: &str) -> Rig {
         ),
     )
     .unwrap();
+    // The same client config with the protocol log on, for the one step that has hung.
+    let debug_config = dir.path().join("ssh_config_debug");
+    let base_cfg = std::fs::read_to_string(&config_path).unwrap();
+    assert!(
+        base_cfg.contains("LogLevel ERROR"),
+        "config has a LogLevel line"
+    );
+    std::fs::write(
+        &debug_config,
+        base_cfg.replace("LogLevel ERROR", "LogLevel DEBUG1"),
+    )
+    .unwrap();
     Rig {
         rt,
         name,
@@ -194,20 +206,41 @@ impl Rig {
         slashes(&self.config)
     }
 
-    /// Runs a client tool in the client directory with stdin closed.
+    /// Runs a client tool in the client directory with stdin closed. Its output goes to files, so
+    /// a client that outlives `CLIENT_WAIT` is killed and the panic shows what it had printed
+    /// (a timed-out `output()` future drops it). `PUDDLE_SSH_BRIDGE_REPORT` makes the bridge
+    /// print how its session ended, which a client's stderr then carries.
     async fn run(&self, program: &str, args: &[&str]) -> Output {
-        timeout(
-            CLIENT_WAIT,
-            Command::new(tool(program))
-                .current_dir(self.dir.path())
-                .args(args)
-                .stdin(Stdio::null())
-                .kill_on_drop(true)
-                .output(),
-        )
-        .await
-        .unwrap_or_else(|_| panic!("{program} {args:?} timed out"))
-        .unwrap()
+        let out_path = self.dir.path().join("client.stdout");
+        let err_path = self.dir.path().join("client.stderr");
+        let mut child = Command::new(tool(program))
+            .current_dir(self.dir.path())
+            .args(args)
+            .env("PUDDLE_SSH_BRIDGE_REPORT", "1")
+            .stdin(Stdio::null())
+            .stdout(std::fs::File::create(&out_path).unwrap())
+            .stderr(std::fs::File::create(&err_path).unwrap())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let waited = timeout(CLIENT_WAIT, child.wait()).await;
+        if waited.is_err() {
+            let _ = child.kill().await;
+        }
+        let stdout = std::fs::read(&out_path).unwrap_or_default();
+        let stderr = std::fs::read(&err_path).unwrap_or_default();
+        let Ok(status) = waited else {
+            panic!(
+                "{program} {args:?} timed out after {CLIENT_WAIT:?}\nstdout: {}\nstderr: {}",
+                String::from_utf8_lossy(&stdout),
+                String::from_utf8_lossy(&stderr)
+            );
+        };
+        Output {
+            status: status.unwrap(),
+            stdout,
+            stderr,
+        }
     }
 
     async fn guest(&self, script: &str) -> (i32, String) {
@@ -275,13 +308,14 @@ async fn copies(rig: &Rig) {
         );
         eprintln!("{name}: 8 MiB up and back, equal");
     }
+    let debug_cfg = slashes(&rig.dir.path().join("ssh_config_debug"));
     std::fs::write(
         d.join("batch"),
         "put src.bin /tmp/sftp.bin\nget /tmp/sftp.bin sftp-got.bin\n",
     )
     .unwrap();
     let sftp = rig
-        .run("sftp", &["-F", &cfg, "-q", "-b", "batch", "box"])
+        .run("sftp", &["-vv", "-F", &debug_cfg, "-b", "batch", "box"])
         .await;
     assert_eq!(sftp.status.code(), Some(0), "sftp: {}", text(&sftp));
     assert!(

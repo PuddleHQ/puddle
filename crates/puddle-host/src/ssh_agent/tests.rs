@@ -455,12 +455,31 @@ mod gate {
         for n in 0..(REFUSALS_REMEMBERED * 2) {
             gate.record(
                 &ws("a"),
-                Some("h"),
-                &Outcome::Refused(Refusal::UnknownFlags(u32::try_from(n).unwrap())),
+                Some(&format!("h{n}")),
+                &Outcome::Refused(Refusal::SshSig),
             );
         }
         let len = gate.refused.lock().unwrap().len();
         assert!(len <= REFUSALS_REMEMBERED, "{len}");
+    }
+
+    #[test]
+    fn refusals_of_one_kind_differing_only_in_guest_chosen_values_are_written_once() {
+        let store = store();
+        let gate = gate(&store, Duration::from_millis(30), Duration::from_secs(60));
+        for n in 0..300_u32 {
+            gate.record(
+                &ws("a"),
+                Some("h"),
+                &Outcome::Refused(Refusal::UnknownFlags(n)),
+            );
+        }
+        assert_eq!(
+            audit(&store).len(),
+            1,
+            "one row per workspace, host and kind"
+        );
+        assert_eq!(gate.refused.lock().unwrap().len(), 1);
     }
 
     #[test]
@@ -470,8 +489,8 @@ mod gate {
         for n in 0..(REFUSALS_REMEMBERED + 44) {
             gate.record(
                 &ws("a"),
-                Some("h"),
-                &Outcome::Refused(Refusal::UnknownFlags(u32::try_from(n).unwrap())),
+                Some(&format!("h{n}")),
+                &Outcome::Refused(Refusal::SshSig),
             );
         }
         let len = gate.refused.lock().unwrap().len();

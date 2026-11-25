@@ -595,16 +595,33 @@ replaced by its default, a `&&` turned into `||`) and runs the crate's tests; a 
 
 | Set | Gates | Runs |
 |---|---|---|
-| `fast` | fmt, typos, spdx, shellcheck, hooks, platform-literals, standalone, git-pins, mutants-exclusions, silent-skips, early-exit-pipes, spawn, test-hooks | pre-commit hook |
+| `fast` | the gates `scripts/check.sh --list fast` prints (`fast_gates` in the script) | pre-commit hook |
 | `pre-push` | `fast`, then `diff-coverage-fast`, then every other gate of `all` except `ui-e2e`, `advisories` and `ui-audit` | pre-push hook |
 | `all` (the default) | every gate, `ui-e2e`, `advisories` and `ui-audit` included | `ci.yml` (every push and PR, except `advisories` and `ui-audit`, see below), by hand |
 
 **Hook environment.** Git exports `GIT_DIR`, `GIT_INDEX_FILE` and `GIT_WORK_TREE` to every hook. Both hooks clear them (`git rev-parse --local-env-vars`) before the gates start, because a `git init` in a temporary directory under a leaked `GIT_DIR` acts on the hook's repository and, from a linked worktree, sets the shared `core.bare` to true. A test that runs git clears them again for its own calls: a shell test sources `scripts/git-clean-env.sh`, a Rust test removes them from its `Command` (`clean_git` in `puddle-e2e`). `scripts/check-test-git-env.sh` (the `hooks` gate) fails a test file that runs git without doing so.
 
 **Concurrent gates.** Within a set, `fast` (and, in `pre-push`, `diff-coverage-fast` after it) runs first, one gate at a time, and a failure stops the run.
-The rest runs as up to three streams at once (`scripts/gate-sched.sh`): the Rust gates (`git-env`, `clippy`,
-`clippy-windows`, `dormant`, `openapi`, `doc`, `coverage`), the UI chain (`ui`, `ui-licences`, `ui-audit`, `ui-e2e`) and the
-read-only scans (`secrets`, `deny`, `advisories`, `notices`). `coverage` waits for `ui`, which builds the UI it tests against.
+The rest runs as up to three streams at once (`scripts/gate-sched.sh`): the Rust gates, the UI chain and the
+read-only scans, one gate per line (`gate_stream` in `scripts/gate-sched.sh` holds the same assignment):
+
+- Rust: `git-env`
+- Rust: `clippy`
+- Rust: `clippy-windows`
+- Rust: `dormant`
+- Rust: `openapi`
+- Rust: `doc`
+- Rust: `coverage`
+- UI chain: `ui`
+- UI chain: `ui-licences`
+- UI chain: `ui-audit`
+- UI chain: `ui-e2e`
+- Scan: `secrets`
+- Scan: `deny`
+- Scan: `advisories`
+- Scan: `notices`
+
+`coverage` waits for `ui`, which builds the UI it tests against.
 A gate's output is kept and printed whole under its `==> <gate>` line when it finishes, followed by
 `-- <gate>: ok, N s`; a failed gate stops its own stream only, the other streams finish, and the run exits with the
 status of the first failed gate in set order, whose log is the last thing printed. `PUDDLE_CHECK_SERIAL=1`

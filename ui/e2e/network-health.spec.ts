@@ -151,12 +151,11 @@ test("with nothing wrong the page is one short list that fits one screen", async
   ).toBeVisible();
   await expect(page.getByText(/^Nothing found for:/)).toBeVisible();
   await expect(page.getByText(/^None found$|^None\.$/)).toHaveCount(0);
-  const height = await page.evaluate(
-    () => document.documentElement.scrollHeight,
-  );
-  expect(height, "the page is at most one screen tall").toBeLessThanOrEqual(
-    900,
-  );
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollHeight), {
+      message: "the page is at most one screen tall",
+    })
+    .toBeLessThanOrEqual(900);
   await expectNoAxeViolations(page, "nothing wrong");
 });
 

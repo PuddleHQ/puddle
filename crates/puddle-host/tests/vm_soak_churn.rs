@@ -24,7 +24,7 @@
     clippy::expect_used,
     reason = "VM test: a failed step fails the test; measurements go to stderr"
 )]
-#![allow(
+#![expect(
     clippy::indexing_slicing,
     reason = "VM test: JSON read from the API, a missing key fails the test"
 )]

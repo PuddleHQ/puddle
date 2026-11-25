@@ -5052,6 +5052,15 @@ async fn vm_host_a_terminal_is_a_shell_as_the_session_user_in_the_start_folder()
         .await;
     assert_eq!(reply.json()["exists"], true, "{}", reply.body);
 
+    // The terminal's prompt shows the name, not the generated id the guest's host name keeps.
+    let renamed = api
+        .patch(
+            &format!("/api/workspaces/{name}"),
+            &json!({"name": "play ground"}).to_string(),
+        )
+        .await;
+    assert_eq!(renamed.status, 200, "{}", renamed.body);
+
     let size = puddle_api::TerminalSize::new(100, 30).unwrap();
     let service = host.workspaces();
     puddle_api::TerminalService::check(service, &sandbox)
@@ -5075,6 +5084,24 @@ async fn vm_host_a_terminal_is_a_shell_as_the_session_user_in_the_start_folder()
         )),
         "{seen:?}"
     );
+
+    // The prompt reads `user@<name>`, and the id is nowhere in it.
+    let typed = "echo \"prompt=<${PS1@P}>\"; echo end=$((20 + 22))\r";
+    link.input
+        .send(puddle_api::TerminalInput::Bytes(typed.as_bytes().to_vec()))
+        .await
+        .unwrap();
+    let seen = terminal_text_until(&mut link, "end=42").await;
+    assert!(
+        seen.contains(&format!("prompt=<{user}@play ground:")),
+        "{seen:?}"
+    );
+    let shown = seen
+        .rsplit("prompt=<")
+        .next()
+        .and_then(|rest| rest.split('>').next())
+        .unwrap_or_default();
+    assert!(!shown.contains(&name), "{seen:?}");
 
     // The shell's own exit ends the session with its status.
     link.input

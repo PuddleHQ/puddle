@@ -142,6 +142,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             record.start_folder.as_ref(),
             crate::editor_file::terminal_folder(record),
             record.session_user,
+            record.label(),
         )
         .await
     }
@@ -157,6 +158,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         start_folder: Option<&StartFolder>,
         terminals: Option<StartFolder>,
         session_user: SessionUser,
+        label: &str,
     ) -> Result<(puddle_boot::BootPlan, GuestEnv, GuestState), OpError> {
         let inner = &self.inner;
         let capture = crate::logins::capture_enabled(inner.settings.as_ref(), name);
@@ -179,6 +181,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .flatten()
             .map(GuestFile::kept);
         let state = GuestState {
+            label: label.to_owned(),
             editor,
             image,
             ca: began.certificate,
@@ -210,6 +213,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 session_user: state.session_user,
                 ssh_agent: state.ssh_agent,
                 mise: state.mise.as_ref(),
+                label: &state.label,
             },
         ) {
             Ok((plan, env)) => Ok((plan, env, state)),
@@ -550,6 +554,55 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
         self.check_start_folder(name, &gated, &replanned.root, record.start_folder.as_ref())
             .await
+    }
+
+    /// A rename of `record`'s workspace: the running guest's prompt shows the new name from its
+    /// next terminal on, through the boot plan run again. A stopped workspace reads the name at
+    /// its next start. The prompt is cosmetic, so a guest that does not answer only gets a log
+    /// line.
+    pub(super) async fn follow_rename(&self, record: &WorkspaceRecord) {
+        let name = &record.id;
+        let inner = &self.inner;
+        let Some(rewrite) = inner
+            .live
+            .lock()
+            .await
+            .get(name)
+            .map(|e| Arc::clone(&e.rewrite))
+        else {
+            return;
+        };
+        let _one_at_a_time = rewrite.lock().await;
+        let Some((gated, guest)) = ({
+            let live = inner.live.lock().await;
+            live.get(name)
+                .and_then(|e| Some((e.gated.clone()?, e.guest.clone()?)))
+        }) else {
+            return;
+        };
+        if guest.label == record.label() {
+            return;
+        }
+        let replanned = GuestState {
+            label: record.label().to_owned(),
+            ..guest
+        };
+        match self.run_plan(name, &gated, &replanned).await {
+            Ok(()) => {
+                if let Some(state) = inner
+                    .live
+                    .lock()
+                    .await
+                    .get_mut(name)
+                    .and_then(|e| e.guest.as_mut())
+                {
+                    state.label = replanned.label;
+                }
+            }
+            Err(reason) => {
+                tracing::warn!(workspace = %name, %reason, "the prompt in the workspace's terminals keeps the old name");
+            }
+        }
     }
 
     /// The checkouts the editor opens. An image with no git can't describe checkouts (the

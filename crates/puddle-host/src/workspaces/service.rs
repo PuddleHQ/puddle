@@ -458,47 +458,51 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         name: DisplayName,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let mut state = self.state();
-            if state.closed {
-                return Err(WorkspaceError::Unavailable(
-                    "Puddle is shutting down".to_owned(),
-                ));
-            }
-            puddle_api::check_rename(state.slots.values().map(|s| &s.record), id, &name)?;
-            let slot = state.slots.get_mut(id).ok_or_else(|| not_found(id))?;
-            let before = std::mem::replace(&mut slot.record.name, name);
-            if let Err(e) = self.persist(&state) {
-                // Nothing changes when the list can't be saved, so a restart doesn't undo a
-                // rename the user was told about.
-                if let Some(slot) = state.slots.get_mut(id) {
-                    slot.record.name = before;
+            let record = {
+                let mut state = self.state();
+                if state.closed {
+                    return Err(WorkspaceError::Unavailable(
+                        "Puddle is shutting down".to_owned(),
+                    ));
                 }
-                let name = state.slots.get(id).map(|s| s.record.id.clone());
+                puddle_api::check_rename(state.slots.values().map(|s| &s.record), id, &name)?;
+                let slot = state.slots.get_mut(id).ok_or_else(|| not_found(id))?;
+                let before = std::mem::replace(&mut slot.record.name, name);
+                if let Err(e) = self.persist(&state) {
+                    // Nothing changes when the list can't be saved, so a restart doesn't undo a
+                    // rename the user was told about.
+                    if let Some(slot) = state.slots.get_mut(id) {
+                        slot.record.name = before;
+                    }
+                    let name = state.slots.get(id).map(|s| s.record.id.clone());
+                    drop(state);
+                    let reason = format!("the workspace was not renamed: {e}; {SAVE_HINT}");
+                    if let Some(name) = name {
+                        self.record_op(
+                            WorkspaceOpKind::Rename,
+                            &name,
+                            WorkspaceOpOutcome::Failed,
+                            Some(reason.clone()),
+                        );
+                    }
+                    return Err(WorkspaceError::Unavailable(reason));
+                }
+                let record = state
+                    .slots
+                    .get(id)
+                    .map(|s| s.record.clone())
+                    .ok_or_else(|| not_found(id))?;
                 drop(state);
-                let reason = format!("the workspace was not renamed: {e}; {SAVE_HINT}");
-                if let Some(name) = name {
-                    self.record_op(
-                        WorkspaceOpKind::Rename,
-                        &name,
-                        WorkspaceOpOutcome::Failed,
-                        Some(reason.clone()),
-                    );
-                }
-                return Err(WorkspaceError::Unavailable(reason));
-            }
-            let record = state
-                .slots
-                .get(id)
-                .map(|s| s.record.clone())
-                .ok_or_else(|| not_found(id))?;
-            drop(state);
-            let detail = format!("renamed to {}", record.name);
-            self.record_op(
-                WorkspaceOpKind::Rename,
-                &record.id,
-                WorkspaceOpOutcome::Succeeded,
-                Some(detail),
-            );
+                let detail = format!("renamed to {}", record.name);
+                self.record_op(
+                    WorkspaceOpKind::Rename,
+                    &record.id,
+                    WorkspaceOpOutcome::Succeeded,
+                    Some(detail),
+                );
+                record
+            };
+            self.follow_rename(&record).await;
             Ok(record)
         })
     }

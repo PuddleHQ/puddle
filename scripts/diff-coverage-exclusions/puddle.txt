@@ -3,7 +3,7 @@
 # path glob here starts with crates/puddle/; the gate refuses another crate's entry, so two pull requests that
 # touch different crates edit different files. Entries stay sorted by path glob, then by the whole line.
 crates/puddle/src/cmd/doctor.rs | eprintln!("puddle: can't find Puddle's own folder: {e}"); | a message no test reaches; the line only changed the spelling of the product name
-crates/puddle/src/cmd/secrets.rs | None => puddle_fs::data_dir().map_err(\|e\| e.to_string())?, | the default data folder is the real one of the machine running the test; the tests always pass `--data-dir`
+crates/puddle/src/cmd/mod.rs | None => puddle_fs::data_dir()?, | the default data folder is the real one of the machine running the test; the tests always pass `--data-dir`
 crates/puddle/src/cmd/serve.rs | Ok(Role::Worker) => {}\nErr(e) => { | the startup path runs only in the real binary after the front/worker split; `log_level` is unit-tested and the exit path is three lines
 crates/puddle/src/cmd/serve.rs | Ok(Role::Worker) => {}\nErr(e) => {\neprintln!("puddle: {e}"); | the startup path runs only in the real binary after the front/worker split; `log_level` is unit-tested and the exit path is three lines
 crates/puddle/src/cmd/serve.rs | Ok(Role::Worker) => {}\nErr(e) => {\neprintln!("puddle: {e}");\nreturn ExitCode::FAILURE; | the startup path runs only in the real binary after the front/worker split; `log_level` is unit-tested and the exit path is three lines

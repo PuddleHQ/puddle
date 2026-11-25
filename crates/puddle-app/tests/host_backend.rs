@@ -337,12 +337,12 @@ fn the_backend_asks_a_workspace_s_guest_to_end_its_extension_hosts_while_the_hos
 
     // No workspace of that name runs: the host says so, in words.
     let reason = tauri::async_runtime::block_on(ends(demo.clone())).unwrap_err();
-    assert_eq!(reason, "the workspace is not running");
+    assert_eq!(reason.to_string(), "the workspace is not running");
 
     // After the shutdown the host is gone and the handle, which does not keep it alive, says so.
     tauri::async_runtime::block_on(backend.shutdown()).unwrap();
     let reason = tauri::async_runtime::block_on(ends(demo)).unwrap_err();
-    assert_eq!(reason, "the host has stopped");
+    assert_eq!(reason.to_string(), "the host has stopped");
     drop(backend);
     // The handle kept nothing: the data folder is free for the next start.
     start(&options, &Machine::default()).unwrap();

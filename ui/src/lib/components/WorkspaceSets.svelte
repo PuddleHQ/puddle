@@ -1,11 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  import {
-    overrides,
-    stateFor,
-    systemFor,
-    type RuleSet,
-  } from "#lib/rules/sets.ts";
+  import { isOn, systemFor, type RuleSet } from "#lib/rules/sets.ts";
   import {
     ruleSets as defaultStore,
     type RuleSetsStore,
@@ -14,6 +9,7 @@
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import LoadNotice from "./LoadNotice.svelte";
   import SetChip from "./SetChip.svelte";
+  import ThreeWaySwitch from "./ThreeWaySwitch.svelte";
   import SystemManagedList from "./SystemManagedList.svelte";
   import "#lib/theme/controls.css";
 
@@ -63,30 +59,13 @@
           <span class="name"
             ><SetChip name={ruleSet.name} fill={ruleSet.fill} /></span
           >
-          <span class="muted">{stateFor(ruleSet, workspace)}</span>
-          <span class="actions">
-            <button
-              type="button"
-              class="btn"
-              aria-label="On here: {ruleSet.name} in {label}"
-              onclick={() => void set(ruleSet, true)}>On here</button
-            >
-            <button
-              type="button"
-              class="btn"
-              aria-label="Off here: {ruleSet.name} in {label}"
-              onclick={() => void set(ruleSet, false)}>Off here</button
-            >
-            {#if overrides(ruleSet, workspace)}
-              <button
-                type="button"
-                class="btn"
-                aria-label="Make {ruleSet.name} in {label} follow every workspace"
-                onclick={() => void set(ruleSet, null)}
-                >Follow every workspace</button
-              >
-            {/if}
-          </span>
+          <ThreeWaySwitch
+            label="{ruleSet.name} in {label}"
+            value={ruleSet.overrides.find((o) => o.workspace === workspace)
+              ?.enabled ?? null}
+            inherited={isOn(ruleSet, null)}
+            onChange={(next) => void set(ruleSet, next)}
+          />
         </li>
       {/each}
     </ul>
@@ -127,12 +106,6 @@
   .name {
     font-weight: 600;
     min-width: 12rem;
-  }
-  .actions {
-    display: inline-flex;
-    flex-wrap: wrap;
-    gap: var(--space-1);
-    margin-left: auto;
   }
   .muted {
     color: var(--color-text-muted);

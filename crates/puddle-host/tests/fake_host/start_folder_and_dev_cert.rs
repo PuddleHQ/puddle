@@ -172,7 +172,7 @@ async fn a_start_folder_reaches_the_login_shell_file_and_a_missing_one_is_a_prob
 }
 
 /// Stops `name` and starts it again.
-async fn stop_and_start(api: &Api, events: &mut support::Events, name: &'static str) {
+pub(super) async fn stop_and_start(api: &Api, events: &mut support::Events, name: &'static str) {
     for step in ["stop", "start"] {
         let reply = api
             .post(&format!("/api/workspaces/{name}/{step}"), "")

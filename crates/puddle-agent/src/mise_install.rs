@@ -47,7 +47,7 @@ pub const USAGE: &str = "usage: puddle-agent mise-install <workspace-dir> [--mis
 /// What the host sends.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
-    /// The workspace folder (`/workspaces/<id>`).
+    /// The workspace folder (`/workspace`).
     pub root: PathBuf,
     /// Only report what is missing; install nothing.
     pub report_only: bool,

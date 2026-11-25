@@ -348,10 +348,8 @@ async fn vm_radar_a_fresh_workspace_gets_the_pinned_mise_without_an_inbox_row() 
                 &vm,
                 &ws,
                 "version",
-                &format!(
-                    "/workspaces/{ws}/.puddle/mise/bin/mise --version 2>&1; \
-                     test -f /workspaces/{ws}/.puddle/mise/bin/.puddle-mise && echo marker"
-                ),
+                "/workspace/.puddle/mise/bin/mise --version 2>&1; \
+                     test -f /workspace/.puddle/mise/bin/.puddle-mise && echo marker",
             )
             .await;
             (code == 0 && out.contains("marker")).then_some(out)
@@ -408,7 +406,7 @@ async fn vm_radar_an_own_deny_on_the_mise_host_gives_a_problem_and_a_done_start(
         &vm,
         &ws,
         "no-binary",
-        &format!("test -e /workspaces/{ws}/.puddle/mise/bin/mise && echo present || echo absent"),
+        "test -e /workspace/.puddle/mise/bin/mise && echo present || echo absent",
     )
     .await;
     assert!(out.contains("absent"), "{out}");
@@ -468,7 +466,7 @@ async fn vm_radar_tools_install_after_the_start_and_a_second_start_installs_noth
         &ws,
         "config",
         &format!(
-            "printf '[tools]\\nnode = \"{NODE_PIN}\"\\njava = \"{JAVA_PIN}\"\\n' > /workspaces/{ws}/mise.toml && cat /workspaces/{ws}/mise.toml"
+            "printf '[tools]\\nnode = \"{NODE_PIN}\"\\njava = \"{JAVA_PIN}\"\\n' > /workspace/mise.toml && cat /workspace/mise.toml"
         ),
     )
     .await;
@@ -483,23 +481,15 @@ async fn vm_radar_tools_install_after_the_start_and_a_second_start_installs_noth
         .until(tools_in(&ws, "ready"), Duration::from_mins(15))
         .await;
     assert_eq!(tools_problem(&api, &ws).await, None);
-    let (code, out) = run(
-        &vm,
-        &ws,
-        "node",
-        &format!("cd /workspaces/{ws} && node --version"),
-    )
-    .await;
+    let (code, out) = run(&vm, &ws, "node", "cd /workspace && node --version").await;
     assert!(code == 0 && out.contains(&format!("v{NODE_PIN}")), "{out}");
     // The trust step ran for the new JDK: its cacerts holds Puddle's CAs.
     let (code, out) = run(
         &vm,
         &ws,
         "jdk-trust",
-        &format!(
-            "k=$(ls /workspaces/{ws}/.puddle/mise/data/installs/java/*/bin/keytool | head -1); \
-             echo \"puddle_cas=$(\"$k\" -list -cacerts -storepass changeit 2>/dev/null | grep -c '^puddle-')\""
-        ),
+        "k=$(ls /workspace/.puddle/mise/data/installs/java/*/bin/keytool | head -1); \
+             echo \"puddle_cas=$(\"$k\" -list -cacerts -storepass changeit 2>/dev/null | grep -c '^puddle-')\"",
     )
     .await;
     assert_eq!(code, 0, "{out}");

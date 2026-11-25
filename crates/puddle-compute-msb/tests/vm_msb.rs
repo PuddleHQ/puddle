@@ -30,7 +30,7 @@ async fn vm_volume_and_owned_disk_are_ext4() {
     let vol = VolumeName::new(&format!("{}-ext4", settings.prefix)).unwrap();
     let s = spec(&settings, "ext4")
         .with_volume(
-            VolumeMount::named(vol.clone(), path("/workspaces/ws")).ensure_size(DiskSize::mib(256)),
+            VolumeMount::named(vol.clone(), path("/workspace")).ensure_size(DiskSize::mib(256)),
         )
         .with_owned_disk(OwnedDisk {
             guest: path("/var/lib/docker"),
@@ -40,7 +40,7 @@ async fn vm_volume_and_owned_disk_are_ext4() {
     let sb = rt.create(s).await.expect("create");
     let out = sh(
         &sb,
-        r#"awk '$2 == "/workspaces/ws" || $2 == "/var/lib/docker" { print $2, $3 }' /proc/mounts | sort"#,
+        r#"awk '$2 == "/workspace" || $2 == "/var/lib/docker" { print $2, $3 }' /proc/mounts | sort"#,
     )
     .await;
     sb.stop().await.unwrap();
@@ -409,7 +409,7 @@ async fn vm_volume_used_matches_what_the_guest_holds() {
     let settings = support::settings();
     let rt = support::runtime(&settings).await;
     let vol = VolumeName::new(&format!("{}-used", settings.prefix)).unwrap();
-    let mount = "/workspaces/ws";
+    let mount = "/workspace";
     let s = spec(&settings, "used")
         .with_volume(VolumeMount::named(vol.clone(), path(mount)).ensure_size(DiskSize::mib(1024)));
     let n = s.name.clone();

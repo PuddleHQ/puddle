@@ -542,6 +542,11 @@ pub enum WorkspaceOpKind {
     SshAgentRefused,
     /// The user answered the first-use question of the filtered SSH agent; `detail` says how.
     SshAgentAnswered,
+    /// The days the activity log is kept were changed; `detail` says from how many to how many.
+    AuditRetentionChanged,
+    /// Records older than the retention were deleted on request (`puddle audit prune`); `detail`
+    /// says for how many days the log was kept and how many records went.
+    AuditPruned,
 }
 
 /// How a workspace operation ended.

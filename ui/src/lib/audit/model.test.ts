@@ -863,6 +863,8 @@ describe("a record as a row", () => {
       "git_switches_changed",
       "root_disk_grown",
       "git_repaired",
+      "audit_retention_changed",
+      "audit_pruned",
     ]) {
       expect(op({ op: kind }).detail).toMatch(/^[A-Z][a-z ]+, by api$/);
     }

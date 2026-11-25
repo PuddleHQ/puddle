@@ -910,6 +910,11 @@ fn the_ssh_agent_audit_kinds_reach_the_wire_under_their_own_names() {
             store::WorkspaceOpKind::SshAgentAnswered,
             "ssh_agent_answered",
         ),
+        (
+            store::WorkspaceOpKind::AuditRetentionChanged,
+            "audit_retention_changed",
+        ),
+        (store::WorkspaceOpKind::AuditPruned, "audit_pruned"),
     ] {
         assert_eq!(
             serde_json::to_value(WorkspaceOpKind::from(from)).unwrap(),

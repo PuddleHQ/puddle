@@ -24925,7 +24925,9 @@
           "root_disk_grown",
           "ssh_agent_signed",
           "ssh_agent_refused",
-          "ssh_agent_answered"
+          "ssh_agent_answered",
+          "audit_retention_changed",
+          "audit_pruned"
         ]
       },
       "WorkspaceOpOutcome": {

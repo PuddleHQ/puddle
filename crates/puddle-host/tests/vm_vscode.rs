@@ -151,7 +151,7 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
 
     /// Waits until `window` is attached. When it is not, the picture of the window, what its dialogs
     /// say and the window logs so far go into the artifact before the test fails: a window that never
-    /// attaches (T-2210: the second profile's window, run 45550753291) left only a timeout, and the
+    /// attaches (the second profile's window in a nightly run) left only a timeout, and the
     /// logs of the later windows were copied only at the end of the story.
     async fn attached_or_report(
         s: &Story,

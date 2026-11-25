@@ -3661,7 +3661,8 @@ async fn vm_perf_transparency_package_tools_keep_to_twice_the_hosts_time_and_hal
 }
 
 /// A timed trace of the cold npm install, run on the host and in the workspace: curl's phase times
-/// for fresh and reused connections to the registry, then `npm install` with every request timed.
+/// for fresh and reused connections to the registry, then `npm install` with every request timed. npm
+/// renames its node process to `npm install` (process.title), so the thread sampler finds it by that name.
 const NPM_TRACE_SCRIPT: &str = r#"set -u
 W=$(mktemp -d "${TMPDIR:-/tmp}/npm-trace.XXXXXX") || exit 1
 trap 'rm -rf "$W"' EXIT
@@ -3688,7 +3689,7 @@ TIMEFORMAT='TRACE npm_cpu real=%R user=%U sys=%S'
 threads() { for t in /proc/$1/task/*; do awk -v t="${t##*/}" '{n=split($0,a,") "); split(a[n],f," "); print t, f[12]+f[13]}' "$t/stat" 2>/dev/null; done | sort; }
 (
   sleep 25
-  N=$(for p in $(pgrep -x node); do tr '\0' ' ' < /proc/$p/cmdline | grep -q 'install --no-audit' && echo $p; done | head -1)
+  N=$(pgrep '^npm( |$)' | head -1)
   threads "$N" > "$W/th0"; sleep 10; threads "$N" > "$W/th1"
   join "$W/th0" "$W/th1" | awk '{d=($3-$2)/10; if (d>0) printf "%03.0f %s\n", d, $1}' | sort -r | head -6 | while read -r d t; do echo "TRACE thread busy=$d% tid=$t name=$(tr ' ' _ < /proc/$N/task/$t/comm)"; done > "$W/threads.log"
 ) &

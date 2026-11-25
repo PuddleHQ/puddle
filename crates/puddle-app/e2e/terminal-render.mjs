@@ -203,7 +203,7 @@ export async function inspectContextMenu(port) {
       else {
         // Not pasted: tell a read that waits at the webview's own clipboard prompt (setting Ask, the default; nobody
         // answers it on the runner, clipboard-permission.mjs) from a refusal or a read that works but never reached the shell.
-        const probe = await page.evaluate(`Promise.race([navigator.clipboard.readText().then((t) => "read:" + t, (e) => "rejected:" + e.name), new Promise((r) => setTimeout(() => r("pending"), 3000))])`, true).catch((e) => `error:${e}`);
+        const probe = await page.evaluate(`Promise.race([navigator.clipboard.readText().then((t) => "read:" + t, (e) => "rejected:" + e.name + " " + e.message + " focus=" + document.hasFocus()), new Promise((r) => setTimeout(() => r("pending"), 3000))])`, true).catch((e) => `error:${e}`);
         dump.steps.push({ pasteProbe: probe });
         const prompt = probe === "pending";
         note("Paste sends the clipboard text to the shell, or waits at the webview's clipboard prompt (Ask)", prompt, prompt ? "the script read waits at the prompt: setting Ask, nobody to press Allow here, so the shell was not reached (follow-up: run this under Allow)" : `probe ${probe}; rows: ${(await read()).rows.slice(-200)}`);

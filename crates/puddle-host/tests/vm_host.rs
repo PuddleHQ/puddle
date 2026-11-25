@@ -5667,9 +5667,9 @@ async fn vm_host_a_reset_of_the_root_disk_loses_packages_and_home_files_and_keep
         &runtime,
         &sandbox,
         &format!(
-            "set -e; mkdir -p /workspaces/{id}/app; cd /workspaces/{id}/app; \
+            "set -e; mkdir -p /workspace/app; cd /workspace/app; \
              git init -q; git -c user.name=t -c user.email=t@example.org commit -q --allow-empty -m kept; \
-             echo kept > notes.txt; echo volume > /workspaces/{id}/volume-file; sync"
+             echo kept > notes.txt; echo volume > /workspace/volume-file; sync"
         ),
     )
     .await;
@@ -5706,7 +5706,7 @@ async fn vm_host_a_reset_of_the_root_disk_loses_packages_and_home_files_and_keep
         &runtime,
         &sandbox,
         &format!(
-            "cat /workspaces/{id}/volume-file; cd /workspaces/{id}/app; git log --format=%s; cat notes.txt"
+            "cat /workspace/volume-file; cd /workspace/app; git log --format=%s; cat notes.txt"
         ),
     )
     .await;

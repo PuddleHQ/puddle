@@ -234,7 +234,7 @@ async function createRunning(name, memory = 1536) {
 
 /** Waits until the editor's own install of the newest build is confirmed in `wsId`'s guest (as for the first workspace). */
 async function waitOwnInstall(wsId) {
-  const dir = `/workspaces/${wsId}/.puddle/vscode-server/servers`;
+  const dir = `/workspace/.puddle/vscode-server/servers`;
   await until(
     `the editor of ${wsId} to install its own build`,
     async () => {
@@ -264,7 +264,7 @@ async function putPinned(wsId, dir, checkouts) {
     `mv "$builds/$commit.partial" "$builds/$commit"`,
     `: > "$builds/$commit/.puddle-installed"`,
     `printf '%s' "$commit" > "$builds/current"`,
-    `cd /workspaces/${wsId}`,
+    `cd /workspace`,
     ...checkouts.map((c) => `[ -d ${c}/.git ] || git init -q ${c}`),
     `if id agent >/dev/null 2>&1; then chown -R agent:agent ${checkouts.join(" ")}; fi`,
     "echo pinned-installed",

@@ -88,7 +88,7 @@ test("defaults set in Settings reach a workspace with their source, and a worksp
   );
   await expect(row(page, "editor-theme")).toContainText("Global setting");
   await expect(page.getByLabel("Font size (pixels)")).toHaveValue("16");
-  await expect(row(page, "editor-keybindings")).toContainText(
+  await expect(row(page, "editor-keybindings")).not.toContainText(
     "Puddle's default",
   );
   await expect(

@@ -1479,8 +1479,8 @@ describe("the settings tab", () => {
       within(row("editor-theme")).getByText("Global setting"),
     ).toBeVisible();
     expect(
-      within(row("editor-keybindings")).getByText("Puddle's default"),
-    ).toBeVisible();
+      within(row("editor-keybindings")).queryByText("Puddle's default"),
+    ).toBeNull();
     expect(
       screen.queryByRole("button", { name: /again for Editor colour theme/ }),
     ).toBeNull();

@@ -280,7 +280,7 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   that cross crates live in `puddle-types` or are converted at the boundary.
 - **Binaries:** `puddle` maps errors to a user message and an exit code at the top; it may use
   `anyhow` only in `main`-level glue, never in the libraries (`deny.toml` bans it with a list of the crates that may depend on it).
-- Don't stringly-type errors (the gate fails a `Result<_, String>` in production code, `ban-result-string`, unless a `// string-error-ok: <why>` comment on or within three lines above says the text is the whole contract), don't discard them (`let _ =` on a `Result` needs a comment), and
+- Don't stringly-type errors (the gate fails a `Result<_, String>` in production code, `ban-result-string`; no comment excuses one: write a thiserror enum, or a boxed `dyn Error` for a closure the caller supplies), don't discard them (`let _ =` on a `Result` needs a comment), and
   don't log *and* return the same error (the handler that consumes it logs it).
 - Error messages are lower-case, no trailing period, and never contain secret values. The quality gate fails a `#[error("...")]` that starts with a capital or ends with a period (`ban-error-capital`, `ban-error-period`), and a `#[serde(untagged)]` (`ban-untagged`, ADR 0002).
 

@@ -4,6 +4,8 @@
 # restores the files to $RUNNER_TEMP/apt-debs and sets APT_DEBS_DIR for the rest of the job, which makes
 # ci/apt-setup.sh point apt's archives at that directory. The index is still fetched (a few MB), the
 # packages are not. Only develop saves, like the other caches here; a pull request reads develop's entry.
+# Only the .deb files are cached: apt runs as root and leaves root-owned `lock` and `partial/` in the
+# directory, which the cache's tar (runner user) cannot read ("Cannot open: Permission denied" on every save).
 # The key names the job's package set (`name`), the runner image version and the workflow file, so a new
 # image or an edited package list starts a fresh entry; a miss or a read-only cache (an exhausted cache
 # budget) only means a normal download.
@@ -25,11 +27,11 @@ runs:
       if: ${{ github.ref == 'refs/heads/develop' }}
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: ${{ runner.temp }}/apt-debs
+        path: ${{ runner.temp }}/apt-debs/*.deb
         key: apt-debs-${{ inputs.name }}-${{ env.ImageVersion }}-${{ hashFiles('.github/workflows/ci.yml') }}
     - name: Restore
       if: ${{ github.ref != 'refs/heads/develop' }}
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: ${{ runner.temp }}/apt-debs
+        path: ${{ runner.temp }}/apt-debs/*.deb
         key: apt-debs-${{ inputs.name }}-${{ env.ImageVersion }}-${{ hashFiles('.github/workflows/ci.yml') }}

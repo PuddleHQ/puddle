@@ -90,7 +90,12 @@ async fn rig() -> Rig {
     os.set_pac(|_| Ok(vec![Hop::Direct]));
     let discovery = Discovery::new(os, DiscoveryConfig::default());
     let resolver = StaticResolver::new().with(NAME, &[IpAddr::V4(LOCAL)]);
-    let rig = rig_with(discovery, basic("lab", "lab"), resolver).await;
+    let rig = rig_with(
+        discovery,
+        basic("lab", &puddle_types::fixture::password("lab")),
+        resolver,
+    )
+    .await;
     allow(&rig.store, NAME);
     rig
 }

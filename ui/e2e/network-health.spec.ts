@@ -26,7 +26,9 @@ test("a corporate network: the setup, sign-in, roots and routes, no notice, no C
 }) => {
   const csp = await watchCsp(page);
   await open(page, backend, "corporate-network");
-  await expect(page.getByText("Automatic proxy script (PAC)")).toBeVisible();
+  await expect(
+    page.getByText("Automatic proxy script (PAC)", { exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByText("http://wpad.corp.example/proxy.pac"),
   ).toBeVisible();
@@ -135,6 +137,27 @@ test("with nothing left out the list says so", async ({ page, backend }) => {
   await open(page, backend, "corporate-network");
   await expect(leftOutHeading(page)).toBeVisible();
   await expect(page.getByText("No certificate was left out.")).toBeVisible();
+});
+
+test("with nothing wrong the page is one short list that fits one screen", async ({
+  page,
+  backend,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, backend, "empty");
+  await expect(page.getByText("No problems found.")).toBeVisible();
+  await expect(
+    page.getByText("No proxy (direct connection), no company certificates."),
+  ).toBeVisible();
+  await expect(page.getByText(/^Nothing found for:/)).toBeVisible();
+  await expect(page.getByText(/^None found$|^None\.$/)).toHaveCount(0);
+  const height = await page.evaluate(
+    () => document.documentElement.scrollHeight,
+  );
+  expect(height, "the page is at most one screen tall").toBeLessThanOrEqual(
+    900,
+  );
+  await expectNoAxeViolations(page, "nothing wrong");
 });
 
 test("settings link to the details", async ({ page, backend }) => {

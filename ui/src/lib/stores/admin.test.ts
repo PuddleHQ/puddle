@@ -115,6 +115,7 @@ describe("load", () => {
     await store.load();
     expect(store.status).toBe("failed");
     expect(store.available).toBe(false);
+    expect(store.missing).toBe(true);
     expect(store.reason).toContain("no admin screen");
 
     answers["GET /api/admin/users"] = [good({ users: [] })];
@@ -122,6 +123,7 @@ describe("load", () => {
     answers["GET /api/admin/audit"] = [bad(500)];
     await store.load();
     expect(store.reason).toContain("status 500");
+    expect(store.missing).toBe(false);
   });
 
   it("names a service that does not answer", async () => {

@@ -183,7 +183,7 @@ async fn a_host_as_old_as_its_time_is_gone_in_every_way_to_ask() {
     let list = PassThrough::with_limits(ttl, 8);
     let h = host("edge.example");
     assert!(list.learn(&h));
-    tokio::time::advance(ttl - Duration::from_nanos(1)).await;
+    tokio::time::advance(Duration::new(59, 999_999_999)).await;
     assert!(list.contains(&h), "a nanosecond left");
     tokio::time::advance(Duration::from_nanos(1)).await;
     assert!(!list.contains(&h), "contains: the time is up");

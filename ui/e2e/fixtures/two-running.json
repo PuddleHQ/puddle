@@ -1,0 +1,19 @@
+{
+  "name": "two-running",
+  "workspaces": [
+    {
+      "name": "Alpha Shop",
+      "id": "alpha-shop",
+      "repositories": [{ "url": "https://github.com/acme/alpha-shop.git" }],
+      "status": "running",
+      "ago_ms": 604800000
+    },
+    {
+      "name": "Beta Docs",
+      "id": "beta-docs",
+      "repositories": [{ "url": "https://github.com/acme/beta-docs.git" }],
+      "status": "running",
+      "ago_ms": 604800000
+    }
+  ]
+}

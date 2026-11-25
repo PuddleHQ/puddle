@@ -223,6 +223,46 @@ async fn a_guest_puddle_header_never_reaches_the_registry_over_plain_http() {
 }
 
 #[tokio::test]
+async fn a_large_blob_over_plain_http_arrives_whole_and_the_answer_says_it_closes() {
+    const BLOB: usize = 16 * 1024 * 1024;
+    let registry = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = registry.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        let (mut conn, _) = registry.accept().await.unwrap();
+        let mut seen = vec![0u8; 4096];
+        let _ = conn.read(&mut seen).await.unwrap();
+        let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {BLOB}\r\n\r\n");
+        conn.write_all(head.as_bytes()).await.unwrap();
+        let chunk = vec![7u8; 64 * 1024];
+        for _ in 0..BLOB / chunk.len() {
+            conn.write_all(&chunk).await.unwrap();
+        }
+        let _ = conn.shutdown().await;
+    });
+    let endpoints = PuddleEndpoints::new();
+    let (route, good) = pull_proxy(&endpoints, Some(LOCAL));
+    let target = format!("registry.test:{port}");
+    let (head, mut s) = send(
+        route.local_addr(),
+        &format!(
+            "GET http://{target}/v2/blobs/sha256:x HTTP/1.1\r\nHost: {target}\r\nProxy-Authorization: Basic {good}\r\n\r\n"
+        ),
+    )
+    .await;
+    assert!(head.starts_with("HTTP/1.1 200 "), "{head}");
+    assert!(
+        head.to_ascii_lowercase().contains("connection: close"),
+        "{head}"
+    );
+    let mut body = Vec::new();
+    s.read_to_end(&mut body).await.unwrap();
+    assert_eq!(body.len(), BLOB);
+    assert!(body.iter().all(|b| *b == 7));
+}
+
+#[tokio::test]
 async fn puddles_own_endpoints_and_metadata_are_blocked() {
     let endpoints = PuddleEndpoints::new();
     let api = echo().await;

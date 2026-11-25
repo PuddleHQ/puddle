@@ -647,6 +647,9 @@ struct StopDuringRaise {
 
 impl puddle_types::EventSink for StopDuringRaise {
     fn emit(&self, _: Event) {
+        if self.stopped_meanwhile.lock().unwrap().is_some() {
+            return;
+        }
         let Some(desk) = self.desk.get().cloned() else {
             return;
         };
@@ -661,7 +664,12 @@ impl puddle_types::EventSink for StopDuringRaise {
         let ran_at_once = finished
             .recv_timeout(std::time::Duration::from_millis(300))
             .is_ok();
-        *self.stopped_meanwhile.lock().unwrap() = Some(ran_at_once);
+        // Only the first emit is the raise; the stop's own clearing emits again once it runs, and
+        // that later answer must not overwrite this one before the test reads it.
+        self.stopped_meanwhile
+            .lock()
+            .unwrap()
+            .get_or_insert(ran_at_once);
     }
 }
 

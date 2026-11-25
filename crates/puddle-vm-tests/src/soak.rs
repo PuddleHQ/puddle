@@ -10,16 +10,26 @@ use crate::Gaps;
 /// The longest silence of the one-second heartbeat that the busy build may show.
 pub const HEARTBEAT_MAX_GAP_SECS: i64 = 5;
 
+/// A probe tick later than this after the previous one is a stall of the guest.
+const GAP_OVER: i64 = 2;
+
 /// How long Stop on a busy workspace may take before the state is Stopped.
 pub const STOP_WITHIN_SECS: u64 = 75;
 
 /// Checks the ticks of a heartbeat that ran through a busy stretch.
 ///
+/// `probe` is a second one-second loop of the same guest that asks no one (a `date` and a
+/// `sleep`). A gap of the heartbeat over the bar is the product's (the route stood still) unless
+/// the probe also went silent for over 2 s while the heartbeat did: then the guest, or the
+/// runner under it, did not run, and no route could have kept the beat. A gap the probe does not
+/// share is never excused.
+///
 /// # Errors
 ///
 /// A sentence naming the longest gap, when there are fewer than `min_ticks` ticks (a heartbeat
-/// that did not run is not a heartbeat without gaps) or a gap is over [`HEARTBEAT_MAX_GAP_SECS`].
-pub fn judge_heartbeat(ticks: &[i64], min_ticks: usize) -> Result<Gaps, String> {
+/// that did not run is not a heartbeat without gaps) or a gap is over [`HEARTBEAT_MAX_GAP_SECS`]
+/// and not shared by the probe.
+pub fn judge_heartbeat(ticks: &[i64], probe: &[i64], min_ticks: usize) -> Result<Gaps, String> {
     if ticks.len() < min_ticks {
         return Err(format!(
             "the heartbeat ticked {} times, at least {min_ticks} expected",
@@ -27,10 +37,26 @@ pub fn judge_heartbeat(ticks: &[i64], min_ticks: usize) -> Result<Gaps, String> 
         ));
     }
     let gaps = Gaps::of(ticks);
-    if gaps.longest > HEARTBEAT_MAX_GAP_SECS {
+    let stalls: Vec<&[i64]> = probe
+        .windows(2)
+        .filter(|pair| pair[1].saturating_sub(pair[0]) > GAP_OVER)
+        .collect();
+    let route_gap = ticks
+        .windows(2)
+        .filter(|pair| pair[1].saturating_sub(pair[0]) > HEARTBEAT_MAX_GAP_SECS)
+        .filter(|pair| {
+            !stalls
+                .iter()
+                .any(|stall| stall[0] < pair[1] && stall[1] > pair[0])
+        })
+        .map(|pair| pair[1].saturating_sub(pair[0]))
+        .max();
+    if let Some(longest) = route_gap {
         return Err(format!(
-            "the heartbeat went silent for {} s (bar {HEARTBEAT_MAX_GAP_SECS} s), {} gap(s) over 2 s",
-            gaps.longest, gaps.count
+            "the heartbeat went silent for {longest} s (bar {HEARTBEAT_MAX_GAP_SECS} s) while the \
+             guest kept running (its own probe has {} stall(s) over 2 s elsewhere), {} gap(s) over 2 s",
+            stalls.len(),
+            gaps.count
         ));
     }
     Ok(gaps)

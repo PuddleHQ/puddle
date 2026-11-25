@@ -471,3 +471,76 @@ async fn only_the_processes_of_the_runs_own_tree_are_measured() {
     );
     assert_eq!(rss(&mine), [format!("proc.sleep.{}.rss_kb", ours.id())]);
 }
+
+#[cfg(windows)]
+#[test]
+fn the_handle_count_follows_the_handles_a_process_opens() {
+    let me = std::process::id();
+    let (_, before) = winhost::native::process(me).unwrap();
+    let exe = std::env::current_exe().unwrap();
+    let held: Vec<_> = (0..100)
+        .map(|_| std::fs::File::open(&exe).unwrap())
+        .collect();
+    let (_, during) = winhost::native::process(me).unwrap();
+    assert!(
+        during >= before + 100.0,
+        "100 more open files, handles {before} -> {during}"
+    );
+    drop(held);
+    let (_, after) = winhost::native::process(me).unwrap();
+    assert!(after < during, "closed again, handles {during} -> {after}");
+}
+
+#[cfg(windows)]
+#[test]
+fn the_machine_has_a_commit_charge_below_its_limit() {
+    let mem = winhost::native::memory().unwrap();
+    let readings = mem.readings();
+    let get = |name: &str| readings.iter().find(|(n, _)| *n == name).map(|&(_, v)| v);
+    let (charge, limit) = (get("commit_kb").unwrap(), get("commit_limit_kb").unwrap());
+    assert!(charge > 0.0 && charge < limit, "charge {charge} of {limit}");
+    assert!(get("free_ram_kb").unwrap() > 0.0);
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn a_windows_sample_holds_handles_threads_commit_and_free_ram_for_the_run_tree() {
+    let dead = Target {
+        addr: "127.0.0.1:1".to_owned(),
+        token: None,
+    };
+    let exe = std::env::current_exe().unwrap();
+    let me = winhost::comm(exe.file_name().unwrap().to_str().unwrap());
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = Config {
+        api: dead,
+        w4: None,
+        process_prefixes: vec![format!("{me}$")],
+        db: None,
+        files: Vec::new(),
+        disk: Some(dir.path().to_owned()),
+    };
+    let mut sampler = Sampler::start(cfg, || 7);
+    sampler.only_below(Some(std::process::id()));
+    let mut s = Series::default();
+    sampler.sample(100, &mut s).await;
+    let pid = std::process::id();
+    for field in ["rss_kb", "threads", "handles"] {
+        let metric = format!("proc.{me}.{pid}.{field}");
+        assert!(
+            s.points(&metric).first().is_some_and(|p| p.1 > 0.0),
+            "{metric} missing"
+        );
+    }
+    for m in [
+        "host.free_ram_kb",
+        "host.commit_kb",
+        "host.commit_limit_kb",
+        "host.free_disk_kb",
+    ] {
+        assert!(
+            s.points(m).first().is_some_and(|p| p.1 > 0.0),
+            "{m} missing"
+        );
+    }
+}

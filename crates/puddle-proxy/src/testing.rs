@@ -35,6 +35,7 @@ struct State {
     next_id: i64,
     decisions: u64,
     unavailable: bool,
+    workspace_name: Option<String>,
 }
 
 /// One request that matched no rule.
@@ -132,6 +133,11 @@ impl StaticPolicy {
         self.state().decisions
     }
 
+    /// Gives every workspace this name, as the store does for a named one.
+    pub fn set_workspace_name(&self, name: &str) {
+        self.state().workspace_name = Some(name.to_owned());
+    }
+
     /// Makes every later decision fail (or succeed again).
     pub fn set_unavailable(&self, unavailable: bool) {
         self.state().unavailable = unavailable;
@@ -139,6 +145,10 @@ impl StaticPolicy {
 }
 
 impl Policy for StaticPolicy {
+    fn workspace_name(&self, _: &WorkspaceId) -> Option<String> {
+        self.state().workspace_name.clone()
+    }
+
     fn decide(
         &self,
         request: &EgressRequest,

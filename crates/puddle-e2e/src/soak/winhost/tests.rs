@@ -61,7 +61,7 @@ fn only_the_tree_below_the_runs_own_root_is_measured() {
     let prefixes = vec!["puddle$".to_owned(), "msb".to_owned()];
     let found = select(&machine(), &prefixes, Some(100));
     // The second Puddle (200) and its msb (201) belong to another run of the machine.
-    assert_eq!(names(&found), ["msb-vm.102", "msb.103", "puddle.101"]);
+    assert_eq!(names(&found), ["msb-vm.102", "msb-vm.103", "puddle.101"]);
 }
 
 #[test]

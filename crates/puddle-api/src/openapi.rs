@@ -36,6 +36,7 @@ const BEARER: &str = "bearer";
         crate::wire::AuditType,
         crate::wire::AuditOutcome,
         crate::wire::ConnectionOrigin,
+        crate::wire::ConnectionProtocol,
         crate::wire::ConnectionOutcome,
         puddle_types::WorkspaceId,
         puddle_types::ReasonCode,

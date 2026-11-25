@@ -118,7 +118,10 @@ impl Injecting {
         events: &Arc<EventHub>,
     ) -> (AbortOnDrop, AbortOnDrop) {
         (
-            AbortOnDrop(crate::changes::follow(events.subscribe(), service.clone())),
+            AbortOnDrop(crate::changes::follow(
+                events.follow(crate::changes::wanted),
+                service.clone(),
+            )),
             AbortOnDrop(forward_sign_in_needed(&self.secrets, events.clone())),
         )
     }

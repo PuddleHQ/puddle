@@ -344,3 +344,44 @@ async fn shutdown_ends_a_background_download_that_no_operation_counts() {
     assert_eq!(down.operations_ended, 0, "{down:?}");
     assert_eq!(watch.in_flight.load(Ordering::SeqCst), 0);
 }
+
+/// The lifecycle owns a sandbox from the moment it exists, not from the end of its boot: a boot
+/// that is ended half-way (here its task dies at the hook) leaves the VM running for the shutdown,
+/// which trims and stops it like any running one.
+#[tokio::test(flavor = "multi_thread")]
+async fn shutdown_during_a_boot_trims_and_stops_the_sandbox_that_is_booting() {
+    let rig = Rig::named_ids();
+    let mut config = rig.config();
+    config.operations_grace = Duration::from_millis(50);
+    let host = rig.start_with(config).await;
+    let api = api(&host);
+    let held = rig.guest.hold_next(&["boot"]);
+    api.post("/api/workspaces", &new_workspace("acme")).await;
+    held.wait_reached();
+    held.kill();
+
+    let down = host.shutdown().await;
+    let acme = down
+        .sandboxes
+        .sandboxes
+        .iter()
+        .find(|s| s.sandbox.as_str() == "acme")
+        .unwrap_or_else(|| panic!("the booting sandbox was not stopped: {down:?}"));
+    assert_eq!(
+        acme.trim,
+        puddle_lifecycle::TrimOutcome::Trimmed,
+        "{down:?}"
+    );
+    assert_eq!(
+        acme.stop,
+        puddle_lifecycle::StopOutcome::Stopped,
+        "{down:?}"
+    );
+    assert!(
+        rig.guest
+            .commands()
+            .contains(&"acme shutdown-trim".to_owned()),
+        "{:?}",
+        rig.guest.commands()
+    );
+}

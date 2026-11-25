@@ -212,7 +212,7 @@ async fn a_push_off_the_list_is_refused_in_one_readable_line_and_recorded() {
     assert_eq!(answer.header("x-puddle-blocked"), Some("push_denied"));
     assert_eq!(
         answer.text(),
-        "puddle: push to bound.test/acme/other is not on this workspace's push list yet, as with a repository the workspace just created or forked; click \"Allow push for other\" in the notice (it works at once, no restart), or turn off \"Only push to listed repos\" on the workspace's Git tab, then try again\n"
+        "puddle: Blocked this push: bound.test/acme/other is not in this workspace's allowed repositories for push. Allow it in the Puddle notice (\"Allow push for other\"), or open the workspace's Git tab > Repositories and tick Push for it. Then run git push again.\n"
     );
     assert!(t.server.recorded().is_empty(), "nothing went upstream");
     assert_eq!(
@@ -251,7 +251,7 @@ async fn the_pull_list_refuses_a_fetch_with_the_same_kind_of_line() {
     assert_eq!(answer.header("x-puddle-blocked"), Some("pull_denied"));
     assert_eq!(
         answer.text(),
-        "puddle: pull from bound.test/someone/else is not on this workspace's pull list yet, as with a repository the workspace just created or forked; click \"Allow pull for else\" in the notice (it works at once, no restart), or turn off \"Only pull from listed repos\" on the workspace's Git tab, then try again\n"
+        "puddle: Blocked this fetch: bound.test/someone/else is not in this workspace's allowed repositories for pull. Allow it in the Puddle notice (\"Allow pull for else\"), or open the workspace's Git tab > Repositories and tick Pull for it. Then run the fetch or pull again.\n"
     );
     assert_eq!(
         t.raised(),
@@ -673,7 +673,7 @@ async fn over_http2_the_three_cases_the_lists_and_the_401s() {
     assert_eq!(refused.header("x-puddle-blocked"), Some("push_denied"));
     assert!(
         refused.text().starts_with(
-            "puddle: push to bound.test/acme/other is not on this workspace's push list"
+            "puddle: Blocked this push: bound.test/acme/other is not in this workspace's allowed repositories for push"
         )
     );
     assert_eq!(

@@ -6,7 +6,8 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-fail() { echo "check-az-contract-test: FAIL: $1" >&2; exit 1; }
+# shellcheck disable=SC1091 # the helper sits in scripts/
+. "$(dirname "$0")/../scripts/test-fail.sh"
 
 src="$tmp/src"
 mkdir -p "$src/azure-cli/azure/cli/command_modules/profile" "$src/azure-cli-core/azure/cli/core"

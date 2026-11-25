@@ -2,12 +2,12 @@
 //! The `TerminalService` and `WorkspaceService` implementations of the host.
 
 use futures_util::future::BoxFuture;
+use puddle_api::phase::{Action, admit, begin};
 use puddle_api::{
     AttachMode, Attached, DEFAULT_IMAGE, DeleteCheck, DisplayName, GitSetup, KeptLogins,
     LocalCheckoutError, LocalSource, NewWorkspace, Operation, ShellInitCheck, StartFolder,
     StartFolderChange, WorkspaceError, WorkspaceRecord, WorkspaceService, admit_delete_fingerprint,
-    admit_delete_status, admit_grow_size, admit_reset_root_disk, admit_settled, admit_start,
-    admit_stop,
+    admit_grow_size,
 };
 use puddle_api::{TerminalError, TerminalLink, TerminalService, TerminalSize};
 use puddle_compute::{DiskSize, Runtime};
@@ -182,7 +182,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 record.disk_size_mib =
                     u64::from(self.inner.workspaces.config().default_size.as_mib());
                 record.disk_used_mib = None;
-                record.busy = Some(Operation::Creating);
+                begin(&mut record, Operation::Creating)?;
                 state.slots.insert(id, Slot::new(record.clone(), true));
                 self.ticket(record, Operation::Creating)
             };
@@ -244,9 +244,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let ticket = self.accept(id, Operation::Starting, admit_start, |r| {
-                r.status = WorkspaceStatus::Starting;
-            })?;
+            let ticket = self.accept(id, Operation::Starting)?;
             let record = ticket.record().clone();
             self.status_event(&record);
             let this = self.clone();
@@ -261,9 +259,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let ticket = self.accept(id, Operation::Stopping, admit_stop, |r| {
-                r.status = WorkspaceStatus::Draining;
-            })?;
+            let ticket = self.accept(id, Operation::Stopping)?;
             let record = ticket.record().clone();
             self.status_event(&record);
             // A stopped workspace is the one a user deletes next: have the delete check's image
@@ -284,7 +280,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let ticket = self.accept(id, Operation::Reclaiming, admit_settled, |_| {})?;
+            let ticket = self.accept(id, Operation::Reclaiming)?;
             let record = ticket.record().clone();
             let this = self.clone();
             let work = record.clone();
@@ -306,12 +302,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let ticket = self.accept(
-                id,
-                Operation::ResettingRootDisk,
-                admit_reset_root_disk,
-                |_| {},
-            )?;
+            let ticket = self.accept(id, Operation::ResettingRootDisk)?;
             let record = ticket.record().clone();
             let this = self.clone();
             let work = record.clone();
@@ -359,7 +350,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     added / (1024 * 1024 * 1024)
                 )));
             }
-            let ticket = self.accept(id, Operation::GrowingRootDisk, admit_settled, |_| {})?;
+            let ticket = self.accept(id, Operation::GrowingRootDisk)?;
             let record = ticket.record().clone();
             let this = self.clone();
             let work = record.clone();
@@ -398,7 +389,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         fingerprint: Option<&'a str>,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let ticket = self.accept(id, Operation::Deleting, admit_delete_status, |_| {})?;
+            let ticket = self.accept(id, Operation::Deleting)?;
             let record = ticket.record().clone();
             // The check runs before the call returns, so a refusal reaches the caller.
             // The ticket goes with the check: a request dropped while it runs leaves the
@@ -588,12 +579,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
     ) -> BoxFuture<'a, Result<Attached, WorkspaceError>> {
         Box::pin(async move {
             let record = self.get(id).await?;
-            if record.busy.is_some() || record.status != WorkspaceStatus::Running {
-                return Err(WorkspaceError::Conflict(format!(
-                    "{} is not running; start it first",
-                    record.name
-                )));
-            }
+            admit(&record, Action::Attach)?;
             self.refresh_editor_file(&record).await;
             match mode {
                 AttachMode::Browser => Ok(self.attach_browser(&record).await),

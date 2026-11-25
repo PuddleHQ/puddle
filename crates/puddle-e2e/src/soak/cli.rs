@@ -6,14 +6,21 @@
 //! puddle-soak sample --out metrics.tsv --api 127.0.0.1:PORT [--token T] [--w4 127.0.0.1:3000]
 //!     [--proc PREFIX]... [--db puddle.db] [--file NAME=PATH]... [--disk PATH]
 //!     [--interval 300] [--count N]
-//! puddle-soak judge metrics.tsv [--start EPOCH_S] [--active-hours 8]
+//! puddle-soak judge metrics.tsv [--start EPOCH_S] [--active-hours 8] [--hour-secs 3600]
+//! puddle-soak run --puddle PATH --out DIR [--profile smoke|hosted|full] [--runtime MSB_DIR]
+//!     [--agent PUDDLE_AGENT] [--scripts ci/soak] [--ui CMD] [--port 18080] [--min-ram-gib 8] [--min-disk-gib 20]
 //! ```
+//!
+//! `run` exits 0 when the run passes, 1 on a MAJOR finding, and fails (2) when the run could
+//! not be made (BLOCKED, a failed setup).
 
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::judge::{Schedule, Severity, judge};
+use super::plan::Profile;
+use super::run::{Options, run as run_soak};
 use super::sample::{Config, Sampler, Target};
 use super::series::Series;
 
@@ -33,7 +40,8 @@ pub async fn run(args: &[String], out: &mut impl std::io::Write) -> Result<u8, S
     match args.first().map(String::as_str) {
         Some("judge") => judge_command(rest, out),
         Some("sample") => sample_command(rest).await.map(|()| 0),
-        _ => Err("usage: puddle-soak sample|judge ...".to_owned()),
+        Some("run") => run_command(rest, out).await,
+        _ => Err("usage: puddle-soak sample|judge|run ...".to_owned()),
     }
 }
 
@@ -76,7 +84,7 @@ fn judge_command(args: &[String], out: &mut impl std::io::Write) -> Result<u8, S
     let (pos, flags) = options(args)?;
     let [path] = pos.as_slice() else {
         return Err(
-            "usage: puddle-soak judge metrics.tsv [--start EPOCH_S] [--active-hours N]".to_owned(),
+            "usage: puddle-soak judge metrics.tsv [--start EPOCH_S] [--active-hours N] [--hour-secs S]".to_owned(),
         );
     };
     let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
@@ -85,9 +93,11 @@ fn judge_command(args: &[String], out: &mut impl std::io::Write) -> Result<u8, S
         .or_else(|| series.first_time())
         .ok_or("the file holds no measurement")?;
     let hours = number::<u64>(&flags, "active-hours")?.unwrap_or(8);
+    let hour = number::<u64>(&flags, "hour-secs")?.unwrap_or(3600).max(1);
     let schedule = Schedule {
         start,
-        active_secs: hours * 3600,
+        active_secs: hours * hour,
+        hour,
     };
     let findings = judge(&series, schedule);
     for f in &findings {
@@ -106,6 +116,40 @@ fn judge_command(args: &[String], out: &mut impl std::io::Write) -> Result<u8, S
     )
     .map_err(|e| e.to_string())?;
     Ok(u8::from(major))
+}
+
+async fn run_command(args: &[String], out: &mut impl std::io::Write) -> Result<u8, String> {
+    let (_, flags) = options(args)?;
+    let profile_name = flag(&flags, "profile").unwrap_or("smoke");
+    let opts = Options {
+        puddle: PathBuf::from(flag(&flags, "puddle").ok_or("--puddle is required")?),
+        runtime: flag(&flags, "runtime").map(PathBuf::from),
+        agent: flag(&flags, "agent").map(PathBuf::from),
+        out: PathBuf::from(flag(&flags, "out").ok_or("--out is required")?),
+        profile: Profile::named(profile_name)
+            .ok_or_else(|| format!("--profile: no profile `{profile_name}`"))?,
+        scripts: flag(&flags, "scripts").map(PathBuf::from),
+        ui: flag(&flags, "ui").map(str::to_owned),
+        port: number(&flags, "port")?.unwrap_or(18080),
+        min_ram_gib: number(&flags, "min-ram-gib")?.unwrap_or(8),
+        min_disk_gib: number(&flags, "min-disk-gib")?.unwrap_or(20),
+    };
+    let outcome = run_soak(opts).await?;
+    for line in &outcome.lines {
+        writeln!(out, "{line}").map_err(|e| e.to_string())?;
+    }
+    writeln!(
+        out,
+        "{} finding(s), {}",
+        outcome.lines.len(),
+        if outcome.major {
+            "MAJOR: the run fails"
+        } else {
+            "no MAJOR: the run passes"
+        }
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(u8::from(outcome.major))
 }
 
 async fn sample_command(args: &[String]) -> Result<(), String> {

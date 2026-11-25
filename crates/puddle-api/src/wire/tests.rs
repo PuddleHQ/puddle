@@ -858,7 +858,7 @@ fn typed_audit_records_serialise_as_stored() {
         "port": 443, "resolved_ip": "93.184.216.34", "upstream": "PROXY corp:3128",
         "decision": "allow", "outcome": "connected", "reason": "rule", "rule_id": 4, "rule_set": "user:2",
         "request_rule": 3, "refused_address": "10.0.0.8", "refused_reason": "toggle:private", "category": "company_network", "signal": "dns_suffix", "pending_id": null, "binding_id": null, "injected": false, "unswapped_stand_ins": [], "scrubbed_stand_ins": [], "foreign_credentials": [], "answer_credentials": [],
-        "method": "GET", "path": "/",
+        "protocol": "http", "method": "GET", "path": "/",
         "path_truncated": false, "bytes_up": 1, "bytes_down": 2, "count": null
     });
     let record: store::AuditRecord = serde_json::from_value(stored.clone()).unwrap();
@@ -910,6 +910,11 @@ fn the_ssh_agent_audit_kinds_reach_the_wire_under_their_own_names() {
             store::WorkspaceOpKind::SshAgentAnswered,
             "ssh_agent_answered",
         ),
+        (
+            store::WorkspaceOpKind::AuditRetentionChanged,
+            "audit_retention_changed",
+        ),
+        (store::WorkspaceOpKind::AuditPruned, "audit_pruned"),
     ] {
         assert_eq!(
             serde_json::to_value(WorkspaceOpKind::from(from)).unwrap(),

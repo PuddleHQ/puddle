@@ -9,7 +9,8 @@ use std::sync::Arc;
 
 use puddle_api::{ResetError, ResetInvite, reset_account, reset_user_account};
 use puddle_store::{
-    AccountSecrets, Clock as _, Limits, Role, Store, SystemClock, UserId, UserName,
+    AccountSecrets, Actor, Clock as _, Limits, NewWorkspaceOp, Role, Store, SystemClock, UserId,
+    UserName, WorkspaceOpKind, WorkspaceOpOutcome,
 };
 
 use crate::HostPaths;
@@ -185,6 +186,17 @@ pub fn prune_audit(paths: &HostPaths, days: Option<u32>) -> Result<AuditPruned, 
     };
     let deleted = store.prune_audit(days)?.deleted;
     let shrunk_bytes = store.shrink_audit_file()?;
+    // After the delete, so the record that says who asked is never among the records deleted.
+    store.note_workspace_op(&NewWorkspaceOp {
+        op: WorkspaceOpKind::AuditPruned,
+        workspace: None,
+        user: None,
+        outcome: WorkspaceOpOutcome::Succeeded,
+        actor: Actor::Cli,
+        detail: Some(format!(
+            "records older than {days} days deleted by hand: {deleted} records"
+        )),
+    });
     Ok(AuditPruned {
         days,
         deleted,

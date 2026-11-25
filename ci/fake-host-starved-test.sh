@@ -10,7 +10,8 @@ command -v taskset >/dev/null || { echo "fake-host-starved-test: skipped, taskse
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/fake-host-starved-test.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
-fail() { echo "fake-host-starved-test: $*" >&2; exit 1; }
+# shellcheck disable=SC1091 # the helper sits in scripts/
+. "$(dirname "$0")/../scripts/test-fail.sh"
 
 # The stub counts its runs in $STUB_DIR/count and fails on run $STUB_FAIL_ON.
 cat >"$tmp/fake_host_stub" <<'STUB'

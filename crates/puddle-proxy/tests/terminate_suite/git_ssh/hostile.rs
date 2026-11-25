@@ -186,7 +186,7 @@ async fn hostile_hg47_a_push_to_an_unlisted_repository_is_denied_in_every_spelli
         assert_eq!(ran.exit, Some(1), "{command}: {ran:?}");
         assert!(
             ran.err.starts_with(
-                "puddle: push to bound.test/acme/other is not on this workspace's push list"
+                "puddle: Blocked this push: bound.test/acme/other is not in this workspace's allowed repositories for push"
             ),
             "{command}: {ran:?}"
         );

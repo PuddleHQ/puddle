@@ -100,7 +100,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         match inner
             .kit
             .hook()
-            .create(&inner.runtime, spec, &plan, &gate)
+            .create_kept(&inner.runtime, spec, &plan, &gate, &self.keeper())
             .await
         {
             Ok(gated) => {
@@ -121,6 +121,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 Ok(())
             }
             Err(e) => {
+                // A sandbox the hook stopped again leaves the lifecycle; one it could not stop
+                // stays, so the shutdown stops it.
+                if !e.left_running() {
+                    inner.lifecycle.release(&name.sandbox_name());
+                }
                 inner.injection.end(name);
                 let reason = self.abort_attachment(attachment, e.into()).await;
                 route.shutdown().await;
@@ -336,15 +341,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// Runs the boot plan again in the running guest when its authors differ from what the guest
     /// holds (the hook is idempotent: only the author files change).
     ///
-    /// The settings are read once the guest is ours alone: rewrites for one workspace start in
-    /// any order, and a copy taken when the change arrived could be applied after a newer one,
-    /// leaving the old authors and a problem the newer settings already ended.
+    /// The settings are read once the guest is ours alone, not when the change arrived: the
+    /// workspace's change queue runs one rewrite for every change that waited behind a running one,
+    /// and `settle` runs one more after a boot.
     pub(crate) async fn rewrite_authors(&self, name: &WorkspaceId) {
         let inner = &self.inner;
-        let _held = match &inner.rewrite_gate {
-            Some(gate) => Some(gate(name).await),
-            None => None,
-        };
         let rewrite = {
             let live = inner.live.lock().await;
             match live.get(name) {
@@ -353,6 +354,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }
         };
         let _one_at_a_time = rewrite.lock().await;
+        let _held = match &inner.rewrite_gate {
+            Some(gate) => Some(gate(name).await),
+            None => None,
+        };
         let (gated, guest) = {
             let live = inner.live.lock().await;
             match live

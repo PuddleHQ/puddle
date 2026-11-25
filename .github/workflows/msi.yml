@@ -481,6 +481,7 @@ jobs:
             ${{ runner.temp }}/usable-out/*.out
             ${{ runner.temp }}/usable-out/uia-tree-*.txt
             ${{ runner.temp }}/usable-out/terminal-render.json
+            ${{ runner.temp }}/usable-out/terminal-menu.json
             ${{ runner.temp }}/usable-out/forgejo-server.log
             ${{ runner.temp }}/usable-out/company-proxy.log
             ${{ runner.temp }}/usable-out/company-lab.out

@@ -73,6 +73,64 @@ async function runTheCheck(page: Page) {
   await expect(control(page, check.afterStart!)).toBeVisible();
 }
 
+const backupFile = {
+  name: "puddle-backup.tar.gz",
+  mimeType: "application/gzip",
+  buffer: Buffer.from("Puddle fake backup: a file the fixture accepts"),
+};
+
+test("a backup can be imported from the welcome page, with no mode choice, and the flow is still to run", async ({
+  page,
+  backend,
+  request,
+}) => {
+  await freshInstall(page, backend);
+  await page.goto("/welcome");
+  await page.getByRole("link", { name: "Import a backup" }).click();
+  await expect(heading(page, "Import a backup")).toBeFocused();
+  await backend.control.step({ do: "restore_preview", secrets: ["TOKEN"] });
+  await page.getByTestId("import-file").setInputFiles(backupFile);
+  await expect(page.getByTestId("import-preview")).toBeVisible();
+  await expect(page.getByTestId("restore-part-rules")).toContainText("Rules");
+  await expect(page.getByTestId("restore-secrets")).toContainText("TOKEN");
+  await expect(page.getByRole("radio")).toHaveCount(0);
+  await page.getByTestId("import-confirm").click();
+  await expect(page.getByTestId("import-waiting")).toContainText(
+    "Setup continues after the restart",
+  );
+  // The first-run flag is not taken over: the flow has still to run.
+  expect((await firstRun(request, backend)).completed).toBe(false);
+});
+
+test("a file that is not a backup is refused on the import page and cannot be confirmed", async ({
+  page,
+  backend,
+}) => {
+  await freshInstall(page, backend);
+  await page.goto("/welcome/import");
+  await page.getByTestId("import-file").setInputFiles({
+    name: "notes.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("just some notes"),
+  });
+  await expect(page.getByTestId("import-problem")).toContainText(
+    "not a gzip archive",
+  );
+  await expect(page.getByTestId("import-confirm")).toHaveCount(0);
+});
+
+test("going back from the import page continues to the system check", async ({
+  page,
+  backend,
+}) => {
+  await freshInstall(page, backend);
+  await page.goto("/welcome/import");
+  await page.getByRole("link", { name: "Back" }).click();
+  await expect(heading(page, "Welcome to Puddle")).toBeVisible();
+  await goOn(page, "Welcome to Puddle");
+  await expect(heading(page, "System check")).toBeVisible();
+});
+
 test("a fresh install is led through every step and then opens on the workspaces", async ({
   page,
   backend,

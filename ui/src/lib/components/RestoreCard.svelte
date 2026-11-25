@@ -5,6 +5,7 @@
   // copies a restore makes are listed here with their sizes; only the user removes one.
   import { onMount } from "svelte";
   import ConfirmDialog from "#lib/components/ConfirmDialog.svelte";
+  import RestorePreviewFacts from "#lib/components/RestorePreviewFacts.svelte";
   import { sizeText } from "#lib/settings/backup.ts";
   import {
     applyRestore,
@@ -14,10 +15,8 @@
     droppedByReplace,
     loadResult,
     loadSafetyCopies,
-    partLabel,
     previewRestore,
     safetyCopyTime,
-    toAdd,
     type RestoreMode,
     type RestorePreview,
     type RestoreResult,
@@ -165,71 +164,7 @@
       data-testid="restore-preview"
       aria-label="What a restore would do"
     >
-      <h3>What this file would do</h3>
-      <p class="desc">
-        Made by Puddle {preview.puddle_version ??
-          "(version not recorded)"}{#if preview.created_at_ms}
-          on {new Date(preview.created_at_ms).toLocaleString()}{/if}.
-        {toAdd(preview.parts)} entries are new to this machine.
-      </p>
-      <table>
-        <thead>
-          <tr>
-            <th scope="col">Part</th>
-            <th scope="col">In the file</th>
-            <th scope="col">New here</th>
-            <th scope="col">Differ</th>
-            <th scope="col">Same</th>
-            <th scope="col">Only here</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each preview.parts as part (part.name)}
-            <tr data-testid={`restore-part-${part.name}`}>
-              <th scope="row">{partLabel(part.name)}</th>
-              <td>{part.in_backup}</td>
-              <td>{part.add}</td>
-              <td>{part.differ}</td>
-              <td>{part.same}</td>
-              <td>{part.only_here}</td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-
-      {#if preview.workspaces.some((w) => w.disk === "missing")}
-        <p data-testid="restore-missing-disks">
-          Workspaces whose disk is not on this machine are listed as "disk
-          missing" and not started:
-          {preview.workspaces
-            .filter((w) => w.disk === "missing")
-            .map((w) => w.name)
-            .join(", ")}.
-        </p>
-      {/if}
-      {#if preview.secrets_needing_value.length > 0}
-        <p data-testid="restore-secrets">
-          These secrets need a value on this machine (a backup never holds one):
-          {preview.secrets_needing_value.map((s) => s.name).join(", ")}.
-        </p>
-      {/if}
-      {#if preview.identity_tokens_needing_value.length > 0}
-        <p data-testid="restore-identity-tokens">
-          These Git identities need their token entered again on this machine (a
-          backup never holds one):
-          {preview.identity_tokens_needing_value
-            .map((t) => `${t.identity} (${t.host})`)
-            .join(", ")}.
-        </p>
-      {/if}
-      {#if preview.running_workspaces > 0}
-        <p data-testid="restore-running">
-          {preview.running_workspaces} workspace{preview.running_workspaces ===
-          1
-            ? ""
-            : "s"} running will stop while Puddle restarts.
-        </p>
-      {/if}
+      <RestorePreviewFacts {preview} />
 
       <fieldset class="modes">
         <legend>How to restore</legend>
@@ -386,15 +321,6 @@
   .preview {
     display: grid;
     gap: var(--space-3);
-  }
-  table {
-    border-collapse: collapse;
-    font-size: var(--text-sm);
-  }
-  th,
-  td {
-    text-align: left;
-    padding: var(--space-1) var(--space-3);
   }
   .modes {
     display: grid;

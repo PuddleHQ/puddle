@@ -175,14 +175,6 @@ struct Serve {
 
 /// A program folder laid out as an install: `puddle`, and `runtime` with a link to each file of
 /// the msb runtime folder and to the guest agent.
-/// A link to `from` at `link`; a copy where the platform has no unprivileged symlink.
-fn link_file(from: &Path, link: &Path) -> io::Result<()> {
-    #[cfg(unix)]
-    return std::os::unix::fs::symlink(from, link);
-    #[cfg(not(unix))]
-    return std::fs::copy(from, link).map(drop);
-}
-
 fn program_folder(out: &Path, opts: &Options) -> io::Result<PathBuf> {
     let folder = out.join("program");
     let runtime = folder.join("runtime");
@@ -201,7 +193,12 @@ fn program_folder(out: &Path, opts: &Options) -> io::Result<PathBuf> {
     for (from, name) in files {
         let link = runtime.join(name);
         if std::fs::symlink_metadata(&link).is_err() {
-            link_file(&std::path::absolute(from)?, &link)?;
+            let from = std::path::absolute(from)?;
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(from, link)?;
+            // Windows symlinks need a privilege; the soak runs on Linux, copy is enough to compile and work.
+            #[cfg(not(unix))]
+            std::fs::copy(from, link)?;
         }
     }
     Ok(exe)

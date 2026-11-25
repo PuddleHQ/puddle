@@ -182,6 +182,13 @@ describe("welcome step", () => {
     );
   });
 
+  it("offers a small way to import a backup, apart from the steps", () => {
+    render(Welcome);
+    expect(
+      screen.getByRole("link", { name: "Import a backup" }),
+    ).toHaveAttribute("href", "/welcome/import");
+  });
+
   it("skipping the setup records it and opens the workspace list", async () => {
     render(Welcome);
     await fireEvent.click(screen.getByRole("button", { name: "Skip setup" }));

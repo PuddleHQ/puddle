@@ -60,12 +60,41 @@ pub(super) fn settings(
     new: &Path,
 ) -> Result<(), RestoreError> {
     match mode {
-        ApplyMode::Replace => copy_tree(there, new),
+        ApplyMode::Replace => copy_tree(there, new)?,
         ApplyMode::Add => {
             copy_tree(here, new)?;
-            add_missing(there, Path::new(""), new)
+            add_missing(there, Path::new(""), new)?;
         }
     }
+    keep_first_run(here, new)
+}
+
+/// Whether the first-run flow has been through is a fact about this machine, so a backup never
+/// takes it over (BK-31): the new global document gets this machine's `first_run` value, or none.
+fn keep_first_run(here: &Path, new: &Path) -> Result<(), RestoreError> {
+    let target = new.join("global.json");
+    let Ok(body) = fs::read(&target) else {
+        return Ok(());
+    };
+    let Ok(Value::Object(mut doc)) = serde_json::from_slice::<Value>(&body) else {
+        return Ok(());
+    };
+    let present = fs::read(here.join("global.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+        .and_then(|v| v.get("first_run").cloned());
+    if doc.get("first_run") == present.as_ref() {
+        return Ok(());
+    }
+    match present {
+        Some(value) => doc.insert("first_run".into(), value),
+        None => doc.remove("first_run"),
+    };
+    let body = serde_json::to_vec_pretty(&Value::Object(doc)).map_err(|e| RestoreError::Io {
+        what: format!("cannot write {}", target.display()),
+        source: io::Error::other(e),
+    })?;
+    private::write_atomic(&target, &body).map_err(io_error("cannot write", &target))
 }
 
 fn add_missing(there: &Path, rel: &Path, new: &Path) -> Result<(), RestoreError> {

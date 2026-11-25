@@ -24,9 +24,11 @@
 //   9. a new request makes no notification while the window is in front, and exactly one, naming the
 //      workspace and the host, while it is minimized;
 //  10. Activity's "Export JSON lines" saves a .jsonl file in Downloads, one valid JSON record a line;
-//  11. the tray's "Quit Puddle" with the workspace running leaves no `puddle-app`, `puddle` or `msb` process
+//  11. the close button still hides the window when the page failed to load (broken-page.mjs refuses
+//      every request and reloads, so the window shows the browser's error page);
+//  12. the tray's "Quit Puddle" with the workspace running leaves no `puddle-app`, `puddle` or `msb` process
 //      within 90 s, and a new start lists the workspace as stopped.
-// Steps 7 to 11 run in the direct run only (below): the shell does not change behind a proxy.
+// Steps 7 to 12 run in the direct run only (below): the shell does not change behind a proxy.
 //
 // Windows notifications are read from the Action Center's history for the app's AppUserModelID (the
 // Start menu shortcut's, the `identifier` in tauri.conf.json), and the window's buttons are pressed with
@@ -68,6 +70,7 @@ import { Uia } from "./uia.mjs";
 import { onChildEnd } from "./child-end.mjs";
 import { GiveUp, until } from "./poll.mjs";
 import { debugPortPolicy, inspectTerminal } from "./terminal-render.mjs";
+import { breakThePage } from "./broken-page.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const local = process.env.LOCALAPPDATA;
@@ -608,6 +611,33 @@ async function terminalTab(startFolder) {
   await terminalRendering();
 }
 
+/**
+ * The close button on a page that failed to load: the window's page is made to fail on purpose (every
+ * request refused, then a reload shows the browser's error page), and the close button still hides the
+ * window in the tray, the app keeps running, and the window comes back from a second start.
+ */
+async function closeOnABrokenPage() {
+  mainWindow("front");
+  const broken = await breakThePage(DEBUG_PORT);
+  // The control: Puddle's own navigation is gone from the window, so the close below is pressed on a page
+  // that is not Puddle's.
+  const gone = await until("Puddle's navigation to be gone", async () => (await uia.find(inMain("link", "Workspaces"))).length === 0, 30_000, 1000).then(() => true, () => false);
+  check("the main window's page failed to load on purpose (the control)", gone && broken.refused.length > 0, `refused: ${broken.refused.join(", ")}; navigation gone: ${gone}`);
+  try {
+    const hidden = [];
+    for (const round of [1, 2]) {
+      mainWindow("front");
+      mainWindow("close");
+      const s = await windowBecomes(`the window to hide on the broken page (close ${round})`, (w) => !w.visible).catch(() => mainWindow());
+      hidden.push(!s.visible && !appExited);
+      await reopen().catch(() => {});
+    }
+    check("the close button hides the window in the tray on a page that failed to load", hidden.every(Boolean), `hidden after each close: ${hidden.join(", ")}; exited: ${appExited}`);
+  } finally {
+    await broken.restore();
+  }
+}
+
 /** Colours, font, size and a mouse selection of the terminal, read from the page over the policy's DevTools port. */
 async function terminalRendering() {
   // Two SGR sequences by printf; the words appear in the output only (the typed command holds the escapes, not the words).
@@ -951,6 +981,7 @@ try {
     await phase("the close button", () => closeToTray(id));
     await phase("the request notifications", () => requestNotifications(id));
     await phase("the Activity export", exportActivity);
+    await phase("the close button on a broken page", closeOnABrokenPage);
     await phase("the tray's Quit", () => quitFromTheTray(id));
   }
 

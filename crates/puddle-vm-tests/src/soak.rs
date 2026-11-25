@@ -16,6 +16,11 @@ const GAP_OVER: i64 = 2;
 /// How long Stop on a busy workspace may take before the state is Stopped.
 pub const STOP_WITHIN_SECS: u64 = 75;
 
+/// Each consecutive (earlier, later) pair of `xs`.
+fn pairs(xs: &[i64]) -> impl Iterator<Item = (i64, i64)> + '_ {
+    xs.iter().copied().zip(xs.iter().copied().skip(1))
+}
+
 /// Checks the ticks of a heartbeat that ran through a busy stretch.
 ///
 /// `probe` is a second one-second loop of the same guest that asks no one (a `date` and a
@@ -37,19 +42,17 @@ pub fn judge_heartbeat(ticks: &[i64], probe: &[i64], min_ticks: usize) -> Result
         ));
     }
     let gaps = Gaps::of(ticks);
-    let stalls: Vec<&[i64]> = probe
-        .windows(2)
-        .filter(|pair| pair[1].saturating_sub(pair[0]) > GAP_OVER)
+    let stalls: Vec<(i64, i64)> = pairs(probe)
+        .filter(|&(from, to)| to.saturating_sub(from) > GAP_OVER)
         .collect();
-    let route_gap = ticks
-        .windows(2)
-        .filter(|pair| pair[1].saturating_sub(pair[0]) > HEARTBEAT_MAX_GAP_SECS)
-        .filter(|pair| {
+    let route_gap = pairs(ticks)
+        .filter(|&(from, to)| to.saturating_sub(from) > HEARTBEAT_MAX_GAP_SECS)
+        .filter(|&(from, to)| {
             !stalls
                 .iter()
-                .any(|stall| stall[0] < pair[1] && stall[1] > pair[0])
+                .any(|&(stall_from, stall_to)| stall_from < to && stall_to > from)
         })
-        .map(|pair| pair[1].saturating_sub(pair[0]))
+        .map(|(from, to)| to.saturating_sub(from))
         .max();
     if let Some(longest) = route_gap {
         return Err(format!(

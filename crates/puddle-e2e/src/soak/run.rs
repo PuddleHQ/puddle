@@ -524,9 +524,8 @@ impl Run {
             // is the event working, and the rounds after it show the workspace came back.
             let cut = cuts.cut(started, w);
             let note = cut.map_or(String::new(), |e| format!(", cut by {}", e.name()));
-            log.line(&format!(
-                "{w:?} round {round}: exit {code} in {took} s{note}"
-            ));
+            let line = format!("{w:?} round {round}: exit {code} in {took} s{note}");
+            log.line(&line);
             append(
                 &opts.out.join("rounds.tsv"),
                 &format!("{}\t{w:?}\t{round}\t{code}\t{took}\n", now()),

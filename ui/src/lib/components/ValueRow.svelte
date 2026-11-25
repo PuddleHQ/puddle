@@ -21,6 +21,7 @@
     inputmode = undefined,
     placeholder = undefined,
     mono = false,
+    multiline = false,
   }: {
     id: string;
     label: string;
@@ -37,6 +38,8 @@
     inputmode?: "numeric" | "text" | undefined;
     placeholder?: string | undefined;
     mono?: boolean;
+    /** A box of several lines (a list or a JSON text) instead of one line; Enter then adds a line. */
+    multiline?: boolean;
   } = $props();
 
   // The text follows the stored value unless the user is typing something else.
@@ -66,18 +69,32 @@
 
 <SettingRow {id} {label} {desc} {how} {restart}>
   <form class="entry" onsubmit={(e) => void save(e)}>
-    <input
-      {id}
-      type="text"
-      class={[width, mono && "mono"]}
-      {inputmode}
-      {placeholder}
-      aria-describedby={[desc && `${id}-desc`, problem && `${id}-problem`]
-        .filter(Boolean)
-        .join(" ") || undefined}
-      aria-invalid={problem ? "true" : undefined}
-      bind:value={text}
-    />
+    {#if multiline}
+      <textarea
+        {id}
+        rows="4"
+        class={["area", mono && "mono"]}
+        {placeholder}
+        spellcheck="false"
+        aria-describedby={[desc && `${id}-desc`, problem && `${id}-problem`]
+          .filter(Boolean)
+          .join(" ") || undefined}
+        aria-invalid={problem ? "true" : undefined}
+        bind:value={text}></textarea>
+    {:else}
+      <input
+        {id}
+        type="text"
+        class={[width, mono && "mono"]}
+        {inputmode}
+        {placeholder}
+        aria-describedby={[desc && `${id}-desc`, problem && `${id}-problem`]
+          .filter(Boolean)
+          .join(" ") || undefined}
+        aria-invalid={problem ? "true" : undefined}
+        bind:value={text}
+      />
+    {/if}
     {#if changed}
       <button
         type="submit"
@@ -103,6 +120,11 @@
   }
   .wide {
     width: min(20rem, 100%);
+  }
+  .area {
+    width: min(28rem, 100%);
+    min-height: 5rem;
+    resize: vertical;
   }
   .problem {
     margin: 0;

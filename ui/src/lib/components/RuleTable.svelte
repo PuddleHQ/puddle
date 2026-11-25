@@ -2,9 +2,6 @@
 <script lang="ts">
   import ArrowDown from "@lucide/svelte/icons/arrow-down";
   import ArrowUp from "@lucide/svelte/icons/arrow-up";
-  import Clock from "@lucide/svelte/icons/clock";
-  import Pencil from "@lucide/svelte/icons/pencil";
-  import Trash2 from "@lucide/svelte/icons/trash-2";
   import { absoluteTime, relativeTime } from "#lib/format/relative-time.ts";
   import {
     isExpired,
@@ -16,6 +13,7 @@
     type SortKey,
     actorLabel,
   } from "#lib/rules/model.ts";
+  import RuleRowMenu from "./RuleRowMenu.svelte";
   import "#lib/theme/controls.css";
 
   let {
@@ -63,7 +61,6 @@
     { key: "pattern", label: "Host" },
     { key: "effect", label: "Effect" },
     { key: "scope", label: "Workspace" },
-    { key: "precedence", label: "Precedence" },
     { key: "expires", label: "Expires" },
     { key: "created", label: "Created" },
   ];
@@ -82,7 +79,11 @@
     <thead>
       <tr>
         {#each columns as column (column.key)}
-          <th scope="col" aria-sort={ariaSort(column.key)}>
+          <th
+            scope="col"
+            aria-sort={ariaSort(column.key)}
+            class:created={column.key === "created"}
+          >
             {#if onSort}
               <button
                 type="button"
@@ -136,7 +137,6 @@
           <td>
             {scopeLabel(rule)}
           </td>
-          <td class="precedence">{rule.precedence}</td>
           <td>
             {#if rule.expires_at === null}
               <span class="muted">Never</span>
@@ -148,10 +148,9 @@
                   ? "Expired"
                   : relativeTime(rule.expires_at, now)}</time
               >
-              {#if expired}<span class="chip">no longer applies</span>{/if}
             {/if}
           </td>
-          <td>
+          <td class="created">
             <time
               datetime={new Date(rule.created_at).toISOString()}
               title="{absoluteTime(rule.created_at)} by {actorLabel(
@@ -161,47 +160,24 @@
           </td>
           {#if onEnabled}
             <td class="on">
-              <input
-                type="checkbox"
-                role="switch"
-                checked={rule.enabled}
-                aria-label="Rule on: {ruleName(rule)}"
-                onchange={(e) => {
-                  const next = e.currentTarget.checked;
-                  e.currentTarget.checked = rule.enabled;
-                  onEnabled(rule, next);
-                }}
-              />
+              {#if !expired}
+                <input
+                  type="checkbox"
+                  role="switch"
+                  checked={rule.enabled}
+                  aria-label="Rule on: {ruleName(rule)}"
+                  onchange={(e) => {
+                    const next = e.currentTarget.checked;
+                    e.currentTarget.checked = rule.enabled;
+                    onEnabled(rule, next);
+                  }}
+                />
+              {/if}
             </td>
           {/if}
           {#if onExpiry && onDelete}
             <td class="actions">
-              {#if onEdit}
-                <button
-                  type="button"
-                  class="btn"
-                  aria-label="Edit rule: {ruleName(rule)}"
-                  onclick={(e) => onEdit(rule, e.currentTarget)}
-                >
-                  <Pencil aria-hidden="true" size={16} />Edit
-                </button>
-              {/if}
-              <button
-                type="button"
-                class="btn"
-                aria-label="Change expiry: {ruleName(rule)}"
-                onclick={(e) => onExpiry(rule, e.currentTarget)}
-              >
-                <Clock aria-hidden="true" size={16} />Expiry
-              </button>
-              <button
-                type="button"
-                class="btn deny"
-                aria-label="Delete rule: {ruleName(rule)}"
-                onclick={(e) => onDelete(rule, e.currentTarget)}
-              >
-                <Trash2 aria-hidden="true" size={16} />Delete
-              </button>
+              <RuleRowMenu {rule} {expired} {onEdit} {onExpiry} {onDelete} />
             </td>
           {/if}
         </tr>
@@ -275,9 +251,21 @@
     border-color: var(--color-danger);
   }
   .actions {
-    display: flex;
-    gap: var(--space-2);
-    justify-content: flex-end;
+    text-align: end;
     white-space: nowrap;
+  }
+  /* Below about 800 px the table must fit without a sideways scroll, since the row's menu sits at its
+     right end: the Created column steps aside and the host wraps. */
+  @media (max-width: 800px) {
+    .created {
+      display: none;
+    }
+    .wrap {
+      overflow-x: visible;
+    }
+    th,
+    td {
+      padding-inline: var(--space-2);
+    }
   }
 </style>

@@ -48,7 +48,6 @@
       type="button"
       class="btn allow"
       aria-label="Allow {target.host} for {spoken}"
-      title={`Allow for ${spoken}, this host only, permanently (A)\nCtrl+click: allow for all workspaces`}
       onclick={(event) => choose("allow", event)}
     >
       Allow
@@ -58,7 +57,6 @@
     type="button"
     class="btn deny"
     aria-label="Deny {target.host} for {spoken}"
-    title={`Deny for ${spoken}, this host only, permanently (D)\nCtrl+click: deny for all workspaces`}
     onclick={(event) => choose("deny", event)}
   >
     Deny
@@ -71,7 +69,6 @@
       aria-label="More choices for {target.host}"
       aria-haspopup="dialog"
       aria-expanded={optionsOpen}
-      title="More choices: every workspace, subdomains, how long (Enter)"
       onclick={(event) => onMore(event.currentTarget)}
     ></button>
   {/if}

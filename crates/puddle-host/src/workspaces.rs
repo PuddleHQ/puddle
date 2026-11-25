@@ -315,6 +315,8 @@ struct GuestState {
     /// The multi-root file the editor opens when the workspace has two or more checkouts, as the
     /// last attach wrote it; `None` has the hook take Puddle's lines out of it.
     editor_file: Option<GuestFile>,
+    /// The editor defaults file as of this start; `None` has the hook delete the file.
+    editor_defaults: Option<GuestFile>,
     /// The user sessions, clones and checks run as until the next start: the setting as of this
     /// start (a later change waits for the next one).
     session_user: SessionUser,

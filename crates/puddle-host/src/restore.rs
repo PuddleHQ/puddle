@@ -11,7 +11,7 @@ use std::io::{self, BufRead as _, BufReader, Read};
 use std::path::{Component, Path, PathBuf};
 
 use puddle_api::wire::{RestorePart, RestorePartName};
-use puddle_api::{RestoreFacts, RestoreServiceError, SecretRef};
+use puddle_api::{IdentityTokenRef, RestoreFacts, RestoreServiceError, SecretRef};
 use puddle_fs::private;
 use puddle_store::DatabaseRefusal;
 
@@ -85,6 +85,9 @@ pub enum RestoreError {
     /// The staged database could not be migrated.
     #[error("cannot read the backup's database: {0}")]
     Store(#[from] puddle_store::StoreError),
+    /// The safety copy could not be made again at the start of the apply.
+    #[error("the safety copy could not be refreshed: {0}")]
+    SafetyCopy(String),
 }
 
 fn io_error(what: &str, path: &Path) -> impl FnOnce(io::Error) -> RestoreError {
@@ -506,6 +509,15 @@ pub(crate) fn facts(paths: &HostPaths, staged: &Staged) -> Result<RestoreFacts, 
             part(RestorePartName::Users, db.users),
         ],
         workspaces: there,
+        token_refs: db
+            .identity_tokens
+            .into_iter()
+            .map(|t| IdentityTokenRef {
+                identity: t.identity,
+                host: t.host,
+                secret_id: t.secret_id,
+            })
+            .collect(),
         secret_refs: db
             .secret_envs
             .into_iter()

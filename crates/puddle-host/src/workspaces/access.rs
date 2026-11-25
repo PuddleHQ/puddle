@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use puddle_agent_proto::editor::ServerKind;
+use puddle_agent_proto::editor::{EDITOR_DEFAULTS_GUEST, EditorDefaults, ServerKind};
 use puddle_api::{
     Attached, BrowserTarget, DesktopTarget, EditorLogin, EditorSignIn, OpenTarget, WorkspaceRecord,
 };
@@ -11,7 +11,7 @@ use puddle_boot::GatedSandbox;
 use puddle_compute::{ComputeError, Runtime};
 use puddle_settings::{Effective, ReconnectionGrace, ServerChoice, resolve};
 use puddle_ssh::SshEndpoint;
-use puddle_types::{Problem, SessionUser, WorkspaceId};
+use puddle_types::{GuestFile, Problem, SessionUser, WorkspaceId, guest_path};
 
 use crate::op_error::OpError;
 use crate::settings_read::SettingsReadError;
@@ -161,6 +161,46 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 ReconnectionGrace::DEFAULT.secs()
             }
         }
+    }
+
+    /// The file that carries `name`'s editor defaults (colour theme, font size, extensions, key
+    /// bindings) into the guest, or `None` when none is set at either level. Settings that cannot
+    /// be read mean no defaults: the editor is not worth a failed start.
+    pub(super) fn editor_defaults_file(&self, name: &WorkspaceId) -> Option<GuestFile> {
+        let settings = self.inner.settings.as_ref();
+        let read = || {
+            let global = crate::settings_read::global(settings)?;
+            let own = crate::settings_read::workspace(settings, name)?;
+            Ok::<_, SettingsReadError>(resolve(&global, Some(&own)).editor)
+        };
+        let editor = match read() {
+            Ok(editor) => editor,
+            Err(reason) => {
+                tracing::warn!(workspace = %name, %reason, "the editor starts without the defaults: the settings cannot be read");
+                return None;
+            }
+        };
+        let defaults = EditorDefaults {
+            colour_theme: editor.colour_theme.value.map(|t| t.as_str().to_owned()),
+            font_size: editor
+                .font_size
+                .value
+                .map(puddle_settings::EditorFontSize::get),
+            extensions: editor
+                .extensions
+                .value
+                .iter()
+                .map(|id| id.as_str().to_owned())
+                .collect(),
+            keybindings: editor.keybindings.value.map(|k| k.as_str().to_owned()),
+        };
+        if defaults.is_empty() {
+            return None;
+        }
+        // A struct of strings and numbers always serialises.
+        serde_json::to_vec_pretty(&defaults)
+            .ok()
+            .map(|bytes| GuestFile::new(guest_path!(EDITOR_DEFAULTS_GUEST), bytes))
     }
 
     /// Asks the launcher to open `record`'s editor in a window of its own. A launcher with no

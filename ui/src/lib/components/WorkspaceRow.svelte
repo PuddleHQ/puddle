@@ -339,25 +339,4 @@
       display: none;
     }
   }
-  :global(.row-menu) {
-    z-index: 30;
-    display: grid;
-    min-width: 10rem;
-    padding: var(--space-1);
-    background: var(--color-surface-raised);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-  }
-  :global(.row-menu-item) {
-    padding: var(--space-2) var(--space-3);
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-  }
-  :global(.row-menu-item[data-highlighted]) {
-    background: var(--color-surface);
-  }
-  :global(.row-menu-item[data-disabled]) {
-    color: var(--color-text-muted);
-    cursor: not-allowed;
-  }
 </style>

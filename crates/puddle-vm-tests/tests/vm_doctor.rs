@@ -176,6 +176,17 @@ fn assert_firmware_names(dir: &Path) {
     }
 }
 
+/// Default options with the free-space lines at zero: these tests assert that every other check
+/// is green, and a runner with under 20 GB free (CI's vm-linux runners are near 14 GB after a
+/// build) would otherwise turn the disk check into a warning. The disk check has its own tests.
+fn without_disk_lines() -> Options {
+    Options {
+        disk_warn_below: 0,
+        disk_fail_below: 0,
+        ..Options::default()
+    }
+}
+
 fn run(dir: PathBuf, expected: RuntimeVersion, options: &Options) -> Report {
     run_with_store(dir, expected, options, StoreHealth::Working)
 }
@@ -226,7 +237,7 @@ fn credential_store_warns_and_nothing_else_does() {
     let report = run_with_store(
         dir,
         RuntimeVersion::built_for(),
-        &Options::default(),
+        &without_disk_lines(),
         StoreHealth::NoProvider,
     );
     assert_eq!(
@@ -249,7 +260,7 @@ fn credential_store_warns_and_nothing_else_does() {
 fn vm_doctor_is_all_green_with_a_test_boot_under_30_s() {
     let root = tempfile::tempdir().unwrap();
     let dir = runtime_copy(root.path());
-    let report = run(dir, RuntimeVersion::built_for(), &Options::default());
+    let report = run(dir, RuntimeVersion::built_for(), &without_disk_lines());
     for id in [
         CheckId::Hypervisor,
         CheckId::Runtime,

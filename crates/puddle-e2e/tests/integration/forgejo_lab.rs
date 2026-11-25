@@ -123,6 +123,41 @@ fn git_clones_pushes_and_deletes_a_branch_with_the_token_and_is_refused_without_
     }
 }
 
+#[test]
+fn a_token_made_through_the_api_reads_until_it_is_revoked_and_the_fixtures_own_token_stays() {
+    let Some(forgejo) = Forgejo::start(NAME) else {
+        return;
+    };
+    forgejo.add_repo("acme/app", true);
+    let work = forgejo.scratch().join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    let made = forgejo.add_token("second");
+    assert_ne!(made, forgejo.token(), "a new token, not the fixture's");
+    let list = |token: &str| {
+        git(
+            &forgejo,
+            &work,
+            &[
+                "ls-remote",
+                &url(&forgejo, Some(("x-access-token", token)), "acme/app"),
+            ],
+        )
+    };
+    ok(&list(&made));
+
+    forgejo.revoke_token("second");
+    let out = list(&made);
+    assert!(
+        !out.status.success(),
+        "a revoked token still listed the repository"
+    );
+    ok(&list(forgejo.token()));
+    assert!(
+        forgejo.branch_head("acme/app", "main").is_some(),
+        "the fixture's own calls work after the revoke"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn ssh_signs_in_with_the_key_the_account_holds_and_checks_the_servers_host_key() {

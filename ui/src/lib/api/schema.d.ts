@@ -4233,6 +4233,17 @@ export interface components {
             workspace: components["schemas"]["WorkspaceId"];
         } | {
             /**
+             * Format: int64
+             * @description Bytes done so far, for a step that counts them (downloading and unpacking the image);
+             *     `null` for every other step, and while the count is not known yet.
+             */
+            bytes_done: number | null;
+            /**
+             * Format: int64
+             * @description Bytes in all, when `bytes_done` is set and the total is known; `null` otherwise.
+             */
+            bytes_total: number | null;
+            /**
              * @description More about the step, or why it failed; `null` when there is nothing to add. A cloning
              *     step names the address. It can quote tool output: escape it when rendering.
              */
@@ -7154,6 +7165,11 @@ export interface components {
          */
         Workspace: {
             /**
+             * @description What the workspace's state admits now, from the same rules the calls are checked by:
+             *     offer these and grey out the rest. Empty while an operation runs.
+             */
+            actions: components["schemas"]["WorkspaceAction"][];
+            /**
              * @description The hosts creating the workspace, or adding a repository to it, allowed for it because no
              *     rule decided them (each is a rule made by the create, on the Rules screen). Only those
              *     answers fill it; every other answer has an empty list.
@@ -7249,6 +7265,12 @@ export interface components {
             /** @description The workspace's state. */
             status: components["schemas"]["WorkspaceStatus"];
         };
+        /**
+         * @description Something the user can ask of a workspace. A workspace lists the ones its state admits now in
+         *     `actions`; the call for any other is refused with 409.
+         * @enum {string}
+         */
+        WorkspaceAction: "start" | "stop" | "attach" | "delete" | "reclaim" | "reset_root_disk" | "grow_root_disk" | "add_repository";
         /**
          * @description What a workspace sees: its own variables and the global ones, by name. A global variable that
          *     the workspace's own of the same name hides is listed after it with `overridden` set. The
@@ -7386,7 +7408,7 @@ export interface components {
          * @description Where a long workspace operation is, as [`Event::WorkspaceProgress`] reports it.
          * @enum {string}
          */
-        WorkspaceStep: "preparing_volume" | "pulling_image" | "cloning" | "starting" | "syncing" | "checking" | "reclaiming" | "resetting_root_disk" | "growing_root_disk" | "stopping" | "removing" | "done" | "failed";
+        WorkspaceStep: "preparing_volume" | "pulling_image" | "unpacking_image" | "cloning" | "starting" | "syncing" | "checking" | "reclaiming" | "resetting_root_disk" | "growing_root_disk" | "stopping" | "removing" | "done" | "failed";
         /** @description Changes a workspace's two switches; a switch left out stays as it is. */
         WorkspaceSwitchesRequest: {
             /** @description "Only pull from listed repos": the workspace's own value. */

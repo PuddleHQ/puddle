@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use puddle_secrets::StoredId;
+use puddle_types::StoredId;
 use puddle_types::{Event, WorkspaceId};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 

@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// What the workspace screens decide without the server: which buttons make sense for a state,
-// the words for states and progress steps, and the checks a create form can make before it asks.
+// What the workspace screens decide without the server: the words for states and progress steps,
+// and the checks a create form can make before it asks. Which buttons a state offers comes from
+// the server (`Workspace.actions`).
 // Pure TypeScript, no DOM.
 import type { components } from "#lib/api/schema.d.ts";
+import { bytesLabel } from "#lib/audit/model.ts";
 
 export type Workspace = components["schemas"]["Workspace"];
 export type Status = components["schemas"]["WorkspaceStatus"];
@@ -10,7 +12,10 @@ export type Operation = components["schemas"]["WorkspaceOperation"];
 export type Step = components["schemas"]["WorkspaceStep"];
 export type DeleteCheck = components["schemas"]["DeleteCheck"];
 
-/** States with no VM: the workspace can be started or deleted. */
+/** What the user can ask of a workspace; `Workspace.actions` lists the ones its state admits. */
+export type Action = components["schemas"]["WorkspaceAction"];
+
+/** States with no VM. Which buttons a state offers is the server's `actions`, not this. */
 export function isDown(status: Status): boolean {
   return (
     status === "created" ||
@@ -20,32 +25,9 @@ export function isDown(status: Status): boolean {
   );
 }
 
-/** Nothing is changing the workspace right now. */
-export const isIdle = (w: Workspace): boolean => w.busy === null;
-
-export const canStart = (w: Workspace): boolean =>
-  isIdle(w) && isDown(w.status);
-export const canStop = (w: Workspace): boolean =>
-  isIdle(w) && w.status === "running";
-export const canAttach = canStop;
-export const canDelete = (w: Workspace): boolean =>
-  isIdle(w) && isDown(w.status);
-export const canReclaim = (w: Workspace): boolean =>
-  isIdle(w) && (w.status === "running" || w.status === "stopped");
-/** The root disk goes with the sandbox, so a reset needs the workspace down. */
-export const canResetRootDisk = (w: Workspace): boolean =>
-  isIdle(w) && (w.status === "stopped" || w.status === "crashed");
-
-/**
- * A root disk can grow while the workspace runs, or waits for its next start when it is down;
- * only a start or stop in progress (and any other operation) holds it back.
- */
-export const canGrowRootDisk = (w: Workspace): boolean =>
-  isIdle(w) &&
-  w.root_disk_size_mib !== null &&
-  w.status !== "starting" &&
-  w.status !== "draining" &&
-  w.status !== "volume_missing";
+/** Whether the server says `w`'s state admits `action` now. */
+export const allows = (w: Workspace, action: Action): boolean =>
+  w.actions.includes(action);
 
 /**
  * The largest root disk size the form offers, in whole GiB. A limit of the form, not of the API
@@ -122,6 +104,7 @@ export const operationLabel = (op: Operation): string => OPERATION_WORDS[op];
 const STEP_WORDS: Record<Step, string> = {
   preparing_volume: "Preparing the disk",
   pulling_image: "Downloading the image",
+  unpacking_image: "Preparing the image",
   cloning: "Cloning the repository",
   starting: "Starting the workspace",
   syncing: "Syncing your settings",
@@ -136,6 +119,27 @@ const STEP_WORDS: Record<Step, string> = {
 };
 
 export const stepLabel = (step: Step): string => STEP_WORDS[step];
+
+/** How much of an image is done, as the card prints it: "120 MB of 480 MB, 25 %", or just "120 MB"
+ * while the total is not known. `null` when the stream gave no count. */
+export function byteCountText(
+  bytes: { done: number; total: number | null } | null,
+): string | null {
+  if (!bytes) return null;
+  if (bytes.total === null || bytes.total <= 0) return bytesLabel(bytes.done);
+  const share = Math.min(100, Math.floor((bytes.done / bytes.total) * 100));
+  return `${bytesLabel(bytes.done)} of ${bytesLabel(bytes.total)}, ${share} %`;
+}
+
+/** What a step takes long over, in words, for the steps people sit and wait through. */
+export const STEP_HINTS: Partial<Record<Step, string>> = {
+  pulling_image:
+    "The first workspace downloads its image once; later ones reuse it.",
+  unpacking_image:
+    "Turning the download into the disk the workspace boots from.",
+  starting:
+    "Booting the workspace's virtual machine takes a minute or two, every time it starts.",
+};
 
 /** The ordered steps each operation goes through, to show "step 2 of 3". */
 const SCRIPTS: Record<Operation, readonly Step[]> = {
@@ -155,6 +159,8 @@ const SCRIPTS: Record<Operation, readonly Step[]> = {
  * nothing: `done`, `failed`.
  */
 export function operationOfStep(step: Step): Operation | null {
+  // Only a create reports it, and it is not one of the numbered steps ("step 2 of 3").
+  if (step === "unpacking_image") return "creating";
   // `reclaiming` is also the last step of a stop; seen alone it is taken as a reclaim.
   const found = (
     Object.entries(SCRIPTS) as [Operation, readonly Step[]][]

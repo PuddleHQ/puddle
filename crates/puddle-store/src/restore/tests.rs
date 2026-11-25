@@ -685,7 +685,7 @@ fn the_audit_log_rows_get_new_ids_in_the_order_of_the_backup() {
 #[test]
 fn the_preview_lists_the_pasted_tokens_of_the_backups_identities_and_no_other_source() {
     use crate::identity::{Coverage, CredentialBinding};
-    use puddle_secrets::{HostName, SourceSpec, StoredId, TokenScope};
+    use puddle_types::{HostName, SourceSpec, StoredId, TokenScope};
     let host = HostName::new("github.com").unwrap();
     let rest = Coverage::new(std::collections::BTreeSet::new(), true).unwrap();
     let pasted = CredentialBinding::new(
@@ -704,7 +704,7 @@ fn the_preview_lists_the_pasted_tokens_of_the_backups_identities_and_no_other_so
         &host,
         SourceSpec::Gh {
             host: host.clone(),
-            account: puddle_secrets::AccountName::new("octo").unwrap(),
+            account: puddle_types::AccountName::new("octo").unwrap(),
         },
         rest,
     )

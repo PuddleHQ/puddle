@@ -2,7 +2,7 @@
 use puddle_types::Host;
 
 use super::*;
-use crate::target::Target;
+use crate::request_target::Target;
 
 fn target() -> Target {
     Target {

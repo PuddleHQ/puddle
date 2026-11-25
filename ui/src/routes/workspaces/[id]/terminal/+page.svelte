@@ -12,7 +12,7 @@
   import { workspaceActions as actions } from "#lib/stores/workspace-actions.svelte.ts";
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import { tabHref } from "#lib/workspaces/tabs.ts";
-  import { canStart } from "#lib/workspaces/model.ts";
+  import { allows } from "#lib/workspaces/model.ts";
   import type { TerminalSession } from "#lib/terminal/session.svelte.ts";
   import "#lib/theme/controls.css";
 
@@ -118,10 +118,10 @@
         <button
           type="button"
           class="btn primary"
-          disabled={!canStart(workspace)}
+          disabled={!allows(workspace, "start")}
           onclick={startAndOpen}>Start and open a terminal</button
         >
-        {#if !canStart(workspace)}
+        {#if !allows(workspace, "start")}
           <p class="why">{workspace.name} cannot start right now.</p>
         {/if}
       </div>
@@ -221,7 +221,7 @@
                 <button
                   type="button"
                   class="btn"
-                  disabled={!canStart(workspace)}
+                  disabled={!allows(workspace, "start")}
                   onclick={() => actions.start(workspace)}>Start</button
                 >
               {:else if shown.end.action === "overview"}
@@ -253,7 +253,6 @@
     display: grid;
     gap: var(--space-3);
     margin-bottom: var(--space-6);
-    max-width: 80rem;
     min-width: 0;
   }
   h2 {

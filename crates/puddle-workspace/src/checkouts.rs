@@ -120,7 +120,7 @@ pub(crate) async fn run<S: Sandbox>(
     id: &WorkspaceId,
     scope: Scope<'_>,
 ) -> Result<CheckoutList, WorkspaceError> {
-    let layout = Layout::new(id)?;
+    let layout = Layout::new()?;
     let out = sandbox
         .exec(request(&layout, scope))
         .await
@@ -147,7 +147,7 @@ pub(crate) async fn run<S: Sandbox>(
             clean(out.stderr_text().trim())
         )));
     }
-    parse(&out.stdout_text()).map_err(fail)
+    parse(&out.whole_stdout_text().map_err(|e| fail(e.to_string()))?).map_err(fail)
 }
 
 /// A guest string made safe to keep and show: control characters replaced, cut at [`MAX_FIELD`].

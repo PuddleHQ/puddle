@@ -60,10 +60,9 @@ use crate::coalesce::Coalescing;
 use crate::counted::Counted;
 use crate::destination::{Resolver, SystemResolver};
 use crate::http::{self, Head};
-use crate::proxy::{
-    ProxyConfig, Refusal, Unresolved, forward, parse_request, read_request, refuse, tunnel,
-};
-use crate::target::Target;
+use crate::plain;
+use crate::proxy::{ProxyConfig, Refusal, Unresolved, parse_request, read_request, refuse, tunnel};
+use crate::request_target::Target;
 use crate::upstream::{Admitted, Upstream, connect_out};
 
 /// Random bytes in a token (256 bits).
@@ -454,7 +453,7 @@ async fn serve(shared: &Shared, stream: TcpStream) {
         refuse(reader.get_mut(), &unauthorised()).await;
         return;
     }
-    let (target, path, body) = match parse_request(&head) {
+    let (target, path, _) = match parse_request(&head) {
         Ok(parsed) => parsed,
         Err(refusal) => {
             refuse(reader.get_mut(), &refusal).await;
@@ -470,7 +469,7 @@ async fn serve(shared: &Shared, stream: TcpStream) {
     if let Some(path) = &path {
         event.http = Some(HttpRequestLine::new(head.method.as_str(), path));
     }
-    relay(shared, reader, &head, &target, path, body, &mut event).await;
+    relay(shared, reader, &head, &target, path, &mut event).await;
     event.bytes_up = counts.read();
     event.bytes_down = counts.written();
     tracing::debug!(
@@ -495,9 +494,20 @@ async fn relay(
     head: &Head,
     target: &Target,
     path: Option<String>,
-    body: http::Body,
     event: &mut ConnectionEvent,
 ) {
+    // A plain-HTTP pull is checked for framing before anything is admitted or connected, as a
+    // workspace's plain HTTP is.
+    let incoming = match path {
+        Some(path) => match plain::Incoming::new(head.clone(), target.clone(), path) {
+            Ok(incoming) => Some(incoming),
+            Err(refusal) => {
+                refuse(reader.get_mut(), &refusal).await;
+                return;
+            }
+        },
+        None => None,
+    };
     let admitted = match admit(shared, target, event).await {
         Ok(admitted) => admitted,
         Err(refusal) => {
@@ -509,7 +519,7 @@ async fn relay(
     let out = match connect_out(
         shared.upstream.as_ref(),
         target,
-        path.is_none(),
+        incoming.is_none(),
         &admitted,
         shared.config.connect_timeout,
     )
@@ -526,21 +536,15 @@ async fn relay(
     event.resolved_ip = out.addr.map(|addr| addr.ip());
     event.upstream.clone_from(&out.hop);
     tracing::info!(host = %target.host, port = target.port, addr = ?out.addr, hop = ?out.hop, "image-pull connection");
-    match path {
+    match incoming {
         None => {
             tunnel(reader.into(), out.stream, None, out.watch, None, None).await;
         }
-        Some(path) => {
-            forward(
-                reader,
-                out.stream,
-                head,
-                &path,
-                target,
-                body,
-                out.via.as_ref(),
-            )
-            .await;
+        Some(incoming) => {
+            // Nothing counts upstream connection ends here: the counter is a test aid of the
+            // workspace proxy.
+            let ended = Arc::default();
+            plain::forward_once(&shared.config, &ended, reader, out, &incoming).await;
         }
     }
 }

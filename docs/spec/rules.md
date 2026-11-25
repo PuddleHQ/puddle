@@ -107,7 +107,10 @@ expires when its workspace is deleted (R-21): a waiting request never lapses by 
   waiting, so a host that is not listed is never a silent one.
 - **R-47 The refusal says the request is waiting.** The 403 body says in words that the host is
   waiting for approval in Puddle and that the tool should retry once it is approved; the headers
-  keep `x-puddle-decision: pending` and, when a row exists, `x-puddle-pending: <id>`. For an
+  keep `x-puddle-decision: pending` and, when a row exists, `x-puddle-pending: <id>`. The status line
+  carries the words too (`403 Forbidden, waiting for approval in Puddle`): a client that discards the
+  body and headers of a refused `CONNECT` (`curl`, `git`) still shows the code only, but Python, npm,
+  Go and apt print the reason phrase. For an
   `unlisted` request (R-45) the body says instead that the host is not listed for approval yet
   because Puddle holds more waiting requests for the workspace than it lists, and that answering some
   lists this one on the next try. The connection
@@ -553,6 +556,10 @@ the API. *Added 2026-10-08.*
   ships off, R-36), so without the grant a clone into a fresh workspace would wait for the user. Cloning
   again and adopting an existing checkout make no grant. A grant that closes a pending row records
   `decided_by` `system`. The create answer lists the hosts it allowed with their rule ids.
+  The same grant is made by "Add repository" › clone on a running workspace's Repositories tab, on the same
+  terms and before that clone. A repository
+  added to the Git tab's list only stores a list row and makes no rule: its host, if no rule decides it,
+  waits in the Inbox like any new host.
 
 ### Groups and precedence
 

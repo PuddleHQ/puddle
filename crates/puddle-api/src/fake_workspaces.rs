@@ -3,7 +3,7 @@
 //!
 //! It follows the trait's contract the way the real service does: a call checks the request,
 //! marks the workspace busy, returns it, and a background task walks the operation's steps,
-//! emitting [`Event::StatusChanged`] and [`Event::WorkspaceProgress`] as it goes. Tests wait for
+//! emitting [`Move::StatusChanged`] and [`Move::WorkspaceProgress`] as it goes. Tests wait for
 //! the end with [`FakeWorkspaces::idle`], and can make the next operation fail.
 
 use std::collections::BTreeMap;
@@ -21,14 +21,22 @@ use tokio::sync::watch;
 
 use crate::checkouts::{AddRepository, Checkouts, FoundList, check_addition, checkouts_view};
 use crate::wire::{RegistryTool, ToolRegistry, ToolVersions, ToolsFile, ToolsListing};
+use crate::workspaces::phase::{Action, Move, Next, Outcome, admit, begin};
 use crate::workspaces::{
     AttachMode, Attached, BrowserTarget, DEFAULT_DISK_MIB, DEFAULT_IMAGE, DEFAULT_ROOT_DISK_MIB,
     DeleteCheck, DesktopTarget, DisplayName, GitSetup, KeptLogins, LaunchError, Launcher, Listing,
     LocalCheckoutError, LocalSource, NameIds, NewRepository, NewWorkspace, Operation, RepoFindings,
     ShellInitCheck, StartFolder, StartFolderChange, WorkspaceError, WorkspaceRecord,
-    WorkspaceService, admit_delete_fingerprint, admit_delete_status, admit_grow_size, admit_idle,
-    admit_reset_root_disk, admit_settled, admit_start, admit_stop, not_found,
+    WorkspaceService, admit_delete_fingerprint, admit_grow_size, not_found,
 };
+
+/// The size of the image a fake create "downloads", and how far each report of it is.
+const FAKE_PULL_BYTES: u64 = 400 * 1024 * 1024;
+const FAKE_PULL_DOWNLOAD: [u64; 3] = [
+    FAKE_PULL_BYTES / 4,
+    FAKE_PULL_BYTES * 3 / 5,
+    FAKE_PULL_BYTES,
+];
 
 /// One step an operation reports: the step, its detail, and the checkout a cloning step is about.
 type Step = (WorkspaceStep, Option<String>, Option<CheckoutDir>);
@@ -356,11 +364,30 @@ impl FakeWorkspaces {
             step,
             detail,
             repository,
+            bytes_done: None,
+            bytes_total: None,
         });
     }
 
-    /// Marks `id` busy with `op` after `check`, runs `enter` on the record (the immediate
-    /// state change) and returns the record.
+    fn progress_bytes(
+        &self,
+        record: &WorkspaceRecord,
+        step: WorkspaceStep,
+        bytes_done: u64,
+        bytes_total: Option<u64>,
+    ) {
+        self.inner.events.emit(Event::WorkspaceProgress {
+            workspace: record.id.clone(),
+            step,
+            detail: None,
+            repository: None,
+            bytes_done: Some(bytes_done),
+            bytes_total,
+        });
+    }
+
+    /// Begins `op` on `id` when its phase admits it and `check` passes, runs `enter` on the
+    /// record (what the operation changes at once besides the phase) and returns the record.
     fn accept(
         &self,
         id: &WorkspaceId,
@@ -370,10 +397,11 @@ impl FakeWorkspaces {
     ) -> Result<WorkspaceRecord, WorkspaceError> {
         let mut state = lock(&self.inner.state);
         let entry = state.entries.get_mut(id).ok_or_else(|| not_found(id))?;
-        admit_idle(&entry.record)?;
+        let mut next = entry.record.clone();
+        begin(&mut next, op)?;
         check(&entry.record)?;
-        entry.record.busy = Some(op);
-        enter(&mut entry.record);
+        enter(&mut next);
+        entry.record = next;
         Ok(entry.record.clone())
     }
 
@@ -385,7 +413,23 @@ impl FakeWorkspaces {
         tokio::spawn(async move {
             for step in steps {
                 this.pause().await;
+                let pulling = step.0 == WorkspaceStep::PullingImage;
                 this.progress(&record, step);
+                if pulling {
+                    // What a first pull of the image reports: a download that counts up to its
+                    // total, then an unpack whose total is not known until the end.
+                    for done in FAKE_PULL_DOWNLOAD {
+                        this.pause().await;
+                        this.progress_bytes(
+                            &record,
+                            WorkspaceStep::PullingImage,
+                            done,
+                            Some(FAKE_PULL_BYTES),
+                        );
+                    }
+                    this.pause().await;
+                    this.progress_bytes(&record, WorkspaceStep::UnpackingImage, 0, None);
+                }
             }
             this.pause().await;
             this.finish(&record.id, op);
@@ -411,69 +455,40 @@ impl FakeWorkspaces {
         let Some(entry) = state.entries.get_mut(id) else {
             return;
         };
-        entry.record.busy = None;
-        let mut record = entry.record.clone();
-        let mut status_changed = false;
-        if let Some(reason) = failure {
+        let before = entry.record.status;
+        let outcome = if failure.is_some() {
+            Outcome::Failed
+        } else {
+            Outcome::Done
+        };
+        let next = entry.record.apply(Move::End(outcome));
+        if failure.is_none() {
             match op {
-                Operation::Creating => {
-                    state.entries.remove(id);
+                // The in-memory service boots nothing, so what it creates stays `created`: a
+                // known difference from the real service, which starts it.
+                Operation::Creating => entry.record.status = WorkspaceStatus::Created,
+                Operation::Reclaiming => {
+                    entry.record.disk_used_mib = entry.record.disk_used_mib.map(|used| used / 2);
                 }
-                Operation::Starting => {
-                    status_changed = true;
-                    record.status = WorkspaceStatus::Crashed;
+                Operation::ResettingRootDisk => {
+                    entry.record.root_disk_used_mib = entry.record.root_disk_size_mib.map(|_| 0);
                 }
-                Operation::Stopping => {
-                    // A failed graceful stop leaves the VM up.
-                    status_changed = true;
-                    record.status = WorkspaceStatus::Running;
-                }
-                Operation::Reclaiming
-                | Operation::ResettingRootDisk
-                | Operation::GrowingRootDisk
-                | Operation::Cloning
-                | Operation::Deleting => {}
-            }
-            if let Some(entry) = state.entries.get_mut(id) {
-                entry.record = record.clone();
-            }
-            drop(state);
-            if status_changed {
-                self.emit_status(&record);
-            }
-            self.progress(&record, (WorkspaceStep::Failed, Some(reason), None));
-            return;
-        }
-        match op {
-            Operation::Creating | Operation::Cloning | Operation::GrowingRootDisk => {}
-            Operation::Starting => {
-                record.status = WorkspaceStatus::Running;
-                status_changed = true;
-            }
-            Operation::Stopping => {
-                record.status = WorkspaceStatus::Stopped;
-                status_changed = true;
-            }
-            Operation::Reclaiming => {
-                record.disk_used_mib = record.disk_used_mib.map(|used| used / 2);
-            }
-            Operation::ResettingRootDisk => {
-                record.root_disk_used_mib = record.root_disk_size_mib.map(|_| 0);
-            }
-            Operation::Deleting => {
-                state.entries.remove(id);
+                _ => {}
             }
         }
-        if op != Operation::Deleting
-            && let Some(entry) = state.entries.get_mut(id)
-        {
-            entry.record = record.clone();
+        let record = entry.record.clone();
+        if next == Ok(Next::Removed) {
+            state.entries.remove(id);
         }
         drop(state);
-        if status_changed {
+        if record.status != before {
             self.emit_status(&record);
         }
-        self.progress(&record, (WorkspaceStep::Done, None, None));
+        let last = match failure {
+            Some(reason) => (WorkspaceStep::Failed, Some(reason), None),
+            None => (WorkspaceStep::Done, None, None),
+        };
+        self.progress(&record, last);
     }
 
     fn repositories_changed(&self, record: &WorkspaceRecord) {
@@ -503,12 +518,6 @@ impl FakeWorkspaces {
             id,
             Operation::Cloning,
             |r| {
-                if r.status != WorkspaceStatus::Running {
-                    return Err(WorkspaceError::Conflict(format!(
-                        "{} is {}; start it to add a repository",
-                        r.name, r.status
-                    )));
-                }
                 if add {
                     check_addition(&r.repositories, &new.repository)?;
                 }
@@ -803,7 +812,7 @@ impl WorkspaceService for FakeWorkspaces {
                 record.disk_used_mib = Some(0);
                 record.root_disk_size_mib = Some(DEFAULT_ROOT_DISK_MIB);
                 record.root_disk_used_mib = Some(0);
-                record.busy = Some(Operation::Creating);
+                begin(&mut record, Operation::Creating)?;
                 if crate::label_taken(
                     state.entries.values().map(|e| &e.record),
                     new.owner,
@@ -859,9 +868,7 @@ impl WorkspaceService for FakeWorkspaces {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let record = self.accept(id, Operation::Starting, admit_start, |r| {
-                r.status = WorkspaceStatus::Starting;
-            })?;
+            let record = self.accept(id, Operation::Starting, |_| Ok(()), |_| {})?;
             self.emit_status(&record);
             self.run(
                 &record,
@@ -880,9 +887,7 @@ impl WorkspaceService for FakeWorkspaces {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let record = self.accept(id, Operation::Stopping, admit_stop, |r| {
-                r.status = WorkspaceStatus::Draining;
-            })?;
+            let record = self.accept(id, Operation::Stopping, |_| Ok(()), |_| {})?;
             self.emit_status(&record);
             self.run(
                 &record,
@@ -901,7 +906,7 @@ impl WorkspaceService for FakeWorkspaces {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let record = self.accept(id, Operation::Reclaiming, admit_settled, |_| {})?;
+            let record = self.accept(id, Operation::Reclaiming, |_| Ok(()), |_| {})?;
             self.run(
                 &record,
                 Operation::Reclaiming,
@@ -916,12 +921,7 @@ impl WorkspaceService for FakeWorkspaces {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let record = self.accept(
-                id,
-                Operation::ResettingRootDisk,
-                admit_reset_root_disk,
-                |_| {},
-            )?;
+            let record = self.accept(id, Operation::ResettingRootDisk, |_| Ok(()), |_| {})?;
             self.run(
                 &record,
                 Operation::ResettingRootDisk,
@@ -941,7 +941,6 @@ impl WorkspaceService for FakeWorkspaces {
                 id,
                 Operation::GrowingRootDisk,
                 |r| {
-                    admit_settled(r)?;
                     r.root_disk_size_mib
                         .map_or(Ok(()), |current| admit_grow_size(size_mib, current))
                 },
@@ -976,10 +975,7 @@ impl WorkspaceService for FakeWorkspaces {
             let record = self.accept(
                 id,
                 Operation::Deleting,
-                |r| {
-                    admit_delete_status(r)?;
-                    admit_delete_fingerprint(r, fingerprint, &check)
-                },
+                |r| admit_delete_fingerprint(r, fingerprint, &check),
                 |_| {},
             )?;
             self.run(
@@ -1193,12 +1189,7 @@ impl WorkspaceService for FakeWorkspaces {
     ) -> BoxFuture<'a, Result<Attached, WorkspaceError>> {
         Box::pin(async move {
             let record = self.get(id).await?;
-            if record.busy.is_some() || record.status != WorkspaceStatus::Running {
-                return Err(WorkspaceError::Conflict(format!(
-                    "{} is not running; start it first",
-                    record.name
-                )));
-            }
+            admit(&record, Action::Attach)?;
             match mode {
                 AttachMode::Browser => {
                     let target = BrowserTarget {
@@ -1226,7 +1217,7 @@ impl WorkspaceService for FakeWorkspaces {
                 AttachMode::Desktop => {
                     let target = DesktopTarget {
                         ssh_host: format!("puddle-{}", record.id),
-                        path: format!("/workspaces/{}", record.id),
+                        path: "/workspace".to_owned(),
                         is_workspace_file: false,
                     };
                     Ok(

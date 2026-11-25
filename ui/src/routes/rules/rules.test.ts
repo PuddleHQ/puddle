@@ -157,6 +157,25 @@ async function choose(item: string | RegExp) {
   await fireEvent.click(await screen.findByRole("menuitem", { name: item }));
 }
 
+// The first render of this page, its first open dialog and its first role queries build what every
+// later test reuses. That cost fell on the first test, where a loaded host (load 91, 12 s loop lag)
+// turned a 0.4 s test into 7.4 s against the 5 s limit. A top-level await has no test clock, so the
+// file pays it here once, as vitest.setup.ts does for what every page shares.
+{
+  seed();
+  await loaded();
+  await fireEvent.click(screen.getByRole("button", { name: /Add rule/ }));
+  await screen.findByRole("dialog");
+  screen.getAllByRole("option", { hidden: true });
+  rows();
+  cleanup();
+  api.rules = [];
+  rulesStore.rules = [];
+  rulesStore.status = "loading";
+  ruleSets.status = "loading";
+  requestRulesStore.status = "loading";
+}
+
 describe("workspace ids", () => {
   it("stay behind the names in the table, the filter and the add form", async () => {
     workspaces.list = [{ ...fakeWorkspace("Shop"), id: "g07jxx5q" }];
@@ -230,7 +249,7 @@ describe("the list", () => {
     await loaded();
     expect(hosts()).toEqual([
       "old.example.com",
-      "*.github.com and subdomains",
+      "*.github.com",
       "registry.npmjs.org",
     ]);
     const old = rows()[0]!;
@@ -250,7 +269,7 @@ describe("the list", () => {
     seed();
     await loaded();
     await fireEvent.click(screen.getByRole("button", { name: "Sort by host" }));
-    expect(hosts()[0]).toBe("*.github.com and subdomains");
+    expect(hosts()[0]).toBe("*.github.com");
     expect(screen.getByRole("columnheader", { name: /Host/ })).toHaveAttribute(
       "aria-sort",
       "ascending",
@@ -387,7 +406,7 @@ describe("adding", () => {
     expect(toasts.items[0]?.message).toBe(
       "Added: deny *.example.org for workspace shop.",
     );
-    expect(hosts()).toContain("*.example.org and subdomains");
+    expect(hosts()).toContain("*.example.org");
   });
   it("checks the form before asking the server", async () => {
     const dialog = await open();
@@ -555,7 +574,7 @@ describe("editing a rule in place", () => {
       "Saved: allow api.github.com for workspace shop.",
     );
     expect(hosts()).toContain("api.github.com");
-    expect(hosts()).not.toContain("*.github.com and subdomains");
+    expect(hosts()).not.toContain("*.github.com");
     expect(rows()).toHaveLength(3);
   });
 

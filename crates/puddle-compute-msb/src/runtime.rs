@@ -278,9 +278,10 @@ impl MsbRuntime {
         self.inner.sandboxes_dir.join(name)
     }
 
-    /// Deletes the root images a grow of this stopped sandbox left behind (see [`grow_orphans`]):
-    /// call it after a grow that took the next-start path, and `start` runs it as well. A failure
-    /// is logged and never fails the caller, since the sandbox works with the orphans in place.
+    /// Deletes the root images that grows of this stopped sandbox left behind (see [`grow_orphans`]).
+    /// Only `start` calls it, before it boots the sandbox, so a grow leaves its orphans in place
+    /// until the next start. A failure is logged and never fails the caller, since the sandbox
+    /// works with the orphans in place.
     pub(crate) fn prune_grow_orphans(&self, name: &str) {
         grow_orphans::prune_logged(name, &self.sandbox_dir(name));
     }
@@ -407,6 +408,23 @@ impl Runtime for MsbRuntime {
                 &self.inner.local,
                 &self.inner.config.registry_roots,
                 image,
+                None,
+            ))
+            .await
+        })
+    }
+
+    fn pull_image_reporting<'a>(
+        &'a self,
+        image: &'a ImageRef,
+        report: puddle_compute::PullReport<'a>,
+    ) -> impl Future<Output = Result<ImageConfig, ComputeError>> + Send + 'a {
+        Box::pin(async move {
+            Box::pin(image::pull(
+                &self.inner.local,
+                &self.inner.config.registry_roots,
+                image,
+                Some(report),
             ))
             .await
         })
@@ -627,6 +645,7 @@ impl Runtime for MsbRuntime {
                                 .collect()
                         },
                     ),
+                    volume_mounts: crate::volume::named_mount_points(h.config()),
                     // A record whose stored config can't be read is not claimed as Puddle's.
                     puddle_owned: h.config().is_ok_and(|c| {
                         c.spec.labels.get(OWNER_LABEL).map(String::as_str)
@@ -654,6 +673,17 @@ impl Runtime for MsbRuntime {
             self.sdk(Sandbox::remove(name.as_str()))
                 .await
                 .map_err(|e| map("remove", name.as_str(), e))
+        })
+    }
+
+    fn kill(&self, name: &SandboxName) -> impl Future<Output = Result<(), ComputeError>> + Send {
+        Box::pin(async move {
+            let record = self.existing(name).await?;
+            // The SDK ends the VM by the sandbox's recorded identity, so a VM `get` refuses to
+            // connect to (starting, draining, paused) is reachable; a down one returns at once.
+            self.sdk(record.kill())
+                .await
+                .map_err(|e| map("kill", name.as_str(), e))
         })
     }
 

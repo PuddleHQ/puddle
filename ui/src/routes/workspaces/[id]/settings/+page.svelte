@@ -34,7 +34,7 @@
     DIRECT_SSH_LABEL,
   } from "#lib/workspaces/direct-ssh.ts";
   import {
-    canDelete,
+    allows,
     diskLabel,
     diskWarned,
     rootDiskLabel,
@@ -440,7 +440,9 @@
                 </select>
               </td>
               <td class="from">
-                <span class="chip">{sourceLabel(row.source)}</span>
+                {#if row.source !== "default"}<span class="meta wrap"
+                    >{sourceLabel(row.source)}</span
+                  >{/if}
                 {#if row.source === "workspace"}
                   <button
                     type="button"
@@ -592,7 +594,7 @@
             <button
               type="button"
               class="btn deny"
-              disabled={!canDelete(workspace)}
+              disabled={!allows(workspace, "delete")}
               onclick={() => void actions.askDelete(workspace)}
             >
               <Trash2 aria-hidden="true" size={16} />{actions.checking ===
@@ -600,7 +602,7 @@
                 ? "Checking…"
                 : "Delete workspace…"}
             </button>
-            {#if !canDelete(workspace) && workspace.busy === null}
+            {#if !allows(workspace, "delete") && workspace.busy === null}
               <p class="why">Stop the workspace before deleting it.</p>
             {/if}
           </td>
@@ -630,7 +632,6 @@
   }
   table {
     width: 100%;
-    max-width: 64rem;
     border-collapse: collapse;
   }
   thead th {
@@ -668,12 +669,6 @@
   .from {
     white-space: nowrap;
   }
-  .chip {
-    padding: 0 var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-pill);
-    font-size: var(--text-sm);
-  }
   .reset {
     margin-inline-start: var(--space-2);
     padding: 0;
@@ -708,6 +703,10 @@
     }
     .from {
       white-space: normal;
+    }
+    .pick {
+      width: 100%;
+      min-width: 0;
     }
   }
 </style>

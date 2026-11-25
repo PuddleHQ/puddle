@@ -7,6 +7,7 @@
 //! guest says about a checkout is hostile input (`puddle-workspace` parses it) and is only shown,
 //! or used when the user picks "Manage this", and then it is read again at that moment.
 
+use puddle_api::phase::begin;
 use puddle_api::{
     AddRepository, Checkouts, Found, FoundList, NewRepository, RemoteNote, RepoUrl, check_addition,
     check_seen, checkouts_view, why_no_remote,
@@ -280,7 +281,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 self.save_repositories(&mut state, id, before)?;
             }
             let slot = state.slots.get_mut(id).ok_or_else(|| not_found(id))?;
-            slot.record.busy = Some(Operation::Cloning);
+            begin(&mut slot.record, Operation::Cloning)?;
             self.ticket(slot.record.clone(), Operation::Cloning)
         };
         let record = ticket.record().clone();
@@ -371,8 +372,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 format!(
                     "{reason}. {made}The repository stays on the list: use Clone again to try \
                      once more, or Remove from the list. To get it yourself, clone it in a \
-                     terminal in the workspace: git clone {} /workspaces/{}/{}",
-                    repository.url, record.id, repository.directory
+                     terminal in the workspace: git clone {} /workspace/{}",
+                    repository.url, repository.directory
                 ),
             )
             .about(record.id.clone()),

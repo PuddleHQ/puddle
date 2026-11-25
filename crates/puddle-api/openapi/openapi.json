@@ -17767,9 +17767,29 @@
               "step",
               "detail",
               "repository",
+              "bytes_done",
+              "bytes_total",
               "type"
             ],
             "properties": {
+              "bytes_done": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "Bytes done so far, for a step that counts them (downloading and unpacking the image);\n`null` for every other step, and while the count is not known yet.",
+                "minimum": 0
+              },
+              "bytes_total": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "Bytes in all, when `bytes_done` is set and the total is known; `null` otherwise.",
+                "minimum": 0
+              },
               "detail": {
                 "type": [
                   "string",
@@ -24550,6 +24570,7 @@
           "memory_mib",
           "status",
           "busy",
+          "actions",
           "created_at",
           "disk_size_mib",
           "disk_used_mib",
@@ -24563,6 +24584,13 @@
           "allowed_hosts"
         ],
         "properties": {
+          "actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceAction"
+            },
+            "description": "What the workspace's state admits now, from the same rules the calls are checked by:\noffer these and grey out the rest. Empty while an operation runs."
+          },
           "allowed_hosts": {
             "type": "array",
             "items": {
@@ -24693,6 +24721,20 @@
             "description": "The workspace's state."
           }
         }
+      },
+      "WorkspaceAction": {
+        "type": "string",
+        "description": "Something the user can ask of a workspace. A workspace lists the ones its state admits now in\n`actions`; the call for any other is refused with 409.",
+        "enum": [
+          "start",
+          "stop",
+          "attach",
+          "delete",
+          "reclaim",
+          "reset_root_disk",
+          "grow_root_disk",
+          "add_repository"
+        ]
       },
       "WorkspaceEnv": {
         "type": "object",
@@ -25024,6 +25066,7 @@
         "enum": [
           "preparing_volume",
           "pulling_image",
+          "unpacking_image",
           "cloning",
           "starting",
           "syncing",

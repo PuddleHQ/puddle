@@ -256,6 +256,17 @@ fn a_refresh_a_crash_left_behind_is_cleared_and_the_copy_is_made_again() {
 }
 
 #[test]
+fn a_safety_copy_deleted_since_the_confirm_is_made_again_and_the_restore_applies() {
+    let s = setup();
+    let requested = request(&s.here, &s.staging_id, ApplyMode::Add, "").unwrap();
+    let copy = s.here.safety_copies().join(&requested.safety_copy);
+    fs::remove_dir_all(&copy).unwrap();
+    let outcome = apply_pending(&s.here).unwrap();
+    assert!(outcome.applied, "{}", outcome.message);
+    assert!(copy.is_dir());
+}
+
+#[test]
 fn replace_takes_the_backups_rules_settings_and_workspaces() {
     let s = setup();
     request(&s.here, &s.staging_id, ApplyMode::Replace, "").unwrap();

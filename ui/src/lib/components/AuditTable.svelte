@@ -193,7 +193,7 @@
               <span class="chip {row.outcome.tone}">{row.outcome.label}</span>
             {/if}
             {#if row.company}
-              <span class="chip neutral" title={row.company.title}
+              <span class="meta" title={row.company.title}
                 >{row.company.label}</span
               >
             {/if}

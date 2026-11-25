@@ -307,10 +307,10 @@ struct GuestState {
     editor: Option<EditorServer>,
     /// The development certificate this start gave the guest, so a re-planned boot keeps it.
     dev_cert: Option<puddle_certs::devcert::GuestDevCert>,
-    /// Where login shells land: what the saved start folder was at this start, or when it last
-    /// changed.
+    /// Where login shells land ([`crate::editor_file::terminal_folder`]) at this start, or when
+    /// the start folder last changed.
     start_folder: Option<StartFolder>,
-    /// The volume's mount point, `/workspaces/<id>`.
+    /// The volume's mount point, `/workspace`.
     root: GuestPath,
     /// The multi-root file the editor opens when the workspace has two or more checkouts, as the
     /// last attach wrote it; `None` has the hook take Puddle's lines out of it.
@@ -745,13 +745,13 @@ fn kept_login_row(login: &puddle_logins::KeptLogin) -> KeptLogin {
 }
 
 #[cfg(test)]
-mod room_for_a_grow;
+mod room_for_a_grow_tests;
 
 #[cfg(test)]
-mod kept_login_rows;
+mod kept_login_rows_tests;
 
 #[cfg(test)]
-mod no_link_words;
+mod no_link_words_tests;
 
 /// Why the runtime refuses a checkout, as the user is told: the reason of a refused spec as it is
 /// (the runtime's own wording names the folder), any other failure by its message.
@@ -773,3 +773,6 @@ mod checkout_refusal_tests;
 
 #[cfg(test)]
 mod workspace_error_tests;
+
+#[cfg(test)]
+mod pull_throttle_tests;

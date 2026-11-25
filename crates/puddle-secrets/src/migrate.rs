@@ -14,9 +14,9 @@
 use std::collections::HashSet;
 
 use crate::choice::RecordError;
-use crate::name::StoredId;
 use crate::secret::Secret;
 use crate::store::SecretStore;
+use puddle_types::StoredId;
 
 /// Why a move stopped. Whatever the cause, the old store is still in charge and holds every value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]

@@ -11,7 +11,7 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
-use puddle_secrets::{HostName, OrgName, SourceSpec, StoredId};
+use puddle_types::{HostName, OrgName, SourceSpec, StoredId};
 use serde::{Deserialize, Serialize};
 
 use crate::error::StoreError;

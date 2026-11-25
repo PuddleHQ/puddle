@@ -3688,7 +3688,7 @@ TIMEFORMAT='TRACE npm_cpu real=%R user=%U sys=%S'
 threads() { for t in /proc/$1/task/*/stat; do awk '{print $1, $2, $14+$15}' "$t" 2>/dev/null; done | sort; }
 (
   sleep 25
-  N=$(pgrep -x node | head -1)
+  N=$(for p in $(pgrep -x node); do awk -v p=$p '{print $14+$15, p}' /proc/$p/stat 2>/dev/null; done | sort -n -r | awk 'NR==1 {print $2}')
   threads "$N" > "$W/th0"; sleep 10; threads "$N" > "$W/th1"
   join "$W/th0" "$W/th1" | awk '{d=($5-$3)/10; if (d>0) printf "TRACE thread busy=%03.0f%% tid=%s name=%s\n", d, $1, $2}' | sort -r | head -6 > "$W/threads.log"
 ) &

@@ -6,22 +6,17 @@ use std::sync::Arc;
 
 use puddle_agent_proto::relay::splice;
 use puddle_types::{BlockReason, EgressRequest, HttpRequestLine};
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 use puddle_netpolicy::block_message;
 
-use crate::http::{self, Body, Head};
 use crate::opened::{ESTABLISHED, Opened};
-use crate::request_target::Target;
 use crate::ssh;
 use crate::tap::RequestTap;
 use crate::terminate::{self};
 use crate::token_gate::{self, TokenGate};
-use crate::upstream::ProxyForm;
 use puddle_upstream::RouteWatch;
-
-use super::ClientReader;
 
 pub(crate) use puddle_upstream::connect_first;
 
@@ -149,85 +144,6 @@ where
         },
         None => Some(spliced.await),
     }
-}
-
-/// One plain-HTTP request on a connection that carries only it (the image-pull listener's way;
-/// a workspace's plain HTTP keeps its connection, see [`plain::serve`]): `Host` rewritten to the
-/// checked target, body framed exactly, so a second request can't ride on the checked connection.
-pub(crate) async fn forward<S: AsyncRead + AsyncWrite + Unpin>(
-    mut reader: ClientReader<S>,
-    mut server: TcpStream,
-    head: &Head,
-    path: &str,
-    target: &Target,
-    body: Body,
-    via: Option<&ProxyForm>,
-) {
-    // To a proxy the request target is the absolute URI (of the name or the checked address the
-    // proxy was told), with the proxy credential for this request if the scheme needs one.
-    let uri = via.map_or_else(
-        || path.to_owned(),
-        |proxy| format!("http://{}{path}", proxy.authority),
-    );
-    let authorization = via.and_then(|p| {
-        p.authorization
-            .as_ref()
-            .map(puddle_upstream::Secret::expose)
-    });
-    let upstream_head = http::upstream_head(head, &uri, &target.host_header(), authorization);
-    let result = async {
-        server.write_all(upstream_head.as_bytes()).await?;
-        forward_one_request(&mut reader, &mut server, body).await
-    }
-    .await;
-    match result {
-        Ok(0) => tracing::debug!("request forwarded"),
-        Ok(extra) => tracing::debug!(
-            discarded_bytes = extra,
-            "request forwarded; pipelined bytes discarded"
-        ),
-        Err(err) => {
-            tracing::debug!(error = %err, "plain-HTTP request aborted");
-            abort(&server);
-            // `reader` is dropped without a shutdown: the guest stream resets.
-        }
-    }
-}
-
-/// Sends the body up while the response comes down (so `Expect: 100-continue` works). Anything
-/// the guest sends after the body is never forwarded; returns how many such bytes were buffered.
-pub(super) async fn forward_one_request<C, U>(
-    client: &mut BufReader<C>,
-    upstream: &mut U,
-    body: Body,
-) -> io::Result<usize>
-where
-    C: AsyncRead + AsyncWrite + Unpin,
-    U: AsyncRead + AsyncWrite + Unpin,
-{
-    let (mut server_in, mut server_out) = tokio::io::split(upstream);
-    let leftover = {
-        let (guest_in, mut guest_out) = tokio::io::split(&mut *client);
-        let mut guest_in = BufReader::new(guest_in);
-        {
-            let upload = async {
-                http::copy_body(&mut guest_in, &mut server_out, body).await?;
-                server_out.flush().await
-            };
-            let download = tokio::io::copy(&mut server_in, &mut guest_out);
-            tokio::pin!(download);
-            let uploaded_first = tokio::select! {
-                up = upload => { up?; true }
-                down = &mut download => { down?; false }
-            };
-            if uploaded_first {
-                download.await?;
-            }
-        }
-        guest_out.shutdown().await?;
-        guest_in.buffer().len()
-    };
-    Ok(leftover + client.buffer().len())
 }
 
 /// Makes dropping `server` send a reset instead of a clean close.

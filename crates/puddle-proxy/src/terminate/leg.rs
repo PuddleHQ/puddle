@@ -19,7 +19,7 @@ use tokio::task::JoinHandle;
 
 use super::guest::{ALPN_HTTP11, Proto};
 use super::session::{Context, MAX_RESPONSE_HEAD, MAX_RESPONSE_HEADERS, upstream_tls_refusal};
-use crate::proxy::{Proxy, Refusal};
+use crate::proxy::Refusal;
 use crate::upstream::connect_out;
 
 /// An error a body carries from one leg to the other.
@@ -214,7 +214,11 @@ pub(crate) async fn connect_noting(cx: &Context, alpn: &[&[u8]]) -> Result<Made,
     let setup_failed =
         |err: hyper::Error| ConnectError::from(setup_refusal(&name, &super::session::short(&err)));
     let conn = match proto {
-        Proto::H1 => Connected::H1(h1(io, &cx.proxy).await.map_err(setup_failed)?),
+        Proto::H1 => Connected::H1(
+            h1(io, &cx.proxy.upstream_ended)
+                .await
+                .map_err(setup_failed)?,
+        ),
         Proto::H2 => {
             let (sender, connection) = http2::Builder::new(TokioExecutor::new())
                 .timer(TokioTimer::new())
@@ -257,7 +261,7 @@ pub(crate) async fn h1<I>(
         not(feature = "testing"),
         expect(unused_variables, reason = "only the `testing` end counter reads it")
     )]
-    proxy: &Proxy,
+    upstream_ended: &Arc<std::sync::atomic::AtomicU64>,
 ) -> Result<H1Conn, hyper::Error>
 where
     I: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
@@ -268,7 +272,7 @@ where
         .handshake::<_, UpBody>(io)
         .await?;
     #[cfg(feature = "testing")]
-    let ended = Arc::clone(&proxy.upstream_ended);
+    let ended = Arc::clone(upstream_ended);
     let driver = tokio::spawn(async move {
         if let Err(err) = connection.with_upgrades().await {
             tracing::debug!(error = %err, "upstream connection ended");

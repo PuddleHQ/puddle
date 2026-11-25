@@ -6,8 +6,8 @@
 # requests to main and on manual runs from develop, so a pull request to develop skips it. The jobs
 # run side by side, so the run takes as long as the slowest one instead of the sum: the tests are built once
 # (`test-build`, a nextest archive) and run on four runners (`tests`), the doc tests and the secret scan have a
-# job (`docs`), and the UI is split into Edge end-to-end (`ui-e2e`) and the rest (`ui-unit`). Two cache entries
-# (debug builds, clippy's check builds); only runs on develop save them. The release build has none.
+# job (`docs`), and the UI is split into Edge end-to-end (`ui-e2e`) and the rest (`ui-unit`). One cache entry
+# (debug builds); only runs on develop save it. Clippy and the release build have none.
 # A pull request runs only the jobs its changed files can affect (ci/scope.sh, the `scope` job):
 # no Rust, fixture or UI path skips clippy and tests, no UI-relevant path skips the UI job. Every
 # other trigger, and any doubt, runs everything; the result job accepts a skip only when `scope`
@@ -116,14 +116,15 @@ jobs:
         if: steps.changed.outputs.run == 'true'
         shell: bash
         run: rustup toolchain install && rustc --version
-      # Its own entry: check builds (rmeta) of the dependencies, so a pull request compiles only
-      # the workspace. Only develop saves it; cache-gc.yml deletes the superseded one.
+      # Restores nothing and saves nothing: its 1.4 GB entry pushed the repo's caches over GitHub's 10 GB save limit,
+      # which stops every new save. A cold run compiles the check builds of the dependencies. cache-gc.sh deletes
+      # any entry of this name left on develop.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         if: steps.changed.outputs.run == 'true'
         with:
           shared-key: windows-clippy
-          cache-on-failure: true
-          save-if: ${{ github.ref == 'refs/heads/develop' }}
+          lookup-only: true
+          save-if: false
       - name: clippy
         if: steps.changed.outputs.run == 'true'
         shell: bash

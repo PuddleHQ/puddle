@@ -98,9 +98,6 @@
     gap: var(--space-4);
     margin-bottom: var(--space-4);
   }
-  h1 {
-    font-size: var(--text-xl);
-  }
   .sub,
   .muted {
     margin: 0;

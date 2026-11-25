@@ -20,27 +20,49 @@ describe("isDark", () => {
   });
 });
 
-/** A probe whose computed colour is what `colors` says for the token it was last given. */
+/** A host whose probes compute to what `colors` says for the token they were given. */
 function probeWith(colors: Record<string, string>, family = "JetBrains Mono") {
-  const probe = document.createElement("span");
-  vi.spyOn(globalThis, "getComputedStyle").mockImplementation(
-    () =>
-      ({
-        get color() {
-          const token = /var\((--[a-z-]+)\)/.exec(probe.style.color)?.[1] ?? "";
-          return colors[token] ?? "";
-        },
-        get fontFamily() {
-          return probe.style.fontFamily === "var(--font-mono)" ? family : "";
-        },
-      }) as CSSStyleDeclaration,
-  );
-  return probe;
+  const host = document.createElement("div");
+  vi.spyOn(globalThis, "getComputedStyle").mockImplementation((el) => {
+    const style = (el as HTMLElement).style;
+    return {
+      get color() {
+        const token = /var\((--[a-z-]+)\)/.exec(style.color)?.[1] ?? "";
+        return colors[token] ?? "";
+      },
+      get fontFamily() {
+        return style.fontFamily === "var(--font-mono)" ? family : "";
+      },
+    } as CSSStyleDeclaration;
+  });
+  return host;
 }
 
 describe("readLook", () => {
+  it("reads every token on an element of its own, so an earlier probe's colour cannot carry over", () => {
+    const host = document.createElement("div");
+    const seen = new Set<Element>();
+    vi.spyOn(globalThis, "getComputedStyle").mockImplementation((el) => {
+      seen.add(el);
+      const token = /var\((--[a-z-]+)\)/.exec(
+        (el as HTMLElement).style.color,
+      )?.[1];
+      // An element that already held another colour keeps the inherited white (the installed WebView2).
+      return {
+        color:
+          token === "--color-danger" && seen.size > 3
+            ? "rgb(255, 255, 255)"
+            : "rgb(180, 35, 48)",
+        fontFamily: "",
+      } as CSSStyleDeclaration;
+    });
+    readLook(host);
+    expect(seen.size).toBe(8);
+    expect(host.childElementCount).toBe(0);
+  });
+
   it("takes the colours and the font from the tokens", () => {
-    const probe = probeWith({
+    const host = probeWith({
       "--color-surface": "rgb(255, 255, 255)",
       "--color-text": "rgb(18, 34, 43)",
       "--color-accent": "rgb(10, 106, 133)",
@@ -49,14 +71,14 @@ describe("readLook", () => {
       "--color-warning": "rgb(138, 90, 0)",
       "--color-accent-subtle": "rgb(220, 238, 244)",
     });
-    const { theme, fontFamily } = readLook(probe);
+    const { theme, fontFamily } = readLook(host);
     expect(theme.background).toBe("#ffffff");
     expect(theme.foreground).toBe("#12222b");
     expect(theme.cursor).toBe("#0a6a85");
     expect(theme.red).toBe("#b42330");
     expect(theme.black).toBe("#12222b");
     expect(fontFamily).toBe("JetBrains Mono");
-    expect(probe.style.color).toBe("");
+    expect(host.childElementCount).toBe(0);
   });
 
   it("uses the dark set on a dark background", () => {

@@ -11,6 +11,7 @@
 //! | `exit N` | the exit status `N`, then the channel closes |
 //! | `size` | `<rows> <cols>` of the last pty request or window change |
 //! | `whoami` | the user the client logged in as |
+//! | `hostname` | the name of the sandbox that serves the connection (empty when started with [`serve`]) |
 //! | `term` | the `TERM` the pty was asked for |
 //! | `command` | the command the shell was started with (an exec request), empty for a plain shell request |
 //! | `flood` | output without end, until the connection closes (a program like `yes`) |
@@ -35,6 +36,7 @@ use crate::SshStream;
 pub const PROMPT: &str = "$ ";
 
 struct Shell {
+    host: String,
     user: String,
     term: String,
     cols: u32,
@@ -221,6 +223,7 @@ impl Shell {
             }
             ("size", _) => format!("{} {}\r\n", self.rows, self.cols),
             ("whoami", _) => format!("{}\r\n", self.user),
+            ("hostname", _) => format!("{}\r\n", self.host),
             ("term", _) => format!("{}\r\n", self.term),
             ("command", _) => format!("{}\r\n", self.started_with),
             ("flood", _) => {
@@ -248,6 +251,15 @@ impl Shell {
 ///
 /// Whatever ended the connection abnormally, as text.
 pub async fn serve<S: SshStream>(stream: S) -> Result<(), String> {
+    serve_for(stream, "").await
+}
+
+/// Like [`serve`], and the shell's `hostname` line answers `host` (the sandbox that serves it).
+///
+/// # Errors
+///
+/// Whatever ended the connection abnormally, as text.
+pub async fn serve_for<S: SshStream>(stream: S, host: &str) -> Result<(), String> {
     let key = russh::keys::PrivateKey::from(
         russh::keys::ssh_key::private::Ed25519Keypair::from_seed(&[7; 32]),
     );
@@ -259,6 +271,7 @@ pub async fn serve<S: SshStream>(stream: S) -> Result<(), String> {
         ..Config::default()
     };
     let shell = Shell {
+        host: host.to_owned(),
         user: String::new(),
         term: String::new(),
         cols: 0,

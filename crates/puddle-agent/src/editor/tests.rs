@@ -4,7 +4,7 @@ use puddle_agent_proto::editor::MicrosoftOptions;
 use super::*;
 
 fn server() -> EditorServer {
-    EditorServer::new("/workspaces/a/.puddle/code-server", "/workspaces/a", 300)
+    EditorServer::new("/workspace/.puddle/code-server", "/workspace", 300)
 }
 
 #[test]
@@ -22,7 +22,7 @@ fn the_command_line_binds_loopback_keeps_data_on_the_volume_and_never_holds_the_
     // Built with `Path::join` like the code: the agent runs in the guest, but its unit tests
     // also run on a Windows host, where the separator differs.
     let under = |base: &str, leaf: &str| Path::new(base).join(leaf).to_string_lossy().into_owned();
-    let data = "/workspaces/a/.puddle/code-server";
+    let data = "/workspace/.puddle/code-server";
     assert_eq!(after("--user-data-dir"), under(data, "user-data"));
     assert_eq!(after("--extensions-dir"), under(data, "extensions"));
     assert_eq!(after("--config"), under(data, "config.yaml"));
@@ -31,7 +31,7 @@ fn the_command_line_binds_loopback_keeps_data_on_the_volume_and_never_holds_the_
     assert!(args.iter().any(|a| a == "--disable-update-check"));
     assert!(args.iter().any(|a| a == "--ignore-last-opened"));
     assert!(args.iter().any(|a| a == "--disable-workspace-trust"));
-    assert_eq!(args.last().map(String::as_str), Some("/workspaces/a"));
+    assert_eq!(args.last().map(String::as_str), Some("/workspace"));
     assert!(
         !args
             .iter()
@@ -44,10 +44,10 @@ fn the_server_opens_the_multi_root_file_only_while_it_lists_a_folder() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("a.code-workspace");
     let server =
-        EditorServer::new("/d", "/workspaces/a", 300).with_workspace_file(file.to_string_lossy());
+        EditorServer::new("/d", "/workspace", 300).with_workspace_file(file.to_string_lossy());
     let opens = || target(&server).to_string_lossy().into_owned();
     // No file yet, a file of settings alone, a list with no folder in it: the folder.
-    assert_eq!(opens(), "/workspaces/a");
+    assert_eq!(opens(), "/workspace");
     for text in [
         r#"{"settings": {"path": 1}}"#,
         "",
@@ -55,12 +55,12 @@ fn the_server_opens_the_multi_root_file_only_while_it_lists_a_folder() {
         "not json at all",
     ] {
         std::fs::write(&file, text).unwrap();
-        assert_eq!(opens(), "/workspaces/a", "{text:?}");
+        assert_eq!(opens(), "/workspace", "{text:?}");
     }
     // A list with a folder, comments and all: the file, which is the last argument.
     std::fs::write(
         &file,
-        "// kept\n{\"folders\": [{\"path\": \"/workspaces/a/api\"}], \"settings\": {}}",
+        "// kept\n{\"folders\": [{\"path\": \"/workspace/api\"}], \"settings\": {}}",
     )
     .unwrap();
     assert_eq!(opens(), file.to_string_lossy());
@@ -71,8 +71,8 @@ fn the_server_opens_the_multi_root_file_only_while_it_lists_a_folder() {
         Some(file.to_string_lossy().into_owned())
     );
     // A server told of no file never looks.
-    let plain = EditorServer::new("/d", "/workspaces/a", 300);
-    assert_eq!(target(&plain), OsString::from("/workspaces/a"));
+    let plain = EditorServer::new("/d", "/workspace", 300);
+    assert_eq!(target(&plain), OsString::from("/workspace"));
 }
 
 /// A probe that says "taken" until `free` is set, counting how often it was asked.
@@ -313,7 +313,7 @@ fn the_server_gets_the_password_in_its_environment_and_none_of_the_editor_hand_o
         password_env: true,
         build: None,
     };
-    let cmd = command(&launch, &password, inherited, None);
+    let cmd = command(&launch, Some(&password), inherited, None);
     let envs: std::collections::BTreeMap<String, Option<String>> = cmd
         .as_std()
         .get_envs()
@@ -354,7 +354,7 @@ fn a_server_run_as_the_session_user_gets_its_login_variables() {
     )
     .unwrap();
     let password = puddle_types::fixture::password("editor");
-    let cmd = command(&launch, &password, ["HOME".to_owned()], Some(&agent));
+    let cmd = command(&launch, Some(&password), ["HOME".to_owned()], Some(&agent));
     let envs: std::collections::BTreeMap<String, Option<String>> = cmd
         .as_std()
         .get_envs()
@@ -582,6 +582,63 @@ async fn the_rollback_after_a_failed_new_build_does_not_wait_for_a_running_downl
     settle_trial(&control, &new);
     assert!(!partial.exists());
     assert!(!builds.join(&new).exists());
+}
+
+/// An update service whose first answer is held until `open` is notified: a download in flight.
+struct Held {
+    open: Arc<Notify>,
+}
+
+impl Fetch for Held {
+    async fn text(&self, _url: &str) -> io::Result<String> {
+        self.open.notified().await;
+        Err(io::Error::other("no route to host"))
+    }
+
+    async fn file(&self, _url: &str, _dest: &Path, _max_bytes: u64) -> io::Result<()> {
+        self.open.notified().await;
+        Err(io::Error::other("no route to host"))
+    }
+}
+
+/// A failed build whose rollback came while a download held `work` still has its folder removed:
+/// the download's holder cleans up when it lets go, not some later confirmation.
+#[tokio::test(start_paused = true)]
+async fn the_failed_builds_folder_is_removed_when_the_download_that_blocked_its_clean_up_ends() {
+    let dir = tempfile::tempdir().unwrap();
+    let (config, _) = refusing(dir.path(), true);
+    let control = Control::with_times(&config.server, times(Duration::from_mins(1)));
+    let (old, new) = ("a".repeat(40), "b".repeat(40));
+    let builds = Path::new(&config.server.dir);
+    std::fs::create_dir_all(builds).unwrap();
+    complete_build(builds, &old);
+    complete_build(builds, &new);
+    std::fs::write(builds.join("previous"), &old).unwrap();
+    std::fs::write(builds.join("current"), &new).unwrap();
+    let open = Arc::new(Notify::new());
+    let looking = tokio::spawn(update_loop(
+        Arc::clone(&control),
+        Arc::new(Held {
+            open: Arc::clone(&open),
+        }),
+    ));
+    // The first look is under way and holds `work`.
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    settle_trial(&control, &new);
+    assert_eq!(
+        std::fs::read_to_string(builds.join("current")).unwrap(),
+        old
+    );
+    assert!(builds.join(&new).exists(), "not while the download runs");
+    open.notify_one();
+    puddle_test_kit::eventually(
+        "the failed build to be removed",
+        Duration::from_secs(30),
+        || !builds.join(&new).exists(),
+    )
+    .await;
+    assert!(builds.join(&old).exists());
+    looking.abort();
 }
 
 #[tokio::test(start_paused = true)]

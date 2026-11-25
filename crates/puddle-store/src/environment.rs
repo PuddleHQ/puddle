@@ -9,7 +9,7 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
-use puddle_secrets::StoredId;
+use puddle_types::StoredId;
 use puddle_types::{QueryName, WorkspaceId};
 use serde::{Deserialize, Serialize};
 

@@ -245,6 +245,55 @@ export async function overflow(
   });
 }
 
+/**
+ * Makes every user-supplied string in the API's GET answers (a host, a URL, a path, a repository
+ * name) 120 characters longer, with no space to break at. Call it before the page loads.
+ */
+export async function lengthenUserStrings(page: Page): Promise<void> {
+  const LONG = `-${"long".repeat(30)}`;
+  const USER_STRINGS = new Set([
+    "host",
+    "url",
+    "remote_url",
+    "full_name",
+    "path",
+    "reason",
+    "label",
+    "title",
+    "route",
+  ]);
+
+  function lengthened(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map(lengthened);
+    if (value === null || typeof value !== "object") return value;
+    return Object.fromEntries(
+      Object.entries(value).map(([key, field]) => [
+        key,
+        typeof field === "string" && USER_STRINGS.has(key)
+          ? `${field}${LONG}`
+          : lengthened(field),
+      ]),
+    );
+  }
+  await page.route("**/api/**", async (rest) => {
+    const wants = rest.request().headers()["accept"] ?? "";
+    if (
+      rest.request().method() !== "GET" ||
+      wants.includes("text/event-stream")
+    ) {
+      return rest.continue();
+    }
+    // A request the page abandoned (it navigated away) has nothing left to answer.
+    await (async () => {
+      const response = await rest.fetch();
+      const type = response.headers()["content-type"] ?? "";
+      if (!type.includes("json")) return rest.fulfill({ response });
+      const body: unknown = await response.json();
+      return rest.fulfill({ response, json: lengthened(body) });
+    })().catch(() => undefined);
+  });
+}
+
 const EMPTY_READS = 5;
 const EMPTY_GAP_MS = 100;
 
@@ -334,3 +383,12 @@ export const test = base.extend({
   },
 });
 export { expect };
+
+/** Opens the "..." menu of a table row and picks one item ("Delete rule: <rule>" and the like). */
+export async function pickFromRowMenu(
+  row: Locator,
+  item: RegExp | string,
+): Promise<void> {
+  await row.getByRole("button", { name: /^More about/ }).click();
+  await row.page().getByRole("menuitem", { name: item }).click();
+}

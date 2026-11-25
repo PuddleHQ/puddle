@@ -41,7 +41,7 @@ use crate::destination::BoxFuture;
 use crate::proxy::WorkspaceHandler;
 use crate::terminate::Outcome;
 pub use grammar::GitService;
-pub(crate) use grammar::{GitHost, PathForm, built_in, built_in_names};
+pub(crate) use grammar::{GitHost, PathForm, built_in, built_in_names, is_built_in_https};
 pub use host_keys::{GitSshHostKeys, GitSshKeyError};
 pub use https::GitSshHttps;
 pub(crate) use session::serve;

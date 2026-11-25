@@ -22,7 +22,7 @@
 //!
 //! ```
 //! use puddle_agent_proto::editor::EditorServer;
-//! let server = EditorServer::new("/workspaces/acme/.puddle/code-server", "/workspaces/acme", 300);
+//! let server = EditorServer::new("/workspace/.puddle/code-server", "/workspace", 300);
 //! let env = server.env();
 //! let back = EditorServer::from_lookup(|k| {
 //!     env.iter().find(|(name, _)| *name == k).map(|(_, v)| v.clone())
@@ -33,6 +33,7 @@
 use std::fmt;
 
 use puddle_types::SessionUser;
+use serde::{Deserialize, Serialize};
 
 /// Why the editor server cannot run in a guest whose image has musl and no glibc (for example
 /// Alpine). The agent sends it as the editor's install problem and answers the host's editor
@@ -75,6 +76,36 @@ pub const MICROSOFT_BUILDS: &str = "servers";
 /// window in). It lives in `/run`: a new random value for each boot of the sandbox, kept while
 /// the sandbox runs, so a restarted server accepts the sessions the old one signed in.
 pub const PASSWORD_FILE: &str = "/run/puddle/editor-password";
+
+/// Where the host plans the editor defaults file in the guest (owner root, read by the agent).
+pub const EDITOR_DEFAULTS_GUEST: &str = "/etc/puddle/editor-defaults.json";
+
+/// The editor group of the settings, resolved for one workspace: what the agent merges into the
+/// guest editor's own settings, key bindings and extensions. A field that is unset (`None`, an
+/// empty list) is one the user did not set at either level.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EditorDefaults {
+    /// The colour theme's name (`workbench.colorTheme`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub colour_theme: Option<String>,
+    /// The font size in pixels (`editor.fontSize`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_size: Option<u8>,
+    /// The ids (`publisher.name`) of the extensions to install.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extensions: Vec<String>,
+    /// The key bindings: the text of a JSON array of `{key, command}` objects.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keybindings: Option<String>,
+}
+
+impl EditorDefaults {
+    /// Whether nothing is set, so the host plans no file.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+}
 
 /// The default port: on the guest's loopback, above the ranges dev servers use.
 pub const DEFAULT_PORT: u16 = 41_337;
@@ -130,6 +161,9 @@ pub struct EditorServer {
     /// The user the server runs as: the workspace's session user, so its terminals are that
     /// user's.
     pub user: SessionUser,
+    /// The file the host plans the editor defaults in ([`EDITOR_DEFAULTS_GUEST`]; a test moves it).
+    /// Not sent in the environment: the agent reads the same path the host plans.
+    pub defaults_file: String,
 }
 
 impl EditorServer {
@@ -146,7 +180,15 @@ impl EditorServer {
             workspace_file: None,
             grace_secs,
             user: SessionUser::Root,
+            defaults_file: EDITOR_DEFAULTS_GUEST.to_owned(),
         }
+    }
+
+    /// The same server, reading the editor defaults from `file`.
+    #[must_use]
+    pub fn with_defaults_file(mut self, file: impl Into<String>) -> Self {
+        self.defaults_file = file.into();
+        self
     }
 
     /// Microsoft's server, kept in `data` (its builds in [`MICROSOFT_BUILDS`] below it), opening
@@ -304,6 +346,7 @@ impl EditorServer {
                 Some(name) if name == SessionUser::Root.name() => SessionUser::Root,
                 Some(_) => return Err(EditorEnvError::new(ENV_USER, "expected agent or root")),
             },
+            defaults_file: EDITOR_DEFAULTS_GUEST.to_owned(),
         }))
     }
 }

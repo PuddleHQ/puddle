@@ -498,6 +498,7 @@ async fn guest_with_third_party(
         .await
         .map_err(|e| format!("the guest script failed to finish: {e}{note}\n{script}"))
         .unwrap();
+    assert_whole(&out, script);
     assert!(
         out.status.success(),
         "{script}\n{}{}{note}",
@@ -505,6 +506,67 @@ async fn guest_with_third_party(
         out.stderr_text()
     );
     format!("{}{}", out.stdout_text(), out.stderr_text())
+}
+
+/// A script that writes more than the exec output cap is cut with exit code 0: fail the test
+/// by name instead of letting it read a short answer.
+fn assert_whole(out: &puddle_compute::ExecOutput, script: &str) {
+    assert!(
+        !out.stdout_truncated && !out.stderr_truncated,
+        "the guest script's output was cut at the exec output cap; run it with `.uncapped()` or print less:\n{script}"
+    );
+}
+
+/// `"first""second"`: the shell joins them, so the script text never holds the value.
+fn split_word(value: &str) -> String {
+    let (head, tail) = value.split_at(value.len() / 2);
+    format!("\"{head}\"\"{tail}\"")
+}
+
+/// The guest holds none of `tokens`: not in any process's environment or command line, not in any
+/// file of the disk, neither plain nor in the two base64 forms a Git `Authorization` header takes.
+/// The control comes first: the first token planted in a file and in a process's environment must
+/// be found, or the search proves nothing.
+pub(crate) async fn assert_guest_holds_no_token(
+    vm: &VmHost,
+    sandbox: &WorkspaceId,
+    tokens: &[&str],
+) {
+    let first = tokens.first().expect("at least one token to look for");
+    let patterns = tokens.iter().fold(String::new(), |mut out, token| {
+        use std::fmt::Write as _;
+        let _ = write!(
+            out,
+            "w={w}; printf '%s\\n' \"$w\" \"$(printf 'x-access-token:%s' \"$w\" | base64 -w0)\" \"$(printf '%s' \"$w\" | base64 -w0)\" >> /dev/shm/.p; ",
+            w = split_word(token)
+        );
+        out
+    });
+    let search = format!(
+        "rm -f /dev/shm/.p; {patterns}\
+         echo procs=$(cat /proc/[0-9]*/environ /proc/[0-9]*/cmdline 2>/dev/null | tr '\\0' '\\n' | grep -cFf /dev/shm/.p); \
+         echo files=$(grep -rlaFf /dev/shm/.p --exclude-dir=proc --exclude-dir=sys --exclude-dir=dev --exclude=.p / 2>/dev/null | grep -v '^/dev/shm/.p$' | tr '\\n' ' '); \
+         rm -f /dev/shm/.p; echo done"
+    );
+    let planted = format!(
+        "w={w}; printf '%s\\n' \"$w\" > /root/planted.txt; \
+         env PLANTED=\"$w\" sleep 120 & pid=$!; sleep 1; {search}; kill $pid; rm -f /root/planted.txt",
+        w = split_word(first)
+    );
+    let control = guest_within(&vm.runtime, sandbox, &planted, Duration::from_secs(600)).await;
+    assert!(
+        !control.contains("procs=0") && control.contains("/root/planted.txt"),
+        "the search must find a planted token in a process and in a file: {control}"
+    );
+    let found = guest_within(&vm.runtime, sandbox, &search, Duration::from_secs(600)).await;
+    assert!(
+        found.contains("procs=0"),
+        "a token is in a process: {found}"
+    );
+    assert!(
+        found.contains("files= done") || found.contains("files=\ndone"),
+        "a token is on the guest's disk: {found}"
+    );
 }
 
 /// Runs `script` in a login shell as `user`, the way a terminal of the workspace does and
@@ -529,6 +591,7 @@ pub(crate) async fn guest_as(
         )
         .await
         .unwrap_or_else(|e| panic!("the guest script did not finish: {e}\n{script}"));
+    assert_whole(&out, script);
     (
         out.status.code,
         format!("{}{}", out.stdout_text(), out.stderr_text()),
@@ -744,4 +807,26 @@ pub(crate) fn container_fetch(docker: &str, network: &str, url: &str) -> String 
          sh -c '/bin/busybox env | /bin/busybox grep -i proxy; /bin/busybox wget -T 10 -q -O - {url}' 2>&1; \
          echo \"exit=$? ms=$(( $(now) - s ))\""
     )
+}
+
+/// Reads events until every workspace of `names` has ended an operation, each within `within` of
+/// the last end, and returns the step each ended with. One operation per workspace: the event
+/// stream keeps what it reads, so the end of one workspace that arrives while another is awaited
+/// is not lost.
+pub(crate) async fn all_ended(
+    events: &mut crate::support::Events,
+    names: &[String],
+    within: Duration,
+) -> Vec<(String, String)> {
+    let any =
+        |event: &serde_json::Value| names.iter().any(|name| crate::support::ended(name)(event));
+    let mut done: Vec<(String, String)> = Vec::new();
+    while done.len() < names.len() {
+        let event = events.until(any, within).await;
+        let name = event["workspace"].as_str().unwrap().to_owned();
+        if !done.iter().any(|(n, _)| *n == name) {
+            done.push((name, event["step"].as_str().unwrap().to_owned()));
+        }
+    }
+    done
 }

@@ -235,9 +235,13 @@ async fn company_toggle_on_still_needs_an_exact_allow() {
     allow(&rig.store, PrivateAccess::NAME);
     let reader = tunnel(rig.agent.local_addr(), &authority(PrivateAccess::NAME)).await;
     assert!(get(reader, PrivateAccess::NAME).await.contains("200"));
+    // The three connections' records are written as each one ends, so their order in the audit
+    // is not the order of the requests: the allowed one is found by what it says.
     let records = connection_records(&rig.store, 3).await;
-    let allowed = records.last().unwrap();
-    assert_eq!(allowed["decision"], "allow", "{allowed}");
+    let allowed = records
+        .iter()
+        .find(|record| record["decision"] == "allow")
+        .unwrap_or_else(|| panic!("no allowed connection among {records:?}"));
     assert_eq!(allowed["category"], "company_network", "{allowed}");
 }
 

@@ -19,11 +19,16 @@
   title={page.status === 404 ? "Page not found" : "Something went wrong"}
 >
   {#if page.status === 404}
-    There is nothing at this address. Use the menu to go to a section.
+    There is nothing at this address.
   {:else}
     {page.error?.message ?? "Unknown error."}
   {/if}
 </EmptyState>
+{#if page.status === 404}
+  <p class="home">
+    <a class="btn primary" href="/workspaces">Go to Workspaces</a>
+  </p>
+{/if}
 {#if page.status !== 404 && page.error?.detail}
   {@const detail = page.error.detail}
   <details>
@@ -43,8 +48,10 @@
 {/if}
 
 <style>
+  .home {
+    margin: var(--space-4) 0 0;
+  }
   details {
-    max-width: 60rem;
     margin-top: var(--space-4);
   }
   pre {

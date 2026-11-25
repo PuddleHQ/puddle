@@ -168,3 +168,14 @@ fn a_failed_mise_reason_has_no_control_or_bidi_characters_and_is_cut() {
     };
     assert_eq!(said.chars().count(), MAX_FIELD);
 }
+
+#[test]
+fn a_cut_listing_is_refused_even_when_what_is_left_parses() {
+    let mut out = ExecOutput::new(0, format!("hash\t{HASH}\nend\n"), "");
+    assert!(read(Ok(out.clone()), parse_listing).is_ok());
+    out.stdout_truncated = true;
+    let Err(Failed::Reason(why)) = read(Ok(out), parse_listing) else {
+        panic!("a cut listing was accepted");
+    };
+    assert!(why.contains("cut"), "{why}");
+}

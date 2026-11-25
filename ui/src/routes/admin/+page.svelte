@@ -36,6 +36,10 @@
     expiresAt: number;
   } | null>(null);
   let inviteOpen = $state(false);
+  // With only the owner there is little to administer: totals and logs wait behind a toggle.
+  let showMore = $state(false);
+  const alone = $derived(store.users.length <= 1);
+  const details = $derived(!alone || showMore);
 
   onMount(() => {
     heading?.focus();
@@ -116,19 +120,26 @@
       contents, repositories, requests, rules, secrets or passwords.
     </p>
   </div>
-  <div class="acts">
-    <button
-      type="button"
-      class="btn primary"
-      onclick={() => (createOpen = true)}
-    >
-      <Plus aria-hidden="true" size={16} />Add user
-    </button>
-  </div>
+  {#if store.status === "ready"}
+    <div class="acts">
+      <button
+        type="button"
+        class="btn primary"
+        onclick={() => (createOpen = true)}
+      >
+        <Plus aria-hidden="true" size={16} />Add user
+      </button>
+    </div>
+  {/if}
 </div>
 
 {#if store.status === "loading"}
   <p class="muted">Loading&hellip;</p>
+{:else if store.status === "failed" && store.missing}
+  <p class="muted" role="status">
+    Only one person uses this Puddle. This screen is for the owner of a Puddle
+    with several users.
+  </p>
 {:else if store.status === "failed"}
   <div role="status">
     <p class="muted">Couldn't read the admin data.</p>
@@ -138,7 +149,22 @@
     >
   </div>
 {:else}
-  {#if store.stats}
+  {#if alone}
+    <p class="muted" role="status">
+      Only one person uses this Puddle. Add a user to give someone their own
+      isolated workspaces.
+    </p>
+    <div>
+      <button
+        type="button"
+        class="btn"
+        aria-expanded={showMore}
+        onclick={() => (showMore = !showMore)}
+        >{showMore ? "Hide server details" : "Show server details"}</button
+      >
+    </div>
+  {/if}
+  {#if store.stats && details}
     {@const stats = store.stats}
     <section aria-labelledby="stats-heading">
       <h2 id="stats-heading">This server</h2>
@@ -176,19 +202,13 @@
 
   <section aria-labelledby="users-heading">
     <h2 id="users-heading">Users</h2>
-    {#if store.users.length <= 1}
-      <p class="empty">
-        Nobody else has an account yet. Add a user to give someone their own
-        isolated workspaces on this Puddle.
-      </p>
-    {/if}
     <ul class="rows" aria-label="Users">
       {#each store.users as user (user.id)}
         <li class="row">
           <div class="main">
             <div class="titleline">
               <h3>{user.name}</h3>
-              {#if user.role === "owner"}<span class="chip">Owner</span>{/if}
+              {#if user.role === "owner"}<span class="meta">Owner</span>{/if}
               <span class="chip {user.state}">{stateText(user)}</span>
             </div>
             <dl class="facts">
@@ -245,28 +265,32 @@
     </ul>
   </section>
 
-  <section aria-labelledby="log-heading">
-    <h2 id="log-heading">Activity log</h2>
-    <AuditRetention />
-  </section>
+  {#if details}
+    <section aria-labelledby="log-heading">
+      <h2 id="log-heading">Activity log</h2>
+      <AuditRetention />
+    </section>
+  {/if}
 
-  <section aria-labelledby="audit-heading">
-    <h2 id="audit-heading">What you did</h2>
-    {#if store.audit.length === 0}
-      <p class="muted">Nothing yet.</p>
-    {:else}
-      <ul class="audit" aria-label="Admin audit, newest first">
-        {#each store.audit as line, i (i)}
-          <li>
-            {auditText(line)}
-            <span class="muted" title={absoluteTime(line.at)}
-              >{relativeTime(line.at, Date.now())}</span
-            >
-          </li>
-        {/each}
-      </ul>
-    {/if}
-  </section>
+  {#if details || store.audit.length > 0}
+    <section aria-labelledby="audit-heading">
+      <h2 id="audit-heading">What you did</h2>
+      {#if store.audit.length === 0}
+        <p class="muted">Nothing yet.</p>
+      {:else}
+        <ul class="audit" aria-label="Admin audit, newest first">
+          {#each store.audit as line, i (i)}
+            <li>
+              {auditText(line)}
+              <span class="muted" title={absoluteTime(line.at)}
+                >{relativeTime(line.at, Date.now())}</span
+              >
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
+  {/if}
 {/if}
 
 <Toast />
@@ -306,12 +330,6 @@
     gap: var(--space-4);
     margin-bottom: var(--space-4);
   }
-  h1 {
-    font-size: var(--text-xl);
-  }
-  h1:focus {
-    outline: none;
-  }
   h2 {
     font-size: var(--text-lg);
     margin: var(--space-4) 0 var(--space-2);
@@ -327,16 +345,10 @@
     color: var(--color-text-muted);
   }
   .sub {
-    max-width: 52rem;
+    max-width: var(--page-reading-width);
   }
   .error {
     color: var(--color-danger);
-  }
-  .empty {
-    padding: var(--space-4);
-    border: 1px dashed var(--color-border);
-    border-radius: var(--radius-md);
-    color: var(--color-text-muted);
   }
   .acts {
     display: flex;

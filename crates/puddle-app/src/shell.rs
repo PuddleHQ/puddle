@@ -2,9 +2,11 @@
 //! Wiring: plugins, the backend and the main window, and the exit hook (the quit sequence).
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
-use puddle_host::{HostOptions, HostShutdown, MsbFactory, RuntimeFactory, SystemPlatform};
+use puddle_host::{
+    HostError, HostOptions, HostShutdown, MsbFactory, RuntimeFactory, SystemPlatform,
+};
 use puddle_lifecycle::LifecycleError;
 use puddle_log::{ScopedFilter, init_stderr};
 use puddle_types::Problems;
@@ -190,10 +192,35 @@ fn data_folder(options: &Options) -> Option<PathBuf> {
 /// the file's path, or the reason alone when no file could be written).
 #[must_use]
 pub fn report_startup_failure(options: &Options, err: &ShellError) -> String {
-    let reason = err.to_string();
+    let reason = startup_reason(err);
     let file =
         data_folder(options).and_then(|folder| crash::write_startup_error(&folder, &reason).ok());
     crash::startup_message(&reason, file.as_deref())
+}
+
+/// Why the program did not start, in words for the user. A database a newer Puddle saved says so
+/// and what to do; this Puddle does not touch it. Everything else is the error's own text.
+fn startup_reason(err: &ShellError) -> String {
+    match err {
+        ShellError::Backend(BackendError::Host(HostError::Store(
+            puddle_store::StoreError::SchemaTooNew { found, supported },
+        ))) => format!(
+            "your data was saved by a newer Puddle (database version {found}; this Puddle reads \
+             up to {supported}). Open it with that Puddle or a later one, or install the newer \
+             Puddle again. Nothing in the data folder was changed"
+        ),
+        other => other.to_string(),
+    }
+}
+
+/// What `run` returns when Tauri's `build` failed: the shell's own error when the setup hook
+/// stored one (Tauri wraps a setup error in text, which would hide what failed), else Tauri's.
+fn build_failure(stored: &Mutex<Option<ShellError>>, err: tauri::Error) -> ShellError {
+    stored
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take()
+        .unwrap_or(ShellError::Tauri(err))
 }
 
 /// Tauri's context for the app: `tauri.conf.json`, the capabilities and the ACL manifest.
@@ -382,6 +409,7 @@ fn open_in_order<R: Runtime>(
 ) -> Result<(), ShellError> {
     match open_windows(app, options, &backend, probe_first) {
         Ok(()) => {
+            restart_on_restore(app, &backend, AppHandle::request_restart);
             app.manage(backend);
             Ok(())
         }
@@ -391,6 +419,23 @@ fn open_in_order<R: Runtime>(
             Err(err)
         }
     }
+}
+
+/// Calls `restart` once the user confirms a restore. The restore applies at the next start, so the
+/// desktop app quits (the exit hook, [`stop`], runs first and frees the data folder) and starts
+/// again; the start-up apply then finds the marker. A confirm that came before this call counts.
+pub fn restart_on_restore<R: Runtime>(
+    app: &AppHandle<R>,
+    backend: &Backend,
+    restart: impl FnOnce(&AppHandle<R>) + Send + 'static,
+) {
+    let signal = backend.restore_signal();
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        signal.notified().await;
+        tracing::info!("a restore is confirmed: restarting to apply it");
+        restart(&app);
+    });
 }
 
 fn open_windows<R: Runtime>(
@@ -668,6 +713,8 @@ pub fn run(options: &Options) -> Result<(), ShellError> {
     // While this is the only thread: the host pins the process environment.
     let source = Source::prepare(options, &SystemPlatform::new().with_dev_override_from_env());
     let options = options.clone();
+    let setup_failure = Arc::new(Mutex::new(None));
+    let kept = Arc::clone(&setup_failure);
     // Single-instance first: a second launch hands over to the running app and ends here, before
     // the error of its unlocked data folder could show.
     let builder =
@@ -676,13 +723,18 @@ pub fn run(options: &Options) -> Result<(), ShellError> {
         }));
     let app = with_plugins(builder)
         .setup(move |app| {
-            start(app.handle(), &options, source)?;
+            if let Err(err) = start(app.handle(), &options, source) {
+                let text = err.to_string();
+                *kept.lock().unwrap_or_else(PoisonError::into_inner) = Some(err);
+                return Err(text.into());
+            }
             if let Err(err) = desktop::install_quit_shortcut(app.handle()) {
                 tracing::warn!(%err, "Ctrl+Q will not quit");
             }
             Ok(())
         })
-        .build(context())?;
+        .build(context())
+        .map_err(|err| build_failure(&setup_failure, err))?;
     app.run(|handle, event| {
         if matches!(event, RunEvent::Exit) {
             // the process is exiting; there is no one left to report a failed stop to

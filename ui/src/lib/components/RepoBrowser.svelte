@@ -251,9 +251,6 @@
     gap: var(--space-1);
   }
   .trait {
-    padding: 0 var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-pill);
     font-size: var(--text-sm);
     color: var(--color-text-muted);
   }

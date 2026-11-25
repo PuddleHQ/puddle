@@ -193,6 +193,13 @@ impl Runtime for SlowPull {
         self.0.remove(name)
     }
 
+    fn kill(
+        &self,
+        name: &SandboxName,
+    ) -> impl Future<Output = Result<(), puddle_compute::ComputeError>> + Send {
+        self.0.kill(name)
+    }
+
     fn stale_dirs(
         &self,
     ) -> impl Future<Output = Result<Vec<String>, puddle_compute::ComputeError>> + Send {

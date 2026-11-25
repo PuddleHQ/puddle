@@ -91,7 +91,12 @@ fn full_layer() -> settings::WorkspaceLayer {
             "clipboard_read": "deny",
             "direct_ssh": true,
             "capture_logins": false,
-            "warn_foreign_credentials": false
+            "warn_foreign_credentials": false,
+            "editor": {
+                "colour_theme": "Default Dark Modern", "font_size": 14,
+                "extensions": ["rust-lang.rust-analyzer"],
+                "keybindings": "[{\"key\":\"ctrl+j\",\"command\":\"a.b\"}]"
+            }
         }
     });
     let loaded = settings::WorkspaceSettings::from_document(doc).unwrap();

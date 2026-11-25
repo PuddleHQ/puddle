@@ -4,7 +4,9 @@
   import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
   import type { Progress } from "#lib/stores/workspaces.svelte.ts";
   import {
+    byteCountText,
     operationLabel,
+    STEP_HINTS,
     stepLabel,
     stepPosition,
     type Operation,
@@ -36,6 +38,18 @@
       ? `Cloning ${dir}, ${at + 1} of ${total}`
       : `Cloning ${dir}`;
   });
+  const count = $derived(
+    progress ? byteCountText(progress.bytes ?? null) : null,
+  );
+  /** The share of the image done, for the bar; `null` when the total is not known. */
+  const share = $derived(
+    progress?.bytes && progress.bytes.total && progress.bytes.total > 0
+      ? Math.min(100, (progress.bytes.done / progress.bytes.total) * 100)
+      : null,
+  );
+  const hint = $derived(
+    progress && !progress.detail ? (STEP_HINTS[progress.step] ?? null) : null,
+  );
   const position = $derived(
     operation && progress && !progress.failed
       ? stepPosition(operation, progress.step)
@@ -69,7 +83,15 @@
       {#if position}<span class="muted"
           >step {position.index} of {position.of}</span
         >{/if}
+      {#if count}<span class="muted">{count}</span>{/if}
+      {#if share !== null}<progress
+          class="bar"
+          max="100"
+          value={share}
+          aria-label={progress ? stepLabel(progress.step) : ""}
+        ></progress>{/if}
       {#if progress?.detail}<span class="detail">{progress.detail}</span>{/if}
+      {#if hint}<span class="muted hint">{hint}</span>{/if}
     </span>
   </p>
 {/if}
@@ -89,6 +111,15 @@
   }
   .muted {
     color: var(--color-text-muted);
+  }
+  .hint {
+    display: block;
+  }
+  .bar {
+    display: block;
+    width: min(20rem, 100%);
+    height: 0.4rem;
+    margin-top: var(--space-1);
   }
   .detail {
     display: block;

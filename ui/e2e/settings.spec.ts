@@ -95,7 +95,7 @@ const SECTIONS: Record<Where, string[]> = {
   "this-computer": [
     "Startup and window",
     "Devices and sign-in",
-    "Back up",
+    "Back up and restore",
     "Activity log",
     "Checks and errors",
     "Privacy and about",

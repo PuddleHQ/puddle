@@ -3,10 +3,26 @@
 
 use super::*;
 
+/// A drive that cannot be read until the test opens it, so the first read happens after the test
+/// listens, however long the host took to start.
+struct GatedDrive(AtomicBool);
+
+impl puddle_host::Space for GatedDrive {
+    fn free_bytes(&self) -> std::io::Result<u64> {
+        if self.0.load(Ordering::SeqCst) {
+            Ok(512 * 1024 * 1024 * 1024)
+        } else {
+            Err(std::io::Error::other("the drive is not readable yet"))
+        }
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_host_says_when_the_free_space_of_its_drive_crosses_a_line_and_when_it_recovers() {
     let rig = Rig::new();
-    // Lines no real drive reaches: the first read finds the drive under both.
+    let drive = Arc::new(GatedDrive(AtomicBool::new(false)));
+    *rig.free_space.lock().unwrap() = Some(drive.clone());
+    // Lines the drive never reaches: the first read finds the drive under both.
     let settings = rig.dir.path().join("data").join("settings");
     std::fs::create_dir_all(&settings).unwrap();
     std::fs::write(
@@ -17,8 +33,8 @@ async fn the_host_says_when_the_free_space_of_its_drive_crosses_a_line_and_when_
     .unwrap();
     let mut config = rig.config();
     config.free_space = FreeSpaceTiming {
-        first_read: Duration::from_secs(1),
-        period: Duration::from_millis(200),
+        first_read: Duration::from_millis(10),
+        period: Duration::from_millis(100),
     };
     let host = rig.start_with(config).await;
     let mut events = host.events().subscribe();
@@ -26,6 +42,7 @@ async fn the_host_says_when_the_free_space_of_its_drive_crosses_a_line_and_when_
         Event::DiskSpaceChanged { level, .. } => Some(level),
         _ => None,
     };
+    drive.0.store(true, Ordering::SeqCst);
     let first = next_event_matching(
         "the drive reported under both lines",
         Duration::from_secs(10),

@@ -21,7 +21,8 @@ fn null_layer() -> Value {
         "clipboard_read": null,
         "direct_ssh": null,
         "capture_logins": null,
-        "warn_foreign_credentials": null
+        "warn_foreign_credentials": null,
+        "editor": {"colour_theme": null, "font_size": null, "extensions": null, "keybindings": null}
     })
 }
 
@@ -331,6 +332,12 @@ async fn out_of_range_and_unknown_settings_are_refused() {
         json!({"workspace_defaults": {"reconnection_grace": 5}}),
         json!({"workspace_defaults": {"clipboard_read": "sometimes"}}),
         json!({"workspace_defaults": {"swap": 4}}),
+        json!({"workspace_defaults": {"editor": {"colour_theme": ""}}}),
+        json!({"workspace_defaults": {"editor": {"font_size": 7}}}),
+        json!({"workspace_defaults": {"editor": {"extensions": ["not an id"]}}}),
+        json!({"workspace_defaults": {"editor": {"keybindings": "{}"}}}),
+        json!({"workspace_defaults": {"editor": {"fonts": 1}}}),
+        json!({"workspace_defaults": {"editor": {"extensions": (0..51).map(|n| format!("p.e{n}")).collect::<Vec<_>>()}}}),
         json!({"consents": {}}),
     ] {
         let reply = api.send("PUT", "/api/settings", Some(&body)).await;
@@ -850,5 +857,62 @@ async fn a_global_save_from_a_stale_read_is_refused_with_a_conflict() {
     assert_eq!(reply.status, 200, "{}", reply.body);
     let reply = api.send("PUT", "/api/settings", Some(&json!({}))).await;
     assert_eq!(reply.status, 200, "{}", reply.body);
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn editor_defaults_resolve_field_by_field_with_their_source() {
+    let api = start().await;
+    api.own("mine");
+    let keys = r#"[{"key":"ctrl+j","command":"-workbench.action.togglePanel"}]"#;
+    let reply = api
+        .send(
+            "PUT",
+            "/api/settings",
+            Some(&json!({"workspace_defaults": {"editor": {
+                "colour_theme": "Default Dark Modern", "font_size": 15,
+                "extensions": ["Rust-Lang.Rust-Analyzer", "rust-lang.rust-analyzer"],
+                "keybindings": keys
+            }}})),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let editor = reply.json()["effective"]["editor"].clone();
+    assert_eq!(
+        editor["colour_theme"],
+        json!({"value": "Default Dark Modern", "source": "global"})
+    );
+    assert_eq!(
+        editor["font_size"],
+        json!({"value": 15, "source": "global"})
+    );
+    assert_eq!(
+        editor["extensions"],
+        json!({"value": ["rust-lang.rust-analyzer"], "source": "global"}),
+        "ids are lower-cased and listed once"
+    );
+    assert_eq!(
+        editor["keybindings"],
+        json!({"value": keys, "source": "global"})
+    );
+
+    let reply = api
+        .send(
+            "PUT",
+            "/api/settings/workspaces/mine",
+            Some(&json!({"overrides": {"editor": {"font_size": 11, "extensions": []}}})),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let editor = reply.json()["effective"]["editor"].clone();
+    assert_eq!(
+        editor["font_size"],
+        json!({"value": 11, "source": "workspace"})
+    );
+    assert_eq!(
+        editor["extensions"],
+        json!({"value": [], "source": "workspace"})
+    );
+    assert_eq!(editor["colour_theme"]["source"], "global");
     api.running.shutdown().await;
 }

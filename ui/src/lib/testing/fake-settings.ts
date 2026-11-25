@@ -27,6 +27,12 @@ const noLayer = (): S["SettingsLayer"] => ({
   direct_ssh: null,
   capture_logins: null,
   warn_foreign_credentials: null,
+  editor: {
+    colour_theme: null,
+    font_size: null,
+    extensions: null,
+    keybindings: null,
+  },
 });
 
 const noUi = (): S["UiPrefs"] => ({
@@ -230,6 +236,24 @@ export class FakeSettings {
           value: l.clipboard_read ?? "ask",
           source: l.clipboard_read === null ? "default" : "global",
         },
+        editor: {
+          colour_theme: {
+            value: l.editor.colour_theme,
+            source: l.editor.colour_theme === null ? "default" : "global",
+          },
+          font_size: {
+            value: l.editor.font_size,
+            source: l.editor.font_size === null ? "default" : "global",
+          },
+          extensions: {
+            value: l.editor.extensions ?? [],
+            source: l.editor.extensions === null ? "default" : "global",
+          },
+          keybindings: {
+            value: l.editor.keybindings,
+            source: l.editor.keybindings === null ? "default" : "global",
+          },
+        },
       },
     };
   }
@@ -274,6 +298,10 @@ export class FakeSettings {
           ).map((choice) => ({ choice, png_base64: `${choice}-png` })),
           custom_png_base64: this.customIcon,
         } satisfies S["AppIcons"]);
+      case "/api/restore/result":
+        return this.reply(200, { result: null });
+      case "/api/safety-copies":
+        return this.reply(200, { copies: [] });
       case "/api/health":
         return this.reply(200, {
           version: this.version,

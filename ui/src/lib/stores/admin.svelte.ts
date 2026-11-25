@@ -27,6 +27,8 @@ function refusal(error: { message?: string } | undefined): string {
 export class AdminStore {
   /** Whether this Puddle has an admin screen for the viewer: several users on and the owner. */
   available = $state(false);
+  /** The last read found no admin screen for this viewer (a Puddle with one user). */
+  missing = $state(false);
   status = $state<Status>("loading");
   users = $state.raw<AdminUser[]>(NONE_USERS);
   stats = $state.raw<AdminStats | null>(null);
@@ -73,11 +75,13 @@ export class AdminStore {
         this.stats = stats.data;
         this.audit = audit.data.lines;
         this.available = true;
+        this.missing = false;
         this.status = "ready";
         return;
       }
       const failed = !users.data ? users : !stats.data ? stats : audit;
       const missing = failed.response.status === 404;
+      this.missing = missing;
       if (missing) this.available = false;
       this.status = "failed";
       this.reason = missing

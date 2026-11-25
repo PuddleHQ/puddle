@@ -6335,6 +6335,317 @@
         }
       }
     },
+    "/api/restore/apply": {
+      "post": {
+        "tags": [
+          "restore"
+        ],
+        "summary": "Confirms a restore: the staged copy `staging_id` and the mode the user chose. Makes a safety copy\nof the present state first and does not start when it cannot; then leaves the restore for the next\nstart of Puddle (which stops the workspaces the normal way) and asks for that start. Nothing\nthat exists changes until then.",
+        "operationId": "apply_restore",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreApplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the restore waits for the next start",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestoreApplied"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "only the owner may restore",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "the staged copy is gone; choose the file again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "the backup cannot be merged with this machine's data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "the safety copy could not be made, so the restore did not start",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/restore/preview": {
+      "post": {
+        "tags": [
+          "restore"
+        ],
+        "summary": "Reads the uploaded backup (the file as the request body: a `.tar.gz` made by \"Back up now\") into\na private staging area, checks it and answers what restoring it would do on this machine: counts\nof what would be added, replaced, kept or dropped, which restored workspaces have a disk here,\nwhich secrets need a value, and how many workspaces run. Nothing that exists changes. A file\nthat cannot be read faithfully is refused with the reason (a file that is not a gzip archive, an\nentry outside the backup's three names or its manifest, a path or link that points out of it,\nmore than 4 GiB unpacked, no database, a failed integrity check, a newer schema, an unknown\nformat) and leaves nothing staged. A staged copy that is not applied is removed at the next\nstart and after 24 hours.",
+        "operationId": "preview_restore",
+        "requestBody": {
+          "description": "the backup file",
+          "content": {
+            "application/gzip": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "what a restore of this file would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestorePreview"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "only the owner may restore",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "the file cannot be read faithfully; the message says why",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "the file cannot be staged on this machine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/restore/result": {
+      "get": {
+        "tags": [
+          "restore"
+        ],
+        "summary": "What the last restore did, after the restart: whether it was applied or undone, what changed or\nwhy, and where the safety copy is. `result` is `null` when there is nothing to show.",
+        "operationId": "get_restore_result",
+        "responses": {
+          "200": {
+            "description": "the last restore's result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestoreResultView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "only the owner may restore",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "restore"
+        ],
+        "summary": "Forgets the last restore's result, once the user has seen it.",
+        "operationId": "dismiss_restore_result",
+        "responses": {
+          "204": {
+            "description": "forgotten"
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "only the owner may restore",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/rule-sets": {
       "get": {
         "tags": [
@@ -7554,6 +7865,142 @@
           },
           "404": {
             "description": "no such rule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/safety-copies": {
+      "get": {
+        "tags": [
+          "restore"
+        ],
+        "summary": "The safety copies of the state each restore replaced, newest first, with their sizes. Puddle\nnever removes one; the user does, one at a time.",
+        "operationId": "list_safety_copies",
+        "responses": {
+          "200": {
+            "description": "the safety copies",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SafetyCopyList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "only the owner may restore",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/safety-copies/{name}": {
+      "delete": {
+        "tags": [
+          "restore"
+        ],
+        "summary": "Deletes one safety copy by its name. Restoring from it first is an ordinary restore of the file\nit holds; once it is deleted that way back is gone.",
+        "operationId": "delete_safety_copy",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "the safety copy's folder name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "deleted"
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "only the owner may restore",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no safety copy by that name",
             "content": {
               "application/json": {
                 "schema": {
@@ -16796,6 +17243,56 @@
           "skipped"
         ]
       },
+      "EditorSettings": {
+        "type": "object",
+        "description": "The editor defaults at one level: a workspace's values win over the global ones field by\nfield. `null` inherits.",
+        "required": [
+          "colour_theme",
+          "font_size",
+          "extensions",
+          "keybindings"
+        ],
+        "properties": {
+          "colour_theme": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The colour theme's name as the editor lists it (at most 100 characters). Unset follows\nthe system colour scheme.",
+            "maxLength": 100
+          },
+          "extensions": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Extensions to preinstall, as `publisher.name` ids (at most 50). A level that sets the\nlist replaces the next level's list; an empty list means none.",
+            "maxItems": 50
+          },
+          "font_size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The font size in pixels (8 to 40). Unset keeps the editor's own.",
+            "maximum": 40,
+            "minimum": 8
+          },
+          "keybindings": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Key bindings to merge into the editor: the text of a JSON array of `{key, command}`\nobjects (at most 64 KiB).",
+            "maxLength": 65536
+          }
+        },
+        "additionalProperties": false
+      },
       "Effect": {
         "type": "string",
         "description": "Allow or deny.",
@@ -16803,6 +17300,34 @@
           "allow",
           "deny"
         ]
+      },
+      "EffectiveEditor": {
+        "type": "object",
+        "description": "The editor defaults a workspace gets, each with where it came from.",
+        "required": [
+          "colour_theme",
+          "font_size",
+          "extensions",
+          "keybindings"
+        ],
+        "properties": {
+          "colour_theme": {
+            "$ref": "#/components/schemas/ResolvedText",
+            "description": "The colour theme; `null` follows the system colour scheme."
+          },
+          "extensions": {
+            "$ref": "#/components/schemas/ResolvedTextList",
+            "description": "The extensions to preinstall."
+          },
+          "font_size": {
+            "$ref": "#/components/schemas/ResolvedOptionalNumber",
+            "description": "The font size in pixels; `null` keeps the editor's own."
+          },
+          "keybindings": {
+            "$ref": "#/components/schemas/ResolvedText",
+            "description": "The key bindings text; `null` adds none."
+          }
+        }
       },
       "EffectiveLimits": {
         "type": "object",
@@ -16846,7 +17371,8 @@
           "clipboard_read",
           "direct_ssh",
           "capture_logins",
-          "warn_foreign_credentials"
+          "warn_foreign_credentials",
+          "editor"
         ],
         "properties": {
           "capture_logins": {
@@ -16864,6 +17390,10 @@
           "direct_ssh": {
             "$ref": "#/components/schemas/ResolvedBool",
             "description": "Whether direct SSH is on."
+          },
+          "editor": {
+            "$ref": "#/components/schemas/EffectiveEditor",
+            "description": "What the editor starts with."
           },
           "local_toggles": {
             "$ref": "#/components/schemas/EffectiveToggles",
@@ -17237,9 +17767,29 @@
               "step",
               "detail",
               "repository",
+              "bytes_done",
+              "bytes_total",
               "type"
             ],
             "properties": {
+              "bytes_done": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "Bytes done so far, for a step that counts them (downloading and unpacking the image);\n`null` for every other step, and while the count is not known yet.",
+                "minimum": 0
+              },
+              "bytes_total": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "Bytes in all, when `bytes_done` is set and the total is known; `null` otherwise.",
+                "minimum": 0
+              },
               "detail": {
                 "type": [
                   "string",
@@ -21114,6 +21664,142 @@
           }
         }
       },
+      "ResolvedOptionalNumber": {
+        "type": "object",
+        "description": "An optional effective number and where it came from.",
+        "required": [
+          "value",
+          "source"
+        ],
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/SettingSource",
+            "description": "Where it came from."
+          },
+          "value": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The value, `null` when nothing sets it.",
+            "minimum": 0
+          }
+        }
+      },
+      "ResolvedText": {
+        "type": "object",
+        "description": "An optional effective text and where it came from.",
+        "required": [
+          "value",
+          "source"
+        ],
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/SettingSource",
+            "description": "Where it came from."
+          },
+          "value": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The value, `null` when nothing sets it."
+          }
+        }
+      },
+      "ResolvedTextList": {
+        "type": "object",
+        "description": "An effective list of texts and where it came from.",
+        "required": [
+          "value",
+          "source"
+        ],
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/SettingSource",
+            "description": "Where it came from."
+          },
+          "value": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The values."
+          }
+        }
+      },
+      "RestoreApplied": {
+        "type": "object",
+        "description": "A restore that is confirmed and waits for the next start.",
+        "required": [
+          "safety_copy",
+          "restart_required"
+        ],
+        "properties": {
+          "restart_required": {
+            "type": "boolean",
+            "description": "Whether Puddle must be started again for the restore to apply. The desktop app restarts\nitself; `puddle serve` exits and applies the restore at its next start."
+          },
+          "safety_copy": {
+            "type": "string",
+            "description": "The safety copy of the present state, a folder name in the safety copies list."
+          }
+        }
+      },
+      "RestoreApplyRequest": {
+        "type": "object",
+        "description": "`POST /api/restore/apply`.",
+        "required": [
+          "staging_id",
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/RestoreMode",
+            "description": "The mode the user confirmed."
+          },
+          "staging_id": {
+            "type": "string",
+            "description": "The staged copy a preview named."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RestoreDisk": {
+        "type": "string",
+        "description": "Whether the disk of a restored workspace is on this machine.",
+        "enum": [
+          "present",
+          "missing"
+        ]
+      },
+      "RestoreIdentityToken": {
+        "type": "object",
+        "description": "A Git identity's pasted token that arrives without its value because this machine's store lacks\nit. The identity and the host only, never a value.",
+        "required": [
+          "identity",
+          "host"
+        ],
+        "properties": {
+          "host": {
+            "type": "string",
+            "description": "The Git host the token is for."
+          },
+          "identity": {
+            "type": "string",
+            "description": "The identity's label."
+          }
+        }
+      },
+      "RestoreMode": {
+        "type": "string",
+        "description": "How a restore treats what is already on this machine.",
+        "enum": [
+          "add",
+          "replace"
+        ]
+      },
       "RestoreOrphanRequest": {
         "type": "object",
         "description": "`POST /api/orphan-volumes/{id}/restore`.",
@@ -21127,6 +21813,250 @@
           }
         },
         "additionalProperties": false
+      },
+      "RestorePart": {
+        "type": "object",
+        "description": "How one part of the backup compares with this machine (entries match by natural key).",
+        "required": [
+          "name",
+          "in_backup",
+          "add",
+          "differ",
+          "same",
+          "only_here"
+        ],
+        "properties": {
+          "add": {
+            "type": "integer",
+            "format": "int32",
+            "description": "In the backup and not here: both modes add them.",
+            "minimum": 0
+          },
+          "differ": {
+            "type": "integer",
+            "format": "int32",
+            "description": "In both and different: \"Add what is missing\" keeps yours, \"Replace\" takes the backup's.",
+            "minimum": 0
+          },
+          "in_backup": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Entries in the backup.",
+            "minimum": 0
+          },
+          "name": {
+            "$ref": "#/components/schemas/RestorePartName",
+            "description": "Which part."
+          },
+          "only_here": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Here and not in the backup: \"Add what is missing\" keeps them, \"Replace\" drops them.",
+            "minimum": 0
+          },
+          "same": {
+            "type": "integer",
+            "format": "int32",
+            "description": "In both and equal.",
+            "minimum": 0
+          }
+        }
+      },
+      "RestorePartName": {
+        "type": "string",
+        "description": "A part of a backup that the preview counts.",
+        "enum": [
+          "rules",
+          "rule_sets",
+          "workspaces",
+          "identities",
+          "environment",
+          "settings",
+          "users"
+        ]
+      },
+      "RestorePreview": {
+        "type": "object",
+        "description": "What a restore of the uploaded file would do. Choosing a file changes nothing (BK-10).",
+        "required": [
+          "staging_id",
+          "format",
+          "puddle_version",
+          "schema_version",
+          "created_at_ms",
+          "parts",
+          "workspaces",
+          "secrets_needing_value",
+          "identity_tokens_needing_value",
+          "running_workspaces"
+        ],
+        "properties": {
+          "created_at_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When it was made, in milliseconds since the Unix epoch; none without a manifest.",
+            "minimum": 0
+          },
+          "format": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The backup format (1).",
+            "minimum": 0
+          },
+          "identity_tokens_needing_value": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RestoreIdentityToken"
+            },
+            "description": "The Git identities' pasted tokens that need to be entered again here."
+          },
+          "parts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RestorePart"
+            },
+            "description": "How each part compares with this machine."
+          },
+          "puddle_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Puddle that made the backup; none for a backup without a manifest."
+          },
+          "running_workspaces": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many workspaces run now (a restore stops them).",
+            "minimum": 0
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The schema version of the backup's database (before it is read forward).",
+            "minimum": 0
+          },
+          "secrets_needing_value": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RestoreSecret"
+            },
+            "description": "The secrets that need a value here."
+          },
+          "staging_id": {
+            "type": "string",
+            "description": "Names the staged copy for the apply step. A copy that is not applied is removed at the next\nstart and after 24 hours."
+          },
+          "workspaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RestoreWorkspace"
+            },
+            "description": "The workspaces the backup lists, with whether their disk is here."
+          }
+        }
+      },
+      "RestoreResult": {
+        "type": "object",
+        "description": "What the last restore did.",
+        "required": [
+          "applied",
+          "mode",
+          "safety_copy",
+          "at_ms",
+          "message"
+        ],
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "Whether it was applied; `false` means it was undone and the old state is in use."
+          },
+          "at_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it finished, in milliseconds since the Unix epoch.",
+            "minimum": 0
+          },
+          "message": {
+            "type": "string",
+            "description": "What changed, or why it was undone."
+          },
+          "mode": {
+            "$ref": "#/components/schemas/RestoreMode",
+            "description": "The mode that was asked for."
+          },
+          "safety_copy": {
+            "type": "string",
+            "description": "The safety copy's folder name."
+          }
+        }
+      },
+      "RestoreResultView": {
+        "type": "object",
+        "description": "The last restore's result, until the user has seen it.",
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RestoreResult",
+                "description": "`null` when there is none to show."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "RestoreSecret": {
+        "type": "object",
+        "description": "A secret variable that arrives without a value because this machine's store lacks it. Names\nonly, never a value.",
+        "required": [
+          "workspace_id",
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The variable's name."
+          },
+          "workspace_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The workspace it belongs to; none for a global variable."
+          }
+        }
+      },
+      "RestoreWorkspace": {
+        "type": "object",
+        "description": "A workspace the backup lists.",
+        "required": [
+          "id",
+          "name",
+          "disk"
+        ],
+        "properties": {
+          "disk": {
+            "$ref": "#/components/schemas/RestoreDisk",
+            "description": "Whether its disk is here."
+          },
+          "id": {
+            "type": "string",
+            "description": "Its id."
+          },
+          "name": {
+            "type": "string",
+            "description": "What the backup calls it."
+          }
+        }
       },
       "Rgb": {
         "type": "string",
@@ -21811,6 +22741,42 @@
           "builtin_entry"
         ]
       },
+      "SafetyCopy": {
+        "type": "object",
+        "description": "One safety copy of the state a restore replaced.",
+        "required": [
+          "name",
+          "size_bytes"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The folder name, the UTC time it was made (`20261115T225500Z`)."
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "What it takes on disk.",
+            "minimum": 0
+          }
+        }
+      },
+      "SafetyCopyList": {
+        "type": "object",
+        "description": "The safety copies, newest first. Puddle never removes one; the user does.",
+        "required": [
+          "copies"
+        ],
+        "properties": {
+          "copies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SafetyCopy"
+            },
+            "description": "The copies."
+          }
+        }
+      },
       "SandboxName": {
         "type": "string",
         "description": "A sandbox's name: a DNS label (`a-z`, `0-9`, `-`, no leading or trailing `-`).",
@@ -21964,7 +22930,8 @@
           "clipboard_read",
           "direct_ssh",
           "capture_logins",
-          "warn_foreign_credentials"
+          "warn_foreign_credentials",
+          "editor"
         ],
         "properties": {
           "capture_logins": {
@@ -22001,6 +22968,10 @@
               "null"
             ],
             "description": "Whether Puddle opens an SSH way into the workspace for the user's own tools (desktop\nVS Code, a terminal `ssh`). Off by default; while off there is no SSH endpoint and no ssh\nconfig entry. Turning it on marks the workspace trusted."
+          },
+          "editor": {
+            "$ref": "#/components/schemas/EditorSettings",
+            "description": "The editor's colour theme, font size, preinstalled extensions and key bindings. Left out,\nit means nothing is set at this level."
           },
           "local_toggles": {
             "$ref": "#/components/schemas/LocalToggles",
@@ -24073,6 +25044,7 @@
         "enum": [
           "preparing_volume",
           "pulling_image",
+          "unpacking_image",
           "cloning",
           "starting",
           "syncing",
@@ -24193,6 +25165,10 @@
     {
       "name": "backup",
       "description": "A backup of Puddle's own state as one download. Owner only"
+    },
+    {
+      "name": "restore",
+      "description": "Restore Puddle's state from a backup file: preview first, then apply. Owner only"
     },
     {
       "name": "doctor",

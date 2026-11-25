@@ -66,11 +66,13 @@
           {@attach (row) => reveal(row, rule.id === selected)}
         >
           <td class="host">
-            <span class="mono">{rule.host}</span>
-            {#if !rule.enabled}<span class="chip">off</span>{/if}
-            {#if rule.host.startsWith("*.")}
-              <span class="chip">and subdomains</span>
-            {/if}
+            <span
+              class="mono"
+              title={rule.host.startsWith("*.")
+                ? "This host and every subdomain of it"
+                : undefined}>{rule.host}</span
+            >
+            {#if !rule.enabled}<span class="meta">off</span>{/if}
             {#if rule.warning}
               <p class="warning">
                 <b>Note:</b>
@@ -170,12 +172,6 @@
   }
   .muted {
     color: var(--color-text-muted);
-  }
-  .chip {
-    padding: 0 var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-pill);
-    white-space: nowrap;
   }
   .warning {
     margin: var(--space-1) 0 0;

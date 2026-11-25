@@ -18,14 +18,14 @@ fn no_paths_trims_every_mounted_filesystem() {
 #[test]
 fn paths_are_arguments_not_script_text() {
     let paths = [
-        GuestPath::new("/workspaces/a").unwrap(),
+        GuestPath::new("/workspace").unwrap(),
         GuestPath::new("/srv/$(reboot)").unwrap(),
     ];
     let r = trim_request(&paths, Duration::from_secs(1));
     assert_eq!(r.program, "sh");
     assert_eq!(r.args[0], "-c");
-    assert!(!r.args[1].contains("/workspaces"));
-    assert_eq!(&r.args[3..], ["/workspaces/a", "/srv/$(reboot)"]);
+    assert!(!r.args[1].contains("/workspace"));
+    assert_eq!(&r.args[3..], ["/workspace", "/srv/$(reboot)"]);
 }
 
 #[test]

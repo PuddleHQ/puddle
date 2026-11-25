@@ -120,7 +120,7 @@ pub(crate) async fn run<S: Sandbox>(
     id: &WorkspaceId,
     scope: Scope<'_>,
 ) -> Result<CheckoutList, WorkspaceError> {
-    let layout = Layout::new(id)?;
+    let layout = Layout::new()?;
     let out = sandbox
         .exec(request(&layout, scope))
         .await

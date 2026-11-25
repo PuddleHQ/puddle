@@ -230,7 +230,7 @@ describe("the list", () => {
     await loaded();
     expect(hosts()).toEqual([
       "old.example.com",
-      "*.github.com and subdomains",
+      "*.github.com",
       "registry.npmjs.org",
     ]);
     const old = rows()[0]!;
@@ -250,7 +250,7 @@ describe("the list", () => {
     seed();
     await loaded();
     await fireEvent.click(screen.getByRole("button", { name: "Sort by host" }));
-    expect(hosts()[0]).toBe("*.github.com and subdomains");
+    expect(hosts()[0]).toBe("*.github.com");
     expect(screen.getByRole("columnheader", { name: /Host/ })).toHaveAttribute(
       "aria-sort",
       "ascending",
@@ -387,7 +387,7 @@ describe("adding", () => {
     expect(toasts.items[0]?.message).toBe(
       "Added: deny *.example.org for workspace shop.",
     );
-    expect(hosts()).toContain("*.example.org and subdomains");
+    expect(hosts()).toContain("*.example.org");
   });
   it("checks the form before asking the server", async () => {
     const dialog = await open();
@@ -555,7 +555,7 @@ describe("editing a rule in place", () => {
       "Saved: allow api.github.com for workspace shop.",
     );
     expect(hosts()).toContain("api.github.com");
-    expect(hosts()).not.toContain("*.github.com and subdomains");
+    expect(hosts()).not.toContain("*.github.com");
     expect(rows()).toHaveLength(3);
   });
 

@@ -317,7 +317,7 @@
               <span>
                 {foundLabel(account)}
                 {#if !account.signed_in}
-                  <span class="chip warn">sign-in expired</span>
+                  <span class="meta warn">sign-in expired</span>
                 {/if}
               </span>
             </label>
@@ -626,14 +626,6 @@
   .chipbtn[aria-pressed="true"] {
     border-color: var(--color-accent);
     font-weight: 600;
-  }
-  .chip {
-    padding: 0 var(--space-2);
-    border: 1px solid var(--color-warning);
-    border-radius: var(--radius-pill);
-    color: var(--color-warning);
-    font-size: var(--text-sm);
-    white-space: nowrap;
   }
   .actions {
     display: flex;

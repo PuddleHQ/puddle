@@ -248,12 +248,14 @@ describe("the workspace list", () => {
 });
 
 describe("the workspaces layout", () => {
-  it("listens for the whole section, shows the dialogs and toasts, and stops on leaving", async () => {
+  it("listens for the waiting requests of the section, shows the dialogs and toasts, and stops on leaving", async () => {
     api.list = [workspace("a", { status: "running" })];
     const start = vi.spyOn(workspaces, "start");
     const startPending = vi.spyOn(pending, "start");
     const view = render(Layout, { children: (() => {}) as never });
-    expect(start).toHaveBeenCalledOnce();
+    // The shell reads the list (the sidebar counts it); this section adds the waiting requests.
+    expect(start).not.toHaveBeenCalled();
+    const stopList = workspaces.start();
     expect(startPending).toHaveBeenCalledOnce();
     expect(workspaces.onSettled).toBe(workspaceActions.settled);
     expect(
@@ -277,6 +279,7 @@ describe("the workspaces layout", () => {
       expect(toasts.items.at(-1)?.message).toBe("Stopped a."),
     );
     view.unmount();
+    stopList();
     expect(workspaces.onSettled).toBeNull();
     start.mockRestore();
     startPending.mockRestore();

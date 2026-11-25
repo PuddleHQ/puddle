@@ -642,8 +642,8 @@ async fn named_volume_survives_restart_and_remove<R: Runtime>(c: &Case<'_, R>) -
     let rt = c.runtime();
     let name = c.sandbox("a")?;
     let vol = c.volume("ws")?;
-    let mount = path("/workspaces/puddle-ct")?;
-    let marker = "/workspaces/puddle-ct/marker";
+    let mount = path("/workspace")?;
+    let marker = "/workspace/marker";
     let s = spec(c, &name).with_volume(
         VolumeMount::named(vol.clone(), mount.clone()).ensure_size(DiskSize::mib(256)),
     );
@@ -717,7 +717,7 @@ async fn second_attach_is_refused_naming_the_holder<R: Runtime>(c: &Case<'_, R>)
     let rt = c.runtime();
     let (a, b) = (c.sandbox("first")?, c.sandbox("second")?);
     let vol = c.volume("ws")?;
-    let mount = path("/workspaces/puddle-ct")?;
+    let mount = path("/workspace")?;
     let attach = |name: &SandboxName| {
         spec(c, name).with_volume(
             VolumeMount::named(vol.clone(), mount.clone()).ensure_size(DiskSize::mib(256)),
@@ -765,7 +765,7 @@ async fn failed_create_leaves_no_stale_dir<R: Runtime>(c: &Case<'_, R>) -> Outco
     let rt = c.runtime();
     let name = c.sandbox("a")?;
     let vol = c.volume("ws")?;
-    let mount = path("/workspaces/puddle-ct")?;
+    let mount = path("/workspace")?;
     step(
         "create volume",
         rt.create_volume(VolumeSpec {
@@ -807,8 +807,8 @@ async fn failed_create_leaves_no_stale_dir<R: Runtime>(c: &Case<'_, R>) -> Outco
 async fn missing_volume_fails_create<R: Runtime>(c: &Case<'_, R>) -> Outcome {
     let rt = c.runtime();
     let vol = c.volume("missing")?;
-    let s = spec(c, &c.sandbox("a")?)
-        .with_volume(VolumeMount::named(vol.clone(), path("/workspaces/x")?));
+    let s =
+        spec(c, &c.sandbox("a")?).with_volume(VolumeMount::named(vol.clone(), path("/workspace")?));
     let err = fails("create with a missing volume", rt.create(s)).await?;
     check!(
         matches!(err, ComputeError::VolumeNotFound { ref volume } if volume == vol.as_str()),

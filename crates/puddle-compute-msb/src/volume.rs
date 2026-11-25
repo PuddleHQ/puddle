@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use microsandbox::sandbox::{SandboxConfig, VolumeMount};
 use microsandbox::volume::VolumeHandle;
 use puddle_compute::{ComputeError, DiskSize, VolumeInfo};
-use puddle_types::WorkspaceStatus;
+use puddle_types::{GuestPath, WorkspaceStatus};
 
 /// One sandbox as the holder lookup needs it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,6 +32,23 @@ pub(crate) fn named_volumes(config: &SandboxConfig) -> Vec<String> {
         .iter()
         .filter_map(|m| match m {
             VolumeMount::Named { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Where `config` mounts its named volumes in the guest; none when the configuration cannot be
+/// read, and a path that is not a valid guest path is left out.
+pub(crate) fn named_mount_points<E>(config: Result<SandboxConfig, E>) -> Vec<GuestPath> {
+    let Ok(config) = config else {
+        return Vec::new();
+    };
+    config
+        .spec
+        .mounts
+        .iter()
+        .filter_map(|m| match m {
+            VolumeMount::Named { guest, .. } => GuestPath::new(guest).ok(),
             _ => None,
         })
         .collect()

@@ -49,7 +49,8 @@ async fn probe<S: Sandbox>(
 ) -> Result<ExecOutput, String> {
     let request = ExecRequest::new(program, args)
         .as_user("root")
-        .with_timeout(timeout);
+        .with_timeout(timeout)
+        .with_max_output(ExecRequest::PROBE_MAX_OUTPUT);
     // The runtime enforces the request's timeout (`exec_timeout_is_enforced`).
     sb.exec(request)
         .await

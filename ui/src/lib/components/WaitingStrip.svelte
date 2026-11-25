@@ -52,12 +52,12 @@
 </script>
 
 {#if store.count > 0}
-  <div class="strip waiting" role="status" data-testid="waiting-strip">
-    <p class="count">
+  <div class="strip waiting" aria-live="polite" data-testid="waiting-strip">
+    <p class="tally">
       <span class="dot" aria-hidden="true"></span>
       <b>{store.count} waiting</b>
     </p>
-    <ul class="by" aria-label="Waiting, by workspace">
+    <ul class="by">
       {#each perWorkspace as w (w.id)}
         <li><span class="name">{w.name}</span> <b>{w.n}</b></li>
       {/each}
@@ -86,7 +86,7 @@
     {/if}
   </div>
 {:else if store.status === "ready"}
-  <p class="strip quiet" role="status" data-testid="waiting-strip">
+  <p class="strip quiet" aria-live="polite" data-testid="waiting-strip">
     Nothing is waiting for you.
   </p>
 {/if}
@@ -119,7 +119,7 @@
   p {
     margin: 0;
   }
-  .count {
+  .tally {
     display: inline-flex;
     align-items: center;
     gap: var(--space-2);
@@ -154,6 +154,11 @@
     color: var(--color-text-muted);
   }
   .review {
+    display: inline-flex;
+    align-items: center;
+    min-width: 24px;
+    min-height: 24px;
+    padding-inline: var(--space-2);
     color: var(--color-text);
     font-weight: 600;
   }

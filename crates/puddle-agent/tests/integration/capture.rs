@@ -5,8 +5,10 @@
 //! that records what reaches it. The clients are real tools with no proxy variable at all: `curl`,
 //! `dig`, `bash`'s `/dev/tcp`, Python's UDP sockets.
 //!
-//! A test re-runs itself inside the namespace (`enter`) and fails, not skips, when no
-//! namespace can be made. `nft` is used to look at the kernel's table and to be the guest that
+//! A test re-runs itself inside the namespace (`enter`). Where this machine cannot make a
+//! namespace or lacks one of the tools (a developer's WSL), the test prints `skipped: <why>` and
+//! passes; with `PUDDLE_REQUIRE_CAPTURE_NETNS` set (the Linux CI job sets it) the same
+//! shortfall fails the test. `nft` is used to look at the kernel's table and to be the guest that
 //! tampers with it.
 #![cfg(target_os = "linux")]
 #![expect(
@@ -45,11 +47,73 @@ fn profile_env() -> Option<String> {
         .map(|path| format!("LLVM_PROFILE_FILE={path}"))
 }
 
+/// Why this machine cannot run the capture tests, or `None` when it can: no way to make a network
+/// namespace, or a tool the tests drive (`nft`, `dig`, `curl`, `ip`, `python3`) that does not run.
+fn missing_prerequisite() -> Option<String> {
+    use std::sync::OnceLock;
+    static MISSING: OnceLock<Option<String>> = OnceLock::new();
+    MISSING
+        .get_or_init(|| {
+            let runs = |program: &str, args: &[&str]| {
+                std::process::Command::new(program)
+                    .args(args)
+                    .stdin(Stdio::null())
+                    .output()
+                    .map_err(|err| err.to_string())
+                    .and_then(|out| {
+                        if out.status.success() {
+                            Ok(())
+                        } else {
+                            Err(String::from_utf8_lossy(&out.stderr).trim().to_owned())
+                        }
+                    })
+            };
+            let namespace = runs("unshare", &["-Urnm", "true"])
+                .or_else(|_| runs("sudo", &["-n", "unshare", "-nm", "true"]));
+            if let Err(err) = namespace {
+                return Some(format!(
+                    "cannot create a network namespace (`unshare -Urnm` or passwordless `sudo unshare -nm`): {err}"
+                ));
+            }
+            for (tool, flag) in [
+                ("nft", "--version"),
+                ("dig", "-v"),
+                ("curl", "--version"),
+                ("python3", "--version"),
+                ("ip", "-V"),
+            ] {
+                if let Err(err) = runs(tool, &[flag]) {
+                    return Some(format!("`{tool}` does not run here: {err}"));
+                }
+            }
+            None
+        })
+        .clone()
+}
+
 /// Runs the calling test again inside a fresh network namespace and returns `false` (the caller
-/// returns); inside the namespace returns `true` and the caller runs its body.
+/// returns); inside the namespace returns `true` and the caller runs its body. Where the machine
+/// lacks a prerequisite it returns `false` after printing why, unless `PUDDLE_REQUIRE_CAPTURE_NETNS`
+/// is set, which makes that a failure.
 async fn enter(test: &str) -> bool {
     if std::env::var_os(CHILD).is_some() {
         return true;
+    }
+    if let Some(why) = missing_prerequisite() {
+        assert!(
+            std::env::var_os("PUDDLE_REQUIRE_CAPTURE_NETNS").is_none(),
+            "PUDDLE_REQUIRE_CAPTURE_NETNS is set but {why}"
+        );
+        eprintln!("skipped: {test}: {why}");
+        // nextest hides a passing test's output: a caller that wants the skips counted (the local pre-flight) names a file.
+        if let Some(path) = std::env::var_os("PUDDLE_CAPTURE_SKIP_LOG") {
+            use std::io::Write;
+            let line = format!("{test}\t{why}\n");
+            if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                file.write_all(line.as_bytes()).unwrap();
+            }
+        }
+        return false;
     }
     let exe = std::env::current_exe().unwrap();
     let mut last = String::new();

@@ -14,13 +14,6 @@
 {#if lead}<p class="lead">{lead}</p>{/if}
 
 <style>
-  h1 {
-    margin: 0;
-    font-size: var(--text-xl);
-  }
-  h1:focus {
-    outline: none;
-  }
   .lead {
     margin: var(--space-2) 0 0;
     color: var(--color-text-muted);

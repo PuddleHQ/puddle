@@ -59,7 +59,7 @@
         <input type="radio" name="mode" value={mode} bind:group={choice} />
         <span>
           <b>{MODE_NAMES[mode]}</b>
-          {#if mode === DEFAULT_MODE}<span class="chip">recommended</span>{/if}
+          {#if mode === DEFAULT_MODE}<span class="meta">recommended</span>{/if}
           <span class="desc">{MODE_WARNINGS[mode]}</span>
         </span>
       </label>
@@ -126,13 +126,6 @@
     cursor: pointer;
   }
 
-  .chip {
-    padding: 0 var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-pill);
-    font-size: var(--text-sm);
-    color: var(--color-text-muted);
-  }
   .actions {
     display: flex;
     justify-content: flex-end;

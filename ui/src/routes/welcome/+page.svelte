@@ -39,7 +39,6 @@
 <style>
   .body {
     margin: 0;
-    max-width: 40rem;
   }
   .actions {
     display: flex;

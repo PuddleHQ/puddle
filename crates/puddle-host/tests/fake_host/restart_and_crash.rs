@@ -157,6 +157,63 @@ async fn a_restart_that_cannot_serve_the_sandboxes_route_makes_it_again_and_says
     third.shutdown().await;
 }
 
+/// A sandbox an earlier version made mounts the workspace's volume at a folder named by the id
+/// (`/workspaces/<id>`). A start makes it again on the same volume at `/workspace`, which every
+/// guest path now uses, says why, and keeps the new one at the next start.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sandbox_with_the_volume_at_the_old_folder_is_made_again_at_the_workspace_folder() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api1 = api(&host);
+    let mut events = api1.events().await;
+    create(&api1, &mut events, "acme").await;
+    api1.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    host.shutdown().await;
+    drop(host);
+    drop(events);
+    let sandbox = SandboxName::new("acme").unwrap();
+    assert!(
+        rig.runtime
+            .move_volume_mounts(&sandbox, &GuestPath::new("/workspaces/acme").unwrap())
+    );
+
+    let again = rig.start().await;
+    let api2 = api(&again);
+    let mut events = api2.events().await;
+    api2.post("/api/workspaces/acme/start", "").await;
+    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(end["step"], "done", "{end}");
+    assert_eq!(calls_of(&rig, "Create"), 2);
+    assert_eq!(calls_of(&rig, "Remove"), 1);
+    let mounts: Vec<String> = rig
+        .runtime
+        .volume_mounts(&sandbox)
+        .iter()
+        .map(|m| m.guest.to_string())
+        .collect();
+    assert_eq!(mounts, ["/workspace"]);
+    let said = events.seen.iter().any(|e| {
+        e["type"] == "workspace_progress"
+            && e["detail"].as_str().is_some_and(|d| {
+                d.contains("made again") && d.contains("/workspace") && d.contains("volume")
+            })
+    });
+    assert!(said, "no notice that the sandbox was made again");
+    again.shutdown().await;
+    drop(again);
+    drop(events);
+
+    let third = rig.start().await;
+    let api3 = api(&third);
+    let mut events = api3.events().await;
+    api3.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert_eq!(calls_of(&rig, "Create"), 2);
+    assert_eq!(calls_of(&rig, "Remove"), 1);
+    third.shutdown().await;
+}
+
 /// Docker's data folder is a disk of the sandbox itself: every sandbox the host makes has one,
 /// a stop and start keeps the sandbox (and so the disk), a rebuilt sandbox gets a fresh one, and
 /// the workspace volume never carries it.

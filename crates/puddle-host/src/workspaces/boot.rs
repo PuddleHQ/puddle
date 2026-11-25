@@ -140,6 +140,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             &record.id,
             image,
             record.start_folder.as_ref(),
+            crate::editor_file::terminal_folder(record),
             record.session_user,
         )
         .await
@@ -154,6 +155,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         name: &WorkspaceId,
         image: ImageConfig,
         start_folder: Option<&StartFolder>,
+        terminals: Option<StartFolder>,
         session_user: SessionUser,
     ) -> Result<(puddle_boot::BootPlan, GuestEnv, GuestState), OpError> {
         let inner = &self.inner;
@@ -163,11 +165,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .editor(id, self.reconnection_grace(name), self.editor_kind())?
             .map(|server| server.with_user(session_user));
         let mode = crate::settings_read::mise_or_off(inner.settings.as_ref(), name);
-        let mise = MiseLayer::of(id, mode)?;
+        let mise = MiseLayer::of(mode)?;
         let began = inner.injection.begin(name, capture).await?;
         let wanted = authors(&began.git);
         self.report_git_settings(name, &began.git, &wanted);
-        let root = Layout::new(id)?.mount().clone();
+        let root = Layout::new()?.mount().clone();
         // Only a running guest can list the checkouts, so the multi-root file the last attach
         // wrote stays as it is and the editor server opens it at this start; the next attach
         // writes it again. A start folder replaces it.
@@ -184,9 +186,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             ssh: began.ssh,
             env: began.env,
             dev_cert: inner.kit.dev_cert().await,
-            start_folder: start_folder.cloned(),
+            start_folder: terminals,
             root,
             editor_file,
+            editor_defaults: self.editor_defaults_file(name),
             session_user,
             ssh_agent: began.ssh_agent,
             mise,
@@ -203,6 +206,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 root: &state.root,
                 start_folder: state.start_folder.as_ref(),
                 editor_file: state.editor_file.as_ref(),
+                editor_defaults: state.editor_defaults.as_ref(),
                 session_user: state.session_user,
                 ssh_agent: state.ssh_agent,
                 mise: state.mise.as_ref(),
@@ -438,7 +442,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             ["-c", "[ -d \"$1\" ]", "puddle-start-folder", path.as_str()].map(str::to_owned),
         )
         .as_user("root")
-        .with_timeout(Duration::from_secs(10));
+        .with_timeout(Duration::from_secs(10))
+        .with_max_output(ExecRequest::PROBE_MAX_OUTPUT);
         let exists = match gated.ungated().exec(request).await {
             Ok(output) => output.status.success(),
             Err(e) => {
@@ -501,7 +506,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 .and_then(|e| Some((e.gated.clone()?, e.guest.clone()?)))?
         };
         let replanned = GuestState {
-            start_folder: record.start_folder.clone(),
+            start_folder: crate::editor_file::terminal_folder(record),
             // Opening a folder replaces the multi-root window; the next attach writes it again.
             editor_file: if record.start_folder.is_some() {
                 None

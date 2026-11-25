@@ -1273,8 +1273,8 @@ fn the_start_folder_file_moves_only_an_interactive_shell_that_starts_in_home() {
     for sh in shells() {
         let fr = FakeRoot::new(&sh);
         let (root, api, other, home) = (
-            fr.path("/workspaces/w"),
-            fr.path("/workspaces/w/api"),
+            fr.path("/workspace"),
+            fr.path("/workspace/api"),
             fr.path("/elsewhere"),
             fr.path("/root-home"),
         );
@@ -1299,23 +1299,23 @@ fn the_start_folder_file_moves_only_an_interactive_shell_that_starts_in_home() {
         assert_eq!(at(true, &other), real(&other), "{why}");
 
         // A start folder that does not exist yet opens the volume root; with no root, it stays.
-        let missing = start_folder_file(&guest(&root), &guest(&fr.path("/workspaces/w/later")));
+        let missing = start_folder_file(&guest(&root), &guest(&fr.path("/workspace/later")));
         std::fs::write(&file, missing.contents()).unwrap();
         assert_eq!(at(true, &home), real(&root), "{why}");
         let nowhere = start_folder_file(
-            &guest(&fr.path("/workspaces/none")),
-            &guest(&fr.path("/workspaces/none/x")),
+            &guest(&fr.path("/srv/none")),
+            &guest(&fr.path("/srv/none/x")),
         );
         std::fs::write(&file, nowhere.contents()).unwrap();
         assert_eq!(at(true, &home), real(&home), "{why}");
 
         // The folder's name is one word to the shell, whatever it holds.
-        let odd = fr.path("/workspaces/w/it's $(touch pwned) `x`");
+        let odd = fr.path("/workspace/it's $(touch pwned) `x`");
         std::fs::create_dir_all(&odd).unwrap();
         let quoted = start_folder_file(&guest(&root), &guest(&odd));
         std::fs::write(&file, quoted.contents()).unwrap();
         assert_eq!(at(true, &home), real(&odd), "{why}");
-        assert!(!fr.path("/workspaces/w/pwned").exists());
+        assert!(!fr.path("/workspace/pwned").exists());
         assert!(!home.join("pwned").exists());
     }
 }

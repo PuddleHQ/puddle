@@ -11,7 +11,7 @@
   import Notices from "#lib/components/Notices.svelte";
   import Sidebar from "#lib/components/Sidebar.svelte";
   import SignInGate from "#lib/components/SignInGate.svelte";
-  import { documentTitle } from "#lib/nav.ts";
+  import { documentTitle, frameFor } from "#lib/nav.ts";
   import { api } from "#lib/api/client.ts";
   import { inDesktopApp } from "#lib/desktop/folder-picker.ts";
   import { NoticeWatcher } from "#lib/notify/watcher.ts";
@@ -94,6 +94,8 @@
       const stops = [
         live.start(),
         networkHealth.start(),
+        // The sidebar counts the workspaces on every screen.
+        workspaces.start(),
         watcher.start(),
         build.start(),
         reporter.start(),
@@ -169,7 +171,11 @@
         </p>
       {/if}
       <Notices />
-      <main id="main" tabindex="-1">
+      <main
+        id="main"
+        tabindex="-1"
+        class:page-reading={frameFor(page.url.pathname) === "reading"}
+      >
         {@render children()}
       </main>
     </div>

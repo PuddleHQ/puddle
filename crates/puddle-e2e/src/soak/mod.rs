@@ -16,3 +16,4 @@ pub mod plan;
 pub mod run;
 pub mod sample;
 pub mod series;
+pub mod winhost;

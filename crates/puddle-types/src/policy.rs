@@ -322,6 +322,13 @@ pub trait Policy: Send + Sync {
         let _ = (request, suffix_allows);
         Ok(None)
     }
+
+    /// The workspace's current name, for text shown to the user. The default knows none, and the
+    /// caller then shows the id. It may read the database, like [`Self::decide`].
+    fn workspace_name(&self, workspace: &WorkspaceId) -> Option<String> {
+        let _ = workspace;
+        None
+    }
 }
 
 #[cfg(test)]

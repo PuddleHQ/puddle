@@ -23,7 +23,8 @@ pub enum Severity {
 /// One rule of the judge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Check {
-    /// RSS or handles grew by more than 30 % between hour 1 and the end of the active period.
+    /// RSS or handles grew by more than 30 % between hour 1 (a later process's own hour 1) and the
+    /// end of the active period.
     Leak,
     /// RSS, handles or threads kept rising over the idle night, beyond the measured noise.
     IdleGrowth,
@@ -193,8 +194,15 @@ fn leak(series: &Series, sched: Schedule, out: &mut Vec<Finding>) {
         for metric in proc_metrics(series, field) {
             let pts = series.points(metric);
             let w = sched.level_window();
-            let early = level(pts, sched.start + sched.hour, w);
-            let late = level(pts, sched.active_end().saturating_sub(w), w);
+            // A process started later in the day (Puddle restarted) is read from its own hour 1.
+            let born = pts.first().map_or(sched.start, |p| p.0).max(sched.start);
+            let late_from = sched.active_end().saturating_sub(w);
+            let early_from = born + sched.hour;
+            if early_from + w > late_from {
+                continue;
+            }
+            let early = level(pts, early_from, w);
+            let late = level(pts, late_from, w);
             let (Some(early), Some(late)) = (early, late) else {
                 continue;
             };

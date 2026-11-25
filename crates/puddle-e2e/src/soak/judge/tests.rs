@@ -426,3 +426,35 @@ fn a_compressed_run_is_judged_in_its_own_hours() {
     let flat = squeezed(&with_rss(flat_rss), hour);
     assert_eq!(judge(&flat, compressed), []);
 }
+
+#[test]
+fn a_server_restarted_at_hour_5_is_judged_from_its_own_hour_1() {
+    let s = run(|s, t, h| {
+        if h >= 5.0 {
+            let rss = if h < 7.0 { 100_000.0 } else { 131_000.0 };
+            s.push(t, "proc.puddle.200.rss_kb", rss);
+        }
+    });
+    let f = found_only_by(&s, Check::Leak, Severity::Major);
+    assert_eq!(f.subject, "proc.puddle.200.rss_kb");
+    let flat = run(|s, t, h| {
+        if h >= 5.0 {
+            s.push(t, "proc.puddle.200.rss_kb", 100_000.0);
+        }
+    });
+    assert_eq!(judge(&flat, sched()), []);
+}
+
+#[test]
+fn a_server_started_too_late_for_two_windows_is_not_judged() {
+    let s = run(|s, t, h| {
+        if h >= 7.0 {
+            s.push(
+                t,
+                "proc.puddle.300.rss_kb",
+                if h < 7.5 { 1.0 } else { 1000.0 },
+            );
+        }
+    });
+    assert_eq!(judge(&s, sched()), []);
+}

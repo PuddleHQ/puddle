@@ -175,10 +175,10 @@
 
 <style>
   section {
+    max-width: var(--page-reading-width);
     display: grid;
     gap: var(--space-3);
     margin-bottom: var(--space-6);
-    max-width: 60rem;
   }
   h2 {
     font-size: var(--text-lg);

@@ -127,7 +127,7 @@
             <td class="mono name">{row.name}</td>
             <td class="value">
               {#if row.kind === "secret"}
-                <span class="chip">Secret</span>
+                <span class="meta">Secret</span>
                 Stored in Puddle, never shown. Sent only to
                 <span class="mono">{hostsSummary(row.hosts)}</span
                 >{placeSummary(row.place)}.
@@ -257,14 +257,6 @@
   .name,
   .value {
     overflow-wrap: anywhere;
-  }
-  .chip {
-    display: inline-block;
-    padding: 0 var(--space-2);
-    margin-inline-end: var(--space-1);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-pill);
-    font-size: var(--text-sm);
   }
   .actions {
     text-align: end;

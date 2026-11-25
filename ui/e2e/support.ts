@@ -334,3 +334,12 @@ export const test = base.extend({
   },
 });
 export { expect };
+
+/** Opens the "..." menu of a table row and picks one item ("Delete rule: <rule>" and the like). */
+export async function pickFromRowMenu(
+  row: Locator,
+  item: RegExp | string,
+): Promise<void> {
+  await row.getByRole("button", { name: /^More about/ }).click();
+  await row.page().getByRole("menuitem", { name: item }).click();
+}

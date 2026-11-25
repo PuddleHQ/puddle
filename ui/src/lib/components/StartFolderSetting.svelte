@@ -105,8 +105,15 @@
     }
   }
 
+  const only = $derived(
+    workspace.repositories.length === 1 ? workspace.repositories[0] : undefined,
+  );
   const where = $derived(
-    stored === "" ? "the workspace root" : `/workspaces/${wid}/${stored}`,
+    stored !== ""
+      ? `/workspace/${stored}`
+      : only
+        ? `/workspace/${only.directory}, the one repository`
+        : "the workspace root, /workspace",
   );
 </script>
 
@@ -159,8 +166,10 @@
     {/if}
   </div>
   <p class="desc">
-    New terminals land in {where}, and the editor opens it. Several checkouts at
-    the workspace root open together in the editor.
+    New terminals land in {where}, and the editor opens {stored === ""
+      ? "the workspace root"
+      : "it"}. Several checkouts at the workspace root open together in the
+    editor.
   </p>
 </section>
 

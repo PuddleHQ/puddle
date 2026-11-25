@@ -78,10 +78,19 @@ describe("a workspace's rule sets", () => {
 
   it("shows each set's state there and only the System managed hosts that apply", () => {
     render(WorkspaceSets, { props: { store, workspace: "api" } } as never);
-    expect(screen.getByText("Off, as for every workspace")).toBeInTheDocument();
+    const github = screen.getByRole("group", { name: "GitHub in api" });
     expect(
-      screen.getByText("Off here", { selector: ".muted" }),
-    ).toBeInTheDocument();
+      within(github).getByRole("button", { name: "Follow (off)" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    const work = screen.getByRole("group", { name: "Work in api" });
+    expect(within(work).getByRole("button", { name: "Off" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(within(work).getByRole("button", { name: "On" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
     const system = screen.getByRole("region", { name: "System managed" });
     expect(within(system).getByText("open-vsx.org")).toBeInTheDocument();
     expect(
@@ -92,16 +101,18 @@ describe("a workspace's rule sets", () => {
   it("switches a set there, and back to following every workspace", async () => {
     render(WorkspaceSets, { props: { store, workspace: "api" } } as never);
     await fireEvent.click(
-      screen.getByRole("button", { name: "On here: GitHub in api" }),
+      within(screen.getByRole("group", { name: "GitHub in api" })).getByRole(
+        "button",
+        { name: "On" },
+      ),
     );
     await waitFor(() =>
       expect(toasts.items.at(-1)?.message).toBe("GitHub: on in api."),
     );
     api.closes = [1, 2];
+    const work = () => screen.getByRole("group", { name: "Work in api" });
     await fireEvent.click(
-      screen.getByRole("button", {
-        name: "Make Work in api follow every workspace",
-      }),
+      within(work()).getByRole("button", { name: /^Follow/ }),
     );
     await waitFor(() =>
       expect(toasts.items.at(-1)?.message).toBe(
@@ -109,9 +120,7 @@ describe("a workspace's rule sets", () => {
       ),
     );
     api.refuse = { status: 500, message: "boom" };
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Off here: Work in api" }),
-    );
+    await fireEvent.click(within(work()).getByRole("button", { name: "Off" }));
     await waitFor(() => expect(toasts.items.at(-1)?.message).toBe("Boom."));
   });
 

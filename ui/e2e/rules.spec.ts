@@ -9,6 +9,7 @@ import {
   watchCsp,
   expectNoAxeViolations,
   staysEmpty,
+  pickFromRowMenu,
 } from "./support";
 
 interface Rule {
@@ -45,7 +46,7 @@ const SEEDED_EXPIRY_HEAD_ROOM = 60_000;
 const rowFor = (page: Page, pattern: string, workspace?: string): Locator =>
   page
     .locator("tbody tr", {
-      // The pattern sits in `span.mono`; a suffix rule's "and subdomains" chip is a sibling.
+      // The pattern sits in `span.mono`; a rule that is off has a plain "off" word beside it.
       // `:text-is` is an exact match on text, so the pattern is never read as a regexp.
       has: page.locator(
         `td.host span.mono:text-is(${JSON.stringify(pattern)})`,
@@ -83,7 +84,11 @@ test.describe("the list", () => {
     await expect(global).toContainText("Never");
     const suffix = rowFor(page, "*.crates.io");
     await expect(suffix).toContainText("web-shop");
-    await expect(suffix).toContainText("and subdomains");
+    // "and subdomains" is the wildcard in the host text itself.
+    await expect(suffix.locator("span.mono")).toHaveAttribute(
+      "title",
+      "This host and every subdomain of it",
+    );
     const expiring = rowFor(page, "api.example.com");
     // The page clock starts at the fixture's now but keeps running, and the formatter truncates, so a
     // slow start reads "in 2 hours" for a rule that has 3 hours less a moment left.
@@ -155,9 +160,10 @@ test.describe("filters and sort", () => {
     await page.clock.fastForward(5 * 3_600_000);
     await page.getByLabel("State").selectOption("expired");
     await expect(page.locator("tbody tr")).toHaveCount(1);
-    await expect(rowFor(page, "api.example.com")).toContainText(
-      "no longer applies",
-    );
+    await expect(rowFor(page, "api.example.com")).toContainText("Expired");
+    await expect(
+      rowFor(page, "api.example.com").getByRole("switch"),
+    ).toHaveCount(0);
   });
 
   test("sorting by host is alphabetical and flips", async ({
@@ -234,9 +240,9 @@ test.describe("adding", () => {
       .getByLabel("Workspace", { exact: true })
       .selectOption({ label: "web-shop" });
     await dialog.getByRole("button", { name: "Add rule" }).click();
-    await expect(rowFor(page, "*.cdn.example.org")).toContainText(
-      "and subdomains",
-    );
+    await expect(
+      rowFor(page, "*.cdn.example.org").locator("span.mono"),
+    ).toHaveAttribute("title", "This host and every subdomain of it");
     const rule = (await rules(request, backend)).find(
       (r) => r.pattern === ".cdn.example.org",
     );
@@ -385,7 +391,7 @@ test.describe("editing a rule in place", () => {
     const id = (await rules(request, backend)).find(
       (r) => r.pattern === "edit-me.example.org",
     )?.id;
-    await before.getByRole("button", { name: /^Edit rule/ }).click();
+    await pickFromRowMenu(before, /^Edit rule/);
     const dialog = page.getByRole("dialog", { name: "Edit rule" });
     await expect(dialog.getByLabel("Host")).toHaveValue("edit-me.example.org");
     await expect(dialog.getByRole("radio", { name: "Deny" })).toBeChecked();
@@ -414,7 +420,7 @@ test.describe("editing a rule in place", () => {
   }) => {
     await openRules(page, backend);
     const row = await addRule(page, "stays.example.org");
-    await row.getByRole("button", { name: /^Edit rule/ }).click();
+    await pickFromRowMenu(row, /^Edit rule/);
     const dialog = page.getByRole("dialog", { name: "Edit rule" });
     await dialog.getByLabel("Host").fill("*.com");
     await dialog.getByRole("button", { name: "Save rule" }).click();
@@ -437,9 +443,7 @@ test.describe("changing the expiry", () => {
   }) => {
     await openRules(page, backend);
     const expiring = rowFor(page, "api.example.com");
-    await expiring
-      .getByRole("button", { name: /^Change expiry: allow api.example.com/ })
-      .click();
+    await pickFromRowMenu(expiring, /^Change expiry: allow api.example.com/);
     const dialog = page.getByRole("dialog", { name: "Change expiry" });
     await expect(dialog).toContainText("api.example.com");
     await dialog.getByRole("button", { name: "Save" }).click();
@@ -457,7 +461,7 @@ test.describe("changing the expiry", () => {
     ).toBeNull();
 
     const permanent = rowFor(page, "registry.npmjs.org");
-    await permanent.getByRole("button", { name: /^Change expiry/ }).click();
+    await pickFromRowMenu(permanent, /^Change expiry/);
     await dialog.getByLabel("Ends").selectOption({ label: "In 8 hours" });
     await dialog.getByRole("button", { name: "Save" }).click();
     await expect(permanent).toContainText("in 8 hours");
@@ -478,9 +482,7 @@ test.describe("changing the expiry", () => {
     const target = (await rules(request, backend)).find(
       (r) => r.pattern === "api.example.com",
     );
-    await rowFor(page, "api.example.com")
-      .getByRole("button", { name: /^Change expiry/ })
-      .click();
+    await pickFromRowMenu(rowFor(page, "api.example.com"), /^Change expiry/);
     await request.delete(`/api/rules/${target?.id}`, {
       headers: auth(backend),
     });
@@ -501,7 +503,7 @@ test.describe("deleting", () => {
   }) => {
     await openRules(page, backend);
     const row = rowFor(page, "telemetry.example.net");
-    await row.getByRole("button", { name: /^Delete rule/ }).click();
+    await pickFromRowMenu(row, /^Delete rule/);
     const confirm = page.getByRole("alertdialog", {
       name: "Delete this rule?",
     });
@@ -512,7 +514,7 @@ test.describe("deleting", () => {
     await confirm.getByRole("button", { name: "Cancel" }).click();
     await expect(row).toBeVisible();
 
-    await row.getByRole("button", { name: /^Delete rule/ }).click();
+    await pickFromRowMenu(row, /^Delete rule/);
     await confirm.getByRole("button", { name: "Delete rule" }).click();
     await expect(confirm).toHaveCount(0);
     await expect(row).toHaveCount(0);
@@ -546,7 +548,7 @@ test.describe("deleting", () => {
     await backend.installClock(page);
     await backend.signIn(page);
     await page.goto("/rules");
-    await page.getByRole("button", { name: /^Delete rule/ }).click();
+    await pickFromRowMenu(page.locator("tbody tr"), /^Delete rule/);
     await page
       .getByRole("alertdialog")
       .getByRole("button", { name: "Delete rule" })
@@ -642,18 +644,18 @@ test.describe("keyboard only", () => {
       page.getByRole("button", { name: "Add rule" }).first(),
     ).toBeFocused();
 
-    await row.getByRole("button", { name: /^Change expiry/ }).focus();
+    const trigger = row.getByRole("button", { name: /^More about/ });
+    await trigger.focus();
     await page.keyboard.press("Enter");
+    await page.getByRole("menuitem", { name: /^Change expiry/ }).click();
     const expiry = page.getByRole("dialog", { name: "Change expiry" });
     await expect(expiry.getByLabel("Ends")).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(expiry).toHaveCount(0);
-    await expect(
-      row.getByRole("button", { name: /^Change expiry/ }),
-    ).toBeFocused();
+    await expect(trigger).toBeFocused();
 
-    await row.getByRole("button", { name: /^Delete rule/ }).focus();
     await page.keyboard.press("Enter");
+    await page.getByRole("menuitem", { name: /^Delete rule/ }).click();
     const confirm = page.getByRole("alertdialog");
     await expect(confirm.getByRole("button", { name: "Cancel" })).toBeFocused();
     await page.keyboard.press("Tab");
@@ -690,15 +692,11 @@ test.describe("accessibility", () => {
       await page.emulateMedia({ colorScheme: scheme });
       const csp = await watchCsp(page);
       await openRules(page, backend);
-      await rowFor(page, "api.example.com")
-        .getByRole("button", { name: /^Change expiry/ })
-        .click();
+      await pickFromRowMenu(rowFor(page, "api.example.com"), /^Change expiry/);
       await expectNoAxeViolations(page, "expiry");
       await page.keyboard.press("Escape");
 
-      await rowFor(page, "api.example.com")
-        .getByRole("button", { name: /^Delete rule/ })
-        .click();
+      await pickFromRowMenu(rowFor(page, "api.example.com"), /^Delete rule/);
       await expectNoAxeViolations(page, "delete");
       await page
         .getByRole("button", { name: "Delete rule", exact: true })

@@ -13,7 +13,7 @@
 # run kept), makes a workspace and writes files to it, upgrades to this run's build, and checks that
 # the workspace starts with its files intact under the newer runtime (ci/msi-install-test.ps1
 # -BaselineMsi), and that the state a user builds up (rules, a pending request, variables, a secret,
-# settings, an identity, a home file) is equal after it (crates/puddle-app/e2e/upgrade-state.mjs). The
+# settings, an identity, a file in the workspace folder) is equal after it (crates/puddle-app/e2e/upgrade-state.mjs). The
 # dispatch input `plant_breakage` shows the job fails when a migration loses data.
 #
 # The `usable` job is the "usable" bar (install, create, approve, edit, build, push) with no person: it installs the MSI

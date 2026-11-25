@@ -71,11 +71,8 @@ fn the_editor_server_is_off_until_the_host_names_its_folder() {
     );
     let c = from(&[
         ("PUDDLE_AGENT_EDITOR_DIR", "/puddle/code-server"),
-        (
-            "PUDDLE_AGENT_EDITOR_DATA",
-            "/workspaces/a/.puddle/code-server",
-        ),
-        ("PUDDLE_AGENT_EDITOR_FOLDER", "/workspaces/a"),
+        ("PUDDLE_AGENT_EDITOR_DATA", "/workspace/.puddle/code-server"),
+        ("PUDDLE_AGENT_EDITOR_FOLDER", "/workspace"),
         ("PUDDLE_AGENT_EDITOR_GRACE", "60"),
     ])
     .unwrap();

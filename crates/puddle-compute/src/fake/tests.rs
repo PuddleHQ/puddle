@@ -748,6 +748,7 @@ async fn the_specs_owned_disks_and_volume_mounts_can_be_read_back() {
     let name = s.name.clone();
     assert_eq!(rt.owned_disks(&name).len(), 0);
     assert_eq!(rt.volume_mounts(&name).len(), 0);
+    assert!(!rt.move_volume_mounts(&name, &path("/elsewhere")));
     rt.create(s).await.unwrap();
     let disks = rt.owned_disks(&name);
     assert_eq!(disks.len(), 1);
@@ -756,6 +757,10 @@ async fn the_specs_owned_disks_and_volume_mounts_can_be_read_back() {
     let volumes = rt.volume_mounts(&name);
     assert_eq!(volumes.len(), 1);
     assert_eq!(volumes[0].guest, path("/w"));
+    assert!(rt.move_volume_mounts(&name, &path("/elsewhere")));
+    assert_eq!(rt.volume_mounts(&name)[0].guest, path("/elsewhere"));
+    let listed = rt.list().await.unwrap();
+    assert_eq!(listed[0].volume_mounts, [path("/elsewhere")]);
 }
 
 #[tokio::test]
@@ -855,4 +860,29 @@ async fn the_fake_guest_sweeps_ports_and_ranges_of_the_host_only() {
     assert_eq!(bad_cid.status.code, 2);
     let no_args = run(&sb, "perl", &["-e", VSOCK_SWEEP]).await;
     assert_eq!(no_args.status.code, 2);
+}
+
+#[tokio::test]
+async fn a_guest_that_streams_past_the_cap_is_cut_and_reported() {
+    let rt = FakeRuntime::new();
+    rt.on_exec(|_: &mut ExecContext<'_>, r: &ExecRequest| {
+        (r.program == "flood").then(|| {
+            ExecOutput::new(
+                0,
+                vec![b'x'; 10 * ExecRequest::DEFAULT_MAX_OUTPUT],
+                vec![b'e'; 9],
+            )
+        })
+    });
+    let sb = rt.create(spec("a")).await.unwrap();
+    let flood = ExecRequest::new("flood", Vec::<String>::new());
+    let out = sb.exec(flood.clone()).await.unwrap();
+    assert_eq!(out.stdout.len(), ExecRequest::DEFAULT_MAX_OUTPUT);
+    assert!(out.stdout_truncated && !out.stderr_truncated);
+    let small = sb.exec(flood.clone().with_max_output(4)).await.unwrap();
+    assert_eq!((small.stdout.len(), small.stderr.len()), (4, 4));
+    assert!(small.stdout_truncated && small.stderr_truncated);
+    let all = sb.exec(flood.uncapped()).await.unwrap();
+    assert_eq!(all.stdout.len(), 10 * ExecRequest::DEFAULT_MAX_OUTPUT);
+    assert!(!all.stdout_truncated);
 }

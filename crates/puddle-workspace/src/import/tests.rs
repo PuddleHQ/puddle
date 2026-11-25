@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-use puddle_types::WorkspaceId;
-
 use super::*;
 
 #[test]
@@ -282,7 +280,7 @@ fn a_config_that_is_too_large_or_not_a_file_gives_no_origin() {
 
 #[test]
 fn the_import_commands_are_argument_vectors_and_every_git_process_gets_the_guard() {
-    let layout = Layout::new(&WorkspaceId::new("acme").unwrap()).unwrap();
+    let layout = Layout::new().unwrap();
     let dir = CheckoutDir::new("api").unwrap();
     assert_eq!(import_mount(2).unwrap().as_str(), "/puddle/import/2/.git");
     let clone = layout.import_request(2, &dir).unwrap();
@@ -298,7 +296,7 @@ fn the_import_commands_are_argument_vectors_and_every_git_process_gets_the_guard
             "puddle-checkout",
             "--",
             "/puddle/import/2",
-            "/workspaces/acme/api",
+            "/workspace/api",
         ]
     );
     let env = import_env(2).unwrap();
@@ -339,7 +337,7 @@ fn the_import_commands_are_argument_vectors_and_every_git_process_gets_the_guard
     assert_eq!(finish.args[1], FINISH_IMPORT_SH);
     assert_eq!(
         finish.args[3..],
-        ["/workspaces/acme/api", "/puddle/import/2", url]
+        ["/workspace/api", "/puddle/import/2", url]
     );
     assert_eq!(finish.env, env);
 }

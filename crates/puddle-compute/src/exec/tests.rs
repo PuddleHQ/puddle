@@ -48,3 +48,20 @@ fn output_text_is_lossy() {
     assert_eq!(o.stderr_text(), "err");
     assert!(o.status.success());
 }
+
+#[test]
+fn a_request_is_capped_by_default_and_the_cap_can_change() {
+    let r = ExecRequest::sh("true");
+    assert_eq!(r.max_output, Some(ExecRequest::DEFAULT_MAX_OUTPUT));
+    assert_eq!(r.clone().with_max_output(7).max_output, Some(7));
+    assert_eq!(r.uncapped().max_output, None);
+}
+
+#[test]
+fn capped_cuts_each_stream_and_says_which() {
+    let out = ExecOutput::new(0, vec![b'o'; 10], b"ok".to_vec()).capped(Some(4));
+    assert_eq!((out.stdout.len(), out.stdout_truncated), (4, true));
+    assert_eq!((out.stderr.len(), out.stderr_truncated), (2, false));
+    let whole = ExecOutput::new(0, vec![b'o'; 10], "").capped(None);
+    assert_eq!((whole.stdout.len(), whole.stdout_truncated), (10, false));
+}

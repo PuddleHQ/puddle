@@ -3,7 +3,7 @@
 //! and trust configuration.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex};
 
 use puddle_agent_proto::editor::{EditorServer, MicrosoftOptions, ServerKind};
 use puddle_api::StartFolder;
@@ -105,7 +105,7 @@ pub(crate) struct BootKit {
     assets: Vec<FileMount>,
     agent: PathBuf,
     /// The code-server release as the guests mount it (inside the guest share), when bundled.
-    code_server: Option<PathBuf>,
+    code_server: Option<CodeServer>,
     roots: CorporateRoots,
     git: Option<GitIdentity>,
     shell_init: Copies,
@@ -212,7 +212,7 @@ impl BootKit {
         let code_server = guest
             .code_server
             .as_deref()
-            .map(|release| install_code_server(release, &dir))
+            .map(|release| CodeServer::begin(release, &dir))
             .transpose()
             .map_err(|e| HostError::GuestFiles(format!("install code-server: {e}")))?;
         // Stable routes keep every sandbox across a restart of this process. Without them (the
@@ -396,8 +396,19 @@ impl BootKit {
             .with_owned_disk(docker_disk());
         let spec = with_boot_mounts(spec, self.assets.clone(), Some(&self.agent));
         match &self.code_server {
-            Some(release) => with_code_server_mount(spec, release),
+            Some(release) => with_code_server_mount(spec, &release.path),
             None => spec,
+        }
+    }
+
+    /// Waits until the code-server release is in place for the guests to mount (at once when
+    /// this host bundles none or the folder was complete). A sandbox's spec names the folder, so
+    /// a start waits here before it makes one; the host itself does not wait, because the copy
+    /// can take minutes on a slow disk and the API has to be up before that.
+    pub(crate) async fn code_server_ready(&self) -> Result<(), HostError> {
+        match &self.code_server {
+            Some(server) => server.ready().await,
+            None => Ok(()),
         }
     }
 
@@ -456,7 +467,22 @@ const CODE_SERVER_DIR: &str = "code-server";
 /// the host starts, before any sandbox of this run exists (one host runs per data folder, and the
 /// sandboxes of an earlier run are stopped). Files are hard-linked where the folders share a disk,
 /// else copied.
+#[cfg(test)]
 fn install_code_server(release: &Path, dir: &Path) -> std::io::Result<PathBuf> {
+    let (target, copy) = begin_code_server_install(release, dir)?;
+    if let Some(copy) = copy {
+        copy.run()?;
+    }
+    Ok(target)
+}
+
+/// The cheap half of [`install_code_server`]: the release's version is checked, the old layout
+/// goes, and the answer is where the release will be and the copy that still has to run (none
+/// when the folder is complete for this release).
+fn begin_code_server_install(
+    release: &Path,
+    dir: &Path,
+) -> std::io::Result<(PathBuf, Option<CodeServerCopy>)> {
     let manifest = std::fs::read_to_string(release.join("code-server.json"))?;
     serde_json::from_str::<serde_json::Value>(&manifest)
         .ok()
@@ -472,20 +498,140 @@ fn install_code_server(release: &Path, dir: &Path) -> std::io::Result<PathBuf> {
     remove_legacy_releases(dir);
     let done = target.join(INSTALLED_MARKER);
     if std::fs::read_to_string(&done).is_ok_and(|installed| installed == manifest) {
-        return Ok(target);
+        return Ok((target, None));
     }
-    let partial = dir.join(format!("{CODE_SERVER_DIR}.partial"));
-    if partial.exists() {
-        std::fs::remove_dir_all(&partial)?;
+    let copy = CodeServerCopy {
+        release: release.to_path_buf(),
+        partial: dir.join(format!("{CODE_SERVER_DIR}.partial")),
+        target: target.clone(),
+        manifest,
+    };
+    Ok((target, Some(copy)))
+}
+
+/// The slow half of the install: the release's files into the guest share.
+struct CodeServerCopy {
+    release: PathBuf,
+    partial: PathBuf,
+    target: PathBuf,
+    manifest: String,
+}
+
+impl CodeServerCopy {
+    fn run(self) -> std::io::Result<()> {
+        if self.partial.exists() {
+            std::fs::remove_dir_all(&self.partial)?;
+        }
+        tracing::info!(from = %self.release.display(), to = %self.target.display(), "installing code-server for the guests");
+        let started = std::time::Instant::now();
+        link_or_copy_tree(&self.release, &self.partial, &|from, to| {
+            std::fs::hard_link(from, to)
+        })?;
+        std::fs::write(self.partial.join(INSTALLED_MARKER), &self.manifest)?;
+        if self.target.exists() {
+            std::fs::remove_dir_all(&self.target)?;
+        }
+        std::fs::rename(&self.partial, &self.target)?;
+        tracing::info!(
+            elapsed_ms = started.elapsed().as_millis(),
+            "code-server installed for the guests"
+        );
+        Ok(())
     }
-    tracing::info!(from = %release.display(), to = %target.display(), "installing code-server for the guests");
-    link_or_copy_tree(release, &partial, &|from, to| std::fs::hard_link(from, to))?;
-    std::fs::write(partial.join(INSTALLED_MARKER), &manifest)?;
-    if target.exists() {
-        std::fs::remove_dir_all(&target)?;
+}
+
+/// The code-server release as the guests mount it, and whether its copy has finished.
+struct CodeServer {
+    path: PathBuf,
+    /// `None` when the folder was complete at the start.
+    installing: Option<Arc<Install>>,
+}
+
+/// How a copy ended; the error is shared because every waiting start reports it.
+type Outcome = Result<(), Arc<std::io::Error>>;
+
+/// The outcome of a copy running on its own thread, and the signal that it ended.
+#[derive(Default)]
+struct Install {
+    outcome: Mutex<Option<Outcome>>,
+    ended: Condvar,
+}
+
+impl Install {
+    fn finish(&self, outcome: Outcome) {
+        *self
+            .outcome
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(outcome);
+        self.ended.notify_all();
     }
-    std::fs::rename(&partial, &target)?;
-    Ok(target)
+
+    fn wait(&self) -> Outcome {
+        let mut outcome = self
+            .outcome
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        loop {
+            if let Some(done) = outcome.as_ref() {
+                return done.clone();
+            }
+            outcome = self
+                .ended
+                .wait(outcome)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+    }
+
+    fn outcome(&self) -> Option<Outcome> {
+        self.outcome
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+}
+
+impl CodeServer {
+    /// Checks the release and starts its copy on a thread of its own, so the host does not
+    /// wait for it.
+    fn begin(release: &Path, dir: &Path) -> std::io::Result<Self> {
+        let (path, copy) = begin_code_server_install(release, dir)?;
+        let installing = copy.map(|copy| {
+            let install = Arc::new(Install::default());
+            let ended = install.clone();
+            let spawned = std::thread::Builder::new()
+                .name("code-server-install".into())
+                .spawn({
+                    let ended = ended.clone();
+                    move || {
+                        let outcome = copy.run().map_err(Arc::new);
+                        if let Err(reason) = &outcome {
+                            tracing::error!(%reason, "code-server could not be installed for the guests");
+                        }
+                        ended.finish(outcome);
+                    }
+                });
+            if let Err(e) = spawned {
+                ended.finish(Err(Arc::new(e)));
+            }
+            install
+        });
+        Ok(Self { path, installing })
+    }
+
+    async fn ready(&self) -> Result<(), HostError> {
+        let Some(install) = &self.installing else {
+            return Ok(());
+        };
+        let outcome = if let Some(done) = install.outcome() {
+            done
+        } else {
+            let install = install.clone();
+            tokio::task::spawn_blocking(move || install.wait())
+                .await
+                .unwrap_or_else(|e| Err(Arc::new(std::io::Error::other(e))))
+        };
+        outcome.map_err(|e| HostError::GuestFiles(format!("install code-server: {e}")))
+    }
 }
 
 /// Removes what earlier versions of Puddle left below `dir`: the `code-server-<version>` folders

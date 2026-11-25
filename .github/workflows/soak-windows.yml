@@ -127,6 +127,8 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -File crates/puddle-app/e2e/collect-windows-events.ps1 -Since $since -Out $file -Plant
           if ($LASTEXITCODE -ne 1) { throw "the collector did not fail on a planted puddle-app.exe crash (exit $LASTEXITCODE)" }
           if (-not (Select-String -Path $file -Pattern 'puddle-app.exe' -Quiet)) { throw 'the planted crash is not in the collected events' }
+          # The pwsh shell ends the step with $LASTEXITCODE, which is the planted run's expected 1.
+          exit 0
       - name: the day (${{ env.HOUR_SECS }} s a playbook hour)
         if: steps.whp.outputs.ok == 'true'
         shell: bash

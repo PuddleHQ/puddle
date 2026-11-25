@@ -85,3 +85,34 @@ async fn a_start_does_not_announce_an_image_pull() {
     );
     host.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_default_image_is_described_from_its_labels_once_the_host_has_read_them() {
+    let rig = Rig::named_ids();
+    rig.runtime.add_image(
+        &ImageRef::new(puddle_api::DEFAULT_IMAGE).unwrap(),
+        ImageConfig {
+            labels: [
+                ("dev.containers.id", "base-debian"),
+                ("dev.containers.variant", "trixie"),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+            .collect(),
+            ..ImageConfig::default()
+        },
+    );
+    let host = rig.start().await;
+    let api = api(&host);
+    // The first ask starts the download and does not wait for it.
+    let first = api.get("/api/workspaces/default-image").await.json();
+    assert_eq!(first["image"], puddle_api::DEFAULT_IMAGE);
+    eventually("the labels are read", APPLY, || {
+        host.workspaces().default_image_description().as_deref()
+            == Some("Debian trixie dev container")
+    })
+    .await;
+    let line = api.get("/api/workspaces/default-image").await.json();
+    assert_eq!(line["description"], "Debian trixie dev container");
+    host.shutdown().await;
+}

@@ -393,6 +393,8 @@ struct Inner<R: Runtime + Clone> {
     running: watch::Sender<usize>,
     /// Whether the image the delete check boots is in the cache; see [`HostWorkspaces::maintenance_ready`].
     maintenance_image: watch::Sender<Warmth>,
+    /// The default image's description from its labels, once read; see [`HostWorkspaces::default_image_description`].
+    default_image_note: Mutex<ImageNote>,
     /// Workspaces whose start found their shell-init folder changed from inside, until `settle`
     /// has said so (with what the boot hook found, as one notice).
     shell_init_changed_inside: Mutex<BTreeSet<WorkspaceId>>,
@@ -540,6 +542,17 @@ fn listing(l: &puddle_workspace::Listing) -> Listing {
 /// How long a delete or its check waits for the image it boots to be downloaded before it asks
 /// the user to try again: under the API's 30 s request limit, so the answer is ours and not a 408.
 const MAINTENANCE_WAIT: Duration = Duration::from_secs(15);
+
+/// Where reading the default image's labels stands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ImageNote {
+    /// Not asked for yet.
+    Cold,
+    /// A task of the service is downloading the image to read them.
+    Reading,
+    /// Read: the one line they give, or none when they say nothing.
+    Read(Option<String>),
+}
 
 /// Where the download of the image the delete check boots stands.
 #[derive(Clone, Debug, PartialEq, Eq)]

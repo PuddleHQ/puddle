@@ -21,9 +21,10 @@ use tokio::sync::watch;
 use tokio::task::JoinSet;
 
 use super::{
-    EndExtensionHostsError, HostWorkspaces, Inner, Leftovers, Live, MAINTENANCE_WAIT, Parts,
-    Running, SESSION_END_GAP, SESSION_END_READS, Slot, State, StateGuard, SwitchEditorBuildError,
-    Ticket, Warmth, WriteNames, disk_used, name_or_id, not_found, wait_until_downloaded,
+    EndExtensionHostsError, HostWorkspaces, ImageNote, Inner, Leftovers, Live, MAINTENANCE_WAIT,
+    Parts, Running, SESSION_END_GAP, SESSION_END_READS, Slot, State, StateGuard,
+    SwitchEditorBuildError, Ticket, Warmth, WriteNames, disk_used, name_or_id, not_found,
+    wait_until_downloaded,
 };
 use crate::HostError;
 use crate::files::Stored;
@@ -129,6 +130,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 tasks: Mutex::new(JoinSet::new()),
                 running: watch::channel(0).0,
                 maintenance_image: watch::channel(Warmth::Cold).0,
+                default_image_note: Mutex::new(ImageNote::Cold),
                 shell_init_changed_inside: Mutex::new(BTreeSet::new()),
                 env_missed_while_booting: Mutex::new(BTreeSet::new()),
                 listings: Mutex::new(BTreeMap::new()),
@@ -938,6 +940,43 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// The image config of `image`, pulling it if needed.
     pub(super) async fn image_config(&self, image: &ImageRef) -> Result<ImageConfig, OpError> {
         Ok(self.inner.runtime.pull_image(image).await?)
+    }
+
+    /// The line the default image's labels give, or `None` while they are not read. The first
+    /// call starts a task that downloads the image (the create needs it anyway) and keeps the
+    /// answer; a failed download is tried again by the next call. Never waits for the download.
+    pub(crate) fn default_image_note(&self) -> Option<String> {
+        {
+            let mut note = self
+                .inner
+                .default_image_note
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            match &*note {
+                ImageNote::Read(line) => return line.clone(),
+                ImageNote::Reading => return None,
+                ImageNote::Cold => *note = ImageNote::Reading,
+            }
+        }
+        let this = self.clone();
+        self.spawn(async move {
+            let next = match ImageRef::new(puddle_api::DEFAULT_IMAGE) {
+                Ok(image) => match this.inner.runtime.pull_image(&image).await {
+                    Ok(config) => ImageNote::Read(puddle_api::describe_image(&config.labels)),
+                    Err(e) => {
+                        tracing::warn!(image = %image, error = %e, "the default image was not downloaded to read its description");
+                        ImageNote::Cold
+                    }
+                },
+                Err(_) => ImageNote::Read(None),
+            };
+            *this
+                .inner
+                .default_image_note
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) = next;
+        });
+        None
     }
 
     /// Starts pulling the image the delete check boots on a task the service owns, unless it is

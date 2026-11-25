@@ -102,6 +102,48 @@ function settings(
   } as never;
 }
 
+describe("the default image's description", () => {
+  function mountWith(description: string | null) {
+    render(CreateWorkspaceDialog, {
+      props: {
+        open: true,
+        store: { create: vi.fn() },
+        settings: settings(),
+        defaultImage: { description, load: vi.fn(async () => {}) },
+      },
+    } as never);
+  }
+
+  it("shows what the default image is under the empty Image field", async () => {
+    mountWith("Debian trixie dev container with git");
+    await fireEvent.click(
+      screen.getByText("Start folder, image, memory and CPUs"),
+    );
+    const hint = await screen.findByText(
+      "Default: Debian trixie dev container with git",
+    );
+    expect(hint.textContent?.trim()).not.toBe("");
+    expect(
+      screen.getByLabelText("Image").getAttribute("aria-describedby"),
+    ).toBe(hint.id);
+  });
+
+  it("drops the line once an image is typed, and shows none before it is known", async () => {
+    mountWith("Debian trixie dev container with git");
+    await fireEvent.click(
+      screen.getByText("Start folder, image, memory and CPUs"),
+    );
+    await type("Image", "ghcr.io/acme/dev:1");
+    expect(screen.queryByText(/^Default:/)).toBeNull();
+    cleanup();
+    mountWith(null);
+    await fireEvent.click(
+      screen.getByText("Start folder, image, memory and CPUs"),
+    );
+    expect(screen.queryByText(/^Default:/)).toBeNull();
+  });
+});
+
 function mountWithLimits(
   limits: { max_cpus: number; host_cpus: number } | null,
   byDefault = 4,

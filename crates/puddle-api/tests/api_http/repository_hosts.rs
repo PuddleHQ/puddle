@@ -242,3 +242,18 @@ async fn more_addresses_than_a_workspace_may_hold_are_refused() {
     );
     api.running.shutdown().await;
 }
+
+#[tokio::test]
+async fn the_form_reads_the_default_image_and_a_line_about_it() {
+    let api = start().await;
+    let reply = api.get("/api/workspaces/default-image").await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let body = reply.json();
+    assert_eq!(body["image"], puddle_api::DEFAULT_IMAGE);
+    assert!(
+        body["description"]
+            .as_str()
+            .is_some_and(|d| d.starts_with("Debian trixie dev container")),
+        "{body}"
+    );
+}

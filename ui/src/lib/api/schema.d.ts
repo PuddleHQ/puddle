@@ -1694,6 +1694,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/default-image": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The image a create boots when the form names none, with a line from the image's own labels
+         *     that says what is in it. The line is `null` until the host has read the labels.
+         */
+        get: operations["default_image"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/lookup": {
         parameters: {
             query?: never;
@@ -3845,6 +3865,16 @@ export interface components {
              *     name under it; left out or `null` means the exact host. A public suffix is refused.
              */
             suffix?: string | null;
+        };
+        /** @description `GET /api/workspaces/default-image`: the image a create without one boots. */
+        DefaultImage: {
+            /**
+             * @description One line that says what is in the image, read from the image's own labels; `null` while
+             *     they are not known yet (the image is still downloading, or its labels say nothing).
+             */
+            description: string | null;
+            /** @description The image reference, as the create uses it. */
+            image: string;
         };
         /**
          * @description `GET /api/workspaces/{id}/delete-check`: what deleting the workspace would lose. Text comes
@@ -14868,6 +14898,62 @@ export interface operations {
             };
             /** @description workspaces are not available, or Puddle could not pick a new id (16 draws were all taken: a broken random source) */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    default_image: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the default image */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DefaultImage"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -147,6 +147,6 @@ pub use workspaces::{
     WorkspaceError, WorkspaceRecord, WorkspaceService, admit_delete_fingerprint,
     admit_delete_status, admit_grow_size, admit_idle, admit_reset_root_disk, admit_settled,
     admit_start, admit_stop, check_rename, check_repositories, check_repositories_with,
-    check_session_user_change, check_start_folder_change, entry_id_from_text, label_taken,
-    new_entry_id, not_found,
+    check_session_user_change, check_start_folder_change, describe_image, entry_id_from_text,
+    label_taken, new_entry_id, not_found,
 };

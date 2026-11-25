@@ -33,7 +33,7 @@ counted (`flake-<id>`, `flake-<id>-unreasoned`) until its sites are fixed or rea
 fixed flakes from `scripts/flake-fixtures/`.
 
 Context per Rust line: `test` (under tests/, benches/, examples/; in a `#[cfg(test)]` or
-`#[cfg(any(test, feature = "testing"))]` item or a file module so declared; or in the test-only
+`#[cfg(any(test, feature = "testing"))]` item (never `any(windows, test)`: it builds outside tests) or a file module so declared; or in the test-only
 crates puddle-e2e, puddle-vm-tests, puddle-test-kit and puddle-proxy-test-support), else `prod`. Rows: kind, context, file:line, detail.
 
 It is a lexer-free scanner (strings and comments are blanked by a small state machine), so it
@@ -55,7 +55,10 @@ SKIP_DIRS = {"target", "node_modules", ".git", ".svelte-kit", "build", "corpus",
              "playwright-report", ".scratch", "coverage"}  # coverage: vitest's lcov-report (ui/coverage, gitignored) ships istanbul's own eslint-disable lines
 TEST_CRATES = ("crates/puddle-e2e/", "crates/puddle-vm-tests/", "crates/puddle-test-kit/",
               "crates/puddle-proxy-test-support/")
-TEST_CFG = re.compile(r"#\[cfg\((?:test|all\(test\b[^\]]*|any\(test\b[^\]]*|any\([^\]]*feature\s*=\s*\"testing\"[^\]]*|feature\s*=\s*\"testing\")\)\]")
+_TEST_ONLY = r"(?:test|feature\s*=\s*\"testing\")"
+# Test code is `cfg(test)`, `all(test, ..)` and `any(..)` whose every member is `test` or `feature = "testing"`.
+# `any(windows, test)` and `any(test, windows)` also build outside tests, so they stay production code (T-1802, D-339 A).
+TEST_CFG = re.compile(r"#\[cfg\((?:test|all\(test\b[^\]]*|any\(\s*" + _TEST_ONLY + r"(?:\s*,\s*" + _TEST_ONLY + r")*\s*,?\s*\)|feature\s*=\s*\"testing\")\)\]")
 TEST_ATTR = re.compile(r"#\[(?:tokio::|rstest|test_case|test_log::)?test\b[^\]]*\]|#\[tokio::test\b")
 TEXT_EXT = {".rs", ".ts", ".js", ".svelte", ".sh", ".ps1", ".py", ".toml", ".yml", ".yaml", ".mjs", ".cjs"}
 
@@ -1355,6 +1358,33 @@ def flake_self_test():
     return failures
 
 
+def test_cfg_self_test():
+    """Only test-only cfgs make test context: `cfg(any(windows, test))` (either order) and
+    `any(windows, feature = "testing")` stay prod and their unsafe block without a reason is flagged as prod."""
+    import tempfile
+    cases = {
+        "a_windows_or_test": ("#[cfg(any(windows, test))]", "prod"),
+        "b_test_or_windows": ("#[cfg(any(test, windows))]", "prod"),
+        "c_windows_or_testing": ('#[cfg(any(windows, feature = "testing"))]', "prod"),
+        "d_test": ("#[cfg(test)]", "test"),
+        "e_test_or_testing": ('#[cfg(any(test, feature = "testing"))]', "test"),
+        "f_all_test_unix": ("#[cfg(all(test, unix))]", "test"),
+    }
+    problems = []
+    with tempfile.TemporaryDirectory() as d:
+        os.makedirs(os.path.join(d, "crates/x/src"))
+        with open(os.path.join(d, "crates/x/src/lib.rs"), "w", encoding="utf-8") as h:
+            h.write("#![forbid(unsafe_code)]\n")
+        for name, (attr, _) in cases.items():
+            with open(os.path.join(d, f"crates/x/src/{name}.rs"), "w", encoding="utf-8") as h:
+                h.write(f"{attr}\nfn f() {{ unsafe {{ g() }} }}\n")
+        got = {r[2].split(":")[0].rsplit("/", 1)[1][:-3]: r[1] for r in scan(d) if r[0] == "unsafe-block"}
+        want = {name: ctx for name, (_, ctx) in cases.items()}
+        if got != want:
+            problems.append(f"unsafe block context {got}, want {want}")
+    return problems
+
+
 def self_test():
     import tempfile
     with tempfile.TemporaryDirectory() as d:
@@ -1389,6 +1419,10 @@ def self_test():
     bad_inline = inline_test_self_test()
     if bad_inline:
         print("self-test FAIL inline test blocks:\n  " + "\n  ".join(bad_inline))
+        return 1
+    bad_cfg = test_cfg_self_test()
+    if bad_cfg:
+        print("self-test FAIL test cfg:\n  " + "\n  ".join(bad_cfg))
         return 1
     bad_flake = flake_self_test()
     if bad_flake:

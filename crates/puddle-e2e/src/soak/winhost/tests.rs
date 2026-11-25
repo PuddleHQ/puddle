@@ -15,10 +15,10 @@ fn machine() -> Vec<Proc> {
         proc(4, 0, "System"),
         proc(100, 4, "Puddle-App.EXE"),
         proc(101, 100, "puddle.exe"),
-        proc(102, 101, "msb.exe"),
-        proc(103, 101, "msb.exe"),
+        proc(102, 101, "msb-vm.exe"),
+        proc(103, 101, "msb-vm.exe"),
         proc(200, 4, "puddle.exe"),
-        proc(201, 200, "msb.exe"),
+        proc(201, 200, "msb-vm.exe"),
         proc(300, 4, "puddle-soak.exe"),
     ]
 }
@@ -30,7 +30,7 @@ fn names(found: &[(String, u32)]) -> Vec<String> {
 #[test]
 fn a_process_is_named_by_its_executable_without_the_extension_in_lower_case() {
     assert_eq!(comm("Puddle-App.EXE"), "puddle-app");
-    assert_eq!(comm("msb.exe"), "msb");
+    assert_eq!(comm("msb-vm.exe"), "msb-vm");
     assert_eq!(comm("System"), "system");
 }
 
@@ -46,9 +46,9 @@ fn processes_are_found_by_name_prefix_and_a_dollar_makes_it_a_whole_name() {
     assert_eq!(
         names(&found),
         [
-            "msb.102",
-            "msb.103",
-            "msb.201",
+            "msb-vm.102",
+            "msb-vm.103",
+            "msb-vm.201",
             "puddle.101",
             "puddle.200",
             "puddle-app.100"
@@ -61,7 +61,7 @@ fn only_the_tree_below_the_runs_own_root_is_measured() {
     let prefixes = vec!["puddle$".to_owned(), "msb".to_owned()];
     let found = select(&machine(), &prefixes, Some(100));
     // The second Puddle (200) and its msb (201) belong to another run of the machine.
-    assert_eq!(names(&found), ["msb.102", "msb.103", "puddle.101"]);
+    assert_eq!(names(&found), ["msb-vm.102", "msb.103", "puddle.101"]);
 }
 
 #[test]

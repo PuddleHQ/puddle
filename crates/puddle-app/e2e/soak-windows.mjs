@@ -10,12 +10,12 @@
 //   a loop of guest commands in both workspaces every 30 minutes until hour 8
 //    90  the editor window of the first workspace opened and closed 10 times in a row: the window is
 //        there after each open and gone after each close
-//   120  the tray's "Quit Puddle" through UI Automation (desktop.ps1 tray-quit): no puddle-app, puddle or
-//        msb process within 90 s; a new start lists every workspace again (ids and names equal); both are
+//   120  the tray's "Quit Puddle" through UI Automation (desktop.ps1 tray-quit): no `puddle-app`, `puddle` or
+//        `msb` process within 90 s; a new start lists every workspace again (ids and names equal); both are
 //        started again
 //   480  the loops stop; the idle night (4 playbook hours): the sampler alone
 //   720  the workspaces are still running; Get-WinEvent of Puddle's processes is collected
-//        (collect-windows-events.ps1): an Application Error or hang of puddle-app, puddle or msb fails
+//        (collect-windows-events.ps1): an Application Error or hang of `puddle-app`, `puddle` or `msb` fails
 //        the run; the judge reads metrics.tsv (handles per process flat over the idle hour, RSS, commit charge)
 //
 // Environment: WINSOAK_OUT (the run folder), WINSOAK_SOAK (puddle-soak.exe), WINSOAK_HOUR_SECS (default 1500),

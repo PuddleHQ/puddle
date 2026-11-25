@@ -137,7 +137,7 @@ jobs:
         if: ${{ always() && steps.whp.outputs.ok == 'true' }}
         shell: pwsh
         run: |
-          Get-Process puddle-app, puddle, msb, puddle-soak -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Get-Process -Name 'puddle-app','puddle','msb','puddle-soak' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           if (-not $env:WINSOAK_OUT) { exit 0 }
           $logs = Join-Path $env:WINSOAK_OUT 'runtime-logs'
           New-Item -ItemType Directory -Force -Path $logs | Out-Null

@@ -46,7 +46,7 @@ const SEEDED_EXPIRY_HEAD_ROOM = 60_000;
 const rowFor = (page: Page, pattern: string, workspace?: string): Locator =>
   page
     .locator("tbody tr", {
-      // The pattern sits in `span.mono`; a suffix rule's "and subdomains" chip is a sibling.
+      // The pattern sits in `span.mono`; a rule that is off has a plain "off" word beside it.
       // `:text-is` is an exact match on text, so the pattern is never read as a regexp.
       has: page.locator(
         `td.host span.mono:text-is(${JSON.stringify(pattern)})`,
@@ -84,7 +84,11 @@ test.describe("the list", () => {
     await expect(global).toContainText("Never");
     const suffix = rowFor(page, "*.crates.io");
     await expect(suffix).toContainText("web-shop");
-    await expect(suffix).toContainText("and subdomains");
+    // "and subdomains" is the wildcard in the host text itself.
+    await expect(suffix.locator("span.mono")).toHaveAttribute(
+      "title",
+      "This host and every subdomain of it",
+    );
     const expiring = rowFor(page, "api.example.com");
     // The page clock starts at the fixture's now but keeps running, and the formatter truncates, so a
     // slow start reads "in 2 hours" for a rule that has 3 hours less a moment left.
@@ -236,9 +240,9 @@ test.describe("adding", () => {
       .getByLabel("Workspace", { exact: true })
       .selectOption({ label: "web-shop" });
     await dialog.getByRole("button", { name: "Add rule" }).click();
-    await expect(rowFor(page, "*.cdn.example.org")).toContainText(
-      "and subdomains",
-    );
+    await expect(
+      rowFor(page, "*.cdn.example.org").locator("span.mono"),
+    ).toHaveAttribute("title", "This host and every subdomain of it");
     const rule = (await rules(request, backend)).find(
       (r) => r.pattern === ".cdn.example.org",
     );

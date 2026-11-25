@@ -47,7 +47,7 @@ describe("a built-in set", () => {
   it("says what it is, that it ships off, and has no actions of yours", () => {
     mount(builtIn("github", { name: "GitHub", changed_at: 0 }));
     expect(screen.getByRole("article", { name: "GitHub" })).toBeInTheDocument();
-    expect(screen.getByText("Built in")).toBeInTheDocument();
+    expect(screen.queryByText("Built in")).toBeNull();
     expect(screen.queryByText("builtin:github")).toBeNull();
     expect(screen.getByText(/Updated by Puddle/)).toBeInTheDocument();
     expect(
@@ -169,7 +169,7 @@ describe("a set you made", () => {
       ],
     });
     const props = mount(set);
-    expect(screen.getByText("Yours")).toBeInTheDocument();
+    expect(screen.queryByText("Yours")).toBeNull();
     expect(screen.getByText("their tenant")).toBeInTheDocument();
     expect(
       screen.getByRole("switch", { name: "On for every workspace" }),

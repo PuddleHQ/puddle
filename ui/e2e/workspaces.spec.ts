@@ -1410,7 +1410,7 @@ test.describe("the settings tab", () => {
       ),
     ).toBeVisible();
     await expect(
-      page.locator('[data-setting="memory"] .chip', {
+      page.locator('[data-setting="memory"] .meta', {
         hasText: "This workspace",
       }),
     ).toBeVisible();
@@ -1473,7 +1473,7 @@ test.describe("the settings tab", () => {
         overrides: { cpus: number | null };
       };
     expect((await read()).overrides.cpus).toBe(chosen);
-    await expect(page.locator('[data-setting="cpus"] .chip')).toHaveText(
+    await expect(page.locator('[data-setting="cpus"] .meta')).toHaveText(
       "This workspace",
     );
 

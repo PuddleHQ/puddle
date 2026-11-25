@@ -145,9 +145,9 @@ describe("the flow's frame", () => {
     expect(
       items.map((li) => li.textContent?.replace(/\s+/g, " ").trim()),
     ).toEqual([
-      "1 Welcome, done",
-      "2 System check, done",
-      "3 Certificates, done",
+      "Done: Welcome",
+      "Done: System check",
+      "Done: Certificates",
       "4 Connect",
       "5 Interception",
       "6 Look",
@@ -157,6 +157,9 @@ describe("the flow's frame", () => {
       items.filter((li) => li.getAttribute("aria-current") === "step"),
     ).toEqual([items[3]]);
     expect(screen.getByText("Puddle")).toBeInTheDocument();
+    // A finished step is a tick and normal text; the steps still to do keep their number.
+    expect(items[0]!.querySelector("svg.tick")).not.toBeNull();
+    expect(items[3]!.querySelector("svg")).toBeNull();
   });
 
   it("leaves the step bar out when the system check runs on its own from Settings", () => {

@@ -45,6 +45,24 @@ const card = (name: string) => screen.getByRole("article", { name });
 const lastToast = () => toasts.items.at(-1)?.message;
 
 describe("switching", () => {
+  it("puts your sets and the built-in ones under their own sub-headings, and leaves out a heading with nothing under it", () => {
+    mount();
+    const headings = screen
+      .getAllByRole("heading", { level: 3 })
+      .map((h) => h.textContent);
+    expect(headings.slice(0, 1)).toEqual(["Your sets"]);
+    expect(headings).toContain("Built-in sets");
+    cleanup();
+    api.sets = [builtIn("github", { name: "GitHub" })];
+    return store.refresh().then(() => {
+      mount();
+      expect(screen.queryByRole("heading", { name: "Your sets" })).toBeNull();
+      expect(
+        screen.getByRole("heading", { name: "Built-in sets" }),
+      ).toBeInTheDocument();
+    });
+  });
+
   it("turns a set off at once and says how many requests it decided", async () => {
     mount();
     api.closes = [7];

@@ -204,7 +204,8 @@
                         credential.covers,
                         credential.host,
                       )}
-                      <span class="muted">({sourceLabel(credential.source)})</span
+                      <span class="muted"
+                        >({sourceLabel(credential.source)})</span
                       >
                     </li>
                   {/each}

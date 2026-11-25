@@ -6745,6 +6745,7 @@ dependencies = [
  "puddle-fs",
  "puddle-process",
  "puddle-test-kit",
+ "puddle-types",
  "rcgen",
  "rustls",
  "serde",
@@ -6806,7 +6807,6 @@ version = "0.0.0"
 dependencies = [
  "proptest",
  "psl",
- "puddle-secrets",
  "puddle-store",
  "puddle-test-kit",
  "puddle-types",

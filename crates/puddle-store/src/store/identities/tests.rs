@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use std::sync::Arc;
 
-use puddle_secrets::{AccountName, HostName, SourceSpec};
+use puddle_types::{AccountName, HostName, SourceSpec};
 
 use super::*;
 use crate::clock::ManualClock;

@@ -99,5 +99,8 @@ async fn a_refused_retention_writes_no_record() {
         .send("PUT", "/api/audit/retention", Some(&json!({"days": 0})))
         .await;
     assert!(matches!(refused.status, 422 | 400));
-    assert!(retention_changes(&api).await.is_empty());
+    assert_eq!(
+        retention_changes(&api).await,
+        Vec::<serde_json::Value>::new()
+    );
 }

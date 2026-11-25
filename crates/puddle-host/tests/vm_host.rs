@@ -3680,11 +3680,19 @@ cat > "$W/np/package.json" <<'JSON'
  "@angular/cli":"18.2.9","@nestjs/core":"10.4.5","@nestjs/cli":"10.4.5","express":"4.21.1","lodash":"4.17.21"}}
 JSON
 vmstat 5 > "$W/vmstat.log" 2>&1 & VM=$!
+cpus() { awk '/^cpu[0-9]/ {print $1, $2+$3+$4+$7+$8+$9, $2+$3+$4+$5+$6+$7+$8+$9}' /proc/stat; }
+proc_ticks() { for p in $(pgrep -x "$1"); do awk '{print $14+$15}' /proc/$p/stat 2>/dev/null; done | awk '{s+=$1} END {print s+0}'; }
+cpus > "$W/cpu0"; a0=$(proc_ticks puddle-agent)
 t0=$(date +%s.%N)
-(cd "$W/np" && npm install --no-audit --no-fund --ignore-scripts --loglevel=http) > "$W/npm.log" 2>&1
+TIMEFORMAT='TRACE npm_cpu real=%R user=%U sys=%S'
+{ time (cd "$W/np" && npm install --no-audit --no-fund --ignore-scripts --loglevel=http) > "$W/npm.log" 2>&1 ; } 2> "$W/time.log"
 rc=$?
 t1=$(date +%s.%N)
+cpus > "$W/cpu1"; a1=$(proc_ticks puddle-agent)
 kill $VM 2>/dev/null
+cat "$W/time.log"
+echo "TRACE agent_cpu_ticks=$((a1 - a0)) (100 per second)"
+paste "$W/cpu0" "$W/cpu1" | awk '{b=$5-$2; t=$6-$3; printf "TRACE percpu %s busy=%.0f%%\n", $1, 100*b/t}'
 awk 'NR>2 {n++; us+=$13; sy+=$14; id+=$15; wa+=$16; if ($15<5) sat++} END {printf "TRACE vmstat samples=%d us=%.0f sy=%.0f id=%.0f wa=%.0f saturated_samples=%d\n", n, us/n, sy/n, id/n, wa/n, sat}' "$W/vmstat.log"
 echo "TRACE npm rc=$rc wall=$(awk "BEGIN {printf \"%.1f\", $t1 - $t0}")"
 grep 'http fetch' "$W/npm.log" | grep -o '[0-9]*ms' | tr -d ms | sort -n | awk '{ a[NR] = $1; s += $1 } END { printf "TRACE npm_requests n=%d sum_ms=%d p50_ms=%d p90_ms=%d max_ms=%d\n", NR, s, a[int(NR/2)+1], a[int(NR*0.9)+1], a[NR] }'

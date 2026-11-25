@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
+  import HostName from "./HostName.svelte";
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
@@ -193,8 +194,8 @@
               >{:else}{workspaces.labelOf(row.workspace)}{/if}
           </td>
           <td>{row.type}</td>
-          <td class="mono" title={row.destination ?? undefined}
-            >{row.destination ?? ""}</td
+          <td title={row.destination ?? undefined}
+            >{#if row.destination}<HostName host={row.destination} />{/if}</td
           >
           <td>
             {#if row.outcome}

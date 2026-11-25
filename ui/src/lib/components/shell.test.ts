@@ -176,8 +176,8 @@ describe("root layout", () => {
     expect(health.start).toHaveBeenCalledTimes(1);
     // The sidebar asks once whether there is an admin screen to list.
     expect(admin.probe).toHaveBeenCalledTimes(1);
-    // The workspace list (the sidebar counts it), the notice watcher, the build guard and the tab's notifications each listen to the shell…
-    expect(live.subscribe).toHaveBeenCalledTimes(4);
+    // The workspace list (the sidebar counts it), the notice watcher, the build guard, the tab's notifications and the waiting strip each listen to the shell…
+    expect(live.subscribe).toHaveBeenCalledTimes(5);
     expect(screen.getByRole("region", { name: "Notices" })).toBeInTheDocument();
     expect(document.title).toBe("Inbox - Puddle");
     unmount();

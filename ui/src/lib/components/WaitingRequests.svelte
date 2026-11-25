@@ -2,6 +2,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import ConfirmDialog from "#lib/components/ConfirmDialog.svelte";
+  import AllowDenyPair from "#lib/components/AllowDenyPair.svelte";
   import DecisionFlow from "#lib/components/DecisionFlow.svelte";
   import LoadNotice from "#lib/components/LoadNotice.svelte";
   import RequestRow from "#lib/components/RequestRow.svelte";
@@ -84,12 +85,12 @@
     </h2>
     {#if rows.length > 1}
       <div class="bulk">
-        <button type="button" class="btn allow" onclick={() => ask("allow")}
-          >Allow all</button
-        >
-        <button type="button" class="btn deny" onclick={() => ask("deny")}
-          >Deny all</button
-        >
+        <AllowDenyPair
+          allowLabel="Allow all"
+          denyLabel="Deny all"
+          onAllow={() => ask("allow")}
+          onDeny={() => ask("deny")}
+        />
       </div>
     {/if}
   </div>

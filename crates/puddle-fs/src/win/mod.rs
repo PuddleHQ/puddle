@@ -208,6 +208,7 @@ fn owner_only_descriptor(rights: &str, inherit: bool) -> io::Result<LocalBox> {
 ///
 /// The outer error is an OS failure reading the DACL or the user's SID; the inner one says why
 /// the file is not owner-only.
+// string-error-ok: the inner text is the finding's detail line; the OS failure is the typed outer error
 pub fn dacl_is_owner_only(file: &File) -> io::Result<Result<(), String>> {
     let mut dacl: *mut ACL = ptr::null_mut();
     let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();

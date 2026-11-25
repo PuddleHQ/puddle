@@ -103,6 +103,7 @@ fn execute(
     env: &dyn Fn(&str) -> Option<OsString>,
     cwd: &Path,
     default_data_dir: Result<PathBuf, puddle_fs::DataDirError>,
+    // string-error-ok: a subcommand's error is the line main prints before exiting 1; nothing matches on a kind
 ) -> Result<puddle_host::BackupReport, String> {
     let data = match data_folder::configured(&args.flags, env, cwd).map_err(|e| e.to_string())? {
         Some(dir) => dir,

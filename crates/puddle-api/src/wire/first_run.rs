@@ -40,6 +40,42 @@ pub struct DevCertTrustResult {
     pub waiting: bool,
 }
 
+/// A step of the first-run flow, in the order the person walks them (the ids of the UI's step list).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FirstRunStep {
+    /// The welcome screen.
+    Welcome,
+    /// The system check.
+    Check,
+    /// The certificates step.
+    Certificates,
+    /// How to connect.
+    Connect,
+    /// Which hosts Puddle decrypts.
+    Interception,
+    /// The look of the app.
+    Look,
+    /// The last screen.
+    Done,
+}
+
+impl FirstRunStep {
+    /// The id the settings document keeps (the same as on the wire).
+    #[must_use]
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Welcome => "welcome",
+            Self::Check => "check",
+            Self::Certificates => "certificates",
+            Self::Connect => "connect",
+            Self::Interception => "interception",
+            Self::Look => "look",
+            Self::Done => "done",
+        }
+    }
+}
+
 /// Where the first-run flow stands.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -49,17 +85,27 @@ pub struct FirstRun {
     /// Epoch ms of that; `null` while it still has to run.
     #[schema(required = true)]
     pub completed_at: Option<u64>,
+    /// The step the person was on when they left the flow, so reopening it resumes there; `null`
+    /// before they moved on from the first screen, and once the flow is completed.
+    #[schema(required = true)]
+    pub step: Option<FirstRunStep>,
     /// What the certificates step says about a development certificate.
     pub dev_certificate: DevCertificate,
 }
 
-/// Marks the first-run flow finished, or open again.
+/// Marks the first-run flow finished or open again, and/or records the step the person is on.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FirstRunRequest {
     /// `true` records that the flow was finished or skipped (the time of the first such call is
-    /// kept); `false` makes it run again at the next start.
-    pub completed: bool,
+    /// kept); `false` makes it run again at the next start, from the first step. Left out, the
+    /// flow's completion is not touched.
+    #[serde(default)]
+    pub completed: Option<bool>,
+    /// The step the person is on, kept so reopening the flow resumes there. Ignored once the flow
+    /// is completed.
+    #[serde(default)]
+    pub step: Option<FirstRunStep>,
 }
 
 /// What the first-run banner's Retry came to.

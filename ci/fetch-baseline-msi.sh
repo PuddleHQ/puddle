@@ -5,8 +5,8 @@
 #   ci/fetch-baseline-msi.sh <out-dir>
 #
 # That is the MSI of the newest published release. While there is no release yet, it is the MSI
-# the newest green msi workflow run on develop kept (the `puddle-msi` artifact, 14 days), from a
-# commit other than this one, so the upgrade still crosses commits. Prints the MSI's path on the
+# the newest msi workflow run on develop whose `msi` job passed kept (the `puddle-msi` artifact, 14
+# days; the run's other jobs may be red, the upgrade job among them), from a commit other than this one, so the upgrade still crosses commits. Prints the MSI's path on the
 # last line of stdout and says where it came from on stderr; with GITHUB_STEP_SUMMARY set, the
 # source also goes into the run's summary. Exits 1 when there is no baseline (a release without
 # an MSI, or no kept develop MSI), naming why. Needs GH_TOKEN, GITHUB_REPOSITORY, GITHUB_SHA and
@@ -16,7 +16,7 @@ set -euo pipefail
 out=${1:?usage: fetch-baseline-msi.sh <out-dir>}
 repo=${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is not set}
 sha=${GITHUB_SHA:?GITHUB_SHA is not set}
-# Kept develop MSIs looked at, newest first, for one whose run is green.
+# Kept develop MSIs looked at, newest first, for one whose msi job passed.
 max_candidates=${BASELINE_MAX_CANDIDATES:-10}
 pattern='Puddle_*_x64_en-US.msi'
 
@@ -39,12 +39,15 @@ else
     run="" from=""
     while read -r id head; do
         [ -n "$id" ] || continue
-        if [ "$(gh run view "$id" -R "$repo" --json conclusion --jq .conclusion)" = success ]; then
+        # The job that built and installed the MSI, not the run: a run whose upgrade or usable job
+        # is red still kept an MSI that installed, and judging the run made the baseline
+        # unobtainable while the upgrade job itself was the red one.
+        if [ "$(gh run view "$id" -R "$repo" --json jobs --jq '[.jobs[] | select(.name | startswith("msi (")) | .conclusion] | first // ""')" = success ]; then
             run=$id from=$head
             break
         fi
     done < <(printf '%s\n' "$candidates" | head -n "$max_candidates")
-    [ -n "$run" ] || die "$repo has no release and no green develop run of msi.yml that kept an MSI (puddle-msi, kept 14 days) on another commit"
+    [ -n "$run" ] || die "$repo has no release and no develop run of msi.yml with a passing msi job that kept an MSI (puddle-msi, kept 14 days) on another commit"
     gh run download "$run" -R "$repo" --name puddle-msi --dir "$out" || die "could not download the MSI of run $run"
     source="develop at ${from:0:9} (msi run $run; no release yet)"
 fi

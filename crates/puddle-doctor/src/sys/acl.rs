@@ -63,6 +63,7 @@ pub(super) struct AclEntry {
 
 /// The entries in `ls -lde` output for one folder (empty when it has no ACL). An entry line the
 /// parser does not understand is an error, never "no grant".
+// string-error-ok: the text becomes one finding's detail line; no caller branches on a kind
 pub(super) fn parse_ls_lde(output: &str) -> Result<Vec<AclEntry>, String> {
     let mut lines = output.lines();
     let Some(head) = lines.next() else {
@@ -77,6 +78,7 @@ pub(super) fn parse_ls_lde(output: &str) -> Result<Vec<AclEntry>, String> {
         .collect()
 }
 
+// string-error-ok: the text becomes one finding's detail line; no caller branches on a kind
 fn parse_entry(line: &str) -> Result<AclEntry, String> {
     let bad = || format!("unreadable ACL line {line:?}");
     let (index, rest) = line.trim().split_once(": ").ok_or_else(bad)?;

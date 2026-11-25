@@ -1,7 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import ConnectDialog from "./ConnectDialog.svelte";
-  import CreateWorkspaceDialog from "./CreateWorkspaceDialog.svelte";
   import DeleteWorkspaceDialog from "./DeleteWorkspaceDialog.svelte";
   import DirectSshDialog from "./DirectSshDialog.svelte";
   import RenameWorkspaceDialog from "./RenameWorkspaceDialog.svelte";
@@ -39,8 +38,6 @@
     if (actions.connectOpen) return editorProblems.start();
   });
 </script>
-
-<CreateWorkspaceDialog bind:open={actions.createOpen} />
 
 {#if connecting}
   <ConnectDialog

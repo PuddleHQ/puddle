@@ -28,6 +28,8 @@ fn a_low_soft_limit_is_raised_and_the_process_can_then_hold_that_many_sockets() 
             .map(|_| std::net::UdpSocket::bind("127.0.0.1:0").unwrap())
             .collect();
         assert_eq!(held.len(), 2500);
+        // the sockets stay open until the limit has been asked again
+        drop(held);
     }
     // A second call finds nothing to do and changes nothing.
     assert_eq!(

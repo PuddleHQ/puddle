@@ -5,10 +5,12 @@ ok    Hypervisor          /dev/kvm is usable
 ok    Bundled runtime     msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)
 ok    Runtime starts      msb 0.7.7-puddle.2 (0.0 s)
 FAIL  Test boot           msb can't find its firmware library (libkrunfw) beside it
-      fix:  Reinstall Puddle: its runtime folder /opt/puddle/runtime is incomplete. msb needs
-            the libkrunfw it was released with in the same folder.
-      from: error: microsandbox runtime installation is incomplete: /opt/puddle/runtime/msb
-            has no matching libkrunfw
+      impact: Puddle can't start any workspace: part of its runtime is missing.
+      remedy: Reinstall Puddle.
+      fix:    Reinstall Puddle: its runtime folder /opt/puddle/runtime is incomplete. msb needs
+              the libkrunfw it was released with in the same folder.
+      from:   error: microsandbox runtime installation is incomplete: /opt/puddle/runtime/msb
+              has no matching libkrunfw
 ok    Disk space          120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 ok    Disk encryption     data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent           the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)

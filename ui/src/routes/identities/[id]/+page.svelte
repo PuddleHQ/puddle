@@ -5,7 +5,7 @@
   import { page } from "$app/state";
   import { onMount, tick } from "svelte";
   import CheckChip from "#lib/components/CheckChip.svelte";
-  import CreateWorkspaceDialog from "#lib/components/CreateWorkspaceDialog.svelte";
+  import { workspaceActions } from "#lib/stores/workspace-actions.svelte.ts";
   import RepoBrowser from "#lib/components/RepoBrowser.svelte";
   import ConfirmDialog from "#lib/components/ConfirmDialog.svelte";
   import IdentityDialog from "#lib/components/IdentityDialog.svelte";
@@ -41,8 +41,6 @@
   let started = $state<SignInStart | null>(null);
   let startError = $state<string | null>(null);
   const repos = new RepoLists();
-  let createOpen = $state(false);
-  let createFor = $state<{ url: string; identity: number | null } | null>(null);
 
   // An identity that was here and is gone (deleted here or elsewhere) takes you back to the list.
   let seen = false;
@@ -68,10 +66,12 @@
     else startError = result.message;
   }
 
-  // "Create a workspace for this" opens the create form on this page with the repository filled in.
+  // "Create a workspace for this" opens the New workspace screen with the repository filled in.
   function createFrom(repo: RepoView) {
-    createFor = { url: repo.url, identity: identity?.id ?? null };
-    createOpen = true;
+    workspaceActions.openCreate({
+      url: repo.url,
+      identity: identity?.id ?? null,
+    });
   }
 
   // The identity page's Sign in, for the credential a list says is signed out.
@@ -260,12 +260,6 @@
     confirmLabel="Delete {identity.label}"
     tone="deny"
     onConfirm={confirmDelete}
-  />
-  <CreateWorkspaceDialog
-    bind:open={createOpen}
-    prefill={createFor}
-    onCreated={(workspace) =>
-      void goto(`/workspaces/${encodeURIComponent(workspace.id)}`)}
   />
   <SignInDialog
     bind:open={signInOpen}

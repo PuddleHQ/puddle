@@ -6,7 +6,7 @@ A step name such as `name: rustdoc (-D warnings: a link)` is a mapping inside a 
 rejects the whole workflow, and only CI notices. With PyYAML installed (the CI runners and the host
 lanes have it) every file is parsed for real and the error names file and line. Without it (a
 machine with no YAML library) a line check finds the same class of mistake: an unquoted single-line
-value that holds `: `, or a tab in the indentation (block scalars such as `run: |` and comments are skipped). The line check cannot see everything a parser sees; the real parse is the gate.
+value that holds `: `, or a tab in the indentation (block scalars such as `run: |` and comments are skipped; a value that starts with `${{` is checked like any other, since a plain scalar may not hold `: ` inside the expression either). The line check cannot see everything a parser sees; the real parse is the gate.
 
 Usage: check-workflow-yaml.py [--line-check] [dir]   (default dir .github; --line-check forces the fallback)
        check-workflow-yaml.py --self-test
@@ -47,7 +47,7 @@ def line_check(path):
         if value[:1] in "|>":
             block_indent = len(prefix.replace("-", " "))
             continue
-        if value[:1] in "\"'[{&*!" or value.startswith("${{") or not value:
+        if value[:1] in "\"'[{&*!" or not value:
             continue
         if value.startswith("#"):
             continue
@@ -102,14 +102,16 @@ def self_test():
         os.makedirs(wf)
         good = "name: ci\non: push\njobs:\n  a:\n    steps:\n      - name: fine (ok; really)\n        if: ${{ a && b }}\n        run: |\n          echo 'x: y'\n      - name: \"quoted: colon\"\n        run: echo a\n"
         bad = "name: ci\non: push\njobs:\n  a:\n    steps:\n      - name: a: b\n        run: echo a\n"
+        bad_expr = "name: ci\non: push\njobs:\n  a:\n    strategy:\n      matrix:\n        include: ${{ fromJSON('[{\"name\":\"x (planted: y)\"}]') }}\n"
         open(os.path.join(wf, "good.yml"), "w").write(good)
         for force in modes:
             assert run(d, force) == 0, f"a valid workflow failed (line check {force})"
-        open(os.path.join(wf, "bad.yml"), "w").write(bad)
-        for force in modes:
-            if run(d, force) != 1:
-                print(f"self-test: `name: a: b` passed (line check {force})", file=sys.stderr)
-                return 1
+        for label, text in (("name: a: b", bad), ("a ': ' inside a ${{ }} scalar", bad_expr)):
+            open(os.path.join(wf, "bad.yml"), "w").write(text)
+            for force in modes:
+                if run(d, force) != 1:
+                    print(f"self-test: {label} passed (line check {force})", file=sys.stderr)
+                    return 1
     print("check-workflow-yaml self-test: ok")
     return 0
 

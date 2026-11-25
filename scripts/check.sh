@@ -302,6 +302,9 @@ run_gate() {
     clippy)
         # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
         "$cargo" clippy --workspace $skip_app --all-targets --all-features --locked -- -D warnings
+        # fuzz/ is its own workspace (nightly libFuzzer), so the line above never sees it; it builds on stable
+        # for a lint run, and carries a copy of the workspace lint table (fuzz/Cargo.toml `[lints]`).
+        (cd fuzz && "$cargo" clippy --all-targets --locked -- -D warnings)
         ;;
     dormant)
         # the build that ships (default features, so the `serve` and `mise` cargo features

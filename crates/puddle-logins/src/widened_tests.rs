@@ -272,8 +272,7 @@ async fn forgetting_deletes_every_resources_entry() {
 
 #[test]
 fn slots_are_listed_once_each_and_a_role_with_two_resources_counts_once() {
-    let slots: Vec<Slot> = WIDE[0].slots().into_iter().map(|(slot, _)| slot).collect();
-    assert_eq!(slots.len(), 3);
+    assert_eq!(WIDE[0].slots().len(), 3);
     assert_eq!(WIDE[0].roles(), [Role::Access, Role::ApiKey]);
     assert_eq!(
         WIDE[0].slot_name_of(Slot {

@@ -5,10 +5,14 @@ ok    Hypervisor            Windows Hypervisor Platform is on and the hypervisor
 ok    Code integrity        memory integrity (HVCI) on; App Control policy for programs off
 ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
 FAIL  Runtime starts        msb didn't answer within 10.0 s
-      fix:  Security software scanning a program it hasn't seen before is the usual cause. Run
-            puddle doctor again; if it keeps timing out, check your endpoint security's log for
-            msb.
+      impact: Puddle can't start workspaces yet: its runtime did not answer in time.
+      remedy: Check again. Security software scanning a new program is the usual cause.
+      fix:    Security software scanning a program it hasn't seen before is the usual cause. Run
+              puddle doctor again; if it keeps timing out, check your endpoint security's log for
+              msb.
 skip  Test boot             not checked: the runtime doesn't start
+      impact: Not checked, so Puddle can't tell yet whether a workspace can start here.
+      remedy: Fix any problem above, then check again.
 ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)

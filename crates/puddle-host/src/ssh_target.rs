@@ -69,6 +69,7 @@ impl<S: Sandbox> SshTarget for ReportingTarget<S> {
         self.gated.label()
     }
 
+    // string-error-ok: the trait is puddle-ssh's `SshTarget::admit`, whose `Err` is the text shown to the client
     fn admit(&self) -> impl Future<Output = Result<(), String>> + Send {
         self.gated.admit()
     }

@@ -680,8 +680,11 @@ impl Run {
         match out {
             Ok(o) if o.status.success() => self.log.line(&format!("{}: passed", e.name())),
             Ok(o) => {
-                let text = String::from_utf8_lossy(&o.stdout).into_owned()
-                    + &String::from_utf8_lossy(&o.stderr);
+                let text = format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&o.stdout),
+                    String::from_utf8_lossy(&o.stderr)
+                );
                 append(&self.opts.out.join(format!("ui-{}.log", e.name())), &text);
                 self.major(format!(
                     "the {} event failed in the UI ({}); log ui-{}.log",
@@ -938,7 +941,11 @@ async fn guest(
     match out {
         Ok(o) => (
             o.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&o.stdout).into_owned() + &String::from_utf8_lossy(&o.stderr),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            ),
         ),
         Err(e) => (-1, format!("msb exec: {e}")),
     }

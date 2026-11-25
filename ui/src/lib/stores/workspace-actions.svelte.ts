@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // What a click on a workspace does, shared by the list and the detail page: start, stop,
 // reclaim, connect (the "how do you want to connect" step, with the direct-SSH switch and its
-// trust text), delete (with the check of what would be lost) and the create dialog. The dialogs themselves are drawn by
+// trust text), delete (with the check of what would be lost) and the way to the New workspace screen. The dialogs themselves are drawn by
 // `WorkspaceDialogs.svelte`, which reads the state here.
+import { goto } from "$app/navigation";
 import {
   workspaces as defaultStore,
   type Settled,
@@ -76,7 +77,6 @@ const EDITOR_WORDS = {
 } as const;
 
 export class WorkspaceActions {
-  createOpen = $state(false);
   /** The workspace the connect step is open for (a snapshot: read live data by its id). */
   connectFor = $state.raw<Workspace | null>(null);
   connectOpen = $state(false);
@@ -124,8 +124,12 @@ export class WorkspaceActions {
     });
   };
 
-  openCreate = (): void => {
-    this.createOpen = true;
+  /** The New workspace screen, with a repository filled in when one is given. */
+  openCreate = (from?: { url: string; identity: number | null }): void => {
+    const query = from
+      ? `?url=${encodeURIComponent(from.url)}${from.identity === null ? "" : `&identity=${from.identity}`}`
+      : "";
+    void goto(`/workspaces/new${query}`);
   };
 
   start = async (w: Workspace): Promise<void> => {

@@ -416,7 +416,7 @@ async fn local_addresses_of_an_allowed_name_are_blocked_by_default() {
     assert!(
         refusal
             .message
-            .contains("turn on 'loopback' (host loopback) or 'metadata' (cloud metadata)"),
+            .contains("turn on 'This computer (loopback)' or 'Cloud metadata'"),
         "{}",
         refusal.message
     );
@@ -915,6 +915,26 @@ mod guard {
     }
 
     #[tokio::test]
+    async fn block_text_names_the_workspace_by_its_name_not_its_id() {
+        let policy = Arc::new(StaticPolicy::new());
+        policy.set_workspace_name("Client work");
+        policy.allow(&host("10.1.2.3"));
+        let p = guarded(
+            policy,
+            StaticResolver::new(),
+            all_on().with_toggle(LocalCategory::Private, false),
+        );
+        let refusal = admit(&p, &request("10.1.2.3")).await.unwrap_err();
+        assert!(
+            refusal
+                .message
+                .contains("turn on 'Private networks' globally or for workspace Client work;"),
+            "{}",
+            refusal.message
+        );
+    }
+
+    #[tokio::test]
     async fn toggle_off_allowed_local_destination_is_blocked_naming_the_toggle() {
         let policy = Arc::new(StaticPolicy::new());
         policy.allow(&host("10.1.2.3"));
@@ -926,9 +946,9 @@ mod guard {
         let refusal = admit(&p, &request("10.1.2.3")).await.unwrap_err();
         assert_eq!(blocked(&refusal), Some("toggle:private"));
         assert!(
-            refusal.message.contains(
-                "turn on 'private' (local/private network) globally or for workspace box"
-            ),
+            refusal
+                .message
+                .contains("turn on 'Private networks' globally or for workspace box"),
             "{}",
             refusal.message
         );

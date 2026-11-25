@@ -1,15 +1,21 @@
 puddle doctor (puddle 0.1.0, windows x86_64)
 
 FAIL  CPU virtualization    off in the firmware (UEFI/BIOS)
-      fix:  Turn on CPU virtualization in your PC's UEFI/BIOS setup (Intel: "Intel
-            Virtualization Technology" / VT-x; AMD: "SVM Mode"), save, and start the PC again.
+      impact: Puddle can't start any workspace: the CPU's virtualization feature is turned off.
+      remedy: Turn on CPU virtualization in the PC's UEFI/BIOS setup, then start the PC again.
+      fix:    Turn on CPU virtualization in your PC's UEFI/BIOS setup (Intel: "Intel
+              Virtualization Technology" / VT-x; AMD: "SVM Mode"), save, and start the PC again.
 FAIL  Hypervisor            Windows Hypervisor Platform is on, but the hypervisor can't run: CPU virtualization is off
-      fix:  Turn on CPU virtualization in your PC's UEFI/BIOS setup (Intel: "Intel
-            Virtualization Technology" / VT-x; AMD: "SVM Mode"), save, and start the PC again.
+      impact: Puddle can't start any workspace: the CPU's virtualization feature is turned off.
+      remedy: Turn on CPU virtualization in the PC's UEFI/BIOS setup, then start the PC again.
+      fix:    Turn on CPU virtualization in your PC's UEFI/BIOS setup (Intel: "Intel
+              Virtualization Technology" / VT-x; AMD: "SVM Mode"), save, and start the PC again.
 ok    Code integrity        memory integrity (HVCI) on; App Control policy for programs off
 ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
 ok    Runtime starts        msb 0.7.7-puddle.2 (0.0 s)
 skip  Test boot             not checked: no usable hypervisor
+      impact: Not checked, so Puddle can't tell yet whether a workspace can start here.
+      remedy: Fix any problem above, then check again.
 ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)

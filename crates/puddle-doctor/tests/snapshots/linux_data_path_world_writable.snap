@@ -7,12 +7,14 @@ ok    Runtime starts      msb 0.7.7-puddle.2 (0.0 s)
 ok    Test boot           a test VM booted and ran a program in 1.1 s
 ok    Disk space          120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 FAIL  Data folder path    /data is writable by everyone and not sticky, so msb will not open Puddle's data below it
-      fix:  msb opens its catalog only below folders where other accounts cannot rename entries,
-            so every sandbox start fails until the write permission is gone. A user created with
-            a private group and umask 0002 (the Ubuntu default) often leaves ~/.local at 0775.
-            Run:
-              chmod go-w /data
-      from: /data mode 0757
+      impact: Puddle can't start any workspace: other accounts can change a folder above its data.
+      remedy: Take the write permission for others off that folder with `chmod go-w`.
+      fix:    msb opens its catalog only below folders where other accounts cannot rename entries,
+              so every sandbox start fails until the write permission is gone. A user created with
+              a private group and umask 0002 (the Ubuntu default) often leaves ~/.local at 0775.
+              Run:
+                chmod go-w /data
+      from:   /data mode 0757
 ok    Disk encryption     data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent           the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)
 ok    Azure CLI (az)      version 2.64.0

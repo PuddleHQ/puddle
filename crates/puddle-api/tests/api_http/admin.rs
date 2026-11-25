@@ -517,7 +517,7 @@ async fn a_deletion_whose_workspace_step_fails_is_finished_at_a_later_look() {
     assert_eq!(started.status, 202, "{started:?}");
     admin.workspaces.idle().await;
     let mut others = Vec::new();
-    for name in ["Bob", "Cy", "Dee"] {
+    for name in ["Bob", "Cy", "Dee", "Eve"] {
         others.push((name, admin.user(name, pw("other password three")).await.1));
     }
 
@@ -530,9 +530,13 @@ async fn a_deletion_whose_workspace_step_fails_is_finished_at_a_later_look() {
     admin
         .workspaces
         .fail_next(puddle_api::Operation::Deleting, "the volume is locked");
-    // Each further deletion makes the reaper look again (it also looks every few seconds).
+    // Ann needs four looks: the stop fails, the stop works, the delete fails, the delete works.
+    // A deletion started while a look runs only queues one more look, so two deletions in a row
+    // can share a look. Waiting until each other user is gone gives one look per deletion, and
+    // the one that follows Ann's own deletion is the first of the four.
     for (name, id) in others {
         start_delete(&admin, id, name).await;
+        admin.gone(name).await;
         admin.workspaces.idle().await;
     }
     admin.gone("Ann").await;

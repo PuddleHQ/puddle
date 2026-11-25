@@ -83,7 +83,7 @@ test.describe("the list", () => {
     await expect(global).toContainText("/repos/**");
     await expect(global).toContainText("Every workspace");
     const own = rowFor(page, "*.example.org");
-    await expect(own.locator("span.mono").first()).toHaveAttribute(
+    await expect(own.locator("span.wild")).toHaveAttribute(
       "title",
       "This host and every subdomain of it",
     );

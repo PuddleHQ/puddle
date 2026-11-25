@@ -270,7 +270,7 @@ test("creating from the form for a repository nobody covers warns with the defau
   await backend.signIn(page);
   await page.goto("/workspaces");
   await page.getByRole("button", { name: "New workspace" }).first().click();
-  const dialog = page.getByRole("dialog", { name: "New workspace" });
+  const dialog = page.getByRole("region", { name: "New workspace" });
   await dialog
     .getByLabel("Git repository (HTTPS)")
     .fill("https://gitlab.example.com/team/tooling.git");
@@ -310,7 +310,7 @@ test("creating for a repository an identity covers says nothing and attaches tha
   await backend.signIn(page);
   await page.goto("/workspaces");
   await page.getByRole("button", { name: "New workspace" }).first().click();
-  const dialog = page.getByRole("dialog", { name: "New workspace" });
+  const dialog = page.getByRole("region", { name: "New workspace" });
   // Personal covers the rest of github.com; Work (the default) covers only acme.
   await dialog
     .getByLabel("Git repository (HTTPS)")

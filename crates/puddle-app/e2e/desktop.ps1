@@ -110,8 +110,8 @@ switch ($Action) {
   }
   'tray-quit' {
     # The tray icon's menu: a disabled count line, Open Puddle, Quit Puddle. The popup is a native menu UI
-    # Automation lists only once it is open, so it is opened with a real right click, waited on, and the
-    # entry is invoked by its name.
+    # Automation may list only once it is open, so it is opened with a real right click and waited on; the
+    # entry is invoked by its name, or picked with the keyboard when Automation lists none.
     Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Windows.Forms
     [void][Shell]::SetProcessDPIAware()
     $A = [System.Windows.Automation.AutomationElement]
@@ -146,8 +146,15 @@ switch ($Action) {
     }
     if (-not $menu) { 'tray menu did not open'; exit 1 }
     $item = $menu.FindFirst('Descendants', $nameIs)
-    if (-not $item) { 'no Quit Puddle entry in the tray menu'; exit 1 }
-    $item.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    if ($item) {
+      $item.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    } else {
+      # CI 2026-11-25: the popup was found and its entries were not. Quit Puddle is the menu's last entry,
+      # and Up from nothing selected lands on it.
+      [System.Windows.Forms.SendKeys]::SendWait('{UP}')
+      Start-Sleep -Milliseconds 300
+      [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+    }
     'quit chosen'
   }
   default { throw "unknown action $Action" }

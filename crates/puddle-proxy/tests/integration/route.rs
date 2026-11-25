@@ -950,7 +950,7 @@ async fn a_cloud_metadata_destination_is_refused_naming_its_toggle_and_waits_for
         assert_eq!(header_value(&headers, "x-puddle-pending"), None, "{target}");
         let body = String::from_utf8(read_all(&mut reader).await.unwrap()).unwrap();
         assert!(
-            body.contains("'metadata' (cloud metadata)") && body.contains("toggle is off"),
+            body.contains("turn on 'Cloud metadata'") && body.contains("toggle is off"),
             "{target}: {body}"
         );
     }

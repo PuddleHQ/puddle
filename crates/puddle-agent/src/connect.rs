@@ -102,6 +102,7 @@ impl Request {
     /// # Errors
     ///
     /// The usage text, or what is wrong with the host or port.
+    // string-error-ok: the usage text is the whole contract: main prints it to stderr and exits 2, nothing matches on a kind
     pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<Self, String> {
         let mut args: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
         let mut local = Vec::new();

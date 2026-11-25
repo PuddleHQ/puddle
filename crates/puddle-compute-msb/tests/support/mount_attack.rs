@@ -14,7 +14,7 @@
 //!
 //! The control tests (`mount_attack_control.rs`) feed `judge` what a writable share would produce
 //! and require it to fail, so a judge that passed everything would be caught.
-#![allow(
+#![expect(
     clippy::expect_used,
     clippy::unwrap_used,
     clippy::panic,

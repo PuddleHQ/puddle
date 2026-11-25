@@ -122,7 +122,8 @@ async fn admit_into(
         .check_target(&request.workspace, &target, port)
     {
         note_block(event, reason);
-        return Err(block(request, &[reason]));
+        let label = proxy.workspace_label(&request.workspace).await;
+        return Err(block_at(request, &label, &[reason], None));
     }
     let decided = proxy.decide(request, SuffixAllows::Count).await;
     note(event, request, &decided);
@@ -151,9 +152,9 @@ async fn admit_into(
             }
             AddressVerdict::Block(reason) => {
                 if matches!(reason, BlockReason::CompanyNetwork(_)) {
-                    company_ip.get_or_insert(addr.ip());
+                    company_ip.get_or_insert_with(|| addr.ip());
                 }
-                refused_first.get_or_insert((addr.ip(), RefusedReason::Guard(reason)));
+                refused_first.get_or_insert_with(|| (addr.ip(), RefusedReason::Guard(reason)));
                 blocked.push(reason);
             }
         }
@@ -192,7 +193,8 @@ async fn admit_into(
             blocked.push(BlockReason::LocalAddress);
         }
         note_block(event, shown_reason(&blocked));
-        return Err(block_at(request, &blocked, company_ip));
+        let label = proxy.workspace_label(&request.workspace).await;
+        return Err(block_at(request, &label, &blocked, company_ip));
     }
     // A proxy may be told the name only when nothing the name resolved to was dropped: otherwise
     // it could pick the dropped address itself (R-14, R-27).
@@ -487,11 +489,17 @@ fn allowed(
 /// The refusal for a blocked request; `reasons` holds every address's reason (at least one).
 /// The header names the first toggle if any (turning it on would help), else the first reason.
 fn block(request: &EgressRequest, reasons: &[BlockReason]) -> Refusal {
-    block_at(request, reasons, None)
+    block_at(request, request.workspace.as_str(), reasons, None)
 }
 
 /// [`block`] for a block at an address of the destination: a company-network refusal names it.
-fn block_at(request: &EgressRequest, reasons: &[BlockReason], ip: Option<IpAddr>) -> Refusal {
+/// `workspace` is how the message names the workspace (its name, or its id when it has none).
+fn block_at(
+    request: &EgressRequest,
+    workspace: &str,
+    reasons: &[BlockReason],
+    ip: Option<IpAddr>,
+) -> Refusal {
     let host = &request.host;
     let reason = shown_reason(reasons);
     tracing::info!(workspace = %request.workspace, %host, port = request.port, %reason, "blocked");
@@ -502,7 +510,7 @@ fn block_at(request: &EgressRequest, reasons: &[BlockReason], ip: Option<IpAddr>
         | BlockReason::PuddleEndpoint
         | BlockReason::LocalAddress
         | BlockReason::LocalToggle(_)
-        | BlockReason::SettingsUnreadable => block_message(host, &request.workspace, reasons),
+        | BlockReason::SettingsUnreadable => block_message(host, workspace, reasons),
     };
     Refusal::new("403 Forbidden", message)
         .header("x-puddle-decision", "blocked")

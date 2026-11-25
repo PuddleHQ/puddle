@@ -184,7 +184,7 @@ fn a_window_on_a_forwarded_port_is_the_guests_own_app_with_nothing_of_the_editor
     assert_eq!(forwarded.debug_port, None);
     let probed = Target {
         debug_port: Some(9334),
-        ..editor.clone()
+        ..editor
     };
     assert_eq!(
         forward_target(&probed, &address).debug_port,

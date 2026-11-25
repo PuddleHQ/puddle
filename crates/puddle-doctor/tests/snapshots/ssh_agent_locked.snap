@@ -9,9 +9,12 @@ ok    Test boot             a test VM booted and ran a program in 1.1 s
 ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 warn  SSH agent             the agent on \\.\pipe\openssh-ssh-agent is locked
-      note: SSH to servers other than Git hosts gets no key from Puddle while the agent is
-            locked. Unlock it (1Password, Bitwarden) or run ssh-add to add a key. Git hosts need
-            no agent.
+      impact: Programs in a workspace can't use your SSH keys while the agent is locked. Git over
+              SSH still works.
+      remedy: Unlock the agent, or add a key with ssh-add.
+      note:   SSH to servers other than Git hosts gets no key from Puddle while the agent is
+              locked. Unlock it (1Password, Bitwarden) or run ssh-add to add a key. Git hosts need
+              no agent.
 ok    Azure CLI (az)        version 2.64.0
 ok    Credential store      the operating system's credential store: a test write and delete worked
 ok    Global Secure Access  client not installed

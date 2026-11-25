@@ -5,7 +5,7 @@
 
 use std::fmt;
 use std::io;
-use std::net::{IpAddr, SocketAddr, UdpSocket};
+use std::net::{IpAddr, SocketAddr, TcpListener, ToSocketAddrs, UdpSocket};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 
@@ -182,6 +182,24 @@ impl PuddleEndpoints {
             endpoints: self.clone(),
             id,
         }
+    }
+
+    /// Binds a TCP listener at `addr` and registers the address it really got (so a port of `0`
+    /// registers the port the system picked), before the caller can serve on it. The listener is
+    /// non-blocking, ready for `tokio::net::TcpListener::from_std`.
+    ///
+    /// # Errors
+    ///
+    /// When the address can't be bound or the listener can't be made non-blocking.
+    pub fn bind(
+        &self,
+        addr: impl ToSocketAddrs,
+        kind: EndpointKind,
+    ) -> io::Result<(TcpListener, Registration)> {
+        let listener = TcpListener::bind(addr)?;
+        listener.set_nonblocking(true)?;
+        let registration = self.register(listener.local_addr()?, kind);
+        Ok((listener, registration))
     }
 
     /// Blocks a public name (and, with `subdomains`, every name below it) for guests whatever its

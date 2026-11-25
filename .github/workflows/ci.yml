@@ -461,6 +461,7 @@ jobs:
     permissions:
       contents: read
       actions: write
+      pull-requests: read
     steps:
       - name: disk at start (evidence, never a gate)
         run: |
@@ -547,6 +548,8 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
         run: scripts/check.sh silent-revert
       - name: early-exit pipes (grep -q after a pipe is a SIGPIPE coin toss under pipefail)
         if: ${{ !cancelled() }}
@@ -768,6 +771,7 @@ jobs:
     permissions:
       contents: read
       actions: write
+      pull-requests: read
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -800,6 +804,8 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
         run: scripts/check.sh silent-revert
       - name: gitleaks download cache (the script still checks the pin)
         if: ${{ !cancelled() }}

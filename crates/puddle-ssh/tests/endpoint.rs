@@ -227,12 +227,13 @@ impl Echo {
 
 impl SshTarget for Echo {
     type Error = std::io::Error;
+    type Refusal = String;
 
     fn label(&self) -> String {
         "echo".into()
     }
 
-    fn admit(&self) -> impl Future<Output = Result<(), String>> {
+    fn admit(&self) -> impl Future<Output = Result<(), Self::Refusal>> {
         std::future::ready(Ok(()))
     }
 
@@ -452,12 +453,13 @@ struct Hostile;
 
 impl SshTarget for Hostile {
     type Error = std::io::Error;
+    type Refusal = String;
 
     fn label(&self) -> String {
         "hostile".into()
     }
 
-    fn admit(&self) -> impl Future<Output = Result<(), String>> {
+    fn admit(&self) -> impl Future<Output = Result<(), Self::Refusal>> {
         let mut reason = String::from("evil\r\n\x1b]0;title\x07SSH-2.0-fake\r\n");
         reason.push_str(&"x".repeat(10_000));
         std::future::ready(Err(reason))
@@ -501,12 +503,13 @@ struct Failing;
 
 impl SshTarget for Failing {
     type Error = std::io::Error;
+    type Refusal = String;
 
     fn label(&self) -> String {
         "failing".into()
     }
 
-    fn admit(&self) -> impl Future<Output = Result<(), String>> {
+    fn admit(&self) -> impl Future<Output = Result<(), Self::Refusal>> {
         std::future::ready(Ok(()))
     }
 
@@ -541,12 +544,13 @@ struct Reporting {
 
 impl SshTarget for Reporting {
     type Error = std::io::Error;
+    type Refusal = String;
 
     fn label(&self) -> String {
         "reporting".into()
     }
 
-    fn admit(&self) -> impl Future<Output = Result<(), String>> {
+    fn admit(&self) -> impl Future<Output = Result<(), Self::Refusal>> {
         std::future::ready(Ok(()))
     }
 
@@ -600,12 +604,13 @@ struct EarlyEof {
 
 impl SshTarget for EarlyEof {
     type Error = std::io::Error;
+    type Refusal = String;
 
     fn label(&self) -> String {
         "early-eof".into()
     }
 
-    fn admit(&self) -> impl Future<Output = Result<(), String>> {
+    fn admit(&self) -> impl Future<Output = Result<(), Self::Refusal>> {
         std::future::ready(Ok(()))
     }
 
@@ -660,6 +665,7 @@ struct SlowRefusal {
 
 impl SshTarget for SlowRefusal {
     type Error = std::io::Error;
+    type Refusal = String;
 
     fn label(&self) -> String {
         "slow".into()

@@ -16,6 +16,10 @@ use serde::{Deserialize, Serialize};
 use crate::error::StoreError;
 use crate::pattern::Pattern;
 
+/// Why the caller's stand-in minting failed; the store wraps its message once, into
+/// [`StoreError::EnvInvalid`].
+pub type MintError = Box<dyn std::error::Error + Send + Sync>;
+
 /// The longest variable name.
 pub const MAX_NAME_LEN: usize = 64;
 /// The longest value of a plain variable, in bytes: what fits in the API's request body (64 KiB,

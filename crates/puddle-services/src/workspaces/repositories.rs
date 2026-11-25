@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use puddle_store::{
     IdentityId, RepoRef, SshAddressError, is_bare_user, looks_like_ssh, ssh_address_as_https,
 };
-use puddle_types::{CheckoutDir, EntryId};
+use puddle_types::{CheckoutDir, EntryId, OriginRefusal};
 
 use super::MAX_ID_DRAWS;
 
@@ -219,8 +219,7 @@ pub struct LocalSource {
     /// The name of its folder, the default directory of its clone.
     pub folder_name: String,
     /// The HTTPS address of its `origin` remote, or why there is none Puddle can use.
-    // string-error-ok: the text is the reason shown beside a folder that cannot be imported; the UI renders it as is
-    pub origin: Result<String, String>,
+    pub origin: Result<String, OriginRefusal>,
 }
 
 /// A repository as a request names it, before [`check_repositories`].
@@ -253,7 +252,7 @@ pub enum CheckoutProblem {
     Unusable(LocalCheckoutError),
     /// The checkout has no `origin` Puddle can use, with the reason.
     #[error("{0}")]
-    NoOrigin(String),
+    NoOrigin(OriginRefusal),
 }
 
 /// What is wrong with one entry of a create's repository list.

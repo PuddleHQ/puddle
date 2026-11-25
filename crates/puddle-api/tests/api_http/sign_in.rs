@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, NoNames, PublicHost, Remote,
-    RemoteServing, RunningApi, Services, SettingsRepo, reset_account,
+    RemoteServing, RunningApi, Services, reset_account,
 };
 use puddle_store::{Clock as _, Limits, ManualClock, Store, UserName};
 use serde_json::{Value, json};
@@ -87,7 +87,7 @@ pub(super) async fn site_reaping(
     let made = workspaces(&events, &clock);
     let mut services = Services::new(
         store.clone(),
-        Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>,
+        Arc::new(MemorySettings::default()),
         events,
         clock.clone(),
     )
@@ -1172,7 +1172,7 @@ async fn with_remote_serving_off_there_is_nobody_to_sign_in_to() {
     let store = Arc::new(Store::open_in_memory(clock.clone(), Limits::default()).unwrap());
     let services = Services::new(
         store.clone(),
-        Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>,
+        Arc::new(MemorySettings::default()),
         events,
         clock,
     )
@@ -1211,7 +1211,7 @@ async fn without_accounts_the_routes_answer_unavailable() {
     let store = Arc::new(Store::open_in_memory(clock.clone(), Limits::default()).unwrap());
     let services = Services::new(
         store,
-        Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>,
+        Arc::new(MemorySettings::default()),
         Arc::new(EventHub::default()),
         clock,
     )

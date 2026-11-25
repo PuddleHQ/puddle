@@ -150,7 +150,7 @@ impl World {
         let (guest, host_end) = duplex(64 * 1024);
         let served = tokio::spawn(serve(
             Arc::clone(&self.agents),
-            Some(Arc::clone(&self.terminations) as Arc<dyn TerminationSource>),
+            Some(self.terminations.clone()),
             workspace(ws),
             host_end,
             idle,

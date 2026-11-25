@@ -595,7 +595,8 @@ impl HeldRewrite {
                     held.arrived.store(true, Ordering::SeqCst);
                     held.release.notified().await;
                 }
-                Box::new(RewriteEnd(this_one.then_some(held))) as Box<dyn Send>
+                let end: Box<dyn Send> = Box::new(RewriteEnd(this_one.then_some(held)));
+                end
             })
         })
     }

@@ -12,7 +12,7 @@ use super::*;
 use crate::events::EventHub;
 use crate::learned::LearnedService as _;
 use crate::server::{ApiConfig, ApiServer, RunningApi, Services};
-use crate::settings::{MemorySettings, SettingsRepo};
+use crate::settings::MemorySettings;
 use crate::token::ApiToken;
 use crate::{FakeCredentials, FakeLearned, FakeWorkspaces, openapi};
 use puddle_secrets::MemoryStore;
@@ -397,7 +397,7 @@ async fn pair() -> Pair {
     puddle_store::testing::own(&store, &ws("ownerbox"));
     let services = Services::new(
         store.clone(),
-        Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>,
+        Arc::new(MemorySettings::default()),
         events.clone(),
         clock.clone(),
     )

@@ -154,7 +154,7 @@ impl ProxyAuth for NtlmAuth {
         Ok(offered
             .iter()
             .any(|s| s.eq_ignore_ascii_case("ntlm"))
-            .then(|| Box::new(NtlmSession) as Box<dyn AuthSession>))
+            .then(|| -> Box<dyn AuthSession> { Box::new(NtlmSession) }))
     }
 }
 

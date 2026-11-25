@@ -26,7 +26,7 @@ use tokio::task::JoinHandle;
 
 use super::judge::{Schedule, Severity, judge};
 use super::plan::{Event, Profile, Workload, events, rounds};
-use super::sample::{Config, Sampler, Target, descendants};
+use super::sample::{Config, Sampler, Target, W4_RECOVERY_BOUND, descendants};
 use super::series::Series;
 
 /// What a run needs.
@@ -448,6 +448,27 @@ impl Run {
         self.setup_web().await;
     }
 
+    /// The requests of a planned restart are not counted, so a web app that comes back slowly is
+    /// judged here: it must answer within `W4_RECOVERY_BOUND` of the workspaces being back.
+    async fn judge_web_recovery(&mut self, event: Event) {
+        let took = self
+            .sampler
+            .lock()
+            .await
+            .web_recovery(W4_RECOVERY_BOUND)
+            .await;
+        match took {
+            Some(d) => self.log.line(&format!(
+                "web app answered {} s after {event:?}",
+                d.as_secs()
+            )),
+            None => self.major(format!(
+                "the web app did not answer within {} s of the workspaces being back after {event:?}",
+                W4_RECOVERY_BOUND.as_secs()
+            )),
+        }
+    }
+
     fn space(&self, name: &str) -> Option<Space> {
         self.spaces.iter().find(|s| s.name == name).cloned()
     }
@@ -493,6 +514,8 @@ impl Run {
                 return Err(format!("setup of {}: exit {code}\n{out}", s.name));
             }
         }
+        // The web app answers on this computer's port 3000 only once it is forwarded.
+        self.setup_web().await;
         Ok(())
     }
 
@@ -607,6 +630,9 @@ impl Run {
                 }
             }
             Event::RestartPuddle => {
+                // The forwarded port is the server's: it cannot answer while the server is down,
+                // by plan. The restart's own time limits judge that gap, not the 1 % line.
+                self.sampler.lock().await.w4_paused(true);
                 let pid = self.serve.child.id().unwrap_or_default();
                 let _ = std::process::Command::new("kill")
                     .args(["-TERM", &pid.to_string()])
@@ -617,8 +643,11 @@ impl Run {
                 }
                 self.restart().await?;
                 self.start_spaces().await;
+                self.judge_web_recovery(e).await;
+                self.sampler.lock().await.w4_paused(false);
             }
             Event::HardKill => {
+                self.sampler.lock().await.w4_paused(true);
                 let pid = self.serve.child.id().unwrap_or_default();
                 let started = descendants(pid);
                 let _ = self.serve.child.kill().await;
@@ -634,6 +663,8 @@ impl Run {
                 }
                 self.restart().await?;
                 self.start_spaces().await;
+                self.judge_web_recovery(e).await;
+                self.sampler.lock().await.w4_paused(false);
             }
             Event::Backup => {
                 let (code, raw) = call(&self.api(), "POST", "/api/backup", None)
@@ -1011,10 +1042,8 @@ pub async fn run(opts: Options) -> Result<Outcome, String> {
     log.line(&format!("puddle serve is up on {}", serve.api.addr));
     let cfg = Config {
         api: serve.api.clone(),
-        w4: opts.workloads().then(|| Target {
-            addr: format!("127.0.0.1:{WEB_PORT}"),
-            token: None,
-        }),
+        // The web app is requested from `watch_web_app`, once it is up.
+        w4: None,
         // `puddle$`: the server alone, not this `puddle-soak`.
         process_prefixes: vec!["puddle$".to_owned(), "msb".to_owned()],
         db: Some(data.join("puddle.db")),
@@ -1057,6 +1086,17 @@ pub async fn run(opts: Options) -> Result<Outcome, String> {
     if opts.workloads() {
         run.create_spaces().await?;
         run.setup().await?;
+        // Not before the app answers (`setup` started and forwarded it): the minutes it took to
+        // start are not failures.
+        sampler.lock().await.watch_web_app(
+            Target {
+                addr: format!("127.0.0.1:{WEB_PORT}"),
+                token: None,
+            },
+            opts.profile.w4_every(),
+            opts.profile.w4_window_secs(),
+            now,
+        );
     }
     let api_slot = Arc::new(Mutex::new(run.api()));
     let loads = tokio::spawn(page_loads(api_slot.clone(), opts.profile.at(1)));

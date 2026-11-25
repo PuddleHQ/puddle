@@ -208,6 +208,13 @@ fn a_source_device_is_followed_when_the_device_number_is_anonymous() {
     ));
 }
 
+fn unreadable(path: &'static str) -> ProbeError {
+    ProbeError::Unreadable {
+        path,
+        cause: "gone".into(),
+    }
+}
+
 #[test]
 fn unreadable_inputs_say_unknown_and_the_walk_is_bounded() {
     let sys = tempfile::tempdir().unwrap();
@@ -215,7 +222,7 @@ fn unreadable_inputs_say_unknown_and_the_walk_is_bounded() {
     let facts = facts_from(
         sys.path(),
         Some(dir),
-        &Err("m".into()),
+        &Err(unreadable("/proc/m")),
         &Ok(String::new()),
         false,
     );
@@ -226,9 +233,25 @@ fn unreadable_inputs_say_unknown_and_the_walk_is_bounded() {
             ..
         }
     ));
-    assert_eq!(facts.swap, SwapFacts::Unreadable { why: "m".into() });
-    let facts = facts_from(sys.path(), None, &Ok(vec![]), &Err("s".into()), false);
-    assert_eq!(facts.swap, SwapFacts::Unreadable { why: "s".into() });
+    assert_eq!(
+        facts.swap,
+        SwapFacts::Unreadable {
+            why: "/proc/m: gone".into()
+        }
+    );
+    let facts = facts_from(
+        sys.path(),
+        None,
+        &Ok(vec![]),
+        &Err(unreadable("/proc/s")),
+        false,
+    );
+    assert_eq!(
+        facts.swap,
+        SwapFacts::Unreadable {
+            why: "/proc/s: gone".into()
+        }
+    );
     let nodes = tempfile::tempdir().unwrap();
     let orphan = nodes.path().join("not-in-sys");
     fs::write(&orphan, b"").unwrap();

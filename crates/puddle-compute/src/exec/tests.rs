@@ -65,3 +65,12 @@ fn capped_cuts_each_stream_and_says_which() {
     let whole = ExecOutput::new(0, vec![b'o'; 10], "").capped(None);
     assert_eq!((whole.stdout.len(), whole.stdout_truncated), (10, false));
 }
+
+#[test]
+fn a_parser_reads_stdout_only_when_it_was_not_cut() {
+    let mut o = ExecOutput::new(0, b"all\n".to_vec(), Vec::new());
+    assert_eq!(o.whole_stdout_text().as_deref(), Ok("all\n"));
+    o.stdout_truncated = true;
+    assert_eq!(o.whole_stdout_text(), Err(OutputCut));
+    assert!(OutputCut.to_string().contains("cut"));
+}

@@ -85,6 +85,12 @@ fn read_install(outcome: Result<ExecOutput, ComputeError>) -> (Report, Option<St
         Ok(out) => out,
         Err(e) => return (Report::default(), Some(e.to_string())),
     };
+    if out.stdout_truncated {
+        return (
+            Report::default(),
+            Some("the guest's report was longer than the output cap and was cut".to_owned()),
+        );
+    }
     let Some(report) = parse_report(&out.stdout_text()) else {
         return (
             Report::default(),

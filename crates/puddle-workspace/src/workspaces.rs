@@ -358,7 +358,7 @@ impl Workspaces {
             .await
             .map_err(|e| WorkspaceError::runtime("prepare the layout", id, e))?;
         let text = out.stdout_text();
-        if !out.status.success() || text.lines().last() != Some("D") {
+        if !out.status.success() || out.stdout_truncated || text.lines().last() != Some("D") {
             return Err(WorkspaceError::Layout {
                 reason: format!(
                     "preparing the volume for {user} failed (exit {}): {}",

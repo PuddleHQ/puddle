@@ -57,7 +57,7 @@ mod runtime;
 mod spec;
 
 pub use error::{ComputeError, StartRefusal};
-pub use exec::{ExecOutput, ExecRequest, ExitStatus};
+pub use exec::{ExecOutput, ExecRequest, ExitStatus, OutputCut};
 pub use runtime::{
     Capabilities, ImageConfig, PullPhase, PullProgress, PullReport, RootDiskGrowth, RootDiskUse,
     Runtime, Sandbox, SandboxInfo, SshStream, VolumeInfo, VolumeSpec,

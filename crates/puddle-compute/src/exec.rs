@@ -189,6 +189,11 @@ pub struct ExecOutput {
     pub stderr_truncated: bool,
 }
 
+/// A command wrote more than [`ExecRequest::max_output`] and the runtime kept only the start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("the command wrote more than the output cap allows and its output was cut")]
+pub struct OutputCut;
+
 impl ExecOutput {
     /// An output with `code` and the given streams.
     #[must_use]
@@ -212,6 +217,20 @@ impl ExecOutput {
             self.stderr.truncate(cap);
         }
         self
+    }
+
+    /// stdout as text for a caller that parses it: an error when the command wrote more than
+    /// [`ExecRequest::max_output`], so a cut answer is named, never read as a short one.
+    ///
+    /// # Errors
+    ///
+    /// [`OutputCut`] when stdout was cut.
+    pub fn whole_stdout_text(&self) -> Result<Cow<'_, str>, OutputCut> {
+        if self.stdout_truncated {
+            Err(OutputCut)
+        } else {
+            Ok(self.stdout_text())
+        }
     }
 
     /// stdout as text (invalid UTF-8 replaced).

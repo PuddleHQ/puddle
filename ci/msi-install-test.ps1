@@ -1153,7 +1153,7 @@ function Test-UninstallKeepsData([string]$Package, [string]$Plant) {
     try {
         $wsId = New-Workspace $conn $name
         Wait-WorkspaceRunning $conn $wsId $name $CreateBudgetSec | Out-Null
-        $volume = "/workspaces/$wsId"
+        $volume = "/workspace"  # the single guest folder every workspace mounts its volume at
         $wrote = Read-FilesReport (Invoke-InWorkspace $wsId (Get-WriteFilesScript $volume $token) 'writing the files')
         Expect ($wrote.Token -eq $token -and $wrote.Sha256) "writing the files in $wsId printed no token or checksum"
         Stop-Workspace $conn $wsId $name

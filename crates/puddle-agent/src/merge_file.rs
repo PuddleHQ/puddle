@@ -746,7 +746,9 @@ mod tests {
         assert_eq!(run(&r, second.as_slice()).unwrap(), Outcome::Changed);
         assert_eq!(
             fs::read_to_string(&r.file).unwrap(),
-            format!("{image}# puddle: begin\ngithub.com ssh-ed25519 AAAA2\n# puddle: end\n")
+            format!(
+                "{image}# puddle: begin\n# managed by Puddle; hand edits between these markers are overwritten\ngithub.com ssh-ed25519 AAAA2\n# puddle: end\n"
+            )
         );
         // The guest removed the end marker: the next run repairs the file.
         let damaged = fs::read_to_string(&r.file)
@@ -757,7 +759,7 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&r.file).unwrap(),
             format!(
-                "{image}github.com ssh-ed25519 AAAA2\n# puddle: begin\ngithub.com ssh-ed25519 AAAA2\n# puddle: end\n"
+                "{image}github.com ssh-ed25519 AAAA2\n# puddle: begin\n# managed by Puddle; hand edits between these markers are overwritten\ngithub.com ssh-ed25519 AAAA2\n# puddle: end\n"
             )
         );
     }

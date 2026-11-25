@@ -11,7 +11,7 @@ fn spec(body: &str) -> MergeSpec {
 }
 
 fn ours(body: &str) -> String {
-    format!("{BEGIN}\n{body}\n{END}\n")
+    format!("{BEGIN}\n{NOTE}\n{body}\n{END}\n")
 }
 
 fn applied(body: &str, file: &str) -> Merged {
@@ -118,6 +118,11 @@ fn damaged_markers_are_repaired_by_dropping_puddles_lines_and_writing_the_block_
         ),
         // a marker inside its own block
         (format!("{BEGIN}\n{BEGIN}\nold ssh-rsa C\n{END}\n"), ""),
+        // a lone begin takes the comment under it along; a user line there stays
+        (
+            format!("{BEGIN}\n{NOTE}\nold ssh-rsa C\n"),
+            "old ssh-rsa C\n",
+        ),
     ] {
         assert_eq!(
             written(KEY_A, &file),
@@ -203,4 +208,23 @@ fn the_spec_owns_one_block_of_host_key_lines() {
     }
     let big = "a ".repeat(MAX_BLOCK);
     assert!(bad(vec![MergeEntry::known_hosts(&big)]).contains("too large"));
+}
+
+#[test]
+fn the_block_says_it_is_managed_and_an_older_block_without_the_line_gets_it() {
+    let fresh = String::from_utf8(spec(KEY_A).fresh()).unwrap();
+    let lines: Vec<&str> = fresh.lines().collect();
+    assert_eq!(lines, [BEGIN, NOTE, KEY_A, END]);
+    assert!(NOTE.contains("Puddle") && NOTE.contains("overwritten"));
+    let older = format!("user ssh-rsa U\n{BEGIN}\n{KEY_A}\n{END}\n");
+    assert_eq!(
+        written(KEY_A, &older),
+        format!("user ssh-rsa U\n{}", ours(KEY_A))
+    );
+}
+
+#[test]
+fn a_hand_edit_inside_the_block_is_overwritten() {
+    let edited = format!("{BEGIN}\n{NOTE}\n{KEY_A}\nmine ssh-rsa M\n{END}\n");
+    assert_eq!(written(KEY_A, &edited), ours(KEY_A));
 }

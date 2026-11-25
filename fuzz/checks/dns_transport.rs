@@ -117,13 +117,17 @@ thread_local! {
 /// ends at a chosen byte (around the limits that matter: 512, 1232 and `MAX_QUERY`), or raw bytes.
 #[derive(Debug)]
 pub enum Probe {
+    /// A message built from the wire grammar.
     Grammar(Message),
+    /// A query whose `OPT` record ends at a chosen byte.
     Bounded(Vec<u8>),
+    /// Raw bytes.
     Raw(Vec<u8>),
 }
 
 impl Probe {
     /// The message bytes.
+    #[must_use]
     pub fn bytes(&self) -> &[u8] {
         match self {
             Self::Grammar(message) => message.bytes(),
@@ -133,6 +137,7 @@ impl Probe {
 
     /// Which of the three it is, for the corpus test.
     #[cfg(test)]
+    #[must_use]
     pub fn shape(&self) -> &'static str {
         match self {
             Self::Grammar(_) => "grammar",
@@ -206,6 +211,7 @@ fn sentinel() -> Vec<u8> {
 }
 
 /// A query the stub answers, padded with zero bytes after the question to `len` bytes.
+#[must_use]
 pub fn padded_query(len: usize) -> Vec<u8> {
     let mut message = sentinel();
     message.resize(len, 0);
@@ -332,6 +338,7 @@ impl<'a> Arbitrary<'a> for Stream {
 impl Stream {
     /// How each frame states its length, and whether the stream is cut, for the corpus test.
     #[cfg(test)]
+    #[must_use]
     pub fn kinds(&self) -> Vec<&'static str> {
         let mut kinds: Vec<&'static str> = self
             .frames

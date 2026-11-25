@@ -266,6 +266,7 @@ async fn changes_to_one_workspace_run_one_at_a_time_and_one_that_already_waits_i
         workspace: id("alpha"),
     });
     hub.emit(Event::RulesChanged {});
+    // flake-ok: an absence window: no change may run while the first is held.
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(fake.calls.lock().unwrap().len(), 1, "a change did not wait");
     alpha.add_permits(2);
@@ -273,6 +274,7 @@ async fn changes_to_one_workspace_run_one_at_a_time_and_one_that_already_waits_i
         calls_after(&fake, 3).await,
         ["env alpha", "env alpha", "shell init alpha"]
     );
+    // flake-ok: an absence window: the changes that waited as one must not run again.
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(fake.calls.lock().unwrap().len(), 3, "a change ran twice");
     assert_eq!(fake.overlap.lock().unwrap().1, 1, "two changes ran at once");

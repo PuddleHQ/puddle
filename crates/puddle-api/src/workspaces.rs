@@ -574,11 +574,7 @@ fn id_for_name(name: &DisplayName) -> Result<WorkspaceId, puddle_types::Validati
         return Ok(id);
     }
     let digest = Sha256::digest(name.as_str().to_lowercase().as_bytes());
-    let hex = digest.iter().take(4).fold(String::new(), |mut out, b| {
-        // writing into a `String` cannot fail
-        let _ = fmt::Write::write_fmt(&mut out, format_args!("{b:02x}"));
-        out
-    });
+    let hex = puddle_types::hex_lower(digest.get(..4).unwrap_or_default());
     WorkspaceId::new(&format!("workspace-{hex}"))
 }
 
@@ -868,14 +864,7 @@ fn fingerprint(check: &DeleteCheck) -> String {
     if check.volume_missing {
         put("volume_missing");
     }
-    hash.finalize()
-        .iter()
-        .fold(String::with_capacity(64), |mut out, byte| {
-            use std::fmt::Write as _;
-            // writing into a `String` cannot fail
-            let _ = write!(out, "{byte:02x}");
-            out
-        })
+    puddle_types::hex_lower(&hash.finalize())
 }
 
 #[cfg(test)]

@@ -5,7 +5,8 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 cap="$here/cap-test-memory.sh"
-fail() { echo "cap-test-memory-test: FAIL: $1" >&2; exit 1; }
+# shellcheck disable=SC1091 # the helper sits in scripts/
+. "$(dirname "$0")/../scripts/test-fail.sh"
 
 out=$("$cap" echo "a b" c) || fail "a plain command must run"
 [ "$out" = "a b c" ] || fail "arguments must pass through unchanged: $out"

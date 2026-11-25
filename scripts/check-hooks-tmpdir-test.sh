@@ -15,10 +15,8 @@ unset CARGO_TARGET_DIR CHECK_TMPDIR
     exit 0
 }
 here=$(cd "$(dirname "$0")/.." && pwd)
-fail() {
-    echo "check-hooks-tmpdir-test: $*" >&2
-    exit 1
-}
+# shellcheck disable=SC1091 # the helper sits in scripts/
+. "$(dirname "$0")/../scripts/test-fail.sh"
 # Under /var/tmp, not the caller's TMPDIR, so the base below has room for the exact lengths.
 root=$(mktemp -d /var/tmp/chk-hooks.XXXXXX)
 trap 'rm -rf "$root"' EXIT

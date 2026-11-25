@@ -331,11 +331,7 @@ fn write_private(path: &Path, bytes: &[u8]) {
 fn random_hex() -> String {
     let mut bytes = [0_u8; 16];
     getrandom::fill(&mut bytes).unwrap();
-    bytes.iter().fold(String::new(), |mut out, b| {
-        use std::fmt::Write as _;
-        let _ = write!(out, "{b:02x}");
-        out
-    })
+    puddle_types::hex_lower(&bytes)
 }
 
 /// The answer to a call made with the account's password. Its body can hold a token, so it has

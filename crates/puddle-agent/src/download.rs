@@ -261,7 +261,6 @@ impl Fetch for Downloader {
 ///
 /// When the file cannot be read.
 pub fn sha256_of(path: &Path) -> io::Result<String> {
-    use std::fmt::Write as _;
     let mut file = std::fs::File::open(path)?;
     let mut hasher = Sha256::new();
     let mut chunk = vec![0_u8; 1 << 16];
@@ -272,8 +271,5 @@ pub fn sha256_of(path: &Path) -> io::Result<String> {
         }
         hasher.update(chunk.get(..n).unwrap_or_default());
     }
-    Ok(hasher.finalize().iter().fold(String::new(), |mut s, b| {
-        let _ = write!(s, "{b:02x}"); // writing to a String can't fail
-        s
-    }))
+    Ok(puddle_types::hex_lower(&hasher.finalize()))
 }

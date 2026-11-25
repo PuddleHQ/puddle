@@ -67,11 +67,9 @@ type Fixed = Handle<Box<dyn Fn(ResolveQuery) -> Ready + Send + Sync>>;
 
 /// A host that gives `answer` to every question.
 fn answers_with(answer: ResolveAnswer) -> (Stub<Fixed>, Fixed, StandIns) {
-    stub_with(
-        Box::new(move |_| std::future::ready(Ok(answer.clone())))
-            as Box<dyn Fn(ResolveQuery) -> Ready + Send + Sync>,
-        Limits::default(),
-    )
+    let fixed: Box<dyn Fn(ResolveQuery) -> Ready + Send + Sync> =
+        Box::new(move |_| std::future::ready(Ok(answer.clone())));
+    stub_with(fixed, Limits::default())
 }
 
 /// A decoded response.

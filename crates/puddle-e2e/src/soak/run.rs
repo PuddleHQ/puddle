@@ -494,6 +494,8 @@ impl Run {
                 return Err(format!("setup of {}: exit {code}\n{out}", s.name));
             }
         }
+        // The web app answers on this computer's port 3000 only once it is forwarded.
+        self.setup_web().await;
         Ok(())
     }
 
@@ -615,6 +617,9 @@ impl Run {
                 }
             }
             Event::RestartPuddle => {
+                // The forwarded port is the server's: it cannot answer while the server is down,
+                // by plan. The restart's own time limits judge that gap, not the 1 % line.
+                self.sampler.lock().await.w4_paused(true);
                 let pid = self.serve.child.id().unwrap_or_default();
                 let _ = std::process::Command::new("kill")
                     .args(["-TERM", &pid.to_string()])
@@ -625,8 +630,10 @@ impl Run {
                 }
                 self.restart().await?;
                 self.start_spaces().await;
+                self.sampler.lock().await.w4_paused(false);
             }
             Event::HardKill => {
+                self.sampler.lock().await.w4_paused(true);
                 let pid = self.serve.child.id().unwrap_or_default();
                 let started = descendants(pid);
                 let _ = self.serve.child.kill().await;
@@ -642,6 +649,7 @@ impl Run {
                 }
                 self.restart().await?;
                 self.start_spaces().await;
+                self.sampler.lock().await.w4_paused(false);
             }
             Event::Backup => {
                 let (code, raw) = call(&self.api(), "POST", "/api/backup", None)
@@ -1019,10 +1027,8 @@ pub async fn run(opts: Options) -> Result<Outcome, String> {
     log.line(&format!("puddle serve is up on {}", serve.api.addr));
     let cfg = Config {
         api: serve.api.clone(),
-        w4: opts.workloads().then(|| Target {
-            addr: format!("127.0.0.1:{WEB_PORT}"),
-            token: None,
-        }),
+        // The web app is requested from `watch_web_app`, once it is up.
+        w4: None,
         // `puddle$`: the server alone, not this `puddle-soak`.
         process_prefixes: vec!["puddle$".to_owned(), "msb".to_owned()],
         db: Some(data.join("puddle.db")),
@@ -1066,6 +1072,17 @@ pub async fn run(opts: Options) -> Result<Outcome, String> {
     if opts.workloads() {
         run.create_spaces().await?;
         run.setup().await?;
+        // Not before the app answers (`setup` started and forwarded it): the minutes it took to
+        // start are not failures.
+        sampler.lock().await.watch_web_app(
+            Target {
+                addr: format!("127.0.0.1:{WEB_PORT}"),
+                token: None,
+            },
+            opts.profile.w4_every(),
+            opts.profile.w4_window_secs(),
+            now,
+        );
     }
     let api_slot = Arc::new(Mutex::new(run.api()));
     let loads = tokio::spawn(page_loads(api_slot.clone(), opts.profile.at(1)));

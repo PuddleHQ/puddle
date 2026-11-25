@@ -8,9 +8,10 @@
 //       environment variable and a secret, three settings, an identity and a file in the workspace folder, then dumps every
 //       GET the playbook names (upgrade-compare.mjs DUMPED) into <dir>.
 //   node upgrade-state.mjs plant <breakage>            between the two, with the program quit: damages the database the way a
-//       broken migration would (drop-table, empty-env, empty-pending), so a run can show the check fails.
+//       broken migration would (drop-table, empty-env, empty-pending), so a run can show the check fails. route-throws damages nothing
+//       here: msi.yml builds the newer build's UI with the Activity screen throwing, for the screen check to catch.
 //   node upgrade-state.mjs after <dir> <workspace>    on the newer build, after the workspace started: every dump
-//       equal (ids, names, counts, values), the build not older, the guest sees the variable, the secret's stand-in and the
+//       equal (ids, names, counts, values), the build strictly newer (health.version), api_version not older, the guest sees the variable, the secret's stand-in and the
 //       kept file in /workspace, approving the kept pending request lets the guest's retry through (200), the browser editor's server
 //       answers, and each main screen of the window loads with no error alert (UI Automation; needs PUDDLE_APP_PID).
 //
@@ -21,7 +22,7 @@ import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { Uia, until } from "./uia.mjs";
-import { DUMPED, ERROR_TEXT, buildIsNotOlder, compareDump, compareVersions } from "./upgrade-compare.mjs";
+import { DUMPED, ERROR_TEXT, buildIsNewer, buildIsNotOlder, compareDump, compareVersions } from "./upgrade-compare.mjs";
 
 const local = process.env.LOCALAPPDATA;
 if (!local) throw new Error("LOCALAPPDATA is not set: this runs on Windows");
@@ -223,6 +224,10 @@ function findStore(dir, depth = 0) {
 }
 
 async function plant(breakage) {
+  if (breakage === "route-throws") {
+    console.log("route-throws is built into the newer build's UI (msi.yml), nothing to damage here");
+    return;
+  }
   const { DatabaseSync } = await import("node:sqlite");
   const file = findStore(dataDir);
   if (!file) throw new Error(`no puddle.db under ${dataDir}`);
@@ -230,9 +235,9 @@ async function plant(breakage) {
   const sql = {
     "drop-table": "DROP TABLE rules",
     "empty-env": "DELETE FROM env_vars",
-    "empty-pending": "DELETE FROM pending",
+    "empty-pending": "UPDATE pending SET state = 'expired'",
   }[breakage];
-  if (!sql) throw new Error(`unknown breakage ${breakage}: drop-table, empty-env or empty-pending`);
+  if (!sql) throw new Error(`unknown breakage ${breakage}: drop-table, empty-env, empty-pending or route-throws`);
   db.exec("PRAGMA foreign_keys = OFF");
   db.exec(sql);
   db.close();
@@ -270,6 +275,8 @@ async function after(dir, workspace, appPid) {
   note(`newer build: version ${health.version}, api ${health.api_version}, ui build ${health.ui_build_id} (was ${state.health.ui_build_id})`);
   const back = buildIsNotOlder(state.health, health);
   check("the build is not older (/api/health version and api_version)", back.length === 0, back.join("; "));
+  const newer = buildIsNewer(state.health, health);
+  check("the build is strictly newer (/api/health version)", newer.length === 0, newer.join("; "));
   check("the version is a version", !Number.isNaN(compareVersions(health.version, health.version)), health.version);
 
   // S3.4a, S3.5: the workspace starts, and the guest has what the older build gave it.

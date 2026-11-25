@@ -16,7 +16,7 @@ use bytes::Bytes;
 use http_body_util::BodyExt as _;
 use puddle_logins::{LoginNotices, Logins, Problem, Profile, builtin};
 use puddle_proxy::{InjectDecision, SecretValue, StandIn, StandInOrigin, StandIns};
-use puddle_secrets::{MemoryStore, SecretStore};
+use puddle_secrets::MemoryStore;
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 use terminate_support::h2_rig::{H2Server, Reply as H2Reply, Script, full};
@@ -81,8 +81,8 @@ fn registry_with_login() -> (Arc<StandIns>, Logins, Arc<Notices>) {
         true,
         builtin(),
         Arc::clone(&registry),
-        Arc::new(MemoryStore::new()) as Arc<dyn SecretStore>,
-        Arc::clone(&notices) as Arc<dyn LoginNotices>,
+        Arc::new(MemoryStore::new()),
+        notices.clone(),
         puddle_logins::Marker::none(),
     );
     (registry, logins, notices)

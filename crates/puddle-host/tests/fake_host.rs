@@ -114,9 +114,9 @@ use puddle_certs::{CorporateRoots, SOURCES, StoreSnapshot};
 use puddle_compute::fake::{ExecContext, FakeRuntime, Fault, Op};
 use puddle_compute::{ExecOutput, ExecRequest, ImageConfig, Runtime};
 use puddle_host::{
-    DevCertSource, FreeSpaceTiming, GuestSettings, Host, HostConfig, HostError, HostPaths,
-    PREPARE_STEPS, Platform, RewriteGate, RuntimeFactory, RuntimeInputs, SHUTDOWN_STEPS,
-    START_STEPS, Step, prepare,
+    FreeSpaceTiming, GuestSettings, Host, HostConfig, HostError, HostPaths, PREPARE_STEPS,
+    Platform, RewriteGate, RuntimeFactory, RuntimeInputs, SHUTDOWN_STEPS, START_STEPS, Step,
+    prepare,
 };
 use puddle_netpolicy::EndpointKind;
 use puddle_runtime::{RuntimeLayout, RuntimeVersion};
@@ -1322,7 +1322,7 @@ impl Rig {
         options
             .rewrite_gate
             .clone_from(&self.rewrite_gate.lock().unwrap());
-        options.dev_cert = Some(self.dev_cert.clone() as Arc<dyn DevCertSource>);
+        options.dev_cert = Some(self.dev_cert.clone());
         let taken = self.ids.lock().unwrap().clone();
         if let Some(ids) = taken {
             options.workspace_ids = Some(ids);

@@ -23,6 +23,7 @@
   import { toasts } from "#lib/stores/toasts.svelte.ts";
   import Toast from "#lib/components/Toast.svelte";
   import "#lib/theme/controls.css";
+  import { plantedRouteThrow } from "#lib/plant.ts";
 
   /** How long typing in "Search" waits before the log is read again. */
   const TYPING_MS = 250;
@@ -170,6 +171,8 @@
       `Saved ${result.records.toLocaleString()} ${result.records === 1 ? "record" : "records"} as ${name}.`,
     );
   }
+
+  plantedRouteThrow("activity");
 </script>
 
 <div class="head">

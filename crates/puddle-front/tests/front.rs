@@ -198,14 +198,12 @@ struct Rig {
     dir: tempfile::TempDir,
 }
 
-async fn rig() -> Rig {
+fn rig() -> Rig {
     let dir = tempfile::tempdir().unwrap();
     let running = Arc::new(Running::default());
     let endpoints = PuddleEndpoints::new();
     let halves: Arc<dyn ServerHalves> = Arc::new(FileHalves::new(dir.path().join("front")));
-    let front = Front::bind(None, &endpoints, running.clone(), halves)
-        .await
-        .unwrap();
+    let front = Front::bind(None, &endpoints, running.clone(), halves).unwrap();
     Rig {
         front,
         running,
@@ -273,7 +271,7 @@ fn ws(name: &WorkspaceId) -> WorkspaceId {
 
 #[tokio::test]
 async fn each_workspace_name_reaches_its_own_editor_and_only_its_own() {
-    let rig = rig().await;
+    let rig = rig();
     let (a, b) = (Server::start("alpha").await, Server::start("beta").await);
     rig.running.start("a", Some(a.addr), Flavour::CodeServer);
     rig.running.start("b", Some(b.addr), Flavour::CodeServer);
@@ -292,7 +290,7 @@ fn forward_host(rig: &Rig, port: u16, name: &str) -> String {
 
 #[tokio::test]
 async fn a_forwarded_port_s_own_origin_reaches_that_guest_port_and_not_the_editor() {
-    let rig = rig().await;
+    let rig = rig();
     let (editor, app, other) = (
         Server::start("editor").await,
         Server::start("app").await,
@@ -328,7 +326,7 @@ async fn a_forwarded_port_s_own_origin_reaches_that_guest_port_and_not_the_edito
 
 #[tokio::test]
 async fn a_forwarded_port_carries_the_apps_own_headers_and_sets_no_editor_cookie() {
-    let rig = rig().await;
+    let rig = rig();
     let (editor, app) = (Server::start("editor").await, Server::start("app").await);
     rig.running.start_with_ports(
         "a",
@@ -363,7 +361,7 @@ async fn a_forwarded_port_carries_the_apps_own_headers_and_sets_no_editor_cookie
 
 #[tokio::test]
 async fn a_forwarded_port_nothing_listens_on_is_a_502_that_says_so_and_the_editor_is_not_asked() {
-    let rig = rig().await;
+    let rig = rig();
     let editor = Server::start("editor").await;
     rig.running
         .start("a", Some(editor.addr), Flavour::CodeServer);
@@ -378,7 +376,7 @@ async fn a_forwarded_port_nothing_listens_on_is_a_502_that_says_so_and_the_edito
 #[tokio::test]
 async fn a_forwarded_port_of_a_workspace_that_is_not_running_is_a_404_and_other_hosts_are_refused()
 {
-    let rig = rig().await;
+    let rig = rig();
     let app = Server::start("app").await;
     rig.running
         .start_with_ports("a", None, Flavour::CodeServer, &[(5173, app.addr)]);
@@ -403,7 +401,7 @@ async fn a_forwarded_port_of_a_workspace_that_is_not_running_is_a_404_and_other_
 
 #[tokio::test]
 async fn a_forwarded_port_s_origin_is_its_own_another_origin_may_not_use_it() {
-    let rig = rig().await;
+    let rig = rig();
     let app = Server::start("app").await;
     rig.running
         .start_with_ports("a", None, Flavour::CodeServer, &[(5173, app.addr)]);
@@ -431,7 +429,7 @@ async fn a_forwarded_port_s_origin_is_its_own_another_origin_may_not_use_it() {
 
 #[tokio::test]
 async fn an_app_s_page_may_call_a_port_beside_it_but_not_another_workspace_or_the_editor() {
-    let rig = rig().await;
+    let rig = rig();
     let (api, editor) = (Server::start("api").await, Server::start("editor").await);
     rig.running.start_with_ports(
         "a",
@@ -469,7 +467,7 @@ async fn an_app_s_page_may_call_a_port_beside_it_but_not_another_workspace_or_th
 
 #[tokio::test]
 async fn a_forwarded_port_s_websocket_works_and_is_not_an_editor_window() {
-    let rig = rig().await;
+    let rig = rig();
     let app = Server::start("app").await;
     rig.running
         .start_with_ports("a", None, Flavour::CodeServer, &[(5173, app.addr)]);
@@ -487,7 +485,7 @@ async fn a_forwarded_port_s_websocket_works_and_is_not_an_editor_window() {
 
 #[tokio::test]
 async fn a_connect_request_is_refused_and_reaches_nothing() {
-    let rig = rig().await;
+    let rig = rig();
     let a = Server::start("alpha").await;
     rig.running.start("a", Some(a.addr), Flavour::CodeServer);
     let h = host(&rig, "a");
@@ -499,7 +497,7 @@ async fn a_connect_request_is_refused_and_reaches_nothing() {
 
 #[tokio::test]
 async fn a_name_that_is_not_a_running_workspace_gets_a_404_and_reaches_nothing() {
-    let rig = rig().await;
+    let rig = rig();
     let a = Server::start("alpha").await;
     rig.running.start("a", Some(a.addr), Flavour::CodeServer);
     let h = host(&rig, "stopped");
@@ -511,7 +509,7 @@ async fn a_name_that_is_not_a_running_workspace_gets_a_404_and_reaches_nothing()
 
 #[tokio::test]
 async fn a_foreign_host_is_refused_and_the_editor_never_hears_of_it() {
-    let rig = rig().await;
+    let rig = rig();
     let a = Server::start("alpha").await;
     rig.running.start("a", Some(a.addr), Flavour::CodeServer);
     let port = rig.front.local_addr().port();
@@ -552,7 +550,7 @@ async fn a_foreign_host_is_refused_and_the_editor_never_hears_of_it() {
 
 #[tokio::test]
 async fn another_origin_is_refused_and_the_editors_own_origin_is_not() {
-    let rig = rig().await;
+    let rig = rig();
     let a = Server::start("alpha").await;
     rig.running.start("a", Some(a.addr), Flavour::CodeServer);
     let h = host(&rig, "a");
@@ -581,7 +579,7 @@ async fn another_origin_is_refused_and_the_editors_own_origin_is_not() {
 #[tokio::test]
 async fn the_editor_gets_the_request_without_hop_by_hop_headers_and_with_the_host_it_was_asked_for()
 {
-    let rig = rig().await;
+    let rig = rig();
     let a = Server::start("alpha").await;
     rig.running.start("a", Some(a.addr), Flavour::CodeServer);
     let h = host(&rig, "a");
@@ -606,7 +604,7 @@ async fn the_editor_gets_the_request_without_hop_by_hop_headers_and_with_the_hos
 
 #[tokio::test]
 async fn the_window_s_start_address_reaches_the_editor_with_its_query_as_the_shell_built_it() {
-    let rig = rig().await;
+    let rig = rig();
     let a = Server::start("alpha").await;
     rig.running.start("a", Some(a.addr), Flavour::CodeServer);
     let h = host(&rig, "a");
@@ -626,7 +624,7 @@ async fn the_window_s_start_address_reaches_the_editor_with_its_query_as_the_she
 
 #[tokio::test]
 async fn every_answer_carries_the_frame_headers_next_to_the_servers_own_policy() {
-    let rig = rig().await;
+    let rig = rig();
     let a = Server::start("alpha").await;
     rig.running.start("a", Some(a.addr), Flavour::CodeServer);
     let h = host(&rig, "a");
@@ -642,7 +640,7 @@ async fn every_answer_carries_the_frame_headers_next_to_the_servers_own_policy()
 
 #[tokio::test]
 async fn an_editor_that_cannot_be_reached_is_a_502_that_says_why_and_cannot_run_script() {
-    let rig = rig().await;
+    let rig = rig();
     rig.running.start("a", None, Flavour::CodeServer);
     let h = host(&rig, "a");
     let answer = ask(&rig.front, &get(&rig, &h, "/", "")).await;
@@ -673,7 +671,7 @@ async fn upgrade_at(rig: &Rig, path: &str, host: &str, extra: &str) -> (TcpStrea
 
 #[tokio::test]
 async fn a_websocket_upgrade_carries_bytes_both_ways_and_is_counted_while_it_is_open() {
-    let rig = rig().await;
+    let rig = rig();
     let a = Server::start("alpha").await;
     rig.running.start("a", Some(a.addr), Flavour::CodeServer);
     let name = WorkspaceId::new("a").unwrap();
@@ -706,7 +704,7 @@ async fn a_websocket_upgrade_carries_bytes_both_ways_and_is_counted_while_it_is_
 
 #[tokio::test]
 async fn a_window_that_ends_its_socket_is_no_longer_counted_though_the_server_holds_its_side() {
-    let rig = rig().await;
+    let rig = rig();
     let a = Server::start("alpha").await;
     rig.running.start("a", Some(a.addr), Flavour::CodeServer);
     let name = WorkspaceId::new("a").unwrap();
@@ -732,7 +730,7 @@ async fn a_window_that_ends_its_socket_is_no_longer_counted_though_the_server_ho
 
 #[tokio::test]
 async fn a_socket_the_server_ends_ends_for_the_window_and_is_no_longer_counted() {
-    let rig = rig().await;
+    let rig = rig();
     let a = Server::start("alpha").await;
     rig.running.start("a", Some(a.addr), Flavour::CodeServer);
     let name = WorkspaceId::new("a").unwrap();
@@ -755,7 +753,7 @@ async fn a_socket_the_server_ends_ends_for_the_window_and_is_no_longer_counted()
 
 #[tokio::test]
 async fn a_websocket_from_another_origin_is_refused_before_the_editor_hears_of_it() {
-    let rig = rig().await;
+    let rig = rig();
     let a = Server::start("alpha").await;
     rig.running.start("a", Some(a.addr), Flavour::CodeServer);
     let h = host(&rig, "a");
@@ -767,7 +765,7 @@ async fn a_websocket_from_another_origin_is_refused_before_the_editor_hears_of_i
 
 #[tokio::test]
 async fn closing_the_front_ends_its_websockets_and_frees_its_port() {
-    let rig = rig().await;
+    let rig = rig();
     let a = Server::start("alpha").await;
     rig.running.start("a", Some(a.addr), Flavour::CodeServer);
     let h = host(&rig, "a");
@@ -808,7 +806,7 @@ async fn mint(rig: &Rig, host: &str, cookie: Option<&str>) -> Answer {
 
 #[tokio::test]
 async fn microsofts_server_gets_the_secret_key_cookie_and_a_key_that_holds_across_requests() {
-    let rig = rig().await;
+    let rig = rig();
     let a = Server::start("alpha").await;
     rig.running.start("a", Some(a.addr), Flavour::Microsoft);
     let h = host(&rig, "a");
@@ -866,7 +864,7 @@ async fn microsofts_server_gets_the_secret_key_cookie_and_a_key_that_holds_acros
 
 #[tokio::test]
 async fn the_key_survives_a_new_front_and_differs_between_workspaces() {
-    let first = rig().await;
+    let first = rig();
     let a = Server::start("alpha").await;
     first.running.start("a", Some(a.addr), Flavour::Microsoft);
     first.running.start("b", Some(a.addr), Flavour::Microsoft);
@@ -879,9 +877,7 @@ async fn the_key_survives_a_new_front_and_differs_between_workspaces() {
     let running = Arc::new(Running::default());
     running.start("a", Some(a.addr), Flavour::Microsoft);
     let halves: Arc<dyn ServerHalves> = Arc::new(FileHalves::new(first.dir.path().join("front")));
-    let front = Front::bind(None, &PuddleEndpoints::new(), running, halves.clone())
-        .await
-        .unwrap();
+    let front = Front::bind(None, &PuddleEndpoints::new(), running, halves.clone()).unwrap();
     let h = format!("a.localhost:{}", front.local_addr().port());
     let again = ask(
         &front,
@@ -902,7 +898,7 @@ async fn the_key_survives_a_new_front_and_differs_between_workspaces() {
 
 #[tokio::test]
 async fn code_servers_mint_path_is_the_servers_own_and_sets_no_cookie() {
-    let rig = rig().await;
+    let rig = rig();
     let a = Server::start("alpha").await;
     rig.running.start("a", Some(a.addr), Flavour::CodeServer);
     let h = host(&rig, "a");
@@ -913,7 +909,7 @@ async fn code_servers_mint_path_is_the_servers_own_and_sets_no_cookie() {
 
 #[tokio::test]
 async fn the_front_is_one_of_puddles_own_listeners_on_the_loopback_only() {
-    let rig = rig().await;
+    let rig = rig();
     let addr = rig.front.local_addr();
     assert!(addr.ip().is_loopback());
     assert_eq!(
@@ -937,7 +933,6 @@ async fn the_usual_port_is_kept_when_free_and_replaced_when_taken() {
             Arc::new(Running::default()),
             halves,
         )
-        .await
         .unwrap();
         (front, dir)
     };
@@ -955,7 +950,7 @@ async fn the_usual_port_is_kept_when_free_and_replaced_when_taken() {
 
 #[tokio::test]
 async fn the_password_comes_from_the_workspaces_editor_and_only_while_it_runs() {
-    let rig = rig().await;
+    let rig = rig();
     rig.running.start("a", None, Flavour::CodeServer);
     let a = WorkspaceId::new("a").unwrap();
     assert_eq!(rig.front.password(&a).await.unwrap(), "sekrit");
@@ -969,7 +964,7 @@ async fn the_password_comes_from_the_workspaces_editor_and_only_while_it_runs() 
 
 #[tokio::test]
 async fn the_front_and_its_targets_print_without_leaking_what_they_hold() {
-    let rig = rig().await;
+    let rig = rig();
     rig.running.start("a", None, Flavour::CodeServer);
     let shown = format!("{:?}", rig.front);
     assert!(shown.contains("Guests"), "{shown}");
@@ -1055,7 +1050,7 @@ fn start_editor(rig: &Rig, name: &str, editor: impl Editor + 'static) {
 async fn an_editor_that_resets_after_its_answer_still_gets_the_answer_through_and_the_end_is_logged()
  {
     let (log, _guard) = capture_logs();
-    let rig = rig().await;
+    let rig = rig();
     let h = host(&rig, "a");
     start_editor(
         &rig,
@@ -1080,7 +1075,7 @@ async fn an_editor_that_resets_after_its_answer_still_gets_the_answer_through_an
 
 #[tokio::test]
 async fn an_editor_stream_that_fails_at_the_first_write_is_a_502_that_says_it_did_not_answer() {
-    let rig = rig().await;
+    let rig = rig();
     start_editor(&rig, "a", Refuses);
     let h = host(&rig, "a");
     let answer = ask(&rig.front, &get(&rig, &h, "/", "")).await;
@@ -1094,7 +1089,7 @@ async fn an_editor_stream_that_fails_at_the_first_write_is_a_502_that_says_it_di
 #[tokio::test]
 async fn a_client_that_sends_bytes_that_are_not_http_is_answered_and_its_connection_logged() {
     let (log, _guard) = capture_logs();
-    let rig = rig().await;
+    let rig = rig();
     let mut stream = TcpStream::connect(rig.front.local_addr()).await.unwrap();
     stream.write_all(b"\x01\x02\x03\r\n\r\n").await.unwrap();
     let mut raw = Vec::new();
@@ -1126,7 +1121,7 @@ async fn connections_that_have_all_ended_do_not_count_against_the_next_one() {
         limit.allows(3 * puddle_front::MAX_CONNECTIONS as u64),
         "{limit:?}"
     );
-    let rig = rig().await;
+    let rig = rig();
     let mut open = Vec::new();
     for _ in 0..puddle_front::MAX_CONNECTIONS {
         open.push(TcpStream::connect(rig.front.local_addr()).await.unwrap());

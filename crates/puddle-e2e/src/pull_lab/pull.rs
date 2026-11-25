@@ -12,7 +12,7 @@ use std::sync::Arc;
 use puddle_compute_msb::{MsbConfig, MsbRuntime};
 use puddle_netpolicy::PuddleEndpoints;
 use puddle_proxy::{PullProxy, PullRoute, Upstream};
-use puddle_store::{Clock, Limits, Store, SystemClock};
+use puddle_store::{Limits, Store, SystemClock};
 use puddle_types::ImageRef;
 use puddle_upstream::{
     Chain, Config as DiscoveryConfig, Discovery, FakeOs, Hop, ProxyAuth, ProxyConfig,
@@ -75,10 +75,8 @@ impl Pull {
         });
         os.set_pac(move |_| Ok(vec![hop.clone()]));
         let chain = Chain::new(Discovery::new(os, DiscoveryConfig::default()), auth);
-        let store = Arc::new(
-            Store::open_in_memory(Arc::new(SystemClock) as Arc<dyn Clock>, Limits::default())
-                .unwrap(),
-        );
+        let store =
+            Arc::new(Store::open_in_memory(Arc::new(SystemClock), Limits::default()).unwrap());
         let proxy = PullProxy::bind(&PuddleEndpoints::new())
             .unwrap()
             .with_resolver(Arc::new(LabResolver(addr)))

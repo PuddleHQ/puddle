@@ -37,7 +37,7 @@ async fn admin_site_slow(multi_user: bool, step_delay: Duration) -> Admin {
             step_delay,
         ));
         *made.lock().unwrap() = Some(fake.clone());
-        Some(fake as Arc<dyn WorkspaceService>)
+        Some(fake)
     })
     .await;
     let workspaces = made.lock().unwrap().take().unwrap();

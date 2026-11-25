@@ -99,3 +99,14 @@ fn a_round_is_cut_only_by_an_event_that_began_after_it_started() {
     assert_eq!(cuts.cut(before, Workload::Build), Some(Event::HardKill));
     assert_eq!(cuts.cut(Instant::now(), Workload::Js), None);
 }
+
+#[test]
+fn the_web_app_window_is_five_playbook_minutes_in_every_profile() {
+    assert_eq!(FULL.w4_every(), Duration::from_secs(10));
+    assert_eq!(FULL.w4_window_secs(), 300);
+    assert_eq!(HOSTED.w4_every(), Duration::from_millis(3750));
+    assert_eq!(HOSTED.w4_window_secs(), 112);
+    // A smoke hour is 60 s: the window is 5 s, not five hours.
+    assert_eq!(SMOKE.w4_every(), Duration::from_secs(1));
+    assert_eq!(SMOKE.w4_window_secs(), 5);
+}

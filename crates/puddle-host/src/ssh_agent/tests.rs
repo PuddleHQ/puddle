@@ -72,7 +72,7 @@ async fn the_agent_the_settings_name_is_asked_and_a_changed_setting_applies_to_t
         .save_global(serde_json::json!({"ui": {"ssh_agent_pipe": first}}))
         .unwrap();
     let host_agent = SettingsAgent {
-        settings: Some(settings.clone() as Arc<dyn SettingsRepo>),
+        settings: Some(settings.clone()),
         auth_sock: None,
     };
     let host_agent = Arc::new(host_agent);

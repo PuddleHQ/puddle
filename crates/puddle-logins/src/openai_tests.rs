@@ -3,8 +3,6 @@
 //! the token exchange that trades the identity token for an API key answers in the same
 //! `access_token` field as the login does.
 
-use std::sync::Arc;
-
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use puddle_proxy::ExchangeRewriter as _;
@@ -51,13 +49,10 @@ async fn exchange(rig: &Rig, body: &Value) -> Value {
 }
 
 fn kept(rig: &Rig, role: Role) -> Option<(String, String)> {
-    Vault::new(
-        Arc::clone(&rig.store) as _,
-        &WorkspaceId::new("alpha").unwrap(),
-    )
-    .read(&OPENAI, role)
-    .unwrap()
-    .map(|saved| (saved.stand_in.clone(), saved.real.to_string()))
+    Vault::new(rig.store.clone(), &WorkspaceId::new("alpha").unwrap())
+        .read(&OPENAI, role)
+        .unwrap()
+        .map(|saved| (saved.stand_in.clone(), saved.real.to_string()))
 }
 
 #[test]

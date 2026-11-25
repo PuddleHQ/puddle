@@ -74,6 +74,9 @@ impl Guests for HostGuests {
 /// The background problem raised when the front could not keep its port.
 const MOVED_KEY: &str = "front-port-moved";
 
+/// The running front, its guests and its stored key halves.
+pub(crate) type Served = (Front, Arc<dyn Guests>, Arc<dyn ServerHalves>);
+
 /// Starts the front over the workspaces `ports` holds an agent link for, entered in `endpoints`
 /// as one of Puddle's own listeners.
 ///
@@ -88,19 +91,18 @@ const MOVED_KEY: &str = "front-port-moved";
 /// # Errors
 ///
 /// [`HostError::Front`] when no loopback port can be bound.
-pub(crate) async fn serve(
+pub(crate) fn serve(
     paths: &HostPaths,
     endpoints: &PuddleEndpoints,
     ports: Ports,
     flavours: Arc<Flavours>,
     problems: &Problems,
-) -> Result<(Front, Arc<dyn Guests>, Arc<dyn ServerHalves>), HostError> {
+) -> Result<Served, HostError> {
     let guests: Arc<dyn Guests> = Arc::new(HostGuests { ports, flavours });
     let file = paths.front_port_file();
     let usual = read_port(&file);
     let halves: Arc<dyn ServerHalves> = Arc::new(FileHalves::new(paths.front_keys()));
     let front = Front::bind(usual, endpoints, Arc::clone(&guests), Arc::clone(&halves))
-        .await
         .map_err(HostError::Front)?;
     let port = front.local_addr().port();
     if usual != Some(port) {

@@ -153,8 +153,8 @@
       {#if identity}
         Identity: <a href="/identities/{identity.id}">{identity.label}</a>
       {:else}
-        No identity covers this: <a href={tabHref(workspace.id, "git")}
-          >open the Git tab</a
+        No identity needed for a public repository. For a private one, <a
+          href={tabHref(workspace.id, "git")}>add an identity on the Git tab</a
         >
       {/if}
     </span>

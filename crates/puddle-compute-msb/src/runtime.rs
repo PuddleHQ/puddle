@@ -675,6 +675,17 @@ impl Runtime for MsbRuntime {
         })
     }
 
+    fn kill(&self, name: &SandboxName) -> impl Future<Output = Result<(), ComputeError>> + Send {
+        Box::pin(async move {
+            let record = self.existing(name).await?;
+            // The SDK ends the VM by the sandbox's recorded identity, so a VM `get` refuses to
+            // connect to (starting, draining, paused) is reachable; a down one returns at once.
+            self.sdk(record.kill())
+                .await
+                .map_err(|e| map("kill", name.as_str(), e))
+        })
+    }
+
     fn stale_dirs(&self) -> impl Future<Output = Result<Vec<String>, ComputeError>> + Send {
         Box::pin(async move {
             let dirs = match std::fs::read_dir(&self.inner.sandboxes_dir) {

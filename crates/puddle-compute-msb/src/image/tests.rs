@@ -196,3 +196,18 @@ async fn dropping_the_guard_ends_a_task_that_has_not_finished() {
     tokio::task::yield_now().await;
     assert!(probe.is_finished());
 }
+
+#[test]
+fn a_failed_connect_says_which_registry_could_not_be_reached() {
+    let reason = "registry error: error sending request for url (https://registry.test/v2/): client error (Connect): tunnel error: unsuccessful".to_owned();
+    assert_eq!(
+        explain_connect(reason.clone(), "registry.test"),
+        format!("could not connect to registry.test: {reason}")
+    );
+}
+
+#[test]
+fn a_reason_that_is_not_a_failed_connect_is_left_alone() {
+    let reason = "registry error: 401 Unauthorized".to_owned();
+    assert_eq!(explain_connect(reason.clone(), "registry.test"), reason);
+}

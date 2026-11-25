@@ -172,7 +172,7 @@ pub(crate) fn request_with(
     if pending.join(MARKER).exists() {
         return Err(RequestError::AlreadyPending);
     }
-    book_versions_agree(paths, &staged).map_err(RequestError::Refused)?;
+    book_versions_agree(paths, &staged).map_err(|why| RequestError::Refused(why.to_string()))?;
 
     let requested_at_ms = now_ms();
     let name = utc_name(requested_at_ms);
@@ -448,8 +448,7 @@ fn restored_database(
 }
 
 /// Whether the two workspace lists can be merged, for the request to refuse early.
-// string-error-ok: the text is the refusal shown to the user before a restore starts; no caller branches on a kind
-fn book_versions_agree(paths: &HostPaths, staged: &Path) -> Result<(), String> {
+fn book_versions_agree(paths: &HostPaths, staged: &Path) -> Result<(), merge::BookRefusal> {
     merge::check_book_versions(&paths.workspace_book(), &staged.join(BACKUP_WORKSPACES))
 }
 

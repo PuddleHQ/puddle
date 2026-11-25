@@ -16,6 +16,7 @@ use puddle_types::{EntryId, SessionUser, WorkspaceId, WorkspaceStatus, Workspace
 
 use puddle_workspace::{Import, LocalCheckout};
 
+use super::plumbing::CreateSaveError;
 use super::{
     HostWorkspaces, Room, SAVE_HINT, Slot, checkout_refusal, delete_check, kept_login_row,
     not_found, problem_key, room, workspace_error,
@@ -204,7 +205,8 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             };
             let saved = {
                 let mut state = self.state();
-                let saved = stored.and_then(|()| self.persist(&state).map_err(|e| e.to_string()));
+                let saved =
+                    stored.and_then(|()| self.persist(&state).map_err(CreateSaveError::from));
                 if saved.is_err() {
                     // `git.claim` wrote the owner row, so the id is retired like a failed
                     // create's; the next save that works keeps it.

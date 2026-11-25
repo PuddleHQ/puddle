@@ -21754,6 +21754,24 @@
           "missing"
         ]
       },
+      "RestoreIdentityToken": {
+        "type": "object",
+        "description": "A Git identity's pasted token that arrives without its value because this machine's store lacks\nit. The identity and the host only, never a value.",
+        "required": [
+          "identity",
+          "host"
+        ],
+        "properties": {
+          "host": {
+            "type": "string",
+            "description": "The Git host the token is for."
+          },
+          "identity": {
+            "type": "string",
+            "description": "The identity's label."
+          }
+        }
+      },
       "RestoreMode": {
         "type": "string",
         "description": "How a restore treats what is already on this machine.",
@@ -21849,6 +21867,7 @@
           "parts",
           "workspaces",
           "secrets_needing_value",
+          "identity_tokens_needing_value",
           "running_workspaces"
         ],
         "properties": {
@@ -21866,6 +21885,13 @@
             "format": "int32",
             "description": "The backup format (1).",
             "minimum": 0
+          },
+          "identity_tokens_needing_value": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RestoreIdentityToken"
+            },
+            "description": "The Git identities' pasted tokens that need to be entered again here."
           },
           "parts": {
             "type": "array",

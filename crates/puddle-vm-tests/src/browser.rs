@@ -432,7 +432,7 @@ impl BrowserClient {
     /// message carries the page's console and errors), [`HarnessError::Timeout`] when node itself
     /// hung.
     pub async fn open(&self, request: &PageRequest) -> Result<PageOutcome, HarnessError> {
-        let mut session = self.session_with(request.ignore_https_errors).await?;
+        let mut session = self.session_with(request.ignore_https_errors, None).await?;
         let opened = session.open(request).await;
         session.quit().await?;
         opened.map(|(_, outcome)| outcome)
@@ -446,12 +446,26 @@ impl BrowserClient {
     /// [`HarnessError::Io`] when node can't be started, [`HarnessError::Browser`] when the browser
     /// did not start.
     pub async fn session(&self) -> Result<BrowserSession, HarnessError> {
-        self.session_with(false).await
+        self.session_with(false, None).await
+    }
+
+    /// [`BrowserClient::session`] for a browser whose system colour scheme is `scheme` (`dark` or
+    /// `light`): what a page's `prefers-color-scheme` media query answers.
+    ///
+    /// # Errors
+    ///
+    /// As [`BrowserClient::session`].
+    pub async fn session_in_color_scheme(
+        &self,
+        scheme: &str,
+    ) -> Result<BrowserSession, HarnessError> {
+        self.session_with(false, Some(scheme)).await
     }
 
     async fn session_with(
         &self,
         ignore_https_errors: bool,
+        color_scheme: Option<&str>,
     ) -> Result<BrowserSession, HarnessError> {
         let driver = Driver::spawn(
             &self.node,
@@ -467,7 +481,7 @@ impl BrowserClient {
         };
         session
             .call(
-                &json!({"op": "start", "ignoreHttpsErrors": ignore_https_errors}),
+                &json!({"op": "start", "ignoreHttpsErrors": ignore_https_errors, "colorScheme": color_scheme}),
                 START_BUDGET,
             )
             .await?;

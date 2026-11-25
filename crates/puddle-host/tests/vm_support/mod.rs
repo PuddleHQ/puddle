@@ -797,3 +797,25 @@ pub(crate) fn container_fetch(docker: &str, network: &str, url: &str) -> String 
          echo \"exit=$? ms=$(( $(now) - s ))\""
     )
 }
+
+/// Reads events until every workspace of `names` has ended an operation, each within `within` of
+/// the last end, and returns the step each ended with. One operation per workspace: the event
+/// stream keeps what it reads, so the end of one workspace that arrives while another is awaited
+/// is not lost.
+pub(crate) async fn all_ended(
+    events: &mut crate::support::Events,
+    names: &[String],
+    within: Duration,
+) -> Vec<(String, String)> {
+    let any =
+        |event: &serde_json::Value| names.iter().any(|name| crate::support::ended(name)(event));
+    let mut done: Vec<(String, String)> = Vec::new();
+    while done.len() < names.len() {
+        let event = events.until(any, within).await;
+        let name = event["workspace"].as_str().unwrap().to_owned();
+        if !done.iter().any(|(n, _)| *n == name) {
+            done.push((name, event["step"].as_str().unwrap().to_owned()));
+        }
+    }
+    done
+}

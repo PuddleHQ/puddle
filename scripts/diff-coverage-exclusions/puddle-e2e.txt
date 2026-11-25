@@ -3,6 +3,7 @@
 # path glob here starts with crates/puddle-e2e/; the gate refuses another crate's entry, so two pull requests that
 # touch different crates edit different files. Entries stay sorted by path glob, then by the whole line.
 crates/puddle-e2e/src/bin/puddle-lab-forgejo.rs | * | the program the Windows nightly's `usable` job starts (`.github/workflows/msi.yml`): it runs only there, with a Forgejo built for the run, and its parts are covered by the `forgejo_lab` tests (`start_on`, `add_file`, `root_pem`); the argument parser, the info file and the wait for the stop file have no test of their own
+crates/puddle-e2e/src/bin/puddle-soak.rs | * | the program the soak workflow starts: it only passes the command line to `soak::cli::run`, whose sample and judge commands the `soak::cli` tests drive, and turns the result into an exit code
 crates/puddle-e2e/src/lab/git_host.rs | .await\n.is_err()\n{\nreturn; | x2 | the fake proxy's early exit when the client or the upstream hangs up mid-request; no test can time a peer's disconnect to this line without a race, and a hang-up there only ends one proxied connection
 crates/puddle-e2e/src/lab/git_host.rs | // skip-ok: the assert above already failed when PUDDLE_REQUIRE_TOOLS is set | the branch runs only on a machine without git, where PUDDLE_REQUIRE_TOOLS is unset; CI has git and sets it
 crates/puddle-e2e/src/lab/git_host.rs | eprintln!("skipped: git not found"); | the branch runs only on a machine without git, where PUDDLE_REQUIRE_TOOLS is unset; CI has git and sets it

@@ -227,7 +227,7 @@
           {:else}
             <ul class="chips" aria-label="Credentials of {identity.label}">
               {#each identity.credentials as credential (credentialChip(credential))}
-                <li class="meta">{credentialChip(credential)}</li>
+                <li class="meta wrap">{credentialChip(credential)}</li>
               {/each}
             </ul>
           {/if}
@@ -349,6 +349,8 @@
     list-style: none;
   }
   .row {
+    min-width: 0;
+    overflow-wrap: anywhere;
     display: flex;
     flex-wrap: wrap;
     justify-content: space-between;

@@ -415,6 +415,7 @@
     color: var(--color-text-muted);
     font-size: var(--text-sm);
     white-space: normal;
+    overflow-wrap: anywhere;
   }
   .acts {
     display: flex;

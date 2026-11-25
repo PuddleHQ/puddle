@@ -7,6 +7,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { DEFAULT_MODE, MODE_NAMES } from "#lib/interception/modes.ts";
 
 const walker = resolve(
   import.meta.dirname,
@@ -53,6 +54,19 @@ describe("the installed-app walk", () => {
     expect(
       bold.some((label) => new RegExp(name).test(label)),
       `${name} matches none of ${bold.join(", ")}`,
+    ).toBe(true);
+  });
+
+  it("looks for the Interception step's recommended radio by the name the mode has", () => {
+    const text = readFileSync(walker, "utf8");
+    const found = text.match(
+      /"the recommended interception mode", \{[^}]*nameRegex: "([^"]+)"/,
+    );
+    expect(found).not.toBeNull();
+    const name = found?.[1] ?? "";
+    expect(
+      new RegExp(name).test(MODE_NAMES[DEFAULT_MODE]),
+      `${name} does not match ${MODE_NAMES[DEFAULT_MODE]}`,
     ).toBe(true);
   });
 });

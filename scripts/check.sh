@@ -211,7 +211,7 @@ run_gate() {
         git ls-files -z -- '*.sh' '.githooks/*' | xargs -0 shellcheck
         ;;
     hooks)
-        # The self-tests of the scripts, in scripts/hooks-gate.list, a few at a time (T-2027: one `&&` chain took 133 s, and 3 times that with the
+        # The self-tests of the scripts, in scripts/hooks-gate.list, a few at a time (one `&&` chain took 133 s, and 3 times that with the
         # long-TMPDIR reruns of scripts/check-hooks-tmpdir-test.sh).
         scripts/hooks-gate.sh
         ;;

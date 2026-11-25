@@ -1,6 +1,6 @@
 # The commands of the `hooks` gate (scripts/hooks-gate.sh runs them, a few at a time): one command per line, run from the repository
 # root, each independent of the others. Slowest first, so the longest finish last-but-not-alone. Blank lines and `#` lines are ignored.
-# A new script self-test goes here. Measured serially on a 16-core WSL at load 18 (T-2027): 133 s for the lines below the first,
+# A new script self-test goes here. Measured serially on a 16-core WSL at load 18 133 s for the lines below the first,
 # 25 s for the slowest; the first line reruns this whole gate twice under long TMPDIRs, so it is the longest and starts first.
 scripts/check-hooks-tmpdir-test.sh
 scripts/hooks-gate-test.sh

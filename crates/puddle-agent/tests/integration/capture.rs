@@ -109,7 +109,11 @@ async fn enter(test: &str) -> bool {
         if let Some(path) = std::env::var_os("PUDDLE_CAPTURE_SKIP_LOG") {
             use std::io::Write;
             let line = format!("{test}\t{why}\n");
-            if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+            {
                 file.write_all(line.as_bytes()).unwrap();
             }
         }

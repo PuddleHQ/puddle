@@ -4,15 +4,22 @@ ok    CPU virtualization    on (the hypervisor uses it)
 ok    Hypervisor            Windows Hypervisor Platform is on and the hypervisor runs
 ok    Code integrity        memory integrity (HVCI) on; App Control policy for programs off
 info  Job object            Puddle runs in a job object that doesn't let child processes leave it
-      note: Usual under CI runners and some IDE or remote shells. Puddle keeps its VM processes
-            in its own job, so this only matters if "Test boot" fails with access denied.
+      impact: The program that started Puddle limits the processes Puddle may create, which can
+              stop workspaces.
+      remedy: If workspaces fail to start, start Puddle from the Start menu or a normal terminal.
+      note:   Usual under CI runners and some IDE or remote shells. Puddle keeps its VM processes
+              in its own job, so this only matters if "Test boot" fails with access denied.
 ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
 ok    Runtime starts        msb 0.7.7-puddle.2 (0.0 s)
 FAIL  Test boot             msb exited with 1: access denied starting the VM process inside this job object
-      fix:  The job object Puddle was started in (see "Job object") doesn't let the VM process
-            leave it. Run puddle doctor from a normal terminal; on a CI runner, start it through
-            a process outside the step's job.
-      from: error: io error: Access is denied. (os error 5)
+      impact: Puddle can't start any workspace from here: the program that started it won't let it
+              create virtual machines.
+      remedy: Start Puddle from the Start menu or a normal terminal, not from a CI runner or an
+              IDE.
+      fix:    The job object Puddle was started in (see "Job object") doesn't let the VM process
+              leave it. Run puddle doctor from a normal terminal; on a CI runner, start it through
+              a process outside the step's job.
+      from:   error: io error: Access is denied. (os error 5)
 ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)

@@ -1,14 +1,22 @@
 puddle doctor (puddle 0.1.0, windows x86_64)
 
 info  CPU virtualization    unknown
+      impact: Puddle couldn't read whether CPU virtualization is on.
+      remedy: Fix the Hypervisor line first. If it stays, check that virtualization is on in the
+              UEFI/BIOS setup.
 FAIL  Hypervisor            the hypervisor query failed
-      fix:  Restart Windows and run puddle doctor again. If this stays, include the line below
-            when you report it.
-      from: WHvGetCapability failed: HRESULT 0x80070005
+      impact: Puddle can't tell whether it can start workspaces here.
+      remedy: Restart the computer and check again. If it stays, copy the report and send it with
+              a bug report.
+      fix:    Restart Windows and run puddle doctor again. If this stays, include the line below
+              when you report it.
+      from:   WHvGetCapability failed: HRESULT 0x80070005
 ok    Code integrity        memory integrity (HVCI) on; App Control policy for programs off
 ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
 ok    Runtime starts        msb 0.7.7-puddle.2 (0.0 s)
 skip  Test boot             not checked: no usable hypervisor
+      impact: Not checked, so Puddle can't tell yet whether a workspace can start here.
+      remedy: Fix any problem above, then check again.
 ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)

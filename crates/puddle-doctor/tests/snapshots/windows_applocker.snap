@@ -5,13 +5,17 @@ ok    Hypervisor            Windows Hypervisor Platform is on and the hypervisor
 ok    Code integrity        memory integrity (HVCI) on; App Control policy for programs off
 ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
 FAIL  Runtime starts        an AppLocker or Software Restriction policy blocks msb
-      fix:  The policy doesn't allow C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe.
-            Allow Puddle's install folder (a path or publisher rule), or install Puddle where
-            the policy lets programs run. Event Viewer > Applications and Services Logs >
-            Microsoft > Windows > AppLocker > EXE and DLL names the rule.
-      from: This program is blocked by group policy. For more information, contact your system
-            administrator. (os error 1260)
+      impact: Puddle can't start any workspace: a Windows policy forbids its runtime.
+      remedy: Ask whoever manages this PC to allow Puddle's install folder in AppLocker.
+      fix:    The policy doesn't allow C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe.
+              Allow Puddle's install folder (a path or publisher rule), or install Puddle where
+              the policy lets programs run. Event Viewer > Applications and Services Logs >
+              Microsoft > Windows > AppLocker > EXE and DLL names the rule.
+      from:   This program is blocked by group policy. For more information, contact your system
+              administrator. (os error 1260)
 skip  Test boot             not checked: the runtime doesn't start
+      impact: Not checked, so Puddle can't tell yet whether a workspace can start here.
+      remedy: Fix any problem above, then check again.
 ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)

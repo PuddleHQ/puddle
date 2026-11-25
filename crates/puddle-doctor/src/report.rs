@@ -344,9 +344,15 @@ impl Report {
                 c.id.title(),
                 c.summary
             );
+            if c.status != Status::Ok {
+                push_block(&mut out, "impact:", &c.impact);
+                if let Some(remedy) = &c.remedy {
+                    push_block(&mut out, "remedy:", remedy);
+                }
+            }
             if let Some(fix) = &c.fix {
                 let label = if c.status == Status::Fail {
-                    "fix: "
+                    "fix:"
                 } else {
                     "note:"
                 };
@@ -400,7 +406,7 @@ fn push_block(out: &mut String, label: &str, text: &str) {
     for line in text.lines().flat_map(wrap) {
         let prefix = if first { label } else { "" };
         first = false;
-        let _ignored = writeln!(out, "      {prefix:<5} {line}");
+        let _ignored = writeln!(out, "      {prefix:<7} {line}");
     }
 }
 

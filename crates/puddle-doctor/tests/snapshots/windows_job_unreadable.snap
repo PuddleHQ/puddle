@@ -4,15 +4,19 @@ ok    CPU virtualization    on (the hypervisor uses it)
 ok    Hypervisor            Windows Hypervisor Platform is on and the hypervisor runs
 ok    Code integrity        memory integrity (HVCI) on; App Control policy for programs off
 info  Job object            could not be read; whether Puddle runs in a job object that blocks child processes from leaving it is unknown
-      note: Only matters if "Test boot" fails with access denied; if it does, run puddle doctor
-            from a plain terminal outside a CI runner or IDE.
-      from: QueryInformationJobObject failed: os error 87
+      impact: Puddle couldn't read whether the program that started it limits its processes.
+      remedy: If workspaces fail to start, start Puddle from the Start menu or a normal terminal.
+      note:   Only matters if "Test boot" fails with access denied; if it does, run puddle doctor
+              from a plain terminal outside a CI runner or IDE.
+      from:   QueryInformationJobObject failed: os error 87
 ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
 ok    Runtime starts        msb 0.7.7-puddle.2 (0.0 s)
 FAIL  Test boot             the test VM didn't finish within 25.0 s
-      fix:  Security software scanning a program it hasn't seen before is the usual cause. Run
-            puddle doctor again; if it keeps timing out, check your endpoint security's log for
-            msb.
+      impact: Workspaces may not start: the test machine did not finish in time.
+      remedy: Check again. If it keeps timing out, look for msb in your security software's log.
+      fix:    Security software scanning a program it hasn't seen before is the usual cause. Run
+              puddle doctor again; if it keeps timing out, check your endpoint security's log for
+              msb.
 ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)

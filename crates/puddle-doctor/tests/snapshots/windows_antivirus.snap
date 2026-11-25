@@ -5,12 +5,16 @@ ok    Hypervisor            Windows Hypervisor Platform is on and the hypervisor
 ok    Code integrity        memory integrity (HVCI) on; App Control policy for programs off
 ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
 FAIL  Runtime starts        antivirus flagged msb
-      fix:  Look for C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe in your
-            antivirus's protection history or quarantine. If it is a false positive, restore it,
-            exclude Puddle's runtime folder, and reinstall Puddle if the file is gone.
-      from: Operation did not complete successfully because the file contains a virus or
-            potentially unwanted software. (os error 225)
+      impact: Puddle can't start any workspace: antivirus stopped its runtime.
+      remedy: Restore msb from the antivirus quarantine and exclude Puddle's runtime folder.
+      fix:    Look for C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe in your
+              antivirus's protection history or quarantine. If it is a false positive, restore it,
+              exclude Puddle's runtime folder, and reinstall Puddle if the file is gone.
+      from:   Operation did not complete successfully because the file contains a virus or
+              potentially unwanted software. (os error 225)
 skip  Test boot             not checked: the runtime doesn't start
+      impact: Not checked, so Puddle can't tell yet whether a workspace can start here.
+      remedy: Fix any problem above, then check again.
 ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)

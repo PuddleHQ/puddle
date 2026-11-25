@@ -18,7 +18,7 @@ fn object_with(format: BinaryFormat, sections: &[&[u8]]) -> Vec<u8> {
     obj.write().unwrap()
 }
 
-fn read(bytes: &[u8]) -> Result<Option<String>, String> {
+fn read(bytes: &[u8]) -> Result<Option<String>, VersionReadError> {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("msb");
     std::fs::write(&path, bytes).unwrap();
@@ -46,14 +46,15 @@ fn no_section_is_none() {
 #[test]
 fn malformed_sections_are_errors() {
     let two = object_with(BinaryFormat::Elf, &[b"0.7.7", b"0.7.8"]);
-    assert!(read(&two).unwrap_err().contains("more than one"));
+    assert_eq!(read(&two).unwrap_err(), VersionReadError::MoreThanOne);
     let big = vec![b'1'; 257];
     let err = read(&object_with(BinaryFormat::Elf, &[&big])).unwrap_err();
-    assert!(err.contains("1 to 256 bytes"), "{err}");
+    assert_eq!(err, VersionReadError::Size { size: 257 });
+    assert!(err.to_string().contains("1 to 256 bytes"), "{err}");
     let not_utf8 = object_with(BinaryFormat::Elf, &[&[0xff, 0xfe]]);
-    assert!(read(&not_utf8).unwrap_err().contains("UTF-8"));
+    assert_eq!(read(&not_utf8).unwrap_err(), VersionReadError::NotUtf8);
     let nul = object_with(BinaryFormat::Elf, &[&[0, 0]]);
-    assert!(read(&nul).unwrap_err().contains("empty"));
+    assert_eq!(read(&nul).unwrap_err(), VersionReadError::Empty);
 }
 
 #[test]

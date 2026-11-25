@@ -3685,8 +3685,18 @@ proc_ticks() { for p in $(pgrep -x "$1"); do awk '{print $14+$15}' /proc/$p/stat
 cpus > "$W/cpu0"; a0=$(proc_ticks puddle-agent)
 t0=$(date +%s.%N)
 TIMEFORMAT='TRACE npm_cpu real=%R user=%U sys=%S'
+threads() { for t in /proc/$1/task/*/stat; do awk '{print $1, $2, $14+$15}' "$t" 2>/dev/null; done | sort; }
+(
+  sleep 25
+  N=$(pgrep -x node | head -1)
+  threads "$N" > "$W/th0"; sleep 10; threads "$N" > "$W/th1"
+  join "$W/th0" "$W/th1" | awk '{d=($6-$3)/10; if (d>0) printf "TRACE thread busy=%03.0f%% tid=%s name=%s\n", d, $1, $2}' | sort -r | head -6 > "$W/threads.log"
+) &
+TH=$!
 { time (cd "$W/np" && npm install --no-audit --no-fund --ignore-scripts --loglevel=http > "$W/npm.log" 2>&1) ; } 2> "$W/time.log"
 rc=$?
+wait $TH
+cat "$W/threads.log"
 t1=$(date +%s.%N)
 cpus > "$W/cpu1"; a1=$(proc_ticks puddle-agent)
 kill $VM 2>/dev/null

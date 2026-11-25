@@ -3670,7 +3670,7 @@ U=https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz
 for i in 1 2 3 4 5 6; do
   curl -s -o /dev/null -w 'TRACE fresh dns=%{time_namelookup} conn=%{time_connect} tls=%{time_appconnect} ttfb=%{time_starttransfer} total=%{time_total}\n' $U
 done
-curl -s -o /dev/null -w 'TRACE reuse conns=%{num_connects} ttfb=%{time_starttransfer} total=%{time_total}\n' $U $U $U $U $U $U
+curl -s -o /dev/null -o /dev/null -o /dev/null -o /dev/null -o /dev/null -o /dev/null -w 'TRACE reuse conns=%{num_connects} ttfb=%{time_starttransfer} total=%{time_total}\n' $U $U $U $U $U $U
 mkdir -p "$W/np"
 cat > "$W/np/package.json" <<'JSON'
 {"name":"transparency","version":"1.0.0","dependencies":{
@@ -3685,7 +3685,7 @@ proc_ticks() { for p in $(pgrep -x "$1"); do awk '{print $14+$15}' /proc/$p/stat
 cpus > "$W/cpu0"; a0=$(proc_ticks puddle-agent)
 t0=$(date +%s.%N)
 TIMEFORMAT='TRACE npm_cpu real=%R user=%U sys=%S'
-{ time (cd "$W/np" && npm install --no-audit --no-fund --ignore-scripts --loglevel=http) > "$W/npm.log" 2>&1 ; } 2> "$W/time.log"
+{ time (cd "$W/np" && npm install --no-audit --no-fund --ignore-scripts --loglevel=http > "$W/npm.log" 2>&1) ; } 2> "$W/time.log"
 rc=$?
 t1=$(date +%s.%N)
 cpus > "$W/cpu1"; a1=$(proc_ticks puddle-agent)

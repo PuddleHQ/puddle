@@ -38,10 +38,12 @@ pub enum Check {
     WalSize,
     /// The database grew out of line with the number of records.
     DbGrowth,
+    /// The machine's commit charge came within 5 % of its commit limit (Windows).
+    CommitCharge,
 }
 
 /// Every rule.
-pub const ALL: [Check; 7] = [
+pub const ALL: [Check; 8] = [
     Check::Leak,
     Check::IdleGrowth,
     Check::ApiLatency,
@@ -49,6 +51,7 @@ pub const ALL: [Check; 7] = [
     Check::W4Failures,
     Check::WalSize,
     Check::DbGrowth,
+    Check::CommitCharge,
 ];
 
 /// The timeline of a run, in UTC epoch seconds.
@@ -131,6 +134,7 @@ pub fn judge_only(series: &Series, schedule: Schedule, checks: &[Check]) -> Vec<
             Check::W4Failures => w4_failures(series, schedule, &mut out),
             Check::WalSize => wal_size(series, &mut out),
             Check::DbGrowth => db_growth(series, schedule, &mut out),
+            Check::CommitCharge => commit_charge(series, &mut out),
         }
     }
     out
@@ -452,6 +456,36 @@ fn db_growth(series: &Series, sched: Schedule, out: &mut Vec<Finding>) {
             "file.db.bytes",
             format!(
                 "grew {grown} bytes for {added} records; the line is {DB_BYTES_PER_RECORD} per record, or 10 % with no new records"
+            ),
+        );
+    }
+}
+
+/// The share of the commit limit the playbook stops the loops at.
+const COMMIT_LINE: f64 = 0.95;
+
+fn commit_charge(series: &Series, out: &mut Vec<Finding>) {
+    let limits = series.points("host.commit_limit_kb");
+    let worst = series
+        .points("host.commit_kb")
+        .iter()
+        .filter_map(|&(t, kb)| {
+            let &(_, limit) = limits.iter().find(|&&(lt, _)| lt == t)?;
+            (limit > 0.0).then_some((t, kb / limit))
+        })
+        .max_by(|a, b| a.1.total_cmp(&b.1));
+    if let Some((_, share)) = worst
+        && share >= COMMIT_LINE
+    {
+        find(
+            out,
+            Severity::Major,
+            Check::CommitCharge,
+            "host.commit_kb",
+            format!(
+                "the commit charge reached {:.1} % of the commit limit (line: {:.0} %)",
+                share * 100.0,
+                COMMIT_LINE * 100.0
             ),
         );
     }

@@ -88,6 +88,20 @@ impl LocalCategory {
         }
     }
 
+    /// The name of this category's toggle on the Settings and workspace screens, which the block
+    /// text quotes so the user finds the switch by the words they see.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Loopback => "This computer (loopback)",
+            Self::Private => "Private networks",
+            Self::LinkLocal => "Link-local",
+            Self::Metadata => "Cloud metadata",
+            Self::Special => "Other special ranges",
+            Self::CompanyNetwork => "Company network",
+        }
+    }
+
     /// The audit `reason` for a request this category's toggle blocked (R-24): `toggle:<key>`.
     #[must_use]
     pub const fn audit_reason(self) -> &'static str {

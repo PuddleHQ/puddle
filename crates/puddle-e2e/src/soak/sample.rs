@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The soak sampler: what one sample of `metrics.tsv` holds and how each part is read. Linux
-//! reads the host and processes from `/proc`; the Windows readings (handles, commit charge) are
-//! added where that run lives. Every reader returns plain numbers, so the tests feed it files
+//! reads the host and processes from `/proc`; Windows reads them through [`super::winhost`]
+//! (handle counts, working sets, commit charge). Every reader returns plain numbers, so the tests feed it files
 //! and servers of their own.
 
 use std::collections::VecDeque;
@@ -15,6 +15,8 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
 use super::series::Series;
+#[cfg(windows)]
+use super::winhost;
 
 /// Longest a single request may take before it counts as failed.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -443,17 +445,7 @@ impl Sampler {
     /// (a missing line is a gap in the series, never a made-up zero).
     pub async fn sample(&mut self, now: u64, into: &mut Series) {
         self.host(now, into);
-        let mut procs = find_processes(Path::new("/proc"), &self.cfg.process_prefixes);
-        if let Some(root) = *self.root.lock().unwrap() {
-            let ours = descendants(root);
-            procs.retain(|&(_, pid)| pid == root || ours.contains(&pid));
-        }
-        for (comm, pid) in procs {
-            let readings = read_process(&Path::new("/proc").join(pid.to_string()));
-            for (field, v) in readings.into_iter().flatten() {
-                into.push(now, &format!("proc.{comm}.{pid}.{field}"), v);
-            }
-        }
+        self.processes(now, into);
         self.files(now, into);
         self.api(now, into).await;
         let (age, reconnects) = self.sse.read();
@@ -467,6 +459,44 @@ impl Sampler {
         }
     }
 
+    /// The readings of every Puddle process: from `/proc`.
+    #[cfg(not(windows))]
+    fn processes(&self, now: u64, into: &mut Series) {
+        let mut procs = find_processes(Path::new("/proc"), &self.cfg.process_prefixes);
+        if let Some(root) = *self.root.lock().unwrap() {
+            let ours = descendants(root);
+            procs.retain(|&(_, pid)| pid == root || ours.contains(&pid));
+        }
+        for (comm, pid) in procs {
+            let readings = read_process(&Path::new("/proc").join(pid.to_string()));
+            for (field, v) in readings.into_iter().flatten() {
+                into.push(now, &format!("proc.{comm}.{pid}.{field}"), v);
+            }
+        }
+    }
+
+    /// The readings of every Puddle process: working set, threads and handle count.
+    #[cfg(windows)]
+    fn processes(&self, now: u64, into: &mut Series) {
+        let all = winhost::native::snapshot();
+        let root = *self.root.lock().unwrap();
+        for (comm, pid) in winhost::select(&all, &self.cfg.process_prefixes, root) {
+            let Some((rss_kb, handles)) = winhost::native::process(pid) else {
+                continue;
+            };
+            let threads = all.iter().find(|p| p.pid == pid).map_or(0, |p| p.threads);
+            into.push(now, &format!("proc.{comm}.{pid}.rss_kb"), rss_kb);
+            into.push(
+                now,
+                &format!("proc.{comm}.{pid}.threads"),
+                f64::from(threads),
+            );
+            into.push(now, &format!("proc.{comm}.{pid}.handles"), handles);
+        }
+    }
+
+    /// Free RAM, CPU and free disk of the machine, from `/proc` and `df`.
+    #[cfg(not(windows))]
     fn host(&mut self, now: u64, into: &mut Series) {
         if let Some(kb) = std::fs::read_to_string("/proc/meminfo")
             .ok()
@@ -489,6 +519,37 @@ impl Sampler {
         }
         self.cpu_before = jiffies;
         if let Some(kb) = self.cfg.disk.as_deref().and_then(free_disk_kb) {
+            into.push(now, "host.free_disk_kb", kb);
+        }
+    }
+
+    /// Free RAM, commit charge and its limit, CPU and free disk of the machine.
+    #[cfg(windows)]
+    fn host(&mut self, now: u64, into: &mut Series) {
+        for (name, v) in winhost::native::memory()
+            .into_iter()
+            .flat_map(winhost::Memory::readings)
+        {
+            into.push(now, &format!("host.{name}"), v);
+        }
+        let ticks = winhost::native::cpu_ticks();
+        if let (Some((b0, t0)), Some((b1, t1))) = (self.cpu_before, ticks)
+            && t1 > t0
+        {
+            #[expect(clippy::cast_precision_loss, reason = "tick counts")]
+            into.push(
+                now,
+                "host.cpu_pct",
+                100.0 * (b1 - b0) as f64 / (t1 - t0) as f64,
+            );
+        }
+        self.cpu_before = ticks;
+        if let Some(kb) = self
+            .cfg
+            .disk
+            .as_deref()
+            .and_then(winhost::native::free_disk_kb)
+        {
             into.push(now, "host.free_disk_kb", kb);
         }
     }

@@ -508,7 +508,7 @@ async fn vm_rules_probe_a_guest_tool_sees_every_rule_decide_its_answer() {
         &off,
     );
     t.check(
-        off.body.contains("turn on 'loopback'"),
+        off.body.contains("turn on 'This computer (loopback)'"),
         "S13 off",
         "the text names the toggle",
         &off,

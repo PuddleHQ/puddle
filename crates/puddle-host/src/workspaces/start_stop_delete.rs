@@ -226,9 +226,20 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         inner
             .kit
             .hook()
-            .start(&inner.runtime, &name.sandbox_name(), plan, &gate)
+            .start_kept(
+                &inner.runtime,
+                &name.sandbox_name(),
+                plan,
+                &gate,
+                &self.keeper(),
+            )
             .await
             .map_err(|e| {
+                // A sandbox the hook stopped again leaves the lifecycle; one it could not stop
+                // stays, so the shutdown stops it.
+                if !e.left_running() {
+                    inner.lifecycle.release(&name.sandbox_name());
+                }
                 if let BootError::Compute(ComputeError::StartRefused { cause, .. }) = &e {
                     self.raise_start_refused(name, *cause);
                 }
@@ -258,6 +269,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         // The windows go first, so the editor can disconnect and the guest end its extension hosts
         // before the stop (best effort: the close is asked for, not waited for).
         self.inner.launcher.close_browser(name).await;
+        let _guest = self.hold_guest(name).await;
         let gated = self.gated(name).await?;
         self.progress(name, WorkspaceStep::Reclaiming, None);
         // A failed trim only costs disk space; the VM still stops, and the user is told.
@@ -452,6 +464,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let inner = &self.inner;
         self.progress(&record.id, WorkspaceStep::Checking, None);
         inner.launcher.close_browser(&record.id).await;
+        let _guest = self.hold_guest(&record.id).await;
         self.progress(&record.id, WorkspaceStep::Removing, None);
         inner
             .workspaces

@@ -88,3 +88,9 @@ fn every_round_must_exit_zero_in_all_three_jobs_and_there_must_be_rounds() {
     assert!(judge_rounds("", 1).is_err());
     assert!(judge_rounds(good, 3).is_err());
 }
+
+#[test]
+fn a_listing_line_with_a_fourth_field_or_a_bad_size_is_ignored() {
+    let tree = parse_tree("obj/a.gz 1.5 100 extra\nobj/b.gz 1.5 many\nobj/c.gz 1.5 7\n");
+    assert_eq!(tree.keys().collect::<Vec<_>>(), ["obj/c.gz"]);
+}

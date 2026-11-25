@@ -37,8 +37,8 @@ fn main() -> ExitCode {
         Command::MiseFetch(request) => mise_fetch(&request),
         Command::MiseInstall(request) => mise_install(&request),
         Command::MiseTools(request) => mise_tools(&request),
-        Command::Usage(msg) => {
-            eprintln!("{msg}");
+        Command::Usage(err) => {
+            eprintln!("{err}");
             ExitCode::from(2)
         }
         Command::Run => {

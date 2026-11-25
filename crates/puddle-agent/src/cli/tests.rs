@@ -22,9 +22,10 @@ fn arguments_map_to_commands() {
     ] {
         assert!(matches!(parse(bad), Command::Usage(_)), "{bad:?}");
     }
-    let Command::Usage(msg) = parse(&["--help"]) else {
+    let Command::Usage(err) = parse(&["--help"]) else {
         panic!("not usage");
     };
+    let msg = err.to_string();
     assert!(msg.contains("--help") && msg.contains(USAGE));
     assert!(matches!(parse(&["--version", "x"]), Command::Usage(_)));
     assert!(matches!(

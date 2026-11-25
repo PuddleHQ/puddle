@@ -85,10 +85,10 @@ async fn past_the_limit_a_forward_is_refused_with_a_reason() {
 #[test]
 fn a_refusal_means_nothing_listens_and_any_other_failure_is_named() {
     assert_eq!(
-        failure_text(io::ErrorKind::ConnectionRefused, 80),
+        ConnectFailure::new(io::ErrorKind::ConnectionRefused, 80).to_string(),
         "nothing in the workspace listens on port 80"
     );
-    let other = failure_text(io::ErrorKind::TimedOut, 80);
+    let other = ConnectFailure::new(io::ErrorKind::TimedOut, 80).to_string();
     assert!(
         other.contains("did not take a connection on port 80") && other.contains("timed out"),
         "{other}"

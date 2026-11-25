@@ -4,6 +4,7 @@ use puddle_types::SandboxName;
 use std::sync::Mutex;
 
 use super::*;
+use crate::backend::EndExtensionHostsFailed;
 use tracing::Level;
 
 #[test]
@@ -115,7 +116,9 @@ fn recording_ends() -> (EndExtensionHosts, Arc<Mutex<Vec<String>>>) {
         sink.lock().unwrap().push(workspace.to_string());
         Box::pin(async move {
             if workspace.as_str() == "stopped" {
-                Err("the workspace is not running".to_owned())
+                Err(EndExtensionHostsFailed::Guest(
+                    puddle_host::EndExtensionHostsError::NotRunning,
+                ))
             } else {
                 Ok(())
             }

@@ -91,4 +91,22 @@ describe("first-run import", () => {
     expect(screen.getByTestId("import-preview")).toBeInTheDocument();
     expect(screen.queryByTestId("import-waiting")).toBeNull();
   });
+
+  it("opens the file picker from the choose button", async () => {
+    render(Import);
+    const click = vi.spyOn(screen.getByTestId("import-file"), "click");
+    await fireEvent.click(screen.getByTestId("import-choose"));
+    expect(click).toHaveBeenCalledTimes(1);
+  });
+
+  it("goes back to the file choice from the preview", async () => {
+    svc.preview.mockResolvedValue({ ok: true, value: preview });
+    render(Import);
+    await choose();
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Choose another file" }),
+    );
+    expect(screen.queryByTestId("import-preview")).toBeNull();
+    expect(screen.getByTestId("import-choose")).toBeInTheDocument();
+  });
 });

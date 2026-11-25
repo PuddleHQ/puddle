@@ -14835,6 +14835,7 @@
               "scrubbed_stand_ins",
               "foreign_credentials",
               "answer_credentials",
+              "protocol",
               "method",
               "path",
               "path_truncated",
@@ -14924,7 +14925,7 @@
                   "string",
                   "null"
                 ],
-                "description": "HTTP method, where the proxy saw the request in clear."
+                "description": "HTTP method, where the proxy saw the request in clear; for `protocol: ssh` the Git\ncommand or the refusal (`ssh-command`, `ssh-channel`)."
               },
               "origin": {
                 "$ref": "#/components/schemas/ConnectionOrigin",
@@ -14968,6 +14969,17 @@
                 "format": "int32",
                 "description": "The requested port.",
                 "minimum": 0
+              },
+              "protocol": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/ConnectionProtocol",
+                    "description": "What `method` and `path` are: `http`, or `ssh` for Git over SSH. `null` when there is\nno `method`. Records written before it existed read as `http` when they have a\n`method`."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "reason": {
                 "type": "string",
@@ -16500,6 +16512,14 @@
           "upstream_refused",
           "connect_failed",
           "timeout"
+        ]
+      },
+      "ConnectionProtocol": {
+        "type": "string",
+        "description": "What the `method` and `path` of a connection record are.",
+        "enum": [
+          "http",
+          "ssh"
         ]
       },
       "Consent": {

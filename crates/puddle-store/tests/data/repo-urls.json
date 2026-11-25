@@ -1,5 +1,5 @@
 {
-  "comment": "Clone addresses and the repository each names, shared by the Rust parser (RepoRef::from_https_url) and the UI's (ui/src/lib/identities/repo.ts). `null` is refused. `ssh_cases` are SSH addresses (Rust: ssh_address_as_https; UI: sshAsHttps in ui/src/lib/workspaces/model.ts): `https` is the clone address they stand for and `repo` the repository it names; `refusal` is `host` (not a Git host Puddle ends SSH for), `shape` (not an SSH address Puddle can read) or `shape_repo` (an address of a Git host that names no repository).",
+  "comment": "Clone addresses and the repository each names, shared by the Rust parser (RepoRef::from_https_url) and the UI's (ui/src/lib/identities/repo.ts). `null` is refused. `ssh_cases` are SSH addresses (Rust: ssh_address_as_https; UI: sshAsHttps in ui/src/lib/workspaces/model.ts): `https` is the clone address they stand for and `repo` the repository it names; `refusal` is `host` (not a Git host Puddle ends SSH for), `shape` (not an SSH address Puddle can read) or `shape_repo` (an address of a Git host that names no repository). `ssh_hosts` are the Git hosts Puddle ends SSH for: the SSH name and the HTTPS host it stands for (Rust: the proxy's `ssh_git/grammar.rs` table and `ssh_address_as_https`; UI: `SSH_HOSTS` in ui/src/lib/workspaces/model.ts).",
   "cases": [
     { "url": "https://github.com/acme/web-shop.git", "repo": ["github.com", "acme", "web-shop"] },
     { "url": "https://github.com/Acme/Web-Shop", "repo": ["github.com", "acme", "web-shop"] },
@@ -74,5 +74,15 @@
     { "url": "git@ssh.dev.azure.com:v3/contoso/Platform", "https": null, "refusal": "shape" },
     { "url": "git@ssh.dev.azure.com:v3/contoso/Platform/Api/more", "https": null, "refusal": "shape" },
     { "url": "git@ssh.dev.azure.com:v3/contoso//Api", "https": null, "refusal": "shape" }
+  ],
+  "ssh_hosts": [
+    { "ssh": "github.com", "https": "github.com" },
+    { "ssh": "ssh.github.com", "https": "github.com" },
+    { "ssh": "gitlab.com", "https": "gitlab.com" },
+    { "ssh": "altssh.gitlab.com", "https": "gitlab.com" },
+    { "ssh": "bitbucket.org", "https": "bitbucket.org" },
+    { "ssh": "altssh.bitbucket.org", "https": "bitbucket.org" },
+    { "ssh": "ssh.dev.azure.com", "https": "dev.azure.com" },
+    { "ssh": "vs-ssh.visualstudio.com", "https": "visualstudio.com" }
   ]
 }

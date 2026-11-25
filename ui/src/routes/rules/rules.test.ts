@@ -548,7 +548,9 @@ describe("editing a rule in place", () => {
     expect(within(dialog).getByLabelText("Host")).toHaveValue("*.github.com");
     expect(within(dialog).getByLabelText("Deny")).toBeChecked();
     expect(within(dialog).getByLabelText("One workspace")).toBeChecked();
-    expect(within(dialog).getByLabelText("Workspace")).toHaveValue("shop");
+    expect(
+      within(dialog).getByRole("combobox", { name: "Workspace" }),
+    ).toHaveValue("shop");
     expect(within(dialog).getByLabelText("Expires")).toHaveDisplayValue(
       /^Unchanged/,
     );
@@ -1055,6 +1057,33 @@ describe("method and path rules", () => {
     window.history.replaceState({}, "", "/rules");
   });
 
+  it("opens the new-rule form with the host and workspace the address names, as Activity links to it", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/rules?new-rule=ads.example.net&workspace=shop",
+    );
+    render(RulesPage);
+    const dialog = await screen.findByRole("dialog", { name: "Add a rule" });
+    expect(within(dialog).getByLabelText(/^Host/)).toHaveValue(
+      "ads.example.net",
+    );
+    expect(
+      within(dialog).getByRole("combobox", { name: "Workspace" }),
+    ).toHaveValue("shop");
+    window.history.replaceState({}, "", "/rules");
+  });
+
+  it("opens the new-rule form with only the host when the address names no workspace", async () => {
+    window.history.replaceState({}, "", "/rules?new-rule=ads.example.net");
+    render(RulesPage);
+    const dialog = await screen.findByRole("dialog", { name: "Add a rule" });
+    expect(within(dialog).getByLabelText(/^Host/)).toHaveValue(
+      "ads.example.net",
+    );
+    window.history.replaceState({}, "", "/rules");
+  });
+
   it("ignores a rule named in the address that is not a number", async () => {
     window.history.replaceState({}, "", "/rules?request-rule=abc");
     requestApi.rules = [requestRule(1)];
@@ -1123,8 +1152,8 @@ describe("method and path rules", () => {
     await waitFor(() => expect(requestRulesStore.status).toBe("ready"));
     requestApi.rules = [requestRule(2, { host: "late.example.com" })];
     source.emit({ type: "request_rules_changed" });
-    expect(
-      await within(section()).findByText("late.example.com"),
-    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(section()).toHaveTextContent("late.example.com"),
+    );
   });
 });

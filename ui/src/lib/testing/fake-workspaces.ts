@@ -26,6 +26,7 @@ export function workspace(
           entry: entryOf(name),
           url: `https://github.com/acme/${name}.git`,
           directory: name,
+          branch: null,
         },
       ],
       start_folder: null,
@@ -476,6 +477,7 @@ export class FakeWorkspaces {
             .split("/")
             .pop()!
             .replace(/\.git$/, ""),
+          branch: null,
         })),
         status: "created",
         busy: "creating",
@@ -523,7 +525,7 @@ export class FakeWorkspaces {
         ...found,
         repositories: [
           ...found.repositories,
-          { entry: entryOf(directory), url, directory },
+          { entry: entryOf(directory), url, directory, branch: null },
         ],
         ...(cloning ? { busy: "cloning" as const } : {}),
       };

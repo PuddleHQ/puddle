@@ -1312,6 +1312,19 @@ impl WorkspaceService for FakeWorkspaces {
         })
     }
 
+    fn known_branches(&self, id: &WorkspaceId) -> BTreeMap<String, String> {
+        lock(&self.inner.state)
+            .last_listing
+            .get(id)
+            .map(|(_, list)| {
+                list.checkouts
+                    .iter()
+                    .filter_map(|c| Some((c.directory.clone(), c.branch.clone()?)))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     fn checkouts<'a>(
         &'a self,
         id: &'a WorkspaceId,

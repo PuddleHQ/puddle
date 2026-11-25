@@ -146,6 +146,7 @@ describe("events", () => {
                 entry: "e-x",
                 url: "https://github.com/acme/x.git",
                 directory: "x",
+                branch: null,
               },
             ],
           }

@@ -221,6 +221,9 @@ impl Store {
             tracing::warn!(%err, "the audit file's free space could not be given back; the next sweep tries again");
             0
         });
+        if let Err(err) = self.checkpoint_wal() {
+            tracing::warn!(%err, "the write-ahead log could not be truncated; the next sweep tries again");
+        }
         Ok(SweepReport {
             rules_expired,
             audit_records_pruned,

@@ -18,6 +18,8 @@
     serverOf,
     type ServerChoice,
   } from "#lib/settings/model.ts";
+  import { onMount } from "svelte";
+  import { identities } from "#lib/stores/identities.svelte.ts";
   import { globalSettings as store } from "#lib/stores/global-settings.svelte.ts";
   import { toasts } from "#lib/stores/toasts.svelte.ts";
 
@@ -28,6 +30,18 @@
   let popupBusy = $state(false);
   let popupError = $state<string | null>(null);
   let withdrawing = $state(false);
+
+  onMount(() => void identities.ensureLoaded());
+
+  /** The two Git switches new workspaces start with; a refusal puts the box back and says why. */
+  async function setGitDefault(
+    key: "only_push_listed" | "only_pull_listed",
+    on: boolean,
+  ): Promise<boolean> {
+    const result = await identities.setGitDefaults({ [key]: on });
+    if (!result.ok) toasts.push(result.message, { tone: "error" });
+    return result.ok;
+  }
 
   const when = (ms: number) =>
     new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(ms);
@@ -198,6 +212,31 @@
     >
       <a class="btn" href="/identities">Manage identities</a>
     </SettingRow>
+    {@const defaults = identities.gitDefaults}
+    <SwitchRow
+      id="set-push-listed"
+      label="Only push to allowed repositories"
+      desc={defaults === null
+        ? "Reading the current setting."
+        : defaults.only_push_listed
+          ? "New workspaces may push only to a repository whose Push box is ticked on their Git tab. This checks Git pushes only: a token in the workspace can still change a repository through the GitHub API."
+          : "Off: a push may go to any repository the credential can write to. Each workspace can change this on its Git tab."}
+      checked={defaults?.only_push_listed ?? false}
+      disabled={defaults === null}
+      onchange={(next) => setGitDefault("only_push_listed", next)}
+    />
+    <SwitchRow
+      id="set-pull-listed"
+      label="Only pull from allowed repositories"
+      desc={defaults === null
+        ? "Reading the current setting."
+        : defaults.only_pull_listed
+          ? "New workspaces may fetch only from a repository whose Pull box is ticked on their Git tab."
+          : "Off: a fetch may go to any repository the credential can read. Each workspace can change this on its Git tab."}
+      checked={defaults?.only_pull_listed ?? false}
+      disabled={defaults === null}
+      onchange={(next) => setGitDefault("only_pull_listed", next)}
+    />
     <ValueRow
       id="set-ssh-agent"
       label="SSH agent pipe or socket"

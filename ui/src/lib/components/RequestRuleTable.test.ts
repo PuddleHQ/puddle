@@ -41,10 +41,9 @@ describe("the method and path table", () => {
       expect.stringContaining("by api"),
     );
     expect(second).toHaveTextContent("*.example.org");
-    expect(within(second!).getByText("*.example.org")).toHaveAttribute(
-      "title",
-      "This host and every subdomain of it",
-    );
+    expect(
+      within(second!).getByTitle("This host and every subdomain of it"),
+    ).toHaveTextContent("*.");
     expect(second).toHaveTextContent("Every method");
     expect(second).toHaveTextContent("Every workspace");
   });

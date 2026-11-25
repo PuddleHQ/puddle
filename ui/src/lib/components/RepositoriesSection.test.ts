@@ -90,6 +90,7 @@ const own = {
   entry: entryOf("api"),
   url: "https://github.com/acme/api.git",
   directory: "api",
+  branch: null,
 };
 
 beforeEach(() => {

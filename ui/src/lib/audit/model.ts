@@ -994,3 +994,29 @@ export function jsonLine(record: AuditRecord): string {
 export function exportName(now: number): string {
   return `puddle-activity-${new Date(now).toISOString().slice(0, 19).replaceAll(":", "-")}.jsonl`;
 }
+
+/** A row as one sentence: "Blocked: SSH to host:22 is not supported". The raw record sits behind it. */
+export function sentence(row: RowView): string {
+  const what = [row.destination, row.detail].filter(
+    (s): s is string => s !== null && s !== "",
+  );
+  const head = row.outcome?.label ?? row.type;
+  return what.length === 0 ? head : `${head}: ${what.join(", ")}`;
+}
+
+/** Where "Make a rule from this" goes: a refused connection to a host a rule could allow. */
+export function ruleLink(
+  record: AuditRecord,
+  workspaceName: string | null,
+): string | null {
+  if (
+    record.type !== "connection" ||
+    record.decision !== "deny" ||
+    record.host === null
+  ) {
+    return null;
+  }
+  const query = new URLSearchParams({ "new-rule": record.host });
+  if (workspaceName !== null) query.set("workspace", workspaceName);
+  return `/rules?${query}`;
+}

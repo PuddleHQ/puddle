@@ -25082,9 +25082,17 @@
         "required": [
           "entry",
           "url",
-          "directory"
+          "directory",
+          "branch"
         ],
         "properties": {
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The branch checked out in it, from the last time Puddle listed the workspace's checkouts\n(when the Git tab opened or the editor attached); `null` when no listing was made since\nPuddle started, the checkout is not there, or HEAD is detached. Never listed just for this\nanswer."
+          },
           "directory": {
             "$ref": "#/components/schemas/CheckoutDir",
             "description": "The checkout it is cloned into, directly under the volume root."

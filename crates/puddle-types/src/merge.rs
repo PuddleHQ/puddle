@@ -61,6 +61,7 @@ pub enum MergeFormat {
     /// OpenSSH's `ssh_known_hosts`: Puddle owns the lines between `# puddle: begin` and
     /// `# puddle: end` (key path `["Puddle"]`, the value is the lines, one host-key entry each).
     /// A file without the markers gets them at its end, and every other byte of the file stays.
+    /// The block opens with a comment line that says Puddle manages it and overwrites hand edits.
     KnownHosts,
     /// A shell startup file such as `/etc/bash.bashrc`: Puddle owns the lines between
     /// `# >>> Puddle shell >>>` and `# <<< Puddle shell <<<` (key path `["Puddle"]`, the value is

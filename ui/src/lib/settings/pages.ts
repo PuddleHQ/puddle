@@ -333,6 +333,18 @@ export const SETTINGS: readonly SettingEntry[] = [
     "Git and credentials",
     "identities name email commit",
   ),
+  entry(
+    "editor-and-git",
+    "set-push-listed",
+    "Only push to allowed repositories",
+    "git push default new workspaces repositories",
+  ),
+  entry(
+    "editor-and-git",
+    "set-pull-listed",
+    "Only pull from allowed repositories",
+    "git fetch pull default new workspaces repositories",
+  ),
 
   entry(
     "this-computer",

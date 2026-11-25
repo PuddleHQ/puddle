@@ -95,7 +95,13 @@ describe("AuditTable", () => {
     ]);
     expect(body()).toHaveLength(3);
     const first = within(body()[0] as HTMLElement);
-    expect(first.getByText("h3.example.com:443")).toBeInTheDocument();
+    expect(
+      first.getByText(
+        (_, el) =>
+          el?.classList.contains("host") === true &&
+          el.textContent === "h3.example.com:443",
+      ),
+    ).toBeInTheDocument();
     expect(first.getByText("Allowed")).toBeInTheDocument();
     expect(first.getByText("demo")).toBeInTheDocument();
     expect(screen.getByRole("table")).toHaveAttribute("aria-rowcount", "4");
@@ -185,15 +191,22 @@ describe("AuditTable", () => {
     const evil = connection(1, { host: "<img src=x onerror=alert(1)>.test" });
     render(AuditTable, { entries: [evil, ...many(0)], now: NOW });
     const button = screen.getByRole("button", {
-      name: /^Show the raw record of Connection at \d{2}:\d{2}/,
+      name: /^Show the details of Connection at \d{2}:\d{2}/,
     });
     expect(button).toHaveAttribute("aria-expanded", "false");
     await fireEvent.click(button);
     expect(
       screen.getByRole("button", {
-        name: /^Hide the raw record of Connection at \d{2}:\d{2}/,
+        name: /^Hide the details of Connection at \d{2}:\d{2}/,
       }),
     ).toHaveAttribute("aria-expanded", "true");
+    expect(
+      screen.getByText(/^(Allowed|Denied|Blocked|Waiting): <img src=x/),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Raw record 1")).toBeNull();
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Show raw record" }),
+    );
     const raw = screen.getByLabelText("Raw record 1");
     expect(raw.textContent).toContain(
       '"host": "<img src=x onerror=alert(1)>.test"',
@@ -201,9 +214,29 @@ describe("AuditTable", () => {
     expect(raw.querySelector("img")).toBeNull();
     expect(document.querySelector("tr.detail")).not.toBeNull();
     await fireEvent.click(
-      screen.getByRole("button", { name: /Hide the raw record/ }),
+      screen.getByRole("button", { name: /Hide the details of/ }),
     );
     expect(document.querySelector("tr.detail")).toBeNull();
+  });
+  it("says an opened row in words and offers a rule only for a refusal a rule could allow", async () => {
+    const denied = connection(2, {
+      host: "ads.test",
+      decision: "deny",
+      workspace_id: "w-shop",
+    });
+    render(AuditTable, { entries: [denied, connection(1)], now: NOW });
+    await fireEvent.click(body()[0] as HTMLElement);
+    expect(screen.getByText(/^Denied: ads\.test/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Make a rule from this" }),
+    ).toHaveAttribute(
+      "href",
+      expect.stringMatching(/^\/rules\?new-rule=ads\.test(&workspace=.+)?$/),
+    );
+    await fireEvent.click(body()[1] as HTMLElement);
+    expect(
+      screen.queryByRole("link", { name: "Make a rule from this" }),
+    ).toBeNull();
   });
   it("opens one row at a time, from a click anywhere on the row too", async () => {
     render(AuditTable, { entries: many(3), now: NOW });
@@ -211,13 +244,13 @@ describe("AuditTable", () => {
     expect(document.querySelectorAll("tr.detail")).toHaveLength(1);
     await fireEvent.click(body()[1] as HTMLElement);
     expect(document.querySelectorAll("tr.detail")).toHaveLength(1);
-    expect(screen.getByLabelText("Raw record 2")).toBeInTheDocument();
+    expect(document.getElementById("raw-2")).not.toBeNull();
   });
   it("keeps a row open when records arrive above it", async () => {
     const { rerender } = render(AuditTable, { entries: many(3), now: NOW });
     await fireEvent.click(body()[0] as HTMLElement);
     await rerender({ entries: [connection(9), ...many(3)], now: NOW });
-    expect(screen.getByLabelText("Raw record 3")).toBeInTheDocument();
+    expect(document.getElementById("raw-3")).not.toBeNull();
     expect(body()).toHaveLength(4);
   });
   it("scrolls back to the top with a row open", async () => {

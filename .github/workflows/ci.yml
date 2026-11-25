@@ -507,13 +507,15 @@ jobs:
         uses: ./.github/actions/apt-debs-cache
         with:
           name: gates
-      - name: WebKitGTK dev package (clippy and the doc build compile the desktop shell)
+      - name: System packages (WebKitGTK dev for clippy and the doc build, the tray library and Xvfb for the dormant gate's lib tests)
         timeout-minutes: 10
         run: |
           # ci/apt-setup.sh and ci/apt-retry.sh: see the `rust` job's system packages step.
           ci/apt-setup.sh
           ci/apt-retry.sh sudo apt-get update
-          ci/apt-retry.sh sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev
+          # libayatana-appindicator3-1 and xvfb: `scripts/check.sh dormant` runs every lib test, including the
+          # tray test, which opens the tray library at run time on a virtual display it starts itself.
+          ci/apt-retry.sh sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-1 xvfb
       - name: fmt
         run: scripts/check.sh fmt
       # ci/ is an always-run path, so a change to the scoping rules or this test runs this job.

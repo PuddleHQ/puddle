@@ -26,6 +26,7 @@ import { report } from "#lib/testing/fake-network.ts";
 import SettingsHost from "#lib/testing/SettingsHost.svelte";
 import { microsoftChosenToast, MS_TERMS_VERSION } from "#lib/settings/model.ts";
 import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
+import { identities } from "#lib/stores/identities.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
 import { density } from "#lib/theme/density.svelte.ts";
 import { palette } from "#lib/theme/palette.svelte.ts";
@@ -1031,6 +1032,75 @@ describe("disk space lines", () => {
         name: "Save Warn when free space is under (GB)",
       }),
     ).toBeNull();
+  });
+});
+
+describe("the Git defaults for new workspaces", () => {
+  const push = () =>
+    screen.getByRole("switch", { name: "Only push to allowed repositories" });
+
+  it("show the stored values and save a change through the identities service", async () => {
+    identities.gitDefaults = {
+      only_push_listed: true,
+      only_pull_listed: false,
+    };
+    const saved = vi
+      .spyOn(identities, "setGitDefaults")
+      .mockResolvedValue({ ok: true });
+    await open();
+    await waitFor(() => expect(push()).toBeChecked());
+    expect(
+      screen.getByRole("switch", {
+        name: "Only pull from allowed repositories",
+      }),
+    ).not.toBeChecked();
+    await fireEvent.click(push());
+    await waitFor(() =>
+      expect(saved).toHaveBeenCalledWith({ only_push_listed: false }),
+    );
+    saved.mockRestore();
+  });
+
+  it("explain each switch by its state, and save the pull switch by its own name", async () => {
+    identities.gitDefaults = {
+      only_push_listed: false,
+      only_pull_listed: true,
+    };
+    const saved = vi
+      .spyOn(identities, "setGitDefaults")
+      .mockResolvedValue({ ok: true });
+    await open();
+    const pull = await screen.findByRole("switch", {
+      name: "Only pull from allowed repositories",
+    });
+    await waitFor(() => expect(pull).toBeChecked());
+    expect(
+      screen.getByText(/Off: a push may go to any repository/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/may fetch only from a repository/),
+    ).toBeInTheDocument();
+    await fireEvent.click(pull);
+    await waitFor(() =>
+      expect(saved).toHaveBeenCalledWith({ only_pull_listed: false }),
+    );
+    saved.mockRestore();
+  });
+
+  it("put a refused change back and say why", async () => {
+    identities.gitDefaults = {
+      only_push_listed: true,
+      only_pull_listed: false,
+    };
+    const refused = vi
+      .spyOn(identities, "setGitDefaults")
+      .mockResolvedValue({ ok: false, message: "Nope." });
+    await open();
+    await waitFor(() => expect(push()).toBeChecked());
+    await fireEvent.click(push());
+    await waitFor(() => expect(toasts.items.at(-1)?.message).toBe("Nope."));
+    expect(push()).toBeChecked();
+    refused.mockRestore();
   });
 });
 

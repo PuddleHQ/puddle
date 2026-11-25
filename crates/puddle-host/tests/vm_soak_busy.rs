@@ -4,7 +4,7 @@
 //!
 //! - `vm_soak_busy_build_keeps_the_heartbeat_stops_in_time_and_resumes`: a CPU- and disk-bound
 //!   job runs for 20 minutes beside a one-second heartbeat that goes through the route (one
-//!   request to the site the workspace is allowed, one tick per answer). No gap over 5 s and the
+//!   request to the site the workspace is allowed, one tick per answer). No gap over 5 s (unless a probe loop of the guest with no network stalled with it: the runner, not the route) and the
 //!   workspace stays running; Stop while the job runs ends within 75 s; after Start every file of
 //!   the build tree that existed when Stop was pressed is there with the same size and
 //!   modification time, and an incremental rebuild redoes next to nothing.
@@ -103,6 +103,15 @@ while :; do
 done
 "#;
 
+/// The heartbeat's control: the same one-second loop with no network in it. A gap of the heartbeat
+/// that this loop shares is the guest or the runner not running, not the route.
+const PROBE_SH: &str = r#"cd "$HOME/soak" || exit 1
+while :; do
+  date +%s >> probe
+  sleep 1
+done
+"#;
+
 async fn agent(vm: &VmHost, workspace: &WorkspaceId, script: &str, within: Duration) -> String {
     let (code, out) = guest_as(&vm.runtime, workspace, "agent", script, within).await;
     assert_eq!(code, 0, "{script}\n{out}");
@@ -119,7 +128,8 @@ async fn install_scripts(vm: &VmHost, workspace: &WorkspaceId) {
             "mkdir -p $HOME/soak/src $HOME/soak/obj $HOME/soak/spill && cd $HOME/soak\n\
              cat > build.sh <<'EOF_BUILD'\n{BUILD_SH}EOF_BUILD\n\
              cat > job.sh <<'EOF_JOB'\nPLAN={PLAN_UNITS}; LAST={LAST_UNIT}\n{job}EOF_JOB\n\
-             cat > hb.sh <<'EOF_HB'\n{HEARTBEAT_SH}EOF_HB\n"
+             cat > hb.sh <<'EOF_HB'\n{HEARTBEAT_SH}EOF_HB\n\
+             cat > probe.sh <<'EOF_PROBE'\n{PROBE_SH}EOF_PROBE\n"
         ),
         Duration::from_secs(60),
     )
@@ -137,12 +147,12 @@ async fn tree(vm: &VmHost, workspace: &WorkspaceId) -> String {
     .await
 }
 
-async fn ticks(vm: &VmHost, workspace: &WorkspaceId) -> Vec<i64> {
+async fn ticks(vm: &VmHost, workspace: &WorkspaceId, file: &str) -> Vec<i64> {
     parse_ticks(
         &agent(
             vm,
             workspace,
-            "cat $HOME/soak/hb 2>/dev/null; true",
+            &format!("cat $HOME/soak/{file} 2>/dev/null; true"),
             Duration::from_secs(60),
         )
         .await,
@@ -219,14 +229,15 @@ async fn vm_soak_busy_build_keeps_the_heartbeat_stops_in_time_and_resumes() {
     agent(
         &vm,
         &workspace,
-        "cd $HOME/soak && rm -f hb && setsid nohup bash hb.sh >/dev/null 2>&1 </dev/null & echo up",
+        "cd $HOME/soak && rm -f hb probe && setsid nohup bash hb.sh >/dev/null 2>&1 </dev/null & \
+         setsid nohup bash $HOME/soak/probe.sh >/dev/null 2>&1 </dev/null & echo up",
         Duration::from_secs(30),
     )
     .await;
     eventually_async(
         "the heartbeat has ticked three times",
         Duration::from_secs(60),
-        || async { ticks(&vm, &workspace).await.len() >= 3 },
+        || async { ticks(&vm, &workspace, "hb").await.len() >= 3 },
     )
     .await;
     let end = agent(&vm, &workspace, "date +%s", Duration::from_secs(30))
@@ -276,9 +287,10 @@ async fn vm_soak_busy_build_keeps_the_heartbeat_stops_in_time_and_resumes() {
     }
 
     // Bar 1: no gap over 5 s through the whole stretch.
-    let all = ticks(&vm, &workspace).await;
+    let all = ticks(&vm, &workspace, "hb").await;
+    let probe = ticks(&vm, &workspace, "probe").await;
     let min_ticks = usize::try_from(busy.as_secs() / 5).unwrap();
-    let gaps = judge_heartbeat(&all, min_ticks).unwrap_or_else(|why| panic!("{why}"));
+    let gaps = judge_heartbeat(&all, &probe, min_ticks).unwrap_or_else(|why| panic!("{why}"));
     eprintln!(
         "heartbeat over {} s: {} ticks, {gaps:?}",
         busy.as_secs(),

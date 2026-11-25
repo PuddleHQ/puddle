@@ -43,11 +43,14 @@ async fn a_failed_sync_after_the_clones_leaves_nothing_behind() {
     host.shutdown().await;
 }
 
-/// A list of repositories without its generated entry ids.
+/// A list of repositories without its generated entry ids and the branch the last listing found
+/// (the tests that read the branch read it from the list itself).
 fn without_entries(list: &serde_json::Value) -> serde_json::Value {
     let mut list = list.clone();
     for r in list.as_array_mut().unwrap() {
-        r.as_object_mut().unwrap().remove("entry");
+        let r = r.as_object_mut().unwrap();
+        r.remove("entry");
+        r.remove("branch");
     }
     list
 }
@@ -1173,5 +1176,30 @@ async fn a_host_on_a_version_1_list_shows_one_repository_in_its_checkout_and_a_r
         "{saved}"
     );
     assert!(saved["workspaces"][0].get("repo_url").is_none(), "{saved}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_workspaces_list_shows_each_checkouts_branch_from_the_listing_made_at_the_attach() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "adds").await;
+    eventually("the background listing", Duration::from_secs(10), || {
+        !rig.guest.listings.lock().unwrap().is_empty()
+    })
+    .await;
+    // Before anything asks for the checkouts: only the listing the attach made can have kept it.
+    let list = api.get("/api/workspaces/adds").await.json();
+    assert!(
+        list["repositories"][0]["branch"].is_string(),
+        "the attach's listing is kept for the list: {list}"
+    );
+    let listed = checkouts_of(&api, "adds").await;
+    assert_eq!(
+        list["repositories"][0]["branch"], listed["checkouts"][0]["branch"],
+        "{list}"
+    );
     host.shutdown().await;
 }

@@ -22,6 +22,7 @@ pub(super) const END: &str = "# <<< Puddle shell <<<";
 const SHELL: Markers = Markers {
     begin: BEGIN,
     end: END,
+    note: None,
 };
 
 /// Why `value` cannot be a block, or `None` when it can.

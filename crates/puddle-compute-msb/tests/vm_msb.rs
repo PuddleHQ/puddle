@@ -46,10 +46,7 @@ async fn vm_volume_and_owned_disk_are_ext4() {
     sb.stop().await.unwrap();
     cleanup(&rt, &[&n]).await;
     let _ = rt.remove_volume(&vol).await;
-    assert_eq!(
-        out.stdout_text(),
-        "/var/lib/docker ext4\n/workspace ext4\n"
-    );
+    assert_eq!(out.stdout_text(), "/var/lib/docker ext4\n/workspace ext4\n");
 }
 
 /// Three sandboxes at once, each with its own route and file mount: every one runs commands,

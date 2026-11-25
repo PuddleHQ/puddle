@@ -35,6 +35,9 @@ pub(crate) fn run_without_output(command: &mut Command, limit: Duration) -> Proc
 
 fn run_with(command: &mut Command, limit: Duration) -> ProcessOutcome {
     command.stdin(Stdio::null()).stderr(Stdio::piped());
+    // Its own process group, so the limit can end the program and everything it started.
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(command, 0);
     let start = Instant::now();
     let mut child = match command.spawn() {
         Ok(child) => child,
@@ -79,10 +82,33 @@ fn wait(child: &mut Child, deadline: Instant) -> Option<std::process::ExitStatus
     }
 }
 
+/// Ends `child` and every process it started: a program such as `az.cmd` runs its real work in
+/// a grandchild that would otherwise keep the output pipes open past the limit.
 fn kill(child: &mut Child) {
+    kill_descendants(child);
     // Already gone is fine; there is nothing else to do about a failed kill.
     let _ignored = child.kill();
     let _reaped = child.wait();
+}
+
+#[cfg(unix)]
+fn kill_descendants(child: &Child) {
+    let Some(pid) = rustix::process::Pid::from_raw(i32::try_from(child.id()).unwrap_or(0)) else {
+        return;
+    };
+    // The group was made by `process_group(0)` in `run`; a failed kill means it is gone already.
+    let _gone = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
+}
+
+#[cfg(windows)]
+fn kill_descendants(child: &Child) {
+    // `taskkill /T` walks the tree from the pid; a failure means the tree is gone already.
+    let _gone = Command::new("taskkill")
+        .args(["/T", "/F", "/PID", &child.id().to_string()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 /// One output stream read on its own thread into a bounded buffer.

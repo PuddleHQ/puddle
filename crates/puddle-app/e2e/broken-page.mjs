@@ -26,10 +26,21 @@ export async function breakThePage(port) {
     if (p.resourceType === "Document") refused.push(p.request.url);
     page.send("Fetch.failRequest", { requestId: p.requestId, errorReason: "Failed" }).catch(() => {});
   });
+  // A dialog the page raises on leaving (beforeunload) holds a reload until it is answered.
+  page.on("Page.javascriptDialogOpening", () => page.send("Page.handleJavaScriptDialog", { accept: true }).catch(() => {}));
   await page.send("Page.enable");
   await page.send("Fetch.enable", { patterns: [{ urlPattern: "*", requestStage: "Request" }] });
   await page.send("Page.reload", { ignoreCache: true });
-  await until("the page's document to be refused", async () => refused.length > 0, 30_000, 500);
+  // A reload that never reached the network (a page that is held, or a webview that did not act on it) is
+  // asked again as a navigation to the page's own address.
+  await until("the page's document to be refused", async () => refused.length > 0, 10_000, 500).catch(async () => {
+    await page.send("Page.navigate", { url: target.url });
+  });
+  await until("the page's document to be refused", async () => refused.length > 0, 20_000, 500).catch(async (err) => {
+    const seen = await pages(port).then((list) => list.map((t) => t.url).join(", "), String);
+    page.close();
+    throw new Error(`${err.message}; page targets: ${seen}; asked for: ${target.url}`);
+  });
   return {
     refused,
     async restore() {

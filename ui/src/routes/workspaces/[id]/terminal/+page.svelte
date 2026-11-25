@@ -253,7 +253,6 @@
     display: grid;
     gap: var(--space-3);
     margin-bottom: var(--space-6);
-    max-width: 80rem;
     min-width: 0;
   }
   h2 {

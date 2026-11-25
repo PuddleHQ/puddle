@@ -66,8 +66,8 @@ fn rig_marked(store: &Arc<MemoryStore>, enabled: bool, marker: Marker) -> Rig {
         enabled,
         builtin(),
         Arc::clone(&registry),
-        Arc::clone(store) as Arc<dyn SecretStore>,
-        Arc::clone(&notices) as Arc<dyn LoginNotices>,
+        store.clone(),
+        notices.clone(),
         marker,
     );
     Rig {
@@ -87,7 +87,7 @@ fn host(name: &str) -> Host {
 }
 
 fn vault(rig: &Rig) -> Vault {
-    Vault::new(Arc::clone(&rig.store) as Arc<dyn SecretStore>, &workspace())
+    Vault::new(rig.store.clone(), &workspace())
 }
 
 fn claude_answer(access: &str, refresh: &str) -> Vec<u8> {
@@ -906,12 +906,12 @@ async fn deleting_the_workspace_deletes_every_token_kept_for_it() {
             true,
             builtin(),
             registry,
-            Arc::clone(&rig.store) as Arc<dyn SecretStore>,
-            Arc::clone(&rig.notices) as Arc<dyn LoginNotices>,
+            rig.store.clone(),
+            rig.notices.clone(),
             Marker::none(),
         )
     };
-    let store: Arc<dyn SecretStore> = Arc::clone(&rig.store) as Arc<dyn SecretStore>;
+    let store: Arc<dyn SecretStore> = rig.store.clone();
     other.forget("github").await.unwrap();
     assert_eq!(Logins::delete_workspace(&store, &workspace(), builtin()), 0);
     assert!(vault(&rig).read(&CLAUDE, Role::Access).unwrap().is_none());
@@ -936,7 +936,7 @@ async fn a_workspaces_logins_never_reach_another_workspace() {
         true,
         builtin(),
         Arc::new(StandIns::new()),
-        Arc::clone(&one.store) as Arc<dyn SecretStore>,
+        one.store.clone(),
         Arc::new(Notices::default()),
         Marker::none(),
     );
@@ -1104,7 +1104,7 @@ async fn a_credential_store_that_does_not_answer_is_given_up_on_and_the_start_go
         builtin(),
         Arc::new(StandIns::new()),
         store,
-        Arc::clone(&notices) as Arc<dyn LoginNotices>,
+        notices.clone(),
         Marker::none(),
     );
     logins.set_store_timeout(std::time::Duration::from_millis(50));
@@ -1190,7 +1190,7 @@ fn logins_on(store: &Arc<Scripted>, registry: &Arc<StandIns>) -> Logins {
         true,
         builtin(),
         Arc::clone(registry),
-        Arc::clone(store) as Arc<dyn SecretStore>,
+        store.clone(),
         Arc::new(Notices::default()),
         Marker::none(),
     )
@@ -1215,7 +1215,7 @@ async fn a_capture_that_cannot_store_every_token_leaves_the_earlier_pair_in_the_
     // The refresh's new access token is stored, its new refresh token is not.
     store.then([SetStep::Pass, SetStep::Fail]);
     assert_eq!(capture_claude(&logins, ACCESS_B, REFRESH_B).await, None);
-    let vault = Vault::new(Arc::clone(&store) as Arc<dyn SecretStore>, &workspace());
+    let vault = Vault::new(store.clone(), &workspace());
     for (role, real, given) in [
         (Role::Access, REAL_ACCESS, &first["access_token"]),
         (Role::Refresh, REAL_REFRESH, &first["refresh_token"]),
@@ -1251,7 +1251,7 @@ async fn a_token_the_store_writes_after_it_timed_out_does_not_outlast_the_put_ba
     assert_eq!(capture_claude(&logins, ACCESS_B, REFRESH_B).await, None);
     // An absence window: a late write that the capture did not wait for would land in it.
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    let vault = Vault::new(Arc::clone(&store) as Arc<dyn SecretStore>, &workspace());
+    let vault = Vault::new(store.clone(), &workspace());
     for (role, real, given) in [
         (Role::Access, REAL_ACCESS, &first["access_token"]),
         (Role::Refresh, REAL_REFRESH, &first["refresh_token"]),
@@ -1297,7 +1297,7 @@ async fn an_entry_that_cannot_be_read_is_not_put_back_and_one_the_store_refuses_
     // The damaged access entry is not put back: it goes, and the refresh entry stays as it was.
     store.then([SetStep::Pass, SetStep::Fail]);
     assert_eq!(capture_claude(&logins, ACCESS_B, REFRESH_B).await, None);
-    let vault = Vault::new(Arc::clone(&store) as Arc<dyn SecretStore>, &workspace());
+    let vault = Vault::new(store.clone(), &workspace());
     assert!(vault.read(&CLAUDE, Role::Access).unwrap().is_none());
     let refresh = vault.read(&CLAUDE, Role::Refresh).unwrap().unwrap();
     assert_eq!(refresh.real.as_str(), REAL_REFRESH);

@@ -115,7 +115,7 @@ async fn hostile_hg47_every_other_spelling_of_a_command_is_refused_before_a_byte
         );
         assert_eq!(ran.out, "", "{command:?}");
     }
-    assert_eq!(asked(&t), [] as [String; 0], "nothing went upstream");
+    assert_eq!(asked(&t), <[String; 0]>::default(), "nothing went upstream");
     // The connection is not the worse for it: the named repository still works.
     let ran = exec(&ssh, V2, "git-upload-pack 'acme/web.git'", b"").await;
     assert_eq!(ran.exit, Some(0), "{ran:?}");

@@ -37,7 +37,7 @@ async fn host_behind_proxy_with(
     let prepared = prepare(config, &FakePlatform::new(&rig.log)).unwrap();
     let mut options = hermetic_options();
     options.secret_store = Some(rig.secrets.clone());
-    options.dev_cert = Some(rig.dev_cert.clone() as Arc<dyn DevCertSource>);
+    options.dev_cert = Some(rig.dev_cert.clone());
     options.discovery = Some(Discovery::new(os, puddle_upstream::Config::default()));
     Host::start(prepared, &FakeFactory::new(&rig.runtime, &rig.log), options)
         .await
@@ -144,7 +144,7 @@ async fn listing_the_repositories_of_an_identity_is_in_the_activity_log_as_puddl
     let prepared = prepare(rig.config(), &FakePlatform::new(&rig.log)).unwrap();
     let mut options = hermetic_options();
     options.secret_store = Some(rig.secrets.clone());
-    options.dev_cert = Some(rig.dev_cert.clone() as Arc<dyn DevCertSource>);
+    options.dev_cert = Some(rig.dev_cert.clone());
     options.discovery = Some(Discovery::new(os, puddle_upstream::Config::default()));
     let host = Host::start(prepared, &FakeFactory::new(&rig.runtime, &rig.log), options)
         .await

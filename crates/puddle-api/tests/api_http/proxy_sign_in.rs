@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use puddle_api::{FakeNetworkHealth, FakeProxySignIns, ProxySignInService};
-use puddle_store::{Clock, ManualClock};
+use puddle_store::ManualClock;
 use puddle_upstream::ProxyAddr;
 use serde_json::json;
 
@@ -174,7 +174,7 @@ async fn a_credential_store_that_does_not_answer_is_a_503_that_says_so() {
 async fn the_network_report_names_stored_sign_ins_without_a_password() {
     let clock = Arc::new(ManualClock::new(START_MS));
     let sign_ins = Arc::new(FakeProxySignIns::new());
-    let fake = FakeNetworkHealth::new(clock as Arc<dyn Clock>).with_sign_ins(sign_ins.clone());
+    let fake = FakeNetworkHealth::new(clock).with_sign_ins(sign_ins.clone());
     let api = start_with_network(Arc::new(fake)).await;
     assert_eq!(
         api.get("/api/network-health").await.json()["sign_in"]["stored"],

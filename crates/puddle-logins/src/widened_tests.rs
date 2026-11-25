@@ -82,7 +82,7 @@ pub(crate) fn rig_for(profiles: &'static [Profile]) -> Rig {
         true,
         profiles,
         Arc::clone(&registry),
-        Arc::clone(&store) as Arc<dyn SecretStore>,
+        store.clone(),
         Arc::new(Quiet),
         Marker::none(),
     );
@@ -209,10 +209,7 @@ async fn two_resources_of_one_role_get_a_stand_in_and_an_entry_each() {
         out["graph_token"].as_str().unwrap(),
     );
     assert_ne!(arm, graph);
-    let vault = Vault::new(
-        Arc::clone(&rig.store) as Arc<dyn SecretStore>,
-        &WorkspaceId::new("alpha").unwrap(),
-    );
+    let vault = Vault::new(rig.store.clone(), &WorkspaceId::new("alpha").unwrap());
     let arm_slot = Slot {
         role: Role::Access,
         resource: Some("arm"),
@@ -309,7 +306,7 @@ fn builtin_rig() -> Logins {
         true,
         crate::builtin(),
         Arc::new(StandIns::new()),
-        Arc::new(MemoryStore::new()) as Arc<dyn SecretStore>,
+        Arc::new(MemoryStore::new()),
         Arc::new(Quiet),
         Marker::none(),
     )

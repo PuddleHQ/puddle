@@ -240,6 +240,23 @@ fn a_secret_name_and_its_value_with_spaces_between_lose_the_value() {
 }
 
 #[test]
+fn every_pair_of_a_cookie_header_loses_its_value() {
+    assert_eq!(
+        scrub_line("Cookie: a=1; other=2; third=3"),
+        "Cookie: [redacted]; [redacted]; [redacted]"
+    );
+    assert_eq!(
+        scrub_line("request failed, Set-Cookie: sid=abc; Path=/; HttpOnly"),
+        "request failed, Set-Cookie: [redacted]; [redacted]; [redacted]"
+    );
+    assert_eq!(
+        scrub_line("cookie : a=1; b=2"),
+        "cookie : [redacted]; [redacted]"
+    );
+    assert_eq!(scrub_line("the cookie expired"), "the cookie expired");
+}
+
+#[test]
 fn only_whole_name_parts_say_secret() {
     for text in [
         "author: Ann",

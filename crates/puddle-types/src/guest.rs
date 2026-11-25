@@ -113,8 +113,8 @@ macro_rules! guest_path {
 ///
 /// ```
 /// use puddle_types::GuestPath;
-/// let p = GuestPath::new("/workspaces/acme/src").unwrap();
-/// assert!(p.is_within(&GuestPath::new("/workspaces/acme").unwrap()));
+/// let p = GuestPath::new("/workspace/src").unwrap();
+/// assert!(p.is_within(&GuestPath::new("/workspace").unwrap()));
 /// assert!(GuestPath::new("/workspaces/../etc").is_err());
 /// assert!(GuestPath::new("relative").is_err());
 /// ```

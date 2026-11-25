@@ -123,11 +123,13 @@
           class:off={!rule.enabled}
         >
           <td class="host">
-            <span class="mono">{patternLabel(rule)}</span>
-            {#if rule.pattern_kind === "suffix"}
-              <span class="chip">and subdomains</span>
-            {/if}
-            {#if !rule.enabled}<span class="chip">off</span>{/if}
+            <span
+              class="mono"
+              title={rule.pattern_kind === "suffix"
+                ? "This host and every subdomain of it"
+                : undefined}>{patternLabel(rule)}</span
+            >
+            {#if !rule.enabled}<span class="meta">off</span>{/if}
           </td>
           <td>
             <span class="chip {rule.effect}"
@@ -265,7 +267,7 @@
     }
     th,
     td {
-      padding-inline: var(--space-2);
+      padding-inline: var(--space-1);
     }
   }
 </style>

@@ -109,7 +109,7 @@
                 onclick={() => onPick(repo, repo.identities[0] ?? null)}
               >
                 <span class="name mono">{repo.full_name}</span>
-                <span class="meta">
+                <span class="meta wrap">
                   {[
                     ...traits(repo),
                     roleWord(repo.role),
@@ -119,7 +119,7 @@
                     .join(" · ")}
                 </span>
                 {#if tableCannotHold(repo.url)}
-                  <span class="meta warn"
+                  <span class="meta warn wrap"
                     >Its project name has a space: you can still make a
                     workspace, but its repository table can't hold it.</span
                   >

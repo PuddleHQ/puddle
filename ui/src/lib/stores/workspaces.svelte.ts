@@ -39,6 +39,8 @@ export interface Progress {
   detail: string | null;
   /** The checkout directory a cloning step is about; `null` for any other step. */
   repository: string | null;
+  /** Bytes done and in all, for the steps that count them (the image download and unpack). */
+  bytes?: { done: number; total: number | null } | null;
   /** The operation it belongs to, when the record said (`busy`). */
   operation: Operation | null;
   failed: boolean;
@@ -288,6 +290,7 @@ export class WorkspaceStore {
                   step: event.step,
                   detail: event.detail,
                   repository: event.repository ?? null,
+                  bytes: null,
                   operation,
                   failed,
                 },
@@ -310,6 +313,10 @@ export class WorkspaceStore {
             step: event.step,
             detail: event.detail,
             repository: event.repository ?? null,
+            bytes:
+              typeof event.bytes_done === "number"
+                ? { done: event.bytes_done, total: event.bytes_total ?? null }
+                : null,
             operation,
             failed: false,
           },

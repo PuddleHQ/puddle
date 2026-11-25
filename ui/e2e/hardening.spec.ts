@@ -6,7 +6,11 @@
 // the first-run flow can be finished from the keyboard alone. Each test has a backend of its own.
 import type { Locator, Page } from "@playwright/test";
 import { type Backend, expect, test } from "./fixture";
-import { expectNoAxeViolations, staysEmpty } from "./support";
+import {
+  expectNoAxeViolations,
+  lengthenUserStrings,
+  staysEmpty,
+} from "./support";
 
 const ROUTES = [
   "/workspaces",
@@ -24,6 +28,7 @@ const ROUTES = [
   "/identities/1",
   "/settings",
   "/settings/network-health",
+  "/settings/app-errors",
   "/welcome",
   "/welcome/check",
   "/welcome/certificates",
@@ -204,6 +209,14 @@ test.describe("zoomed to 200 % on a 1280 px window", () => {
   test.use({ viewport: { width: 640, height: 360 } });
   for (const route of ROUTES) {
     test(`${route} has no horizontal scroll bar`, async ({ page, backend }) => {
+      await open(page, backend, route);
+      await staysEmpty(page, () => overflow(page), route);
+    });
+    test(`${route} has none with every host, URL and path 120 characters longer`, async ({
+      page,
+      backend,
+    }) => {
+      await lengthenUserStrings(page);
       await open(page, backend, route);
       await staysEmpty(page, () => overflow(page), route);
     });

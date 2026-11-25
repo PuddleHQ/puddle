@@ -153,8 +153,8 @@
       {#if identity}
         Identity: <a href="/identities/{identity.id}">{identity.label}</a>
       {:else}
-        No identity covers this: <a href={tabHref(workspace.id, "git")}
-          >open the Git tab</a
+        No identity needed for a public repository. For a private one, <a
+          href={tabHref(workspace.id, "git")}>add an identity on the Git tab</a
         >
       {/if}
     </span>
@@ -230,13 +230,13 @@
           <div class="what">
             <b class="mono">{checkout.directory}</b>
             {#if entry}
-              <span class="chip">On the list</span>
+              <span class="meta">On the list</span>
             {:else}
-              <span class="chip">Not managed by Puddle: works as is</span>
+              <span class="meta">Not managed by Puddle: works as is</span>
             {/if}
             {#if checkout.unreadable === null}
               <span class="meta">{branchLabel(checkout)}</span>
-              {#if checkout.dirty}<span class="chip warn">changes</span>{/if}
+              {#if checkout.dirty}<span class="meta warn">changes</span>{/if}
               {#if checkout.remote_url}
                 <span class="meta mono">{checkout.remote_url}</span>
               {/if}
@@ -273,7 +273,7 @@
         <li>
           <div class="what">
             <b class="mono">{entry.directory}</b>
-            <span class="chip warn">Not on the disk</span>
+            <span class="meta warn">Not on the disk</span>
             <span class="meta mono">{entry.url}</span>
             {@render identityLine(entry)}
           </div>
@@ -306,7 +306,7 @@
         <li>
           <div class="what">
             <b class="mono">{entry.directory}</b>
-            <span class="chip">On the list</span>
+            <span class="meta">On the list</span>
             <span class="meta mono">{entry.url}</span>
             {@render identityLine(entry)}
           </div>
@@ -410,22 +410,19 @@
     flex: 1;
     overflow-wrap: anywhere;
   }
+  /* The global .meta never wraps; here it holds URLs and a sentence, which must wrap at 390 px. */
   .meta {
     color: var(--color-text-muted);
     font-size: var(--text-sm);
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
   .acts {
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-2);
   }
-  .chip {
-    padding: 0 var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-pill);
-    font-size: var(--text-sm);
-  }
-  .chip.warn {
+  .meta.warn {
     border-color: var(--color-warning);
   }
   .btn:disabled {

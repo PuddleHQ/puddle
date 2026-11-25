@@ -47,7 +47,7 @@ Two findings from the rerun put requirements on Puddle rather than on the choice
 ## Decision
 
 1. **Each workspace is a named msb disk volume** (`ws-<id>`, ext4, `--mount-named
-   ws-<id>:/workspaces/<id>:kind=disk,size=N`) in puddle's private `MSB_HOME`: Puddle bundles
+   ws-<id>:/workspace:kind=disk,size=N`) in puddle's private `MSB_HOME`: Puddle bundles
    its own msb runtime, so its images and volumes never mix with an msb the user installed
    separately. No Windows folder is bind-mounted as the workspace. The `<id>` is Puddle's own:
    eight random lowercase Crockford base32 characters, the first a letter, picked at create and
@@ -62,7 +62,11 @@ Two findings from the rerun put requirements on Puddle rather than on the choice
    start also sweeps each retired id in the background: a sandbox, store rows, credential-store
    values, the settings file and the browser editor's data still named by it are removed. An id
    whose leftovers are all gone is listed as cleaned and not swept again, and a quit waits at most
-   ten seconds for the sweep; the next start goes on with what it left.
+   ten seconds for the sweep; the next start goes on with what it left. The volume
+   is mounted at `/workspace` in every sandbox (amended 2026-11-18; it was `/workspaces/<id>`): a
+   sandbox holds one workspace, so the folder needs no id, and a shorter path reads better in a
+   prompt. A sandbox made with the volume at the old folder is made again on its next start (msb
+   cannot move the mount of a sandbox it has made); the volume is kept, the root disk is not.
 2. **Code gets in by cloning inside the VM** through Puddle's proxy in the first milestone, with
    git HTTPS credentials injected by the proxy. **"Start from my Windows checkout"** is the first
    thing after it; the measurements showed the mechanism works (a read-only bind of the checkout +
@@ -113,7 +117,7 @@ Two findings from the rerun put requirements on Puddle rather than on the choice
   Windows path handling mostly drops out. Resizing a volume is not known to be supported by msb; the
   size is set at creation.
 - **The IDE attaches into the VM.** VS Code Remote-SSH and JetBrains Gateway open
-  `/workspaces/<id>` over `msb ssh`. A guest-local tree means inotify works and the git
+  `/workspace` over `msb ssh`. A guest-local tree means inotify works and the git
   extension is fast. Windows-native tools (Visual Studio, Rider local, Explorer, Windows git GUIs)
   have no access to the live tree until the post-v1 Windows mount feature (4).
 - **Backups are `git push`.** Unpushed work exists only inside `disk.raw` under `MSB_HOME`; a

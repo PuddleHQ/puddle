@@ -253,7 +253,20 @@ test.describe("creating", () => {
     await expect(
       created.getByRole("button", { name: "Start Ledger_Service" }),
     ).toBeDisabled();
-    // The service reports where it is.
+    // The service reports where it is, with the bytes while an image comes down.
+    await backend.control.emit({
+      type: "workspace_progress",
+      workspace: "ledger-service",
+      step: "pulling_image",
+      detail: null,
+      bytes_done: 120 * 1024 * 1024,
+      bytes_total: 480 * 1024 * 1024,
+    });
+    await expect(created).toContainText("Downloading the image");
+    await expect(created).toContainText("120 MB of 480 MB, 25 %");
+    await expect(
+      created.getByRole("progressbar", { name: "Downloading the image" }),
+    ).toHaveAttribute("value", "25");
     await backend.control.emit({
       type: "workspace_progress",
       workspace: "ledger-service",
@@ -1410,7 +1423,7 @@ test.describe("the settings tab", () => {
       ),
     ).toBeVisible();
     await expect(
-      page.locator('[data-setting="memory"] .chip', {
+      page.locator('[data-setting="memory"] .meta', {
         hasText: "This workspace",
       }),
     ).toBeVisible();
@@ -1473,7 +1486,7 @@ test.describe("the settings tab", () => {
         overrides: { cpus: number | null };
       };
     expect((await read()).overrides.cpus).toBe(chosen);
-    await expect(page.locator('[data-setting="cpus"] .chip')).toHaveText(
+    await expect(page.locator('[data-setting="cpus"] .meta')).toHaveText(
       "This workspace",
     );
 

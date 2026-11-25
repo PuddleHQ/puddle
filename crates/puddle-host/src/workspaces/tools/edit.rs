@@ -21,7 +21,7 @@ use puddle_api::wire::{
 use puddle_compute::{ComputeError, ExecOutput, ExecRequest, Runtime, Sandbox as _};
 use puddle_settings::MiseMode;
 use puddle_types::{ToolName, ToolVersion, ToolsFileHash, WorkspaceId, WorkspaceStatus};
-use puddle_workspace::WORKSPACES_ROOT;
+use puddle_workspace::WORKSPACE_DIR;
 
 use super::{HostWorkspaces, last_stderr_line};
 use crate::workspaces::not_found;
@@ -173,6 +173,11 @@ fn read<T>(
             .unwrap_or_else(|| format!("mise ended with exit code {}", out.status.code));
         return Err(Failed::Reason(reason));
     }
+    if out.stdout_truncated {
+        return Err(Failed::Reason(
+            "the guest's answer was longer than the output cap and was cut".to_owned(),
+        ));
+    }
     parse(&out.stdout_text())
         .ok_or_else(|| Failed::Reason("the guest's answer could not be read".to_owned()))
 }
@@ -245,7 +250,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         words: &[&str],
         timeout: Duration,
     ) -> Option<Result<ExecOutput, ComputeError>> {
-        let mut args = vec!["mise-tools".to_owned(), format!("{WORKSPACES_ROOT}/{name}")];
+        let mut args = vec!["mise-tools".to_owned(), WORKSPACE_DIR.to_owned()];
         args.extend(words.iter().map(|w| (*w).to_owned()));
         self.exec_agent(name, args, timeout).await
     }

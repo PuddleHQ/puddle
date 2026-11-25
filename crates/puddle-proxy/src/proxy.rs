@@ -34,8 +34,8 @@ use crate::destination::{AddressCheck, Resolver, SystemResolver};
 use crate::http::{self, Body, Head, HeadError, RawTarget};
 use crate::plain;
 use crate::records::{RecordResolver, SystemRecords};
+use crate::request_target::Target;
 use crate::ssh;
-use crate::target::Target;
 use crate::terminate::{self, TerminationSource};
 use crate::upstream::{Admitted, Upstream};
 
@@ -345,6 +345,23 @@ impl Proxy {
         let termination = terminations.source.termination(&request.workspace)?;
         let mode = termination.mode_for(&request.host, from_container)?;
         Some((termination, mode, &terminations.tls))
+    }
+
+    /// The termination for a Git-over-SSH leg to `request`'s host, whether or not the workspace
+    /// decrypts the host. The leg's client is Puddle's own and trusts its CA, and the injector
+    /// adds no credential where no identity covers the repository. The leg is always to port 443.
+    /// `None` only when the workspace has no termination.
+    pub(crate) fn terminating_ssh_leg(
+        &self,
+        request: &EgressRequest,
+    ) -> Option<(
+        Arc<terminate::Termination>,
+        terminate::Mode,
+        &puddle_upstream::TlsClient,
+    )> {
+        let terminations = self.terminations.as_ref()?;
+        let termination = terminations.source.termination(&request.workspace)?;
+        Some((termination, terminate::Mode::Bound, &terminations.tls))
     }
 
     /// The workspace's termination, which also holds its rules on method and path.

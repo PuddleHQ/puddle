@@ -54,6 +54,6 @@ done
 grep -qx hooks <<EOF || fail "fast lacks hooks"
 $fast
 EOF
-grep -q 'ci/scope-test.sh' "$here/scripts/check.sh" || fail "the hooks gate does not run ci/scope-test.sh"
+grep -q 'ci/scope-test.sh' "$here/scripts/hooks-gate.list" || fail "the hooks gate does not run ci/scope-test.sh"
 # The fast gates run first and alone, so none of them may need a stream (they are the serial prefix).
 echo "check-sets-test: ok"

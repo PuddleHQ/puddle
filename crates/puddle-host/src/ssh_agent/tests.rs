@@ -362,7 +362,8 @@ mod gate {
     fn a_new_gate_clears_what_an_earlier_run_left() {
         let store = store();
         let key = TestKey::ed25519(2).blob();
-        let first = gate(&store, Duration::from_millis(30), Duration::ZERO);
+        // The first gate waits for a real answer; 30 ms ran out under host load before the fake user polled.
+        let first = gate(&store, Duration::from_secs(5), Duration::ZERO);
         let user = answer_when_asked(&store, SshAgentAnswer::Run);
         assert_eq!(first.approve(&ws("a"), "h.example.com", &key), Ok(()));
         user.join().unwrap();

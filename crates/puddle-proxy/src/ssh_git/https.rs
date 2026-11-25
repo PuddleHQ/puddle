@@ -28,7 +28,7 @@ use super::{
 use crate::counted::Counted;
 use crate::destination::BoxFuture;
 use crate::proxy::admit;
-use crate::target::Target;
+use crate::request_target::Target;
 use crate::terminate::h1::{BoxError, UpBody};
 use crate::terminate::{self, Outcome};
 
@@ -163,7 +163,17 @@ impl Leg<'_> {
             self.cx.leg_refused(event);
             GitSshFailure::new(refusal.message)
         })?;
-        let (termination, mode, tls) = proxy.terminating(&https, false).ok_or_else(|| {
+        let (termination, mode, tls) = proxy
+            .terminating(&https, false)
+            .or_else(|| {
+                // A built-in Git host with no identity on it is not in the workspace's decrypt
+                // set, but a public repository there clones with no credential, as it does
+                // over HTTPS.
+                super::is_built_in_https(&self.host)
+                    .then(|| proxy.terminating_ssh_leg(&https))
+                    .flatten()
+            })
+            .ok_or_else(|| {
             GitSshFailure::new(format!(
                 "Puddle does not decrypt {} for this workspace, so it cannot carry Git over SSH there",
                 self.host

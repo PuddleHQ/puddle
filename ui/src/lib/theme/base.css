@@ -27,6 +27,26 @@ h3 {
   margin: 0;
 }
 
+/* One title style for every route and the first-run steps: a screen never sets its own h1 size. */
+h1 {
+  font-size: var(--text-xl);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+h1:focus {
+  outline: none;
+}
+
+/* The page frame (see `frameFor` in nav.ts): forms and prose get a reading width, tables and the
+   terminal the full width. The frame is set once, on <main>, never by a route. */
+.page-reading {
+  max-width: calc(var(--page-reading-width) + 2 * var(--space-8));
+}
+/* A form inside a full-width frame (a workspace's Git and Settings tabs) keeps the reading width. */
+.reading {
+  max-width: var(--page-reading-width);
+}
+
 /* One size per heading level: the browser's own h3 size made "Proxy sign-in" larger than the "Network"
    section it sits in. Screens that want another size set it on a class. */
 h3 {

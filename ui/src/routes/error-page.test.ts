@@ -69,8 +69,13 @@ describe("the error page", () => {
       screen.getByRole("heading", { name: "Page not found" }),
     ).toBeTruthy();
     expect(screen.queryByText("Details")).toBeNull();
+    // A page that is not there offers the way home, an error does not.
+    expect(
+      screen.getByRole("link", { name: "Go to Workspaces" }),
+    ).toHaveAttribute("href", "/workspaces");
     cleanup();
     show(500, { message: "Internal Error" });
     expect(screen.queryByText("Details")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Go to Workspaces" })).toBeNull();
   });
 });

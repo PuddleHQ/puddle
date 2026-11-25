@@ -370,7 +370,7 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
     }
 
     async fn run() {
-        let mut story = boot().await;
+        let mut story = Box::pin(boot()).await;
         let mut window = phase_attach(&story).await;
         phase_guard_on(&story, &mut window).await;
         phase_trusted_mode(&story, &mut window).await;
@@ -434,9 +434,7 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
         shell(
             &runtime,
             &sandbox,
-            &format!(
-                "cd /workspaces/{name} && git init -q api && git init -q web && chown -R agent: api web 2>/dev/null; true"
-            ),
+            "cd /workspace && git init -q api && git init -q web && chown -R agent: api web 2>/dev/null; true",
         )
         .await;
         let reply = api
@@ -461,7 +459,7 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
         let alias = format!("puddle-{name}");
         assert_eq!(args[0], "--file-uri", "{args:?}");
         assert!(
-            args[1].starts_with(&format!("vscode-remote://ssh-remote+{alias}/workspaces/"))
+            args[1].starts_with(&format!("vscode-remote://ssh-remote+{alias}/workspace"))
                 && args[1].ends_with(".code-workspace"),
             "{args:?}"
         );

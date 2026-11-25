@@ -113,12 +113,9 @@
     <h3 id="{id}-name">
       <SetChip name={set.name} fill={set.fill} variant="chip" />
     </h3>
-    <span class="chip">{mine ? "Yours" : "Built in"}</span>
-    {#if does !== null}
-      <span class="chip {does === 'Allows' ? 'allow' : 'deny'}">{does}</span>
-    {/if}
+    {#if does !== null}<span class="meta wrap">{does}</span>{/if}
     {#if set.changed_at !== null}
-      <span class="chip warn">Updated by Puddle {changed(set.changed_at)}</span>
+      <span class="meta">Updated by Puddle {changed(set.changed_at)}</span>
     {/if}
   </header>
   {#if set.description !== ""}<p class="desc">{set.description}</p>{/if}
@@ -349,9 +346,5 @@
   .chip.deny {
     color: var(--color-danger);
     border-color: var(--color-danger);
-  }
-  .chip.warn {
-    color: var(--color-warning);
-    border-color: var(--color-warning);
   }
 </style>

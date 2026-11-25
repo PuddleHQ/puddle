@@ -17767,9 +17767,29 @@
               "step",
               "detail",
               "repository",
+              "bytes_done",
+              "bytes_total",
               "type"
             ],
             "properties": {
+              "bytes_done": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "Bytes done so far, for a step that counts them (downloading and unpacking the image);\n`null` for every other step, and while the count is not known yet.",
+                "minimum": 0
+              },
+              "bytes_total": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "Bytes in all, when `bytes_done` is set and the total is known; `null` otherwise.",
+                "minimum": 0
+              },
               "detail": {
                 "type": [
                   "string",
@@ -25024,6 +25044,7 @@
         "enum": [
           "preparing_volume",
           "pulling_image",
+          "unpacking_image",
           "cloning",
           "starting",
           "syncing",

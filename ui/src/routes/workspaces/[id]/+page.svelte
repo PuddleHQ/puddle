@@ -174,9 +174,9 @@
 
 <style>
   .stack {
+    max-width: var(--page-reading-width);
     display: grid;
     gap: var(--space-4);
-    max-width: 60rem;
   }
   .card {
     display: grid;

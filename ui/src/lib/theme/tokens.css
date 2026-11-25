@@ -57,6 +57,7 @@
   --radius-sm: 4px;
   --radius-md: 8px;
   --radius-pill: 999px;
+  --page-reading-width: 52rem;
 
   --line-height: 1.5;
   /* The smallest height and width of a button or field; --target-min is WCAG 2.2's 24px floor, in both densities. */

@@ -92,6 +92,7 @@ fn workspace_progress_is_per_workspace_and_always_carries_detail() {
     let steps = [
         (WorkspaceStep::PreparingVolume, "preparing_volume"),
         (WorkspaceStep::PullingImage, "pulling_image"),
+        (WorkspaceStep::UnpackingImage, "unpacking_image"),
         (WorkspaceStep::Cloning, "cloning"),
         (WorkspaceStep::Starting, "starting"),
         (WorkspaceStep::Syncing, "syncing"),
@@ -110,12 +111,14 @@ fn workspace_progress_is_per_workspace_and_always_carries_detail() {
             step,
             detail: None,
             repository: None,
+            bytes_done: None,
+            bytes_total: None,
         };
         let json = serde_json::to_string(&e).unwrap();
         assert_eq!(
             json,
             format!(
-                r#"{{"type":"workspace_progress","workspace":"box","step":"{text}","detail":null,"repository":null}}"#
+                r#"{{"type":"workspace_progress","workspace":"box","step":"{text}","detail":null,"repository":null,"bytes_done":null,"bytes_total":null}}"#
             )
         );
         assert_eq!(serde_json::from_str::<Event>(&json).unwrap(), e);
@@ -137,6 +140,36 @@ fn workspace_progress_is_per_workspace_and_always_carries_detail() {
         cloning,
         Event::WorkspaceProgress { repository: Some(ref r), .. } if r.as_str() == "web"
     ));
+}
+
+#[test]
+fn a_progress_event_from_before_byte_counts_still_reads_and_one_with_counts_round_trips() {
+    let old: Event = serde_json::from_str(
+        r#"{"type":"workspace_progress","workspace":"box","step":"pulling_image","detail":"img","repository":null}"#,
+    )
+    .unwrap();
+    assert!(matches!(
+        old,
+        Event::WorkspaceProgress {
+            bytes_done: None,
+            bytes_total: None,
+            ..
+        }
+    ));
+    let counting = Event::WorkspaceProgress {
+        workspace: name(),
+        step: WorkspaceStep::PullingImage,
+        detail: None,
+        repository: None,
+        bytes_done: Some(5),
+        bytes_total: Some(20),
+    };
+    let json = serde_json::to_string(&counting).unwrap();
+    assert!(
+        json.ends_with(r#""bytes_done":5,"bytes_total":20}"#),
+        "{json}"
+    );
+    assert_eq!(serde_json::from_str::<Event>(&json).unwrap(), counting);
 }
 
 #[test]

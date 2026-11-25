@@ -72,7 +72,7 @@
     <ol class="list" aria-label="App errors">
       {#each errors as error, i (`${error.at}-${i}`)}
         <li class="card">
-          <p class="meta">
+          <p class="meta wrap">
             <b>{KIND_LABEL[error.kind]}</b>
             <span title={absoluteTime(error.at)}
               >{relativeTime(error.at, now)}</span
@@ -114,12 +114,6 @@
     align-items: start;
     gap: var(--space-4);
   }
-  h1 {
-    margin: 0;
-  }
-  h1:focus {
-    outline: none;
-  }
   .crumb {
     margin: 0 0 var(--space-2);
   }
@@ -129,7 +123,7 @@
   }
   .sub {
     margin: var(--space-2) 0 var(--space-4);
-    max-width: 44rem;
+    max-width: var(--page-reading-width);
   }
   p {
     margin: 0;
@@ -143,7 +137,6 @@
   .list {
     display: grid;
     gap: var(--space-3);
-    max-width: 60rem;
     margin: var(--space-3) 0 0;
     padding: 0;
     list-style: none;

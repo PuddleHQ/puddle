@@ -30,7 +30,7 @@ different crates and rarely collides.
 | `crates/puddle-inject` | lib | The credential injector for Git hosts, the proxy's `Injector` hook for a workspace: reads the repository and the kind of access (fetch, push, LFS) from a request path in one canonical spelling and refuses any other, applies the workspace's push and pull lists, and adds the credential of the identity that covers the repository's owner when the request carries no `Authorization` of its own. Reads the identities and the table from the store and the secret from `puddle-secrets` at each request; holds none. A crate of its own because it needs the store, the secrets and the proxy's hook, which do not depend on one another |
 | `crates/puddle-repos` | lib | Which repositories an identity's credentials reach, and who a credential's account is: GitHub's `GET /user/repos` (paged, following `Link` only to the same host and path) and Azure DevOps' organisation-wide list for each organisation a credential names, read on the host with the credential's own token through Puddle's company-proxy route (`HostApi`: no redirect followed, answers capped), kept in memory per credential (current for ten minutes, one read at a time, a host's rate limits honoured with a doubling wait, a list that cannot be refreshed served stale with the reason). `FakeApi` (feature `testing`) scripts a host's answers for tests. A new crate because it is neither a secret source (`puddle-secrets`) nor part of the API |
 | `crates/puddle-logins` | lib | Captured logins: the built-in profiles of Claude Code and GitHub (data: token endpoints, token fields, hosts), the token-exchange rewriter that `puddle-proxy` calls for a login's token endpoint (it keeps the real tokens in the operating system's credential store, one entry for each workspace, profile and role, and gives the workspace stand-ins with the tokens' shape), and the notices when a login cannot be captured, through a trait the host implements |
-| `crates/puddle-workspace` | lib | Workspace volume lifecycle (ADR 0006): one named disk volume `ws-<id>` per workspace at `/workspaces/<id>` (checkouts in subdirectories, `.puddle/` beside them), Puddle's own holder tracking (one writer, refusal names the holder), cleanup after failed creates, `fstrim` on stop and "reclaim space", delete only after the unsaved-work check (`guest/delete-check.sh`) and an explicit confirmation; short-lived maintenance sandboxes `m--<id>` for stopped workspaces |
+| `crates/puddle-workspace` | lib | Workspace volume lifecycle (ADR 0006): one named disk volume `ws-<id>` per workspace at `/workspace` in its sandbox (checkouts in subdirectories, `.puddle/` beside them), Puddle's own holder tracking (one writer, refusal names the holder), cleanup after failed creates, `fstrim` on stop and "reclaim space", delete only after the unsaved-work check (`guest/delete-check.sh`) and an explicit confirmation; short-lived maintenance sandboxes `m--<id>` for stopped workspaces |
 | `crates/puddle-guest-env` | lib | Boot-time proxy config: a pure function from proxy settings and the image env to the proxy `GuestEnv` and tool config `GuestFile`s (apt, sudo, Maven, Gradle, Docker CLI) the boot hook applies. No I/O |
 | `crates/puddle-certs` | lib | Corporate root sync: reads the host's admin- and user-added `Root`/`CA` stores minus `Disallowed` (Windows; its `unsafe` CryptoAPI calls are in `platform/windows.rs`), selects (expired and distrusted out, each certificate once) and turns them plus Puddle's CAs into guest files, env and the bundle step `guest/ca-bundle.sh` (append to the image's bundle, never replace) |
 | `crates/puddle-proxy` | lib | Egress proxy: CONNECT/HTTP, pending requests, toggles, TLS termination of bound hosts (`terminate`: guest leg, upstream leg, the `Injector` hook that `puddle-inject` implements, the registry of stand-ins swapped for their real values and put back in place of them in answers, the `ExchangeRewriter` hook that `puddle-logins` implements to read a login's token exchange), the registry of what each workspace decrypts (changed while it runs), upstream chaining, transparent capture; the image-pull proxy for Puddle's own registry traffic (loopback, per-run token, guard without rules) |
@@ -325,6 +325,13 @@ and the secret-store contract test on a real keyring (`ci/with-keyring.sh cargo 
 a developer machine and the host lane do not carry, and the CI job installs them per run. A change to
 the code behind one of them is verified by the pull request's required checks, not before the push.
 
+### Silent reverts
+
+A pull request that puts back the old text of a commit already on develop, without saying so, fails
+`scripts/check.sh silent-revert` (CI, pull requests only): a rebuilt branch or a conflict resolved to the old side did
+this once and the installed-app walk stayed red for five days. A deliberate revert names the commit in the pull
+request (`Reverts #<number>` or the commit's 8-character SHA).
+
 ### Rules
 
 - **New behaviour is tested at the lowest tier that can catch its bug, plus the tier that proves it
@@ -588,16 +595,33 @@ replaced by its default, a `&&` turned into `||`) and runs the crate's tests; a 
 
 | Set | Gates | Runs |
 |---|---|---|
-| `fast` | fmt, typos, spdx, shellcheck, hooks, platform-literals, standalone, git-pins, mutants-exclusions, silent-skips, early-exit-pipes, spawn, test-hooks | pre-commit hook |
+| `fast` | the gates `scripts/check.sh --list fast` prints (`fast_gates` in the script) | pre-commit hook |
 | `pre-push` | `fast`, then `diff-coverage-fast`, then every other gate of `all` except `ui-e2e`, `advisories` and `ui-audit` | pre-push hook |
 | `all` (the default) | every gate, `ui-e2e`, `advisories` and `ui-audit` included | `ci.yml` (every push and PR, except `advisories` and `ui-audit`, see below), by hand |
 
 **Hook environment.** Git exports `GIT_DIR`, `GIT_INDEX_FILE` and `GIT_WORK_TREE` to every hook. Both hooks clear them (`git rev-parse --local-env-vars`) before the gates start, because a `git init` in a temporary directory under a leaked `GIT_DIR` acts on the hook's repository and, from a linked worktree, sets the shared `core.bare` to true. A test that runs git clears them again for its own calls: a shell test sources `scripts/git-clean-env.sh`, a Rust test removes them from its `Command` (`clean_git` in `puddle-e2e`). `scripts/check-test-git-env.sh` (the `hooks` gate) fails a test file that runs git without doing so.
 
 **Concurrent gates.** Within a set, `fast` (and, in `pre-push`, `diff-coverage-fast` after it) runs first, one gate at a time, and a failure stops the run.
-The rest runs as up to three streams at once (`scripts/gate-sched.sh`): the Rust gates (`git-env`, `clippy`,
-`clippy-windows`, `dormant`, `openapi`, `doc`, `coverage`), the UI chain (`ui`, `ui-licences`, `ui-audit`, `ui-e2e`) and the
-read-only scans (`secrets`, `deny`, `advisories`, `notices`). `coverage` waits for `ui`, which builds the UI it tests against.
+The rest runs as up to three streams at once (`scripts/gate-sched.sh`): the Rust gates, the UI chain and the
+read-only scans, one gate per line (`gate_stream` in `scripts/gate-sched.sh` holds the same assignment):
+
+- Rust: `git-env`
+- Rust: `clippy`
+- Rust: `clippy-windows`
+- Rust: `dormant`
+- Rust: `openapi`
+- Rust: `doc`
+- Rust: `coverage`
+- UI chain: `ui`
+- UI chain: `ui-licences`
+- UI chain: `ui-audit`
+- UI chain: `ui-e2e`
+- Scan: `secrets`
+- Scan: `deny`
+- Scan: `advisories`
+- Scan: `notices`
+
+`coverage` waits for `ui`, which builds the UI it tests against.
 A gate's output is kept and printed whole under its `==> <gate>` line when it finishes, followed by
 `-- <gate>: ok, N s`; a failed gate stops its own stream only, the other streams finish, and the run exits with the
 status of the first failed gate in set order, whose log is the last thing printed. `PUDDLE_CHECK_SERIAL=1`
@@ -608,6 +632,9 @@ the Rust gates, not parallel compilation. `notices` is skipped when Cargo.lock, 
 run (stamp in the target directory; `CHECK_NO_SKIP=1` runs it anyway). A test target must not be named like a
 dependency (`scripts/target-names-test.sh`): `cargo llvm-cov` clears old build output by target name, so a test
 called `http` made every coverage run rebuild the `http` crate and everything that depends on it.
+No tracked directory may be named `target` (`scripts/no-target-dirs-test.sh`, the `hooks` gate): tools that clean, copy or
+ignore Cargo's output folder by name also take a source module of that name, and two `target/tests.rs` files vanished
+from a dozen task worktrees that way. Name the module for what it holds (`request_target`).
 
 `ui-e2e` is the slowest gate (two browsers against the built UI) and the one that flakes most on a loaded
 machine, so a push does not wait for it: the pre-push hook runs `pre-push`, and `ci.yml` runs `ui-e2e` on the

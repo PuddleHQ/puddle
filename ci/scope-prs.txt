@@ -37,6 +37,7 @@ scripts/check.sh
 scripts/gate-sched-test.sh
 scripts/gate-sched.sh
 scripts/git-env-test.sh
+scripts/no-target-dirs-test.sh
 scripts/target-names-test.sh
 @10 full true true true true
 Cargo.lock

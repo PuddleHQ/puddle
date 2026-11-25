@@ -368,6 +368,7 @@ impl Logins {
     async fn settle_store(&self) {
         let limit = Duration::from_millis(self.inner.store_timeout_ms.load(Ordering::Relaxed))
             .saturating_mul(10);
+        // Timing out is fine: the put back then runs behind the late write and may not land.
         let _ = tokio::time::timeout(limit, self.inner.store_gate.lock()).await;
     }
 

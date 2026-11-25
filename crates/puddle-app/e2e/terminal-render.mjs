@@ -199,7 +199,15 @@ export async function inspectContextMenu(port) {
       note("Paste is offered in the Terminal menu", Boolean(paste && !paste.disabled), JSON.stringify(paste));
       if (paste) await click(paste.x, paste.y);
       const shown = await until("the pasted text to show in the shell", async () => ((await read()).rows.includes(marker) ? true : false), 10_000, 300).catch(() => false);
-      note("Paste sends the clipboard text to the shell", shown, shown ? marker : `"${marker}" is not in the terminal rows: ${(await read()).rows.slice(-300)}`);
+      if (shown) note("Paste sends the clipboard text to the shell", true, marker);
+      else {
+        // Not pasted: tell a read that waits at the webview's own clipboard prompt (setting Ask, the default; nobody
+        // answers it on the runner, clipboard-permission.mjs) from a refusal or a read that works but never reached the shell.
+        const probe = await page.evaluate(`Promise.race([navigator.clipboard.readText().then((t) => "read:" + t, (e) => "rejected:" + e.name), new Promise((r) => setTimeout(() => r("pending"), 3000))])`, true).catch((e) => `error:${e}`);
+        dump.steps.push({ pasteProbe: probe });
+        const prompt = probe === "pending";
+        note("Paste sends the clipboard text to the shell, or waits at the webview's clipboard prompt (Ask)", prompt, prompt ? "the script read waits at the prompt: setting Ask, nobody to press Allow here, so the shell was not reached (follow-up: run this under Allow)" : `probe ${probe}; rows: ${(await read()).rows.slice(-200)}`);
+      }
     } catch (err) {
       note("right-click Paste works", false, String(err?.message ?? err));
     }

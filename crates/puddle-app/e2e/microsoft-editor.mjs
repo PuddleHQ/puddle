@@ -245,7 +245,11 @@ async function waitOwnInstall(wsId) {
     },
     600_000,
     5000,
-  );
+  ).catch(async (err) => {
+    // As for the first workspace: a timeout alone says nothing about whether the download, the unpack or the start stalled.
+    const seen = await guest(wsId, `ls -la ${dir}; for f in current confirmed previous; do echo "== $f"; cat ${dir}/$f 2>&1; done; ps -eo pid,etime,args | grep -E 'curl|wget|code-server' | grep -v grep; tail -n 60 /run/puddle/agent.log`, 60_000);
+    throw new Error(`${err.message}; the guest shows:\n${seen.text}`);
+  });
   return dir;
 }
 

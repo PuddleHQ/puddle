@@ -44,9 +44,7 @@ fn builders_fill_the_fields() {
         .with_env(&env)
         .with_route(VsockRoute::new(5000, "/run/p.sock"))
         .with_file_mount(FileMount::read_only("/h/boot.sh", p("/puddle/boot.sh")))
-        .with_volume(
-            VolumeMount::named(v("ws-a"), p("/workspaces/a")).ensure_size(DiskSize::mib(64)),
-        )
+        .with_volume(VolumeMount::named(v("ws-a"), p("/workspace")).ensure_size(DiskSize::mib(64)))
         .with_owned_disk(OwnedDisk {
             guest: p("/var/lib/docker"),
             size: DiskSize::gib(1),

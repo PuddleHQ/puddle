@@ -305,6 +305,8 @@ fn shell(
             status: ExitStatus::signalled(),
             stdout: Vec::new(),
             stderr: Vec::new(),
+            stdout_truncated: false,
+            stderr_truncated: false,
         },
         [program, args @ ..] => return run(ctx, request, program, args),
     })

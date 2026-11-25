@@ -124,14 +124,14 @@ async fn given_trim_paths_are_trimmed_instead_of_every_filesystem() {
     let trims = fstrim_ok(&rt);
     let lc = Lifecycle::new(rt.clone(), ShutdownConfig::default());
     let sb = rt.create(spec("ws")).await.unwrap();
-    let mount = GuestPath::new("/workspaces/w1").unwrap();
+    let mount = GuestPath::new("/workspace").unwrap();
     lc.manage(sb, vec![mount]).unwrap();
     let report = lc.shutdown().await;
     assert!(report.all_stopped());
     let trims = trims.lock().unwrap().clone();
     assert_eq!(trims.len(), 1);
     assert!(trims[0].starts_with("ws: sh -c "), "{trims:?}");
-    assert!(trims[0].ends_with(" fstrim /workspaces/w1"), "{trims:?}");
+    assert!(trims[0].ends_with(" fstrim /workspace"), "{trims:?}");
 }
 
 #[tokio::test]

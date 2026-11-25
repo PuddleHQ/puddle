@@ -157,7 +157,7 @@ async fn a_restarted_server_opens_the_multi_root_file_that_an_attach_wrote_meanw
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(
         &file,
-        r#"{"folders": [{"path": "/workspaces/shop/api"}, {"path": "/workspaces/shop/web"}]}"#,
+        r#"{"folders": [{"path": "/workspace/api"}, {"path": "/workspace/web"}]}"#,
     )
     .unwrap();
     kill(&read(&f.out, "1.pid"));

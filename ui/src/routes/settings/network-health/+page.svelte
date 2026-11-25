@@ -386,12 +386,6 @@
     align-items: start;
     gap: var(--space-4);
   }
-  h1 {
-    margin: 0;
-  }
-  h1:focus {
-    outline: none;
-  }
   h2 {
     margin: 0;
     font-size: var(--text-lg);
@@ -410,7 +404,7 @@
   }
   .sub {
     margin: var(--space-2) 0 var(--space-4);
-    max-width: 44rem;
+    max-width: var(--page-reading-width);
   }
   .desc,
   .small {
@@ -428,7 +422,6 @@
   .card {
     display: grid;
     gap: var(--space-3);
-    max-width: 56rem;
     margin-bottom: var(--space-4);
     padding: var(--space-4);
     background: var(--color-surface);

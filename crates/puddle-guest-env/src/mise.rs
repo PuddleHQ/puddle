@@ -32,13 +32,13 @@ const GENERATED: &str = "Written by Puddle at every boot; changes here are overw
 /// use puddle_guest_env::{MiseSettings, mise_config};
 /// use puddle_types::GuestPath;
 /// let settings = MiseSettings {
-///     dir: GuestPath::new("/workspaces/w/.puddle/mise").unwrap(),
-///     ceiling: GuestPath::new("/workspaces").unwrap(),
+///     dir: GuestPath::new("/workspace/.puddle/mise").unwrap(),
+///     ceiling: GuestPath::new("/").unwrap(),
 ///     trusted: None,
 ///     image_path: None,
 /// };
 /// let config = mise_config(&settings).unwrap();
-/// assert!(config.env.get("PATH").unwrap().starts_with("/workspaces/w/.puddle/mise/data/shims:"));
+/// assert!(config.env.get("PATH").unwrap().starts_with("/workspace/.puddle/mise/data/shims:"));
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MiseSettings {

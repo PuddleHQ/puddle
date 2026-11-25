@@ -57,7 +57,7 @@ TEST_CRATES = ("crates/puddle-e2e/", "crates/puddle-vm-tests/", "crates/puddle-t
               "crates/puddle-proxy-test-support/")
 _TEST_ONLY = r"(?:test|feature\s*=\s*\"testing\")"
 # Test code is `cfg(test)`, `all(test, ..)` and `any(..)` whose every member is `test` or `feature = "testing"`.
-# `any(windows, test)` and `any(test, windows)` also build outside tests, so they stay production code (T-1802, D-339 A).
+# `any(windows, test)` and `any(test, windows)` also build outside tests, so they stay production code.
 TEST_CFG = re.compile(r"#\[cfg\((?:test|all\(test\b[^\]]*|any\(\s*" + _TEST_ONLY + r"(?:\s*,\s*" + _TEST_ONLY + r")*\s*,?\s*\)|feature\s*=\s*\"testing\")\)\]")
 TEST_ATTR = re.compile(r"#\[(?:tokio::|rstest|test_case|test_log::)?test\b[^\]]*\]|#\[tokio::test\b")
 TEXT_EXT = {".rs", ".ts", ".js", ".svelte", ".sh", ".ps1", ".py", ".toml", ".yml", ".yaml", ".mjs", ".cjs"}

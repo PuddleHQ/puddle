@@ -1019,7 +1019,9 @@ function Find-DialogProblems($Dialogs) {
     foreach ($d in $Dialogs) {
         if ($d.Texts.Count -eq 0) { "the dialog '$($d.Title)' shows no text" }
         foreach ($t in $d.Texts) {
-            if ($t -match '\[[0-9A-Za-z_%#!$]*\]') { "the dialog '$($d.Title)' shows a raw placeholder: $t" }
+            # Windows Installer's own transient "Generating script operations for action: [1]" line is not
+            # in the package (no ActionText row can change it) and lasts about a second; skip it.
+            if ($t -notmatch '^Generating script operations for action' -and $t -match '\[[0-9A-Za-z_%#!$]*\]') { "the dialog '$($d.Title)' shows a raw placeholder: $t" }
         }
     }
     if (-not (@($Dialogs) | Where-Object { ($_.Texts -join ' ') -match 'Puddle' })) { 'no dialog names Puddle' }
@@ -1250,6 +1252,7 @@ if ($SelfTest) {
     Check 'a plain installer run has no dialog problem' (@(Find-DialogProblems $pages).Count -eq 0)
     Check 'a run with too few dialogs is named' ((@(Find-DialogProblems $pages[0..1]) -join ';') -match 'only 2 dialogs')
     Check 'a dialog with no text is named' ((@(Find-DialogProblems ($pages + (Dlg 'Puddle Setup' @()))) -join ';') -match 'shows no text')
+    Check 'the installer own script-generation line is not a raw placeholder' (@(Find-DialogProblems ($pages + (Dlg 'Puddle Setup' @('Generating script operations for action: [1]')))).Count -eq 0)
     Check 'a raw placeholder in a dialog is named' ((@(Find-DialogProblems ($pages + (Dlg 'Puddle Setup' @('File: [1],  Directory: [9]')))) -join ';') -match 'raw placeholder')
     Check 'a run that never says Puddle is named' ((@(Find-DialogProblems @((Dlg 'Setup' @('a')), (Dlg 'Setup' @('b')), (Dlg 'Setup' @('c')), (Dlg 'Setup' @('d')))) -join ';') -match 'names Puddle')
     Check 'the refusal is found in a message box' (Test-RefusalShown @((Dlg 'Puddle' @("$RefusalText"))))

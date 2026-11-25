@@ -12,7 +12,8 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use super::{Store, lock, sql_ts, users};
 use crate::environment::{
     EnvChange, EnvDraft, EnvEntry, EnvName, EnvRow, EnvScope, EnvSecret, EnvValue,
-    MAX_ENTRIES_PER_SCOPE, MAX_SCOPE_BYTES, SecretHost, SecretPlace, StartValue, StartVar,
+    MAX_ENTRIES_PER_SCOPE, MAX_SCOPE_BYTES, MintError, SecretHost, SecretPlace, StartValue,
+    StartVar,
 };
 use crate::error::StoreError;
 use crate::users::UserId;
@@ -328,8 +329,7 @@ impl Store {
     pub fn env_for_start(
         &self,
         workspace: &WorkspaceId,
-        // string-error-ok: the minting closure is the caller's: its message is wrapped once into the store error, nothing matches on a kind
-        mint: &mut dyn FnMut(&EnvName) -> Result<String, String>,
+        mint: &mut dyn FnMut(&EnvName) -> Result<String, MintError>,
     ) -> Result<Vec<StartVar>, StoreError> {
         self.change(|tx, _now, _fx| {
             let user = users::owner_in(tx, workspace)?;
@@ -367,8 +367,7 @@ fn stand_in(
     workspace: &WorkspaceId,
     env_id: i64,
     name: &EnvName,
-    // string-error-ok: the minting closure is the caller's: its message is wrapped once into the store error, nothing matches on a kind
-    mint: &mut dyn FnMut(&EnvName) -> Result<String, String>,
+    mint: &mut dyn FnMut(&EnvName) -> Result<String, MintError>,
 ) -> Result<String, StoreError> {
     let held: Option<String> = tx
         .query_row(
@@ -380,7 +379,7 @@ fn stand_in(
     if let Some(held) = held {
         return Ok(held);
     }
-    let made = mint(name).map_err(StoreError::EnvInvalid)?;
+    let made = mint(name).map_err(|e| StoreError::EnvInvalid(e.to_string()))?;
     tx.execute(
         "INSERT INTO env_stand_ins (workspace_id, env_id, stand_in) VALUES (?1, ?2, ?3)",
         params![workspace.as_str(), env_id, made],

@@ -72,10 +72,20 @@ fn r41_direct_ssh_gives_microsofts_hosts_to_that_workspace_only() {
 
 #[test]
 fn m8_the_mise_tools_set_is_hidden_exactly_while_the_global_switch_is_off() {
-    assert!(
+    // a build without the `mise` feature hides the set whatever is stored
+    let hidden_unless_built_in = || {
+        if puddle_settings::Tools::AVAILABLE {
+            vec![]
+        } else {
+            vec![MISE_TOOLS_SLUG]
+        }
+    };
+    assert_eq!(
         plan(&GlobalSettings::default(), &[], &[])
             .hidden_sets
-            .is_empty()
+            .into_iter()
+            .collect::<Vec<_>>(),
+        hidden_unless_built_in()
     );
     let mut off = GlobalSettings::default();
     off.tools.mise = Some(false);
@@ -87,7 +97,13 @@ fn m8_the_mise_tools_set_is_hidden_exactly_while_the_global_switch_is_off() {
         [MISE_TOOLS_SLUG]
     );
     off.tools.mise = Some(true);
-    assert!(plan(&off, &[], &[]).hidden_sets.is_empty());
+    assert_eq!(
+        plan(&off, &[], &[])
+            .hidden_sets
+            .into_iter()
+            .collect::<Vec<_>>(),
+        hidden_unless_built_in()
+    );
 }
 
 #[test]
@@ -108,7 +124,11 @@ fn mise_hosts_go_to_the_workspaces_with_mise_on_only() {
 fn the_switches_decide_who_has_mise_on() {
     let mut global = GlobalSettings::default();
     let mut own = WorkspaceSettings::default();
-    assert!(mise_on(&global, &own), "on by default");
+    assert_eq!(
+        mise_on(&global, &own),
+        puddle_settings::Tools::AVAILABLE,
+        "on by default where the layer is built in"
+    );
     own.tools.mise = Some(false);
     assert!(!mise_on(&global, &own), "the workspace's own switch");
     own.tools.mise = Some(true);

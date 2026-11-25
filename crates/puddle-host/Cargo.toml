@@ -13,6 +13,9 @@ publish.workspace = true
 [features]
 # Serves the built single-page app from the API's origin (see puddle-api).
 embedded-ui = ["puddle-api/embedded-ui"]
+# The managed mise layer (dormant in v0.1), see puddle-settings. Only the tests that need the layer
+# read it: the code asks `puddle_settings::Tools::AVAILABLE`.
+mise = ["puddle-settings/mise"]
 
 [dependencies]
 base64 = { workspace = true }

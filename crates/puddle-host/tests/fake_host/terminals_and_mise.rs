@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Terminals, event readers and the managed tools layer.
 
+#[cfg(target_os = "linux")]
+use super::secret_leaks::files_holding;
 use super::*;
 
 /// An event already in the socket when the deadline has passed is read, not reported as a timeout.
@@ -490,26 +492,6 @@ async fn with_mise_off_nothing_is_fetched_and_an_old_problem_goes() {
         .await;
         assert_eq!(mise_fetches(&rig).len(), before, "{switch}: no new fetch");
     }
-}
-
-#[cfg(target_os = "linux")]
-/// Everything under `dir` that holds `needle`, as the files' relative paths.
-pub(super) fn files_holding(dir: &std::path::Path, needle: &str) -> Vec<String> {
-    let mut found = Vec::new();
-    let mut folders = vec![dir.to_path_buf()];
-    while let Some(folder) = folders.pop() {
-        for entry in std::fs::read_dir(&folder).into_iter().flatten().flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                folders.push(path);
-            } else if std::fs::read(&path)
-                .is_ok_and(|bytes| bytes.windows(needle.len()).any(|w| w == needle.as_bytes()))
-            {
-                found.push(path.strip_prefix(dir).unwrap().display().to_string());
-            }
-        }
-    }
-    found
 }
 
 #[cfg(target_os = "linux")]

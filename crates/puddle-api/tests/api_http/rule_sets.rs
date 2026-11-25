@@ -573,6 +573,7 @@ async fn every_set_has_a_colour_and_your_own_can_be_chosen_and_changed() {
     api.running.shutdown().await;
 }
 
+#[cfg(feature = "mise")] // the layer is dormant in the shipped build
 #[tokio::test]
 async fn mise_hosts_follow_the_two_switches() {
     let api = start().await;
@@ -628,6 +629,7 @@ async fn mise_hosts_follow_the_two_switches() {
     api.running.shutdown().await;
 }
 
+#[cfg(feature = "mise")] // the layer is dormant in the shipped build
 #[tokio::test]
 async fn the_mise_tools_set_is_hidden_while_the_global_tools_switch_is_off() {
     let api = start().await;

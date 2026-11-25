@@ -388,6 +388,9 @@ fn the_table_has_unique_names_and_the_config_row_first() {
     assert!(spec_for_flag("--nope").is_none());
 }
 
+// the usage text names the serve options only in a build with the `serve` feature (tests/dormant.rs
+// checks the opposite)
+#[cfg(feature = "serve")]
 #[test]
 fn the_usage_text_and_the_docs_name_every_option() {
     let docs = include_str!("../../../../../../docs/serve.md");
@@ -465,6 +468,9 @@ fn the_flags_and_the_file_keys_mirror_each_other() {
     );
 }
 
+// the usage text names the serve options only in a build with the `serve` feature (tests/dormant.rs
+// checks the opposite)
+#[cfg(feature = "serve")]
 #[test]
 fn a_switch_is_flag_and_negated_flag_in_the_table_the_usage_and_the_docs() {
     let docs = include_str!("../../../../../../docs/serve.md");

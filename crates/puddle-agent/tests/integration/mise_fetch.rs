@@ -11,6 +11,8 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
+use sha2::{Digest as _, Sha256};
+
 use puddle_agent::mise::Pin;
 
 /// Runs the subcommand with `path` as the whole `PATH`.
@@ -43,7 +45,7 @@ fn a_binary_that_matches_the_marker_is_current_and_downloads_nothing() {
             "{} {} {}\n",
             pin.version,
             pin.sha256,
-            puddle_types::hex_lower(b"the binary")
+            puddle_types::hex_lower(&Sha256::digest(b"the binary"))
         ),
     )
     .unwrap();

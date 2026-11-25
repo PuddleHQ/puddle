@@ -952,13 +952,31 @@ pub async fn connect_first(
     addrs: &[SocketAddr],
     per_address: Duration,
 ) -> io::Result<(TcpStream, SocketAddr)> {
+    let (stream, addr) = race_connect(addrs, per_address, TcpStream::connect).await?;
+    if let Err(err) = stream.set_nodelay(true) {
+        tracing::debug!(error = %err, "nodelay");
+    }
+    Ok((stream, addr))
+}
+
+/// The race of [`connect_first`] over any connector, so a test can stand in for the network.
+async fn race_connect<T, F, Fut>(
+    addrs: &[SocketAddr],
+    per_address: Duration,
+    connect: F,
+) -> io::Result<(T, SocketAddr)>
+where
+    T: Send + 'static,
+    F: Fn(SocketAddr) -> Fut + Copy + Send + 'static,
+    Fut: Future<Output = io::Result<T>> + Send + 'static,
+{
     let mut queue = interleaved(addrs).into_iter();
     let mut attempts = tokio::task::JoinSet::new();
     let start = |attempts: &mut tokio::task::JoinSet<_>, addr: SocketAddr| {
         attempts.spawn(async move {
             let connected = tokio::time::timeout(
                 per_address,
-                connect_through_port_pressure(|| TcpStream::connect(addr)),
+                connect_through_port_pressure(move || connect(addr)),
             )
             .await
             .unwrap_or_else(|_| Err(io::Error::new(io::ErrorKind::TimedOut, "connect timed out")));
@@ -975,12 +993,7 @@ pub async fn connect_first(
             joined = attempts.join_next() => {
                 match joined {
                     None => return Err(last),
-                    Some(Ok((addr, Ok(stream)))) => {
-                        if let Err(err) = stream.set_nodelay(true) {
-                            tracing::debug!(error = %err, "nodelay");
-                        }
-                        return Ok((stream, addr));
-                    }
+                    Some(Ok((addr, Ok(stream)))) => return Ok((stream, addr)),
                     Some(Ok((_, Err(err)))) => last = err,
                     Some(Err(join)) => last = io::Error::other(join),
                 }

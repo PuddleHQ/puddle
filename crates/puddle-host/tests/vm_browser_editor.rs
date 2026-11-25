@@ -1954,13 +1954,17 @@ async fn vm_browser_code_server_hovering_a_typescript_symbol_shows_the_type_the_
     editor.finish().await;
 }
 
+/// Rounds before the memory baseline is read.
+const WARM_UP_ROUNDS: u32 = 2;
+
 /// What the guest's processes hold in memory, summed (bytes).
 const GUEST_RSS: &str = "ps -eo rss= | awk '{ s += $1 } END { print s * 1024 }'";
 
 /// K tier, code-server, soak bar. The window opened and closed ten times in a row: after each
 /// close the guest has no extension host, and after the tenth the guest's memory is within 10 % of
-/// what it was after the first round. `PUDDLE_VM_SOAK_BREAK=keep-extension-host` stops the hosts
-/// at each close and skips the cleanup, which must turn the no-extension-host bar red.
+/// what it was after the warm-up (the first rounds fill code-server's caches: the guest grew
+/// 48 MB from round 1 to 2, then stayed within 4 % of round 3). `PUDDLE_VM_SOAK_BREAK=keep-extension-host`
+/// stops the hosts at each close and skips the cleanup, which must turn the no-extension-host bar red.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_soak_browser_code_server_ten_opens_and_closes_leave_no_extension_host_and_the_memory_back()
  {
@@ -2010,7 +2014,7 @@ async fn vm_soak_browser_code_server_ten_opens_and_closes_leave_no_extension_hos
         .await;
         let rss: u64 = editor.guest(GUEST_RSS).await.trim().parse().unwrap();
         eprintln!("round {round}: guest memory {rss} bytes; open {open}; closed {closed}");
-        if round == 1 {
+        if round == WARM_UP_ROUNDS + 1 {
             first = rss;
         }
         last = rss;

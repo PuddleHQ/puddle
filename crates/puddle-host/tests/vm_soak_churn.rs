@@ -36,6 +36,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use puddle_compute::Runtime as _;
+use puddle_secrets::{HostName, Secret, SecretStore, SourceSpec, StoredId, TokenScope};
+use puddle_store::{Author, Coverage, CredentialBinding, IdentityDraft};
 use puddle_types::WorkspaceId;
 use puddle_vm_tests::VmEnv;
 use puddle_vm_tests::soak::{DISK_BACK_PERCENT, judge_disk_back};
@@ -136,7 +138,7 @@ async fn stop_and_delete(api: &Api, id: &str) {
 
 /// One round: make, stop and delete a workspace; returns what is left of it.
 async fn round(vm: &VmHost, api: &Api) -> Vec<String> {
-    let id = create(api, "churn").await;
+    let id = create(api, "soakspace").await;
     let sandbox = WorkspaceId::new(&id).unwrap();
     // The runner's process id, to see it gone after the delete.
     let runner = VmEnv::new(vm.settings.clone())
@@ -152,15 +154,13 @@ async fn round(vm: &VmHost, api: &Api) -> Vec<String> {
     }
     if broken("leak-disk") {
         let (_, size) = drive_of(&vm.root);
-        let file = std::fs::File::create(vm.root.join("leaked")).unwrap();
-        file.set_len(size / 100 * 3).unwrap();
-        // A sparse file uses no blocks: write a byte in every megabyte so they are used.
-        let mut at = 0;
-        while at < size / 100 * 3 {
-            std::os::unix::fs::FileExt::write_at(&file, &[1], at).unwrap();
-            at += 1 << 20;
-        }
-        file.sync_all().unwrap();
+        // `fallocate` reserves the blocks (a sparse file would use none).
+        let made = std::process::Command::new("fallocate")
+            .args(["-l", &(size / 100 * 3).to_string()])
+            .arg(vm.root.join(format!("leaked-{id}")))
+            .status()
+            .expect("fallocate runs");
+        assert!(made.success(), "fallocate failed: {made}");
     }
 
     let mut left = Vec::new();
@@ -219,16 +219,50 @@ for i in 1 2 3 4 5; do
 done
 echo PUSHES_OK"#;
 
+/// The token the fake github accepts for a push: it takes no anonymous push, so the workspace's
+/// identity holds this one and the proxy adds it.
+const PUSH_TOKEN: &str = "KCANARY-SOAK-PUSH-3f9a1c";
+
+fn push_identity(vm: &VmHost) -> IdentityDraft {
+    let host = HostName::new("github.com").unwrap();
+    let id = StoredId::new("soakpush").unwrap();
+    vm.secrets
+        .set(&id, &Secret::new(PUSH_TOKEN.to_owned()))
+        .unwrap();
+    let binding = CredentialBinding::new(
+        &host,
+        SourceSpec::Stored {
+            id,
+            scope: TokenScope {
+                host: host.clone(),
+                org: None,
+            },
+        },
+        Coverage::new(std::collections::BTreeSet::new(), true).unwrap(),
+    )
+    .unwrap();
+    IdentityDraft {
+        label: "Soak".to_owned(),
+        author: Author::new("Soak", "soak@example.org").unwrap(),
+        credentials: vec![binding],
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_soak_backup_during_a_build_and_a_push_round_passes_and_both_finish() {
     let (vm, net) = start_vm_host_github("bkp").await;
+    net.git.accept_token(PUSH_TOKEN);
+    vm.host
+        .store()
+        .create_identity(puddle_store::UserId::OWNER, push_identity(&vm))
+        .unwrap();
     let api = Api::new(vm.host.url(), vm.host.token());
     let sandbox = vm_support::create_workspace_from(
         &vm,
         &api,
         "bkp",
         &["github.com"],
-        json!({"repositories": []}),
+        json!({"repositories": [{"url": "https://github.com/octocat/Hello-World.git", "push": true}]}),
     )
     .await;
     let pushed_before = net

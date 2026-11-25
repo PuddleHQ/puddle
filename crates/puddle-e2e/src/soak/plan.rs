@@ -125,6 +125,18 @@ impl Event {
         )
     }
 
+    /// Whether the event ends a round of `workload` that is in flight: a restart of the
+    /// JavaScript workspace cuts its round only; a restart or hard kill of `puddle serve` ends
+    /// every exec session, so it cuts all of them. The cut round is expected, not a finding.
+    #[must_use]
+    pub const fn cuts(self, workload: Workload) -> bool {
+        match self {
+            Self::RestartJs => matches!(workload, Workload::Js),
+            Self::RestartPuddle | Self::HardKill => true,
+            _ => false,
+        }
+    }
+
     /// The name the run log and the UI command use.
     #[must_use]
     pub const fn name(self) -> &'static str {

@@ -74,3 +74,13 @@ fn each_loop_starts_a_round_every_period_while_the_loops_run() {
     assert_eq!(agent.first(), Some(&0));
     assert_eq!(agent.last(), Some(&465));
 }
+
+#[test]
+fn a_restart_cuts_the_rounds_it_ends_and_no_others() {
+    for w in Workload::ALL {
+        assert!(Event::RestartPuddle.cuts(w) && Event::HardKill.cuts(w));
+        assert!(!Event::Backup.cuts(w) && !Event::InboxBatch.cuts(w));
+    }
+    assert!(Event::RestartJs.cuts(Workload::Js));
+    assert!(!Event::RestartJs.cuts(Workload::Build) && !Event::RestartJs.cuts(Workload::Agent));
+}

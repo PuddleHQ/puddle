@@ -290,6 +290,8 @@ struct Run {
     spaces: Vec<Space>,
     loops: Vec<(Workload, JoinHandle<()>)>,
     loop_failures: Arc<Mutex<Vec<String>>>,
+    /// When each planned event began.
+    cuts: Arc<Mutex<Vec<(Instant, Event)>>>,
     crashes: u32,
 }
 
@@ -508,22 +510,33 @@ impl Run {
         let Some(space) = self.space(w.workspace()) else {
             return;
         };
-        let (opts, data, log, failures) = (
+        let (opts, data, log, failures, cuts) = (
             self.opts.clone(),
             self.data.clone(),
             self.log.clone(),
             self.loop_failures.clone(),
+            self.cuts.clone(),
         );
         let handle = tokio::spawn(async move {
             let started = Instant::now();
             let (code, out) = guest(&opts, &data, &space, w.script(), &[round.to_string()]).await;
             let took = started.elapsed().as_secs();
-            log.line(&format!("{w:?} round {round}: exit {code} in {took} s"));
+            // A planned restart or kill that began while the round ran ends its exec session: that
+            // is the event working, and the rounds after it show the workspace came back.
+            let cut = cuts.lock().ok().and_then(|c| {
+                c.iter()
+                    .find(|(at, e)| *at >= started && e.cuts(w))
+                    .map(|&(_, e)| e)
+            });
+            let note = cut.map_or(String::new(), |e| format!(", cut by {}", e.name()));
+            log.line(&format!(
+                "{w:?} round {round}: exit {code} in {took} s{note}"
+            ));
             append(
                 &opts.out.join("rounds.tsv"),
                 &format!("{}\t{w:?}\t{round}\t{code}\t{took}\n", now()),
             );
-            if code != 0 {
+            if code != 0 && cut.is_none() {
                 let tail: String = out.lines().rev().take(20).collect::<Vec<_>>().join(" | ");
                 failures
                     .lock()
@@ -583,6 +596,9 @@ impl Run {
 
     async fn event(&mut self, e: Event) -> Result<(), String> {
         self.log.line(&format!("event {}", e.name()));
+        if let Ok(mut c) = self.cuts.lock() {
+            c.push((Instant::now(), e));
+        }
         match e {
             Event::Baseline | Event::StopLoops => {}
             Event::InboxBatch => self.inbox_batch().await,
@@ -1032,6 +1048,7 @@ pub async fn run(opts: Options) -> Result<Outcome, String> {
         spaces: Vec::new(),
         loops: Vec::new(),
         loop_failures: Arc::new(Mutex::new(Vec::new())),
+        cuts: Arc::new(Mutex::new(Vec::new())),
         crashes: 0,
     };
 

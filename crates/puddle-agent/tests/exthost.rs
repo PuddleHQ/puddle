@@ -166,17 +166,22 @@ async fn a_process_that_ignores_term_is_killed_after_the_grace() {
     );
 
     let started = Instant::now();
-    let ended = exthost::end_extension_hosts(&server.folders()).await;
+    // A guard against a hang, not an assertion on speed.
+    let ended = tokio::time::timeout(
+        Duration::from_secs(120),
+        exthost::end_extension_hosts(&server.folders()),
+    )
+    .await
+    .expect("the extension host was never ended");
     let took = started.elapsed();
 
     assert!(
         took >= exthost::TERM_GRACE,
         "ended before the grace: {took:?}"
     );
-    assert!(
-        took < exthost::TERM_GRACE + Duration::from_secs(3),
-        "took {took:?}"
-    );
+    // No upper bound on `took`: it counts /proc snapshots, whose cost grows with host load (6.4 s on a
+    // loaded lane). That the `KILL` came is shown below: the child ignores `TERM`, so only the
+    // `KILL` after the grace can have ended it.
     assert!(ended.processes >= 3, "{ended:?}");
     assert!(!alive(host_id));
     assert!(before.iter().all(|pid| {

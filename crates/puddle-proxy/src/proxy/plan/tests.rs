@@ -5,8 +5,8 @@ use std::sync::Arc;
 use puddle_ca::CaBuilder;
 use puddle_netpolicy::normalise_host;
 use puddle_types::{
-    EgressRequest, Host, Methods, NullSink, PassThroughCode, PathPattern, ProtocolHint, RuleId,
-    WorkspaceId,
+    ConnectionDecision, ConnectionReason, EgressRequest, Host, Methods, NullSink, PassThroughCode,
+    PathPattern, ProtocolHint, ReasonCode, RuleId, WorkspaceId,
 };
 
 use super::{Admitted, ConnectionPlan, GuestHints, Seen};
@@ -85,6 +85,7 @@ fn plan<'p>(proxy: &'p Proxy, request: &EgressRequest, from_container: bool) -> 
 /// What a plan says, short enough to compare.
 #[derive(Debug, PartialEq, Eq)]
 enum Shape {
+    NotRunning,
     GitSsh,
     SshRefused,
     RuleRefusesPort,
@@ -94,6 +95,7 @@ enum Shape {
 
 fn shape(plan: &ConnectionPlan<'_>) -> Shape {
     match plan {
+        ConnectionPlan::NotRunning => Shape::NotRunning,
         ConnectionPlan::GitSsh { .. } => Shape::GitSsh,
         ConnectionPlan::SshRefused => Shape::SshRefused,
         ConnectionPlan::Admit(Admitted::RuleRefusesPort(..)) => Shape::RuleRefusesPort,
@@ -184,16 +186,52 @@ fn ssh_to_a_git_name_puddle_does_not_serve_is_refused_and_other_ssh_is_spliced()
 }
 
 #[test]
-fn a_workspace_without_a_termination_is_spliced_with_no_rules() {
-    // Today's behaviour, kept by this change: the not-running refusal is a later step.
+fn a_workspace_without_a_termination_is_refused_whatever_the_request() {
     let proxy = proxy(&["ruled.example"], false);
-    let other = EgressRequest::new(
-        WorkspaceId::new("other").unwrap(),
-        name("ruled.example"),
-        8443,
-    );
+    let other = WorkspaceId::new("other").unwrap();
+    for (h, port, ssh) in [
+        ("ruled.example", 8443, false),
+        ("ruled.example", 443, false),
+        ("free.example", 443, false),
+        ("github.com", 22, true),
+    ] {
+        let req = EgressRequest::new(other.clone(), name(h), port);
+        let req = if ssh {
+            req.with_protocol(ProtocolHint::Ssh)
+        } else {
+            req
+        };
+        assert_eq!(
+            shape(&plan(&proxy, &req, false)),
+            Shape::NotRunning,
+            "{h}:{port}"
+        );
+    }
+}
+
+#[test]
+fn a_proxy_without_terminations_still_splices() {
+    let plain = Proxy::new(Arc::new(StaticPolicy::new()), Arc::new(NullSink));
     assert_eq!(
-        shape(&plan(&proxy, &other, false)),
+        shape(&plan(&plain, &request("free.example", 8443, false), false)),
         Shape::Splice(None, false)
+    );
+}
+
+#[test]
+fn the_not_running_refusal_is_a_503_recorded_as_blocked() {
+    let req = request("free.example", 443, false);
+    let (refusal, event) = crate::proxy::refuse_not_running(&req);
+    assert_eq!(refusal.status, "503 Service Unavailable");
+    assert_eq!(refusal.code, Some(ReasonCode::WorkspaceNotRunning));
+    assert!(
+        refusal
+            .headers
+            .contains(&("x-puddle-blocked", "workspace_not_running".to_owned()))
+    );
+    assert_eq!(event.decision, ConnectionDecision::Blocked);
+    assert_eq!(
+        event.reason,
+        ConnectionReason::Refused(ReasonCode::WorkspaceNotRunning)
     );
 }

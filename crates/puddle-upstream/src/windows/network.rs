@@ -36,14 +36,37 @@ const NRPT_KEYS: [&str; 2] = [
 /// Rows of the NRPT a read looks at at most; a machine has a handful.
 const MAX_NRPT_RULES: u32 = 4096;
 
+/// Why the adapters or routes could not be read. It displays as the problem line logged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+enum WinNetworkError {
+    /// `GetAdaptersAddresses` failed.
+    #[error("the adapters could not be read: GetAdaptersAddresses error {status}")]
+    Adapters {
+        /// The Win32 error code.
+        status: u32,
+    },
+    /// The adapter list grew on every retry.
+    #[error("the adapters could not be read: the list kept growing")]
+    AdaptersKeptGrowing,
+    /// `GetIpForwardTable2` failed.
+    #[error("the routes could not be read: GetIpForwardTable2 error {status}")]
+    Routes {
+        /// The Win32 error code.
+        status: u32,
+    },
+    /// `GetIpForwardTable2` returned no table.
+    #[error("the routes could not be read: GetIpForwardTable2 returned no table")]
+    NoRouteTable,
+}
+
 /// The Windows network, read on every call.
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct WinNetwork;
 
 impl NetworkOs for WinNetwork {
     fn read(&self) -> Result<NetworkSnapshot, NetworkError> {
-        let adapters = adapters().map_err(NetworkError)?;
-        let routes = routes().map_err(NetworkError)?;
+        let adapters = adapters().map_err(|e| NetworkError(e.to_string()))?;
+        let routes = routes().map_err(|e| NetworkError(e.to_string()))?;
         Ok(NetworkSnapshot {
             adapters,
             routes,
@@ -53,8 +76,7 @@ impl NetworkOs for WinNetwork {
 }
 
 /// Every adapter with its addresses, from `GetAdaptersAddresses`.
-// string-error-ok: the text is the problem line given to `on_problem` and logged; no caller branches on a kind
-fn adapters() -> Result<Vec<Adapter>, String> {
+fn adapters() -> Result<Vec<Adapter>, WinNetworkError> {
     let flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
     let mut size: u32 = 16 * 1024;
     // The buffer is a `Vec<u64>` so it is aligned for the structures Windows writes into it.
@@ -82,10 +104,10 @@ fn adapters() -> Result<Vec<Adapter>, String> {
             }
             ERROR_NO_DATA => return Ok(Vec::new()),
             ERROR_BUFFER_OVERFLOW => {}
-            other => return Err(format!("GetAdaptersAddresses: error {other}")),
+            other => return Err(WinNetworkError::Adapters { status: other }),
         }
     }
-    Err("GetAdaptersAddresses: the adapter list kept growing".to_owned())
+    Err(WinNetworkError::AdaptersKeptGrowing)
 }
 
 /// Copies the adapter list `first` starts into owned values.
@@ -169,18 +191,17 @@ impl Drop for ForwardTable {
 }
 
 /// The IPv4 forwarding table.
-// string-error-ok: the text is the problem line given to `on_problem` and logged; no caller branches on a kind
-fn routes() -> Result<Vec<Route>, String> {
+fn routes() -> Result<Vec<Route>, WinNetworkError> {
     let mut table: *mut MIB_IPFORWARD_TABLE2 = std::ptr::null_mut();
     // SAFETY: `table` is a valid out-pointer; Windows allocates the table.
     let status = unsafe { GetIpForwardTable2(AF_INET, &raw mut table) };
     if status != ERROR_SUCCESS {
-        return Err(format!("GetIpForwardTable2: error {status}"));
+        return Err(WinNetworkError::Routes { status });
     }
     let table = ForwardTable(table);
     // SAFETY: `as_ref` yields `None` for null; a non-null table is valid until `table` drops.
     let Some(head) = (unsafe { table.0.as_ref() }) else {
-        return Err("GetIpForwardTable2: no table".to_owned());
+        return Err(WinNetworkError::NoRouteTable);
     };
     // SAFETY: the table holds `NumEntries` rows from `Table` on, valid until `table` drops.
     let rows = unsafe { std::slice::from_raw_parts(head.Table.as_ptr(), head.NumEntries as usize) };

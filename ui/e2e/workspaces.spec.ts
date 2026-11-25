@@ -599,13 +599,14 @@ test.describe("start and stop", () => {
 
   test("a workspace stopped from elsewhere changes the card at once", async ({
     page,
+    request,
     backend,
   }) => {
     await openList(page, backend);
-    await backend.control.emit({
-      type: "status_changed",
-      workspace: "web-shop",
-      status: "stopped",
+    // Stopped for real: the card takes the actions it offers from the record read after the
+    // event, so an event alone, with the host still saying running, offers nothing.
+    await request.post("/api/workspaces/web-shop/stop", {
+      headers: auth(backend),
     });
     await expect(card(page, "web-shop")).toContainText("Stopped");
     await expect(
@@ -1118,7 +1119,7 @@ test.describe("renaming", () => {
     await rename(page).click();
     const form = dialog(page);
     await expect(form.getByLabel("Name")).toHaveValue("web-shop");
-    await expect(form).toContainText("workspace id, web-shop");
+    await expect(form).toContainText("The new name shows everywhere");
     await form.getByLabel("Name").fill("  Web shop (prod) ");
     await form.getByRole("button", { name: "Save" }).click();
     await expect(form).toHaveCount(0);
@@ -2056,7 +2057,9 @@ test.describe("a workspace whose volume is gone", () => {
     await openList(page, backend);
     const lost = card(page, "lost-disk");
     await expect(lost).toContainText("Volume missing");
-    await expect(lost).toContainText("Restore the volume ws-lost-disk");
+    await expect(lost).toContainText("Restore its volume");
+    await lost.getByText("Volume name").click();
+    await expect(lost).toContainText("ws-lost-disk");
     await expect(
       lost.getByRole("button", { name: "Start lost-disk" }),
     ).toBeEnabled();

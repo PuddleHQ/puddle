@@ -291,6 +291,43 @@ pub fn find_processes(proc_root: &Path, prefixes: &[String]) -> Vec<(String, u32
     found
 }
 
+/// Every process below `root` (children, their children, ...), from `/proc`; not `root` itself.
+#[must_use]
+pub fn descendants(root: u32) -> Vec<u32> {
+    let mut parent_of = Vec::new();
+    for entry in std::fs::read_dir("/proc").into_iter().flatten().flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|s| s.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let stat = std::fs::read_to_string(entry.path().join("stat")).unwrap_or_default();
+        // The parent is the second field after the command, which is in parentheses.
+        let parent = stat
+            .rsplit_once(')')
+            .and_then(|(_, rest)| rest.split_whitespace().nth(1))
+            .and_then(|s| s.parse::<u32>().ok());
+        if let Some(parent) = parent {
+            parent_of.push((pid, parent));
+        }
+    }
+    let mut found = vec![root];
+    let mut i = 0;
+    while let Some(&p) = found.get(i) {
+        found.extend(
+            parent_of
+                .iter()
+                .filter(|&&(_, pp)| pp == p)
+                .map(|&(c, _)| c),
+        );
+        i += 1;
+    }
+    found.retain(|&p| p != root);
+    found
+}
+
 /// Free RAM in KiB (`MemAvailable`) from the text of `/proc/meminfo`.
 #[must_use]
 pub fn available_ram_kb(meminfo: &str) -> Option<f64> {
@@ -355,6 +392,7 @@ pub struct Config {
 pub struct Sampler {
     cfg: Config,
     api: ApiSlot,
+    root: Arc<Mutex<Option<u32>>>,
     sse: Arc<SseState>,
     w4: Arc<Mutex<W4Window>>,
     cpu_before: Option<(u64, u64)>,
@@ -383,10 +421,17 @@ impl Sampler {
         Self {
             cfg,
             api,
+            root: Arc::new(Mutex::new(None)),
             sse,
             w4,
             cpu_before: None,
         }
+    }
+
+    /// Measures only the processes `root` is or started (from the next sample on), so another
+    /// program of the same name on the machine is left out; a restart passes the new server.
+    pub fn only_below(&self, root: Option<u32>) {
+        *self.root.lock().unwrap() = root;
     }
 
     /// Points the API reads and the event reader at `api` from the next request or reconnect on.
@@ -398,7 +443,11 @@ impl Sampler {
     /// (a missing line is a gap in the series, never a made-up zero).
     pub async fn sample(&mut self, now: u64, into: &mut Series) {
         self.host(now, into);
-        let procs = find_processes(Path::new("/proc"), &self.cfg.process_prefixes);
+        let mut procs = find_processes(Path::new("/proc"), &self.cfg.process_prefixes);
+        if let Some(root) = *self.root.lock().unwrap() {
+            let ours = descendants(root);
+            procs.retain(|&(_, pid)| pid == root || ours.contains(&pid));
+        }
         for (comm, pid) in procs {
             let readings = read_process(&Path::new("/proc").join(pid.to_string()));
             for (field, v) in readings.into_iter().flatten() {

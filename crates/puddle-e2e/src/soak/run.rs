@@ -26,7 +26,7 @@ use tokio::task::JoinHandle;
 
 use super::judge::{Schedule, Severity, judge};
 use super::plan::{Event, Profile, Workload, events, rounds};
-use super::sample::{Config, Sampler, Target};
+use super::sample::{Config, Sampler, Target, descendants};
 use super::series::Series;
 
 /// What a run needs.
@@ -250,42 +250,6 @@ async fn start_serve(exe: &Path, data: &Path, log: &Path, port: u16) -> Result<S
     }
 }
 
-/// Every process below `root`, from `/proc`.
-fn descendants(root: u32) -> Vec<u32> {
-    let mut parent_of = Vec::new();
-    for entry in std::fs::read_dir("/proc").into_iter().flatten().flatten() {
-        let Some(pid) = entry
-            .file_name()
-            .to_str()
-            .and_then(|s| s.parse::<u32>().ok())
-        else {
-            continue;
-        };
-        let stat = std::fs::read_to_string(entry.path().join("stat")).unwrap_or_default();
-        // The parent is the second field after the command, which is in parentheses.
-        let parent = stat
-            .rsplit_once(')')
-            .and_then(|(_, rest)| rest.split_whitespace().nth(1))
-            .and_then(|s| s.parse::<u32>().ok());
-        if let Some(parent) = parent {
-            parent_of.push((pid, parent));
-        }
-    }
-    let mut found = vec![root];
-    let mut i = 0;
-    while let Some(&p) = found.get(i) {
-        found.extend(
-            parent_of
-                .iter()
-                .filter(|&&(_, pp)| pp == p)
-                .map(|&(c, _)| c),
-        );
-        i += 1;
-    }
-    found.retain(|&p| p != root);
-    found
-}
-
 /// One workspace of the run.
 #[derive(Debug, Clone)]
 struct Space {
@@ -353,7 +317,11 @@ impl Run {
             self.opts.port,
         )
         .await?;
-        self.sampler.lock().await.retarget(serve.api.clone());
+        {
+            let sampler = self.sampler.lock().await;
+            sampler.retarget(serve.api.clone());
+            sampler.only_below(serve.child.id());
+        }
         self.serve = serve;
         Ok(())
     }
@@ -1036,7 +1004,10 @@ pub async fn run(opts: Options) -> Result<Outcome, String> {
         files: Vec::new(),
         disk: Some(opts.out.clone()),
     };
-    let sampler = Arc::new(tokio::sync::Mutex::new(Sampler::start(cfg, now)));
+    let sampler = Sampler::start(cfg, now);
+    // Only this run's server and what it started: another `puddle` on the machine is not ours.
+    sampler.only_below(serve.child.id());
+    let sampler = Arc::new(tokio::sync::Mutex::new(sampler));
     let metrics = opts.out.join("metrics.tsv");
     let every = opts.profile.sample_every();
     let sampling = tokio::spawn(sample_into(sampler.clone(), metrics.clone(), every));

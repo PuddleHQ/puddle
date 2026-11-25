@@ -422,3 +422,50 @@ async fn a_retargeted_sampler_reads_the_new_api() {
     sampler.sample(400, &mut after).await;
     assert_eq!(after.points("api.health.ms").len(), 1, "{}", after.render());
 }
+
+/// Two runs on one machine each measure their own server: a process of the same name outside
+/// the run's tree is left out.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn only_the_processes_of_the_runs_own_tree_are_measured() {
+    let mut ours = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .unwrap();
+    let mut other = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .unwrap();
+    let cfg = Config {
+        api: Target {
+            addr: "127.0.0.1:1".to_owned(),
+            token: None,
+        },
+        w4: None,
+        process_prefixes: vec!["sleep$".to_owned()],
+        db: None,
+        files: vec![],
+        disk: None,
+    };
+    let mut sampler = Sampler::start(cfg, || 7);
+    let mut all = Series::default();
+    sampler.sample(100, &mut all).await;
+    sampler.only_below(Some(ours.id()));
+    let mut mine = Series::default();
+    sampler.sample(100, &mut mine).await;
+    for child in [&mut ours, &mut other] {
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
+    let rss = |s: &Series| {
+        s.metrics("proc.sleep.", ".rss_kb")
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        rss(&all).contains(&format!("proc.sleep.{}.rss_kb", other.id())),
+        "{:?}",
+        rss(&all)
+    );
+    assert_eq!(rss(&mine), [format!("proc.sleep.{}.rss_kb", ours.id())]);
+}

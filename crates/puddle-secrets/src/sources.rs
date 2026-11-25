@@ -6,11 +6,11 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::error::{Refusal, SourceError, Tool};
-use crate::name::{AccountName, HostName, StoredId, TenantId, UrlPath};
 use crate::run::{AZ_TIMEOUT, TOOL_TIMEOUT, ToolPaths, run, run_capturing};
 use crate::secret::Secret;
-use crate::spec::SourceSpec;
 use crate::store::SecretStore;
+use puddle_types::SourceSpec;
+use puddle_types::{AccountName, HostName, StoredId, TenantId, UrlPath};
 
 /// A credential read from a source. Cheap to clone: the secret is shared and wiped when the last
 /// holder drops it.

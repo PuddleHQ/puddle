@@ -45,6 +45,8 @@ mod query_name;
 mod reason_code;
 mod request_match;
 mod session_user;
+mod source_name;
+mod source_spec;
 mod tool;
 
 pub use connection::{
@@ -73,6 +75,11 @@ pub use name::{
     CheckoutDir, EntryId, ImageRef, ImageRefLit, RESERVED_WORKSPACE_NAMES, SandboxName, VolumeName,
     WORKSPACE_VOLUME_PREFIX, WorkspaceId,
 };
+
+pub use source_name::{
+    AccountName, HostName, HostNameLit, NameError, OrgName, StoredId, TenantId, UrlPath,
+};
+pub use source_spec::{AZURE_DEVOPS_HOST, SourceSpec, TokenScope};
 
 pub use percent::{escape_at, hex_digit, percent_decoded, percent_decoded_bytes};
 pub use policy::{

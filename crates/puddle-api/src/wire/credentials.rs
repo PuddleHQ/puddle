@@ -124,7 +124,7 @@ impl CheckResult {
             readable: false,
             problem: Some(source_problem(err)),
             needs_sign_in: err.needs_sign_in() && !matches!(source, SourceSpec::AzCli { .. }),
-            fix_step: source.fix_step(err),
+            fix_step: puddle_secrets::fix_step(source, err),
         }
     }
 }

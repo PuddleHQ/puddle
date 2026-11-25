@@ -40,10 +40,7 @@ fn a_finished_session_is_reported_only_when_asked() {
     let mut loud = Vec::new();
     assert_eq!(finish(&done, true, &mut loud), ExitCode::SUCCESS);
     let line = String::from_utf8(loud).unwrap();
-    assert!(
-        line.contains("ServerClosed") && line.contains("sent: 3"),
-        "{line}"
-    );
+    assert_eq!(line, "puddle: ssh bridge ended: \"ServerClosed, sent 3\"\n");
     let mut failed = Vec::new();
     assert_eq!(
         finish(&Err::<(), _>(BridgeError::NotPuddle), false, &mut failed),

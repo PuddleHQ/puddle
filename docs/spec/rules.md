@@ -334,6 +334,10 @@ readable as JSONL (one record per line).
   session bind, which every `ssh` that does not bind sends, is not written) and `ssh_agent_answered` (the
   user's answer to the first-use question, actor `cli`, `ui` or `api`; `detail` says which of "allowed once",
   "allowed run", "allowed always" or "denied", for which key and host).
+  Two more are about the activity log itself: `audit_retention_changed` (the owner changed the days the
+  log is kept, through the API; written only when the number changed, `detail` gives the new and the old
+  days) and `audit_pruned` (an operator ran `puddle audit prune`, actor `cli`; `detail` gives the days and
+  the number of records deleted; written even when none was). The sweeper's own deletes stay `audit_trimmed`.
   A create or a delete is written whether it worked or not; a start or a stop only when it failed
   (a start that worked shows in the workspace's state); a rename when it worked, or when the
   workspace list could not be saved; the identity and repository changes, a new order of the identities included, when they worked. A call
@@ -556,6 +560,10 @@ the API. *Added 2026-10-08.*
   ships off, R-36), so without the grant a clone into a fresh workspace would wait for the user. Cloning
   again and adopting an existing checkout make no grant. A grant that closes a pending row records
   `decided_by` `system`. The create answer lists the hosts it allowed with their rule ids.
+  The same grant is made by "Add repository" › clone on a running workspace's Repositories tab, on the same
+  terms and before that clone. A repository
+  added to the Git tab's list only stores a list row and makes no rule: its host, if no rule decides it,
+  waits in the Inbox like any new host.
 
 ### Groups and precedence
 

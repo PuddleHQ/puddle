@@ -7340,7 +7340,7 @@ export interface components {
          * @description What a `workspace_op` record is about.
          * @enum {string}
          */
-        WorkspaceOpKind: "create" | "delete" | "rename" | "start" | "stop" | "identity_created" | "identity_updated" | "identity_deleted" | "identity_default_set" | "identities_changed" | "identities_reordered" | "repo_added" | "repo_switched" | "repo_removed" | "git_switches_changed" | "git_repaired" | "root_disk_grown" | "ssh_agent_signed" | "ssh_agent_refused" | "ssh_agent_answered";
+        WorkspaceOpKind: "create" | "delete" | "rename" | "start" | "stop" | "identity_created" | "identity_updated" | "identity_deleted" | "identity_default_set" | "identities_changed" | "identities_reordered" | "repo_added" | "repo_switched" | "repo_removed" | "git_switches_changed" | "git_repaired" | "root_disk_grown" | "ssh_agent_signed" | "ssh_agent_refused" | "ssh_agent_answered" | "audit_retention_changed" | "audit_pruned";
         /**
          * @description How a workspace operation ended.
          * @enum {string}

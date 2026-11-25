@@ -48,7 +48,7 @@ mod relay;
 use admit::resolve_destination;
 pub(crate) use admit::{Unresolved, admit};
 pub use config::ProxyConfig;
-pub(crate) use forward::{connect_first, forward, tunnel};
+pub(crate) use forward::{connect_first, tunnel};
 pub(crate) use refusal::{Refusal, refuse};
 use relay::relay;
 

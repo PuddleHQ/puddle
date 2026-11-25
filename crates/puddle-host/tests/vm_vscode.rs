@@ -77,6 +77,7 @@ mod story {
     use std::sync::Arc;
     use std::time::Duration;
 
+    use futures_util::FutureExt as _;
     use puddle_compute_msb::MsbRuntime;
     use puddle_host::{Host, HostOptions, VsCodeLauncher};
     use puddle_test_kit::eventually_async;
@@ -291,25 +292,27 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
             marker.trim().parse::<u64>().ok()
         })
         .await;
-        // A plain wait left only a timeout when the local terminal never ran the command (nightly 2026-11-25):
-        // the screenshot, the dialogs, the extension's own error and the window logs say what the window did.
-        let deadline = std::time::Instant::now() + SHOWS;
-        let who = loop {
-            if let Some(found) = std::fs::read(probe).ok().filter(|b| !b.is_empty()) {
-                break found;
-            }
-            if std::time::Instant::now() >= deadline {
+        // A bare timeout is all a run left when the local terminal never ran the command (nightly 2026-11-25):
+        // on a timeout the screenshot, the dialogs, the extension's own error and the window logs go into
+        // the artifact first, then the wait's own panic goes on.
+        let waited = std::panic::AssertUnwindSafe(eventually_async(
+            "the command ran on this computer",
+            SHOWS,
+            || async { std::fs::read(probe).ok().filter(|b| !b.is_empty()) },
+        ))
+        .catch_unwind()
+        .await;
+        let who = match waited {
+            Ok(found) => found,
+            Err(panic) => {
                 let _ = window.screenshot(&out.join("u7c-no-command.png")).await;
                 let shows = window_shows(window).await;
                 let said =
                     shell(runtime, sandbox, "cat /tmp/u7c-ran.err 2>/dev/null || true").await;
                 copy_tree(logs, &out.join("vsc-logs-u7c-no-command"));
-                panic!(
-                    "the command never ran on this computer within {SHOWS:?}; the extension said {said:?}; the window shows {shows}"
-                );
+                eprintln!("the extension said {said:?}; the window shows {shows}");
+                std::panic::resume_unwind(panic);
             }
-            // flake-ok: a poll of a file the window's terminal writes, with a deadline and a report
-            tokio::time::sleep(Duration::from_millis(500)).await;
         };
         let who: String = String::from_utf8_lossy(&who)
             .chars()

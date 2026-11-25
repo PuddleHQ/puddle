@@ -8,7 +8,7 @@ import { slowdown } from "./cpu-throttle.ts";
 import { type Backend, expect, test } from "./fixture";
 import { availableParallelism, loadavg } from "node:os";
 import { loadFactor } from "../scripts/load-budget.ts";
-import { pickFromRowMenu, staysEmpty } from "./support";
+import { hostName, pickFromRowMenu, staysEmpty } from "./support";
 import {
   INBOX_SHORTCUTS,
   type InboxShortcutId,
@@ -46,7 +46,7 @@ async function ask(
 
 const rowFor = (page: Page, host: string): Locator =>
   page.locator("li.req", {
-    has: page.locator(`.host:text-is(${JSON.stringify(host)})`),
+    has: hostName(page, host),
   });
 
 async function openInbox(page: Page, backend: Backend): Promise<void> {
@@ -130,9 +130,10 @@ test.describe("Allow and Deny, and the keys they name", () => {
     }
     await openInbox(page, backend);
     await expect(page.locator("li.req")).toHaveCount(3);
-    const hosts = (await page.locator("li.req .host").allTextContents()).filter(
-      (h) => /^t\d\.example\.com$/.test(h),
-    );
+    // The port is drawn after the name (`t0.example.com:443`); the name is what the shortcuts use.
+    const hosts = (await page.locator("li.req .host").allTextContents())
+      .map((h) => h.replace(/:\d+$/, ""))
+      .filter((h) => /^t\d\.example\.com$/.test(h));
     // flake-ok: the three rows were counted by the web-first assertion above
     expect(hosts).toHaveLength(3);
 
@@ -374,7 +375,7 @@ test.describe("five workspaces whose id differs from the name, 50 waiting reques
     for (const { id } of spaces) await ask(backend, id, `same.${DOMAIN}`);
     await openInbox(page, backend);
     const same = page.locator("li.req", {
-      has: page.locator(`.host:text-is("same.${DOMAIN}")`),
+      has: hostName(page, `same.${DOMAIN}`),
     });
     await expect(same).toHaveCount(5, { timeout: CLEAR_BAR_MS });
     await same
@@ -502,9 +503,7 @@ test.describe("1000 rules", () => {
     expect((await rules(request, backend)).length).toBe(seeded + 20);
     for (let i = 0; i < 20; i += 1) {
       const row = page.locator("tbody tr", {
-        has: page.locator(
-          `td.host span.mono:text-is("added${i}.volume.example.org")`,
-        ),
+        has: hostName(page.locator("td.host"), `added${i}.volume.example.org`),
       });
       await pickFromRowMenu(row, /^Delete rule/);
       await page

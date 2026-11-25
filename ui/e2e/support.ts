@@ -23,6 +23,18 @@ function connection(): { url: string; token: string } {
   };
 }
 
+/**
+ * A host name as the app draws it: split into bold and plain parts, a port after it. Matches the
+ * whole text of one name (a port is allowed), never a part of a longer one. `:text-is` cannot do
+ * this: it does not match an element whose text is spread over child elements.
+ */
+export function hostName(scope: Page | Locator, host: string): Locator {
+  const escaped = host.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return scope.locator("span.host", {
+    hasText: new RegExp(`^${escaped}(:\\d+)?$`),
+  });
+}
+
 /** What the desktop shell's init script does: hand the page the token before the app starts. */
 /** What the host says about CPUs: the computer's cores, its maximum and its default count. */
 export async function cpuLimits(

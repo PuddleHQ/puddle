@@ -10,6 +10,7 @@ import {
   expectNoAxeViolations,
   staysEmpty,
   pickFromRowMenu,
+  hostName,
 } from "./support";
 
 interface Rule {
@@ -46,11 +47,8 @@ const SEEDED_EXPIRY_HEAD_ROOM = 60_000;
 const rowFor = (page: Page, pattern: string, workspace?: string): Locator =>
   page
     .locator("tbody tr", {
-      // The pattern sits in `span.mono`; a rule that is off has a plain "off" word beside it.
-      // `:text-is` is an exact match on text, so the pattern is never read as a regexp.
-      has: page.locator(
-        `td.host span.mono:text-is(${JSON.stringify(pattern)})`,
-      ),
+      // The pattern is drawn by `HostName`; a rule that is off has a plain "off" word beside it.
+      has: hostName(page.locator("td.host"), pattern),
     })
     .filter(workspace ? { hasText: workspace } : {});
 
@@ -85,7 +83,7 @@ test.describe("the list", () => {
     const suffix = rowFor(page, "*.crates.io");
     await expect(suffix).toContainText("web-shop");
     // "and subdomains" is the wildcard in the host text itself.
-    await expect(suffix.locator("span.mono")).toHaveAttribute(
+    await expect(suffix.locator("span.wild")).toHaveAttribute(
       "title",
       "This host and every subdomain of it",
     );
@@ -241,7 +239,7 @@ test.describe("adding", () => {
       .selectOption({ label: "web-shop" });
     await dialog.getByRole("button", { name: "Add rule" }).click();
     await expect(
-      rowFor(page, "*.cdn.example.org").locator("span.mono"),
+      rowFor(page, "*.cdn.example.org").locator("span.wild"),
     ).toHaveAttribute("title", "This host and every subdomain of it");
     const rule = (await rules(request, backend)).find(
       (r) => r.pattern === ".cdn.example.org",

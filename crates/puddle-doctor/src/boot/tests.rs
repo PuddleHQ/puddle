@@ -327,3 +327,53 @@ fn the_command_runs_the_probe_with_a_private_home() {
             .any(|(k, v)| k == "MSB_HOME" && v == Some(layout.home().as_os_str()))
     );
 }
+
+/// A stand-in `msb` in `dir`: `run` exits with the probe's code at once but leaves a "VM" that
+/// ends a second later (it notes that in `events`); `stop` notes the call and returns when that
+/// VM is gone.
+#[cfg(unix)]
+fn fake_msb_with_a_slow_vm(dir: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let script = format!(
+        r#"#!/bin/sh
+d=$(dirname "$0")
+case "$1" in
+run)
+  ( sleep 1; echo vm-stopped >> "$d/events" ) >/dev/null 2>&1 &
+  echo $! > "$d/vm.pid"
+  exit {PROBE_EXIT_CODE};;
+stop)
+  echo stop-called >> "$d/events"
+  while kill -0 "$(cat "$d/vm.pid")" 2>/dev/null; do sleep 0.05; done
+  exit 0;;
+esac
+"#
+    );
+    let msb = dir.join("msb");
+    std::fs::write(&msb, script).unwrap();
+    std::fs::set_permissions(&msb, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn the_boot_returns_only_after_the_vm_has_stopped() {
+    let runtime = tempfile::tempdir().unwrap();
+    fake_msb_with_a_slow_vm(runtime.path());
+    let facts = test_boot(runtime.path(), "x86_64", Duration::from_secs(20), None);
+    assert!(matches!(
+        facts,
+        BootFacts::Ran {
+            outcome: ProcessOutcome::Exited {
+                code: Some(PROBE_EXIT_CODE),
+                ..
+            },
+            ..
+        }
+    ));
+    let events = std::fs::read_to_string(runtime.path().join("events")).unwrap_or_default();
+    assert_eq!(
+        events.lines().collect::<Vec<_>>(),
+        ["stop-called", "vm-stopped"],
+        "the throwaway home was deleted while the VM still ran"
+    );
+}

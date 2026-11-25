@@ -260,7 +260,7 @@ impl World {
             .unwrap();
     }
 
-    /// Sets "Only push to listed repos" and "Only pull from listed repos".
+    /// Sets "Only push to allowed repositories" and "Only pull from allowed repositories".
     pub fn switches(&self, only: OnlyListed) {
         self.store
             .set_git_switches(&self.workspace, Some(only.push()), Some(only.pull()))
@@ -268,7 +268,7 @@ impl World {
     }
 }
 
-/// Which of the two "Only ... listed repos" switches are on.
+/// Which of the two "Only ... allowed repositories" switches are on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OnlyListed {
     /// Neither switch.
@@ -282,13 +282,13 @@ pub enum OnlyListed {
 }
 
 impl OnlyListed {
-    /// "Only push to listed repos" is on.
+    /// "Only push to allowed repositories" is on.
     #[must_use]
     pub const fn push(self) -> bool {
         matches!(self, Self::Push | Self::Both)
     }
 
-    /// "Only pull from listed repos" is on.
+    /// "Only pull from allowed repositories" is on.
     #[must_use]
     pub const fn pull(self) -> bool {
         matches!(self, Self::Pull | Self::Both)

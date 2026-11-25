@@ -1912,7 +1912,7 @@ export interface paths {
         };
         get?: never;
         /**
-         * Sets "only push to listed repos" and "only pull from listed repos"; a switch left out stays. `use_default_push` or `use_default_pull` drops the workspace's own
+         * Sets "only push to allowed repositories" and "only pull from allowed repositories"; a switch left out stays. `use_default_push` or `use_default_pull` drops the workspace's own
          *     value, so that switch follows the default again.
          */
         put: operations["set_git_switches"];
@@ -4652,9 +4652,9 @@ export interface components {
         };
         /** @description Sets either switch; a switch left out stays as it is. */
         GitSwitchesRequest: {
-            /** @description "Only pull from listed repos". */
+            /** @description "Only pull from allowed repositories". */
             only_pull_listed?: boolean | null;
-            /** @description "Only push to listed repos". */
+            /** @description "Only push to allowed repositories". */
             only_push_listed?: boolean | null;
         };
         /** @description The names no workspace decrypts. */
@@ -7411,9 +7411,9 @@ export interface components {
         WorkspaceStep: "preparing_volume" | "pulling_image" | "unpacking_image" | "cloning" | "starting" | "syncing" | "checking" | "reclaiming" | "resetting_root_disk" | "growing_root_disk" | "stopping" | "removing" | "done" | "failed";
         /** @description Changes a workspace's two switches; a switch left out stays as it is. */
         WorkspaceSwitchesRequest: {
-            /** @description "Only pull from listed repos": the workspace's own value. */
+            /** @description "Only pull from allowed repositories": the workspace's own value. */
             only_pull_listed?: boolean | null;
-            /** @description "Only push to listed repos": the workspace's own value. */
+            /** @description "Only push to allowed repositories": the workspace's own value. */
             only_push_listed?: boolean | null;
             /**
              * @description Drop the workspace's own pull value, so it follows the default again. Not with

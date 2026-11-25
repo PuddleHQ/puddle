@@ -270,9 +270,9 @@ const REASON_WORDS: Record<ReasonCode, string> = {
   pki_distribution_point:
     "a certificate check address named in your company's root certificates",
   push_denied:
-    'the push is not on the workspace\'s push list yet (click "Allow push" in the notice, or turn off "Only push to listed repos" on its Git tab)',
+    'the push is not in the workspace\'s allowed repositories (click "Allow push" in the notice, or tick Push for it on the Git tab)',
   pull_denied:
-    'the fetch is not on the workspace\'s pull list yet (click "Allow pull" in the notice, or turn off "Only pull from listed repos" on its Git tab)',
+    'the fetch is not in the workspace\'s allowed repositories (click "Allow pull" in the notice, or tick Pull for it on the Git tab)',
   bad_git_path:
     "the Git address is not one Puddle reads, or names the repository in more than one way (use owner/repository)",
   ssh_command_unsupported:

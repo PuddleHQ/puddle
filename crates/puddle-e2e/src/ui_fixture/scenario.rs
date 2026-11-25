@@ -337,10 +337,10 @@ pub struct GitSeed {
     /// Its repository table.
     #[serde(default)]
     pub repos: Vec<GitRepoSeed>,
-    /// "Only push to listed repos"; on when left out.
+    /// "Only push to allowed repositories"; on when left out.
     #[serde(default)]
     pub only_push_listed: Option<bool>,
-    /// "Only pull from listed repos"; off when left out.
+    /// "Only pull from allowed repositories"; off when left out.
     #[serde(default)]
     pub only_pull_listed: Option<bool>,
 }

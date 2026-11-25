@@ -209,7 +209,7 @@ async fn a_push_to_a_repository_that_is_not_listed_is_refused_and_says_how_to_ad
     assert_eq!((status, code), (403, "push_denied"));
     assert_eq!(
         message,
-        "push to github.com/acme/other is not on this workspace's push list yet, as with a repository the workspace just created or forked; click \"Allow push for other\" in the notice (it works at once, no restart), or turn off \"Only push to listed repos\" on the workspace's Git tab, then try again"
+        "Blocked this push: github.com/acme/other is not in this workspace's allowed repositories for push. Allow it in the Puddle notice (\"Allow push for other\"), or open the workspace's Git tab > Repositories and tick Push for it. Then run git push again."
     );
     assert_eq!(
         w.events.take(),
@@ -275,8 +275,14 @@ async fn turning_off_the_push_list_lets_any_push_through_and_a_name_the_table_ca
         .await;
     let (status, code, message) = refusal(&odd);
     assert_eq!((status, code), (403, "push_denied"));
-    assert!(message.contains("cannot hold this name"), "{message}");
-    assert!(message.contains("Only push to listed repos"), "{message}");
+    assert!(
+        message.contains("allowed repositories cannot hold"),
+        "{message}"
+    );
+    assert!(
+        message.contains("Only push to allowed repositories"),
+        "{message}"
+    );
     assert!(
         w.events.take().is_empty(),
         "there is no row to add, so no notice"
@@ -428,7 +434,7 @@ async fn a_fetch_from_anywhere_is_allowed_until_the_pull_list_is_turned_on() {
     assert_eq!((status, code), (403, "pull_denied"));
     assert_eq!(
         message,
-        "pull from github.com/someone/private is not on this workspace's pull list yet, as with a repository the workspace just created or forked; click \"Allow pull for private\" in the notice (it works at once, no restart), or turn off \"Only pull from listed repos\" on the workspace's Git tab, then try again"
+        "Blocked this fetch: github.com/someone/private is not in this workspace's allowed repositories for pull. Allow it in the Puddle notice (\"Allow pull for private\"), or open the workspace's Git tab > Repositories and tick Pull for it. Then run the fetch or pull again."
     );
     assert!(matches!(
         w.events.take().as_slice(),

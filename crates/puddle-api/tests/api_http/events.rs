@@ -298,3 +298,20 @@ async fn audit_appended_names_the_newest_record_so_a_client_can_read_on() {
     assert_eq!(page["next_after"], id);
     api.running.shutdown().await;
 }
+
+#[tokio::test]
+async fn an_idle_stream_gets_a_keep_alive_comment_within_twenty_seconds() {
+    let api = start().await;
+    let mut s = Stream::open(&api, "").await;
+    let mut chunk = [0u8; 4096];
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while !s.buf.contains("\n:") {
+            let n = s.tcp.read(&mut chunk).await.unwrap();
+            assert!(n > 0, "stream closed early: {}", s.buf);
+            s.buf.push_str(&String::from_utf8_lossy(&chunk[..n]));
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("no keep-alive in 20 s; read so far: {}", s.buf));
+    api.running.shutdown().await;
+}

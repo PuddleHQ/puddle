@@ -38,6 +38,10 @@ const SHRINK_MIN_FREE_PERCENT: u64 = 25;
 const SHRINK_STEP_PAGES: u32 = 2048;
 const SHRINK_STEPS_PER_SWEEP: u32 = 400;
 
+/// The most the write-ahead log file keeps on disk once a checkpoint has emptied it (64 MiB).
+/// Without it SQLite reuses the log in place and the file never shrinks below its peak.
+pub(super) const WAL_LIMIT_BYTES: i64 = 67_108_864;
+
 /// SQLite's `auto_vacuum` value for incremental mode.
 const AUTO_VACUUM_INCREMENTAL: i64 = 2;
 
@@ -239,6 +243,17 @@ impl Store {
     /// A database error.
     pub fn shrink_audit_file(&self) -> Result<u64, StoreError> {
         self.shrink_file(SHRINK_MIN_FREE_BYTES)
+    }
+
+    /// Folds the write-ahead log into the database and truncates its file, so a burst of writes
+    /// that a long reader held back from checkpointing does not leave the log at its peak size.
+    /// A reader still open at this moment leaves the log alone until the next sweep.
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn checkpoint_wal(&self) -> Result<(), StoreError> {
+        lock(&self.conn).execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
+        Ok(())
     }
 
     pub(super) fn shrink_file(&self, min_free_bytes: u64) -> Result<u64, StoreError> {

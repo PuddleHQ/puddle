@@ -14,8 +14,53 @@ mod windows;
 mod windows_parse;
 
 use std::path::Path;
+#[cfg(any(windows, target_os = "macos"))]
+use std::time::Duration;
 
 use crate::facts::DiskEncryptionFacts;
+
+/// Why a probe could not tell. It displays as the finding's detail line.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub(crate) enum ProbeError {
+    /// A file the probe reads could not be read.
+    #[cfg(target_os = "linux")]
+    #[error("{path}: {cause}")]
+    Unreadable {
+        /// The file.
+        path: &'static str,
+        /// The operating system's words.
+        cause: String,
+    },
+    /// The program ran and failed.
+    #[cfg(any(windows, target_os = "macos"))]
+    #[error("{program} exited with {code:?}{}", stderr.as_ref().map_or_else(String::new, |t| format!(": {t}")))]
+    Exited {
+        /// The program's name.
+        program: String,
+        /// Its exit code, if it had one.
+        code: Option<i32>,
+        /// The first line of what it printed to standard error, when that is asked.
+        stderr: Option<String>,
+    },
+    /// The program did not start.
+    #[cfg(any(windows, target_os = "macos"))]
+    #[error("{program} did not start: {detail}")]
+    NotStarted {
+        /// The program's name.
+        program: String,
+        /// Why not.
+        detail: String,
+    },
+    /// The program did not answer in time.
+    #[cfg(any(windows, target_os = "macos"))]
+    #[error("{program} did not answer within {after:?}")]
+    TimedOut {
+        /// The program's name.
+        program: String,
+        /// How long it was given.
+        after: Duration,
+    },
+}
 
 /// The encryption facts of this machine for the data folder `dir`.
 pub(crate) fn disk_encryption(dir: Option<&Path>) -> DiskEncryptionFacts {

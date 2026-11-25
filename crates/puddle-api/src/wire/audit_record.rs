@@ -8,8 +8,8 @@ use utoipa::ToSchema;
 
 use super::{
     AuditPending, AuditRequestRule, AuditRule, AuditRuleSet, ConnectionDecision, ConnectionOrigin,
-    ConnectionOutcome, PendingExpiryReason, RuleDeleteReason, RuleSwitchKind, SystemReason,
-    WorkspaceOpKind, WorkspaceOpOutcome,
+    ConnectionOutcome, ConnectionProtocol, PendingExpiryReason, RuleDeleteReason, RuleSwitchKind,
+    SystemReason, WorkspaceOpKind, WorkspaceOpOutcome,
 };
 
 /// One audit record (rules spec R-24): a tagged union on `type`. `host`, `path` and the like come
@@ -130,7 +130,13 @@ pub enum AuditRecord {
         #[serde(default)]
         #[schema(required = true, value_type = Vec<UnknownTokenKind>)]
         answer_credentials: Box<Vec<String>>,
-        /// HTTP method, where the proxy saw the request in clear.
+        /// What `method` and `path` are: `http`, or `ssh` for Git over SSH. `null` when there is
+        /// no `method`. Records written before it existed read as `http` when they have a
+        /// `method`.
+        #[schema(required = true)]
+        protocol: Option<ConnectionProtocol>,
+        /// HTTP method, where the proxy saw the request in clear; for `protocol: ssh` the Git
+        /// command or the refusal (`ssh-command`, `ssh-channel`).
         #[schema(required = true)]
         method: Option<String>,
         /// HTTP path without query string, where `method` is set.
@@ -378,6 +384,7 @@ impl From<store::ConnectionRecord> for AuditRecord {
             scrubbed_stand_ins,
             foreign_credentials,
             answer_credentials,
+            protocol,
             method,
             path,
             path_truncated,
@@ -410,6 +417,10 @@ impl From<store::ConnectionRecord> for AuditRecord {
             scrubbed_stand_ins: Box::new(scrubbed_stand_ins),
             foreign_credentials: Box::new(foreign_credentials),
             answer_credentials: Box::new(answer_credentials),
+            // A record written before the field existed names an HTTP request when it has a method.
+            protocol: protocol
+                .map(Into::into)
+                .or_else(|| method.is_some().then_some(ConnectionProtocol::Http)),
             method,
             path,
             path_truncated,

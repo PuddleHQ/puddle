@@ -25,7 +25,6 @@ use puddle_agent_proto::relay::splice;
 use puddle_agent_proto::ssh::is_banner;
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::task::JoinSet;
 
 use super::table::{StandIns, in_range};
 use crate::connect::{connect_request, peek, read_answer};
@@ -81,21 +80,16 @@ pub fn destination(
 
 /// Accepts redirected connections forever.
 pub async fn serve(listener: TcpListener, table: StandIns, upstream: Arc<Upstream>) {
-    let mut conns = JoinSet::new();
-    loop {
-        tokio::select! {
-            accepted = listener.accept() => match accepted {
-                Ok((client, _)) => {
-                    conns.spawn(connection(client, table.clone(), Arc::clone(&upstream)));
-                }
-                Err(err) => {
-                    tracing::warn!(error = %err, "capture accept failed");
-                    tokio::time::sleep(ACCEPT_PAUSE).await;
-                }
-            },
-            Some(_) = conns.join_next(), if !conns.is_empty() => {}
-        }
-    }
+    puddle_ipc::accept_tcp(
+        listener,
+        ACCEPT_PAUSE,
+        "capture",
+        std::future::pending(),
+        |conns, client, _| {
+            conns.spawn(connection(client, table.clone(), Arc::clone(&upstream)));
+        },
+    )
+    .await;
 }
 
 /// Whether a connection whose conntrack entry says `original` was redirected here: conntrack

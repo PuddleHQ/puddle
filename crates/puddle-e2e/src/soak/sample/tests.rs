@@ -88,6 +88,21 @@ fn this_process_has_memory_threads_and_descriptors() {
     assert!(read_process(Path::new("/proc/0")).is_none());
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn a_process_whose_descriptors_cannot_be_read_still_has_memory_and_threads() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("status"),
+        "VmRSS:\t  2048 kB\nThreads:\t7\n",
+    )
+    .unwrap();
+    assert_eq!(
+        read_process(dir.path()),
+        Some(vec![("rss_kb", 2048.0), ("threads", 7.0)])
+    );
+}
+
 #[test]
 fn processes_are_found_by_command_name_prefix() {
     let dir = tempfile::tempdir().unwrap();
@@ -108,6 +123,19 @@ fn processes_are_found_by_command_name_prefix() {
         [("msb-vm".to_owned(), 14), ("puddle-worker".to_owned(), 12)]
     );
     assert_eq!(find_processes(&dir.path().join("none"), &prefixes), []);
+}
+
+#[test]
+fn a_prefix_ending_in_a_dollar_is_a_whole_name() {
+    let dir = tempfile::tempdir().unwrap();
+    for (pid, comm) in [("12", "puddle"), ("13", "puddle-soak")] {
+        std::fs::create_dir(dir.path().join(pid)).unwrap();
+        std::fs::write(dir.path().join(pid).join("comm"), comm).unwrap();
+    }
+    assert_eq!(
+        find_processes(dir.path(), &["puddle$".to_owned()]),
+        [("puddle".to_owned(), 12)]
+    );
 }
 
 #[tokio::test]
@@ -367,4 +395,77 @@ async fn a_reader_that_cannot_connect_keeps_trying_and_counts_each_try() {
     })
     .await;
     task.abort();
+}
+
+/// A restart of `puddle serve` moves the API (a new token, maybe a new port): after `retarget`
+/// the timed calls go to the new one.
+#[tokio::test]
+async fn a_retargeted_sampler_reads_the_new_api() {
+    let api = serve(Router::new().route("/api/health", get_route(|| async { "{}" }))).await;
+    let cfg = Config {
+        api: Target {
+            addr: "127.0.0.1:1".to_owned(),
+            token: None,
+        },
+        w4: None,
+        process_prefixes: vec![],
+        db: None,
+        files: vec![],
+        disk: None,
+    };
+    let mut sampler = Sampler::start(cfg, || 7);
+    let mut before = Series::default();
+    sampler.sample(100, &mut before).await;
+    assert_eq!(before.points("api.health.ms"), []);
+    sampler.retarget(target(api));
+    let mut after = Series::default();
+    sampler.sample(400, &mut after).await;
+    assert_eq!(after.points("api.health.ms").len(), 1, "{}", after.render());
+}
+
+/// Two runs on one machine each measure their own server: a process of the same name outside
+/// the run's tree is left out.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn only_the_processes_of_the_runs_own_tree_are_measured() {
+    let mut ours = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .unwrap();
+    let mut other = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .unwrap();
+    let cfg = Config {
+        api: Target {
+            addr: "127.0.0.1:1".to_owned(),
+            token: None,
+        },
+        w4: None,
+        process_prefixes: vec!["sleep$".to_owned()],
+        db: None,
+        files: vec![],
+        disk: None,
+    };
+    let mut sampler = Sampler::start(cfg, || 7);
+    let mut all = Series::default();
+    sampler.sample(100, &mut all).await;
+    sampler.only_below(Some(ours.id()));
+    let mut mine = Series::default();
+    sampler.sample(100, &mut mine).await;
+    for child in [&mut ours, &mut other] {
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
+    let rss = |s: &Series| {
+        s.metrics("proc.sleep.", ".rss_kb")
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        rss(&all).contains(&format!("proc.sleep.{}.rss_kb", other.id())),
+        "{:?}",
+        rss(&all)
+    );
+    assert_eq!(rss(&mine), [format!("proc.sleep.{}.rss_kb", ours.id())]);
 }

@@ -6,7 +6,8 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-fail() { echo "fetch-code-server-test: FAIL: $1" >&2; exit 1; }
+# shellcheck disable=SC1091 # the helper sits in scripts/
+. "$(dirname "$0")/../scripts/test-fail.sh"
 
 # A release the way upstream packs it: a top folder, a licence, the launcher, node and a shim link.
 top=code-server-9.9.9-linux-amd64

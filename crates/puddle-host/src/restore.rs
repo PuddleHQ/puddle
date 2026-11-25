@@ -5,7 +5,6 @@
 //! Staging writes only below the staging root the caller names. Nothing in the data folder's live
 //! files is read for writing or changed: a restore applies later, at a start, from the staged parts.
 
-use std::fmt::Write as _;
 use std::fs::{self, File};
 use std::io::{self, BufRead as _, BufReader, Read};
 use std::path::{Component, Path, PathBuf};
@@ -162,11 +161,7 @@ fn staging_id(
         what: "cannot make a staging id".into(),
         source: io::Error::other(e.to_string()),
     })?;
-    Ok(raw.iter().fold(String::with_capacity(32), |mut id, b| {
-        // Writing to a String never fails.
-        let _ = write!(id, "{b:02x}");
-        id
-    }))
+    Ok(puddle_types::hex_lower(&raw))
 }
 
 /// Makes the staging folder, fills it with `fill`, checks it, and removes it again on any failure.

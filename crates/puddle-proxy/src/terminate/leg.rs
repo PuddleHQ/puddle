@@ -19,7 +19,7 @@ use tokio::task::JoinHandle;
 
 use super::guest::{ALPN_HTTP11, Proto};
 use super::session::{Context, MAX_RESPONSE_HEAD, MAX_RESPONSE_HEADERS, upstream_tls_refusal};
-use crate::proxy::{Proxy, Refusal};
+use crate::proxy::Refusal;
 use crate::upstream::connect_out;
 
 /// An error a body carries from one leg to the other.
@@ -44,6 +44,16 @@ pub(crate) const PING_TIMEOUT: Duration = Duration::from_secs(20);
 /// 16 KiB, made a bulk transfer through the proxy several times slower than a pass-through of
 /// the same connection: every frame costs a parse and a copy on each leg.
 pub(crate) const MAX_FRAME_SIZE: u32 = 64 * 1024;
+
+/// The flow-control windows announced to an HTTP/2 server: per stream, and for the whole connection.
+/// Fixed, not adaptive. hyper's adaptive window (BDP estimation) pings the server and raises the
+/// windows again and again while a download runs, and real servers answer that by closing the
+/// connection or resetting the streams: 5 to 8 of 12 two-stream downloads of a 42 MB npm tarball
+/// from registry.npmjs.org failed with an abrupt TLS close, none of 24 with fixed windows. The
+/// guest sees that as curl exit 92 (`INTERNAL_ERROR`, `PROTOCOL_ERROR`). The windows are twice the
+/// guest leg's, so the proxy can buffer a little ahead of a slow guest and no more.
+pub(crate) const UPSTREAM_STREAM_WINDOW: u32 = 1024 * 1024;
+pub(crate) const UPSTREAM_CONNECTION_WINDOW: u32 = 4 * 1024 * 1024;
 
 /// The largest header list accepted from the upstream on HTTP/2 (RFC 9113 §6.5.2).
 const MAX_UPSTREAM_HEADER_LIST: u32 = 64 * 1024;
@@ -214,11 +224,16 @@ pub(crate) async fn connect_noting(cx: &Context, alpn: &[&[u8]]) -> Result<Made,
     let setup_failed =
         |err: hyper::Error| ConnectError::from(setup_refusal(&name, &super::session::short(&err)));
     let conn = match proto {
-        Proto::H1 => Connected::H1(h1(io, &cx.proxy).await.map_err(setup_failed)?),
+        Proto::H1 => Connected::H1(
+            h1(io, &cx.proxy.upstream_ended)
+                .await
+                .map_err(setup_failed)?,
+        ),
         Proto::H2 => {
             let (sender, connection) = http2::Builder::new(TokioExecutor::new())
                 .timer(TokioTimer::new())
-                .adaptive_window(true)
+                .initial_stream_window_size(UPSTREAM_STREAM_WINDOW)
+                .initial_connection_window_size(UPSTREAM_CONNECTION_WINDOW)
                 .max_frame_size(MAX_FRAME_SIZE)
                 .keep_alive_interval(PING_INTERVAL)
                 .keep_alive_timeout(PING_TIMEOUT)
@@ -226,13 +241,11 @@ pub(crate) async fn connect_noting(cx: &Context, alpn: &[&[u8]]) -> Result<Made,
                 .handshake::<_, UpBody>(io)
                 .await
                 .map_err(setup_failed)?;
-            #[cfg(feature = "testing")]
             let ended = Arc::clone(&cx.proxy.upstream_ended);
             tokio::spawn(async move {
                 if let Err(err) = connection.await {
                     tracing::debug!(error = %err, "upstream HTTP/2 connection ended");
                 }
-                #[cfg(feature = "testing")]
                 ended.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             });
             Connected::H2(H2Conn { sender })
@@ -253,11 +266,7 @@ pub(crate) async fn connect_noting(cx: &Context, alpn: &[&[u8]]) -> Result<Made,
 /// The client library could not start on the connection.
 pub(crate) async fn h1<I>(
     io: I,
-    #[cfg_attr(
-        not(feature = "testing"),
-        expect(unused_variables, reason = "only the `testing` end counter reads it")
-    )]
-    proxy: &Proxy,
+    upstream_ended: &Arc<std::sync::atomic::AtomicU64>,
 ) -> Result<H1Conn, hyper::Error>
 where
     I: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
@@ -267,13 +276,11 @@ where
         .max_headers(MAX_RESPONSE_HEADERS)
         .handshake::<_, UpBody>(io)
         .await?;
-    #[cfg(feature = "testing")]
-    let ended = Arc::clone(&proxy.upstream_ended);
+    let ended = Arc::clone(upstream_ended);
     let driver = tokio::spawn(async move {
         if let Err(err) = connection.with_upgrades().await {
             tracing::debug!(error = %err, "upstream connection ended");
         }
-        #[cfg(feature = "testing")]
         ended.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     });
     Ok(H1Conn {

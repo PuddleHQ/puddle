@@ -42,6 +42,30 @@ fn ssh_addresses_name_the_repository_the_ui_also_reads() {
 }
 
 #[test]
+fn every_listed_git_host_reads_to_its_https_host() {
+    // The proxy's table (`ssh_git/grammar.rs`) and the UI's (`SSH_HOSTS`) are tested against the
+    // same list.
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../tests/data/repo-urls.json")).unwrap();
+    for host in vectors["ssh_hosts"].as_array().unwrap() {
+        let (ssh, https) = (
+            host["ssh"].as_str().unwrap(),
+            host["https"].as_str().unwrap(),
+        );
+        let (path, want) = match https {
+            "dev.azure.com" => ("v3/o/p/r", "https://dev.azure.com/o/p/_git/r".to_owned()),
+            "visualstudio.com" => ("v3/o/p/r", "https://o.visualstudio.com/p/_git/r".to_owned()),
+            _ => ("o/r", format!("https://{https}/o/r")),
+        };
+        assert_eq!(
+            ssh_address_as_https(&format!("git@{ssh}:{path}")),
+            Ok(want),
+            "{ssh}"
+        );
+    }
+}
+
+#[test]
 fn only_ssh_addresses_look_like_ssh() {
     for ssh in ["git@host:path", "host:path", "ssh://h/p", "SSH://h/p"] {
         assert!(looks_like_ssh(ssh), "{ssh}");

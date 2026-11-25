@@ -85,9 +85,9 @@ const lastToast = () => toasts.items.at(-1)?.message;
 
 describe("the default for new workspaces", () => {
   const push = () =>
-    screen.getByRole("switch", { name: "Only push to listed repos" });
+    screen.getByRole("switch", { name: "Only push to allowed repositories" });
   const pull = () =>
-    screen.getByRole("switch", { name: "Only pull from listed repos" });
+    screen.getByRole("switch", { name: "Only pull from allowed repositories" });
 
   it("shows the two switches as they are, even with no identity", async () => {
     api.identities = [];

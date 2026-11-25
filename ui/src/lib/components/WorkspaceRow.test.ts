@@ -227,8 +227,12 @@ describe("WorkspaceRow", () => {
     const calls = mount({}, workspace("demo", { status: "volume_missing" }));
     const card = screen.getByRole("article");
     expect(card).toHaveTextContent("Volume missing");
-    expect(card).toHaveTextContent("Restore the volume ws-w-demo");
+    expect(card).toHaveTextContent("Restore its volume and start it again");
     expect(card).toHaveTextContent("open Details to delete it");
+    // The volume name carries the id, so it sits behind a disclosure for support.
+    const disclosure = card.querySelector("details");
+    expect(disclosure).toHaveTextContent("ws-w-demo");
+    expect(disclosure).not.toHaveAttribute("open");
     expect(screen.getByRole("button", { name: /Start/ })).toBeEnabled();
     expect(calls.start).not.toHaveBeenCalled();
   });

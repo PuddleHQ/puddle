@@ -11,18 +11,9 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
-use puddle_agent::mise::Pin;
 use sha2::{Digest as _, Sha256};
 
-fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    Sha256::digest(bytes)
-        .iter()
-        .fold(String::new(), |mut s, b| {
-            let _ = write!(s, "{b:02x}");
-            s
-        })
-}
+use puddle_agent::mise::Pin;
 
 /// Runs the subcommand with `path` as the whole `PATH`.
 fn mise_fetch(dir: &Path, path: &Path) -> Output {
@@ -50,7 +41,12 @@ fn a_binary_that_matches_the_marker_is_current_and_downloads_nothing() {
     let pin = Pin::current().unwrap();
     std::fs::write(
         dir.join("bin/.puddle-mise"),
-        format!("{} {} {}\n", pin.version, pin.sha256, hex(b"the binary")),
+        format!(
+            "{} {} {}\n",
+            pin.version,
+            pin.sha256,
+            puddle_types::hex_lower(&Sha256::digest(b"the binary"))
+        ),
     )
     .unwrap();
     // No curl and no wget on this PATH: a download would fail, so success proves there was none.

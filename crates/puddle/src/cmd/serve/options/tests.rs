@@ -290,7 +290,7 @@ fn an_environment_value_that_is_not_unicode_refuses() {
     use std::os::unix::ffi::OsStringExt as _;
     let env = |n: &str| (n == "PUDDLE_LOG").then(|| OsString::from_vec(vec![0xff, 0xfe]));
     let err = resolve(&Flags::new(), &env, Path::new("/")).unwrap_err();
-    assert!(err.to_string().contains("not valid Unicode"), "{err}");
+    assert!(err.to_string().contains("expected UTF-8 text"), "{err}");
 }
 
 #[test]

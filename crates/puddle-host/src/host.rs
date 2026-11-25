@@ -1157,6 +1157,10 @@ fn spawn_watchers<R: Runtime + Clone>(
         shared.config.free_space,
         shared.settings.clone(),
         shared.events.clone(),
+        Arc::new({
+            let service = service.clone();
+            move |level| service.note_host_disk(level)
+        }),
     ));
     let disk_watch = AbortOnDrop(crate::disk_watch::spawn(service.clone()));
     Watchers {

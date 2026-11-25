@@ -14,8 +14,8 @@ use puddle_ports::Ports;
 use puddle_settings::{WorkspaceSettings, host_cpu_count, resolve, resolve_on_host};
 use puddle_store::{Actor, NewWorkspaceOp, WorkspaceOpKind, WorkspaceOpOutcome};
 use puddle_types::{
-    CpuCount, DiskKind, Event, EventSink, ImageRef, MemoryMib, WorkspaceId, WorkspaceStatus,
-    WorkspaceStep,
+    CpuCount, DiskKind, Event, EventSink, ImageRef, MemoryMib, Problem, WorkspaceId,
+    WorkspaceStatus, WorkspaceStep,
 };
 
 use tokio::sync::watch;
@@ -28,6 +28,9 @@ use super::{
     wait_until_downloaded,
 };
 use crate::HostError;
+
+/// Key prefix of the notice that the host drive is full, one per workspace.
+const HOST_DISK_FULL: &str = "host-disk-full:";
 use crate::files::Stored;
 use crate::op_error::OpError;
 use crate::settings_read::SettingsReadError;
@@ -599,6 +602,38 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             Err(e) => tracing::debug!(error = %e, "the root disks' use of the disk is unknown"),
         }
         self.warn_about_full_disks();
+    }
+
+    /// Tells the user, per running workspace, that the drive holding Puddle's data is full, and
+    /// takes the notice back when space returns. A full drive makes a workspace's writes fail
+    /// with an input/output error while it still shows Running, so the notice says why.
+    pub(crate) fn note_host_disk(&self, level: puddle_types::DiskSpaceLevel) {
+        if level != puddle_types::DiskSpaceLevel::Critical {
+            self.inner.problems.clear_prefix(HOST_DISK_FULL);
+            return;
+        }
+        let running: Vec<WorkspaceId> = self
+            .state()
+            .slots
+            .values()
+            .filter(|s| s.record.status == WorkspaceStatus::Running)
+            .map(|s| s.record.id.clone())
+            .collect();
+        for id in running {
+            self.inner.problems.raise(
+                Problem::new(
+                    format!("{HOST_DISK_FULL}{id}"),
+                    format!(
+                        "{name} cannot save files: the disk Puddle stores workspaces on is full",
+                        name = self.label(&id)
+                    ),
+                    "Writes inside the workspace fail with an input/output error until space is \
+                     freed on that drive. Delete files outside Puddle, or stop other workspaces \
+                     and use Reclaim space. This notice ends when enough space is free again.",
+                )
+                .about(id),
+            );
+        }
     }
 
     /// Reads the sandboxes again for a while after `workspace`'s agent session ended, until the

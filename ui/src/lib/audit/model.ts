@@ -266,6 +266,8 @@ const REASON_WORDS: Record<ReasonCode, string> = {
     "the request sent a credential Puddle chose to another address than its sign-in endpoint",
   peek_refused: "the request body was not one Puddle reads",
   stream_limit: "the connection had too many requests open at once",
+  workspace_not_running:
+    "Puddle holds no running state for the workspace, so it refuses its connections",
   puddle_request: "Puddle's own request",
   pki_distribution_point:
     "a certificate check address named in your company's root certificates",

@@ -6,8 +6,8 @@ use std::net::{IpAddr, SocketAddr};
 
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionOutcome, ConnectionReason,
-    Decision, EgressRequest, Host, PatternKind, PendingOutcome, PolicyError, RefusedReason, RuleId,
-    SuffixAllows,
+    Decision, EgressRequest, Host, PatternKind, PendingOutcome, PolicyError, ReasonCode,
+    RefusedReason, RuleId, SuffixAllows,
 };
 
 use puddle_netpolicy::{LocalCategory, block_message, company_network_message};
@@ -52,6 +52,28 @@ pub(crate) async fn refuse_ssh(
     if let Some(message) = proxy.azure_devops_ssh_message(request).await {
         refusal.message = message;
     }
+    (refusal, event)
+}
+
+/// The refusal of a connection of a workspace the host holds no termination for
+/// ([`super::plan::Seen::NotRunning`]), with its audit event. It comes instead of [`admit`]: no
+/// rule is read and no pending row is written for a workspace the host believes stopped.
+pub(crate) fn refuse_not_running(request: &EgressRequest) -> (Refusal, ConnectionEvent) {
+    let code = ReasonCode::WorkspaceNotRunning;
+    let event = ConnectionEvent::new(
+        request,
+        ConnectionDecision::Blocked,
+        ConnectionReason::Refused(code),
+    );
+    let refusal = Refusal::new(
+        "503 Service Unavailable",
+        format!(
+            "workspace {} is not running in Puddle's view, so it has no network; start it from Puddle",
+            request.workspace
+        ),
+    )
+    .coded(code)
+    .header("x-puddle-decision", "blocked");
     (refusal, event)
 }
 

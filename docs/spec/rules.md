@@ -556,6 +556,10 @@ the API. *Added 2026-10-08.*
   ships off, R-36), so without the grant a clone into a fresh workspace would wait for the user. Cloning
   again and adopting an existing checkout make no grant. A grant that closes a pending row records
   `decided_by` `system`. The create answer lists the hosts it allowed with their rule ids.
+  The same grant is made by "Add repository" › clone on a running workspace's Repositories tab, on the same
+  terms and before that clone. A repository
+  added to the Git tab's list only stores a list row and makes no rule: its host, if no rule decides it,
+  waits in the Inbox like any new host.
 
 ### Groups and precedence
 

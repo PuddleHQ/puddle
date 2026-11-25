@@ -15,22 +15,16 @@ fn every_kind_has_a_complete_chain() {
     complete(WORKSPACE, crate::WORKSPACE_SCHEMA_VERSION);
 }
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "has the signature of Migration::apply"
-)]
-fn rename_a_to_b(m: &mut Map<String, Value>) -> Result<(), String> {
+fn rename_a_to_b(m: &mut Map<String, Value>) {
     if let Some(v) = m.remove("a") {
         m.insert("b".to_owned(), v);
     }
-    Ok(())
 }
 
-fn double_b(m: &mut Map<String, Value>) -> Result<(), String> {
-    let Some(b) = m.get("b") else { return Ok(()) };
-    let n = b.as_u64().ok_or("b is not a number")?;
-    m.insert("b".to_owned(), json!(n * 2));
-    Ok(())
+fn double_b(m: &mut Map<String, Value>) {
+    if let Some(n) = m.get("b").and_then(Value::as_u64) {
+        m.insert("b".to_owned(), json!(n * 2));
+    }
 }
 
 const STEPS: &[Migration] = &[
@@ -64,15 +58,6 @@ fn a_missing_version_is_version_one() {
     let (m, found) = upgrade("t", json!({"a":1}), 3, STEPS).unwrap();
     assert_eq!(found, 1);
     assert_eq!(Value::Object(m), json!({"b":2}));
-}
-
-#[test]
-fn a_failing_step_names_its_version() {
-    let err = upgrade("t", json!({"schema_version":2,"b":"x"}), 3, STEPS).unwrap_err();
-    assert_eq!(
-        err.to_string(),
-        "cannot migrate t settings from schema version 2: b is not a number"
-    );
 }
 
 #[test]

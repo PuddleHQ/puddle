@@ -8,7 +8,7 @@ use puddle_store::{IdentityId, UserId};
 use super::repositories::draw_entry_id;
 use super::*;
 use crate::checkouts::AddRepository;
-use puddle_types::{ToolName, ToolVersion, ToolsFileHash};
+use puddle_types::{OriginRefusal, ToolName, ToolVersion, ToolsFileHash};
 
 struct SecretLogin(String);
 
@@ -803,11 +803,11 @@ fn draft(url: &str) -> RepositoryDraft {
 
 #[test]
 fn a_checkout_on_this_computer_takes_its_origin_and_folder_name_unless_given() {
-    let source = |folder: &str, origin: Result<&str, &str>| LocalSource {
+    let source = |folder: &str, origin: Result<&str, OriginRefusal>| LocalSource {
         // flake-ok: only compared as a value, never opened as a path
         git_dir: PathBuf::from(format!("/home/u/{folder}/.git")),
         folder_name: folder.into(),
-        origin: origin.map(str::to_owned).map_err(str::to_owned),
+        origin: origin.map(str::to_owned),
     };
     let local = |path: &str, url: &str| RepositoryDraft {
         url: url.to_owned(),
@@ -821,7 +821,7 @@ fn a_checkout_on_this_computer_takes_its_origin_and_folder_name_unless_given() {
     );
     locals.insert(
         "/home/u/none".to_owned(),
-        Ok(source("none", Err("it has no origin remote"))),
+        Ok(source("none", Err(OriginRefusal::NoOrigin))),
     );
     locals.insert(
         "/home/u/plain".to_owned(),

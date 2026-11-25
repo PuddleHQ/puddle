@@ -35,6 +35,24 @@ use crate::files::Stored;
 use crate::op_error::OpError;
 use crate::settings_read::SettingsReadError;
 
+/// Why a create could not keep what it chose: the workspace's own CPU count in its settings file,
+/// then the workspace list. It displays as the reason shown to the user.
+#[derive(Debug, thiserror::Error)]
+pub(super) enum CreateSaveError {
+    /// The workspace's settings could not be read.
+    #[error(transparent)]
+    Read(#[from] SettingsReadError),
+    /// The settings could not be turned into a document.
+    #[error(transparent)]
+    Document(#[from] puddle_settings::SettingsError),
+    /// The settings store refused the document.
+    #[error(transparent)]
+    Store(#[from] puddle_api::SettingsRepoError),
+    /// The workspace list could not be saved.
+    #[error(transparent)]
+    List(#[from] HostError),
+}
+
 impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// The service over `parts`, with the workspaces the book held and the state each sandbox
     /// was left in by reconcile (no sandbox: stopped).
@@ -885,15 +903,14 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         &self,
         name: &WorkspaceId,
         cpus: CpuCount,
-        // string-error-ok: the text is the refusal shown to the user; the caller maps it to one API error
-    ) -> Result<(), String> {
+    ) -> Result<(), CreateSaveError> {
         let repo = self.inner.settings.as_ref();
         let _lock = repo.lock().await;
-        let mut own = crate::settings_read::workspace(repo, name).map_err(|e| e.to_string())?;
+        let mut own = crate::settings_read::workspace(repo, name)?;
         own.overrides.cpus = Some(cpus);
-        let document = own.to_document().map_err(|e| e.to_string())?;
-        repo.save_workspace(name, document)
-            .map_err(|e| e.to_string())
+        let document = own.to_document()?;
+        repo.save_workspace(name, document)?;
+        Ok(())
     }
 
     /// The workspace's image and what the runtime says about it, pulled if it is not local yet.

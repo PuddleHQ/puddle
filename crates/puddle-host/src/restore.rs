@@ -16,6 +16,7 @@ use puddle_store::DatabaseRefusal;
 
 use crate::HostPaths;
 use apply::ApplyMode;
+use merge::BookRefusal;
 
 use crate::backup::{
     BACKUP_DATABASE, BACKUP_FORMAT, BACKUP_MANIFEST, BACKUP_SETTINGS, BACKUP_WORKSPACES, Manifest,
@@ -79,8 +80,8 @@ pub enum RestoreError {
         source: io::Error,
     },
     /// The backup cannot be merged with what is here, and why.
-    #[error("{0}")]
-    Merge(String),
+    #[error(transparent)]
+    Merge(BookRefusal),
     /// The staged database could not be migrated.
     #[error("cannot read the backup's database: {0}")]
     Store(#[from] puddle_store::StoreError),

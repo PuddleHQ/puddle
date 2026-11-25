@@ -1,28 +1,32 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Following the events of the store for changes to a workspace's Git settings and environment,
-//! so that a change applies to the running workspace at once.
+//! Following the events of the store for changes to a workspace's Git settings, environment and
+//! shell init, so that a change applies to the running workspace at once.
+//!
+//! The events come from a lossless feed of the event hub ([`puddle_api::EventHub::follow`]), not
+//! from the stream the UI reads, which drops events for a reader that falls behind. Each
+//! workspace has its own queue of changes, run one at a time in the order they came: a guest
+//! that is slow to answer delays only its own changes, and two changes never rewrite one guest
+//! at once. A change that is already waiting in the queue is not queued twice: it reads the
+//! settings when it runs, so one run applies them all.
 
+use std::collections::HashMap;
 use std::future::Future;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use puddle_store::WorkspaceGit;
 use puddle_types::{Event, PendingEnd, WorkspaceId};
-use tokio::sync::broadcast::{Receiver, error::RecvError};
+use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::task::{JoinHandle, JoinSet};
 
-/// What a running workspace does with a change to its Git settings or its environment.
+/// What a running workspace does with a change to its Git settings, environment or shell init.
 pub(crate) trait Changes: Clone + Send + Sync + 'static {
     /// Recomputes what the workspace decrypts, which is quick and must not wait for anything. The
     /// settings when the workspace runs, else `None`.
     fn decrypt_changed(&self, workspace: &WorkspaceId) -> Option<WorkspaceGit>;
 
     /// Brings the commit authors in the workspace's guest in line with its settings as they are
-    /// when this runs, which can take as long as the guest needs to answer. Rewrites of one
-    /// workspace start in any order, so each reads the settings itself rather than carry a copy:
-    /// an older copy applied last would undo the newer change.
+    /// when this runs, which can take as long as the guest needs to answer.
     fn rewrite_authors(&self, workspace: WorkspaceId) -> impl Future<Output = ()> + Send;
-
-    /// Looks at every running workspace's Git settings again, after events were missed.
-    fn all_git_changed(&self) -> impl Future<Output = ()> + Send;
 
     /// Reads the rules on method and path again for every running workspace, after one changed.
     /// Quick, like [`Changes::decrypt_changed`]: the next request sees the new rules.
@@ -32,82 +36,131 @@ pub(crate) trait Changes: Clone + Send + Sync + 'static {
     /// environment, which can take as long as the credential store needs to answer.
     fn environment_changed(&self, workspace: WorkspaceId) -> impl Future<Output = ()> + Send;
 
-    /// The same for every running workspace: a global variable changed, or events were missed.
-    fn all_environments_changed(&self) -> impl Future<Output = ()> + Send;
+    /// The workspaces a change to every workspace reaches (a global variable changed): the
+    /// running ones.
+    fn running(&self) -> Vec<WorkspaceId>;
 
     /// Brings the folder a workspace's guest sees up to date with its saved shell init.
     fn shell_init_changed(&self, workspace: WorkspaceId) -> impl Future<Output = ()> + Send;
-
-    /// The same for every workspace, after events were missed.
-    fn all_shell_inits_changed(&self) -> impl Future<Output = ()> + Send;
 
     /// A pending request of the workspace was closed, `allowed` or not: a tool install that
     /// waited on it may run again. Quick: what it starts runs on its own.
     fn pending_closed(&self, workspace: &WorkspaceId, id: i64, allowed: bool);
 }
 
-/// Applies each [`Event::WorkspaceGitChanged`], [`Event::RequestRulesChanged`], [`Event::WorkspaceEnvChanged`],
-/// [`Event::WorkspaceShellInitChanged`], [`Event::GlobalEnvChanged`] and [`Event::PendingClosed`] of `events` to `service`
-/// until the task is aborted. A Git change's
-/// decrypt set follows in the order the changes arrive; the guest rewrites and the reads of the
-/// credential store run on their own, so a guest or a store that is slow to answer delays only
-/// itself.
-pub(crate) fn follow<G: Changes>(mut events: Receiver<Event>, service: G) -> JoinHandle<()> {
+/// The events [`follow`] acts on: the feed to give it is `EventHub::follow(wanted)`.
+pub(crate) fn wanted(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::WorkspaceGitChanged { .. }
+            | Event::WorkspaceEnvChanged { .. }
+            | Event::WorkspaceShellInitChanged { .. }
+            | Event::GlobalEnvChanged {}
+            | Event::RequestRulesChanged {}
+            | Event::PendingClosed { .. }
+    )
+}
+
+/// What a workspace's queue runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Change {
+    Authors,
+    Environment,
+    ShellInit,
+}
+
+/// The changes waiting per workspace. A workspace is in the map while its queue's task runs; the
+/// task takes the changes one by one and leaves the map when it finds none.
+type Waiting = Arc<Mutex<HashMap<WorkspaceId, Vec<Change>>>>;
+
+/// Applies each [`Event::WorkspaceGitChanged`], [`Event::RequestRulesChanged`],
+/// [`Event::WorkspaceEnvChanged`], [`Event::WorkspaceShellInitChanged`],
+/// [`Event::GlobalEnvChanged`] and [`Event::PendingClosed`] of `events` to `service` until the
+/// feed ends or the task is aborted, which ends every queue with it. A Git change's decrypt set
+/// follows in the order the changes arrive; the guest rewrites and the reads of the credential
+/// store go to the workspace's queue.
+pub(crate) fn follow<G: Changes>(
+    mut events: UnboundedReceiver<Event>,
+    service: G,
+) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let mut rewrites = JoinSet::new();
+        let waiting = Waiting::default();
+        let mut queues = JoinSet::new();
+        let queue = |workspace: WorkspaceId, change: Change, queues: &mut JoinSet<()>| {
+            enqueue(&waiting, &service, queues, workspace, change);
+        };
         loop {
             tokio::select! {
                 event = events.recv() => match event {
-                    Ok(Event::WorkspaceGitChanged { workspace }) => {
+                    Some(Event::WorkspaceGitChanged { workspace }) => {
                         if service.decrypt_changed(&workspace).is_some() {
-                            let service = service.clone();
-                            rewrites.spawn(async move {
-                                service.rewrite_authors(workspace).await;
-                            });
+                            queue(workspace, Change::Authors, &mut queues);
                         }
                     }
-                    Ok(Event::WorkspaceEnvChanged { workspace }) => {
-                        let service = service.clone();
-                        rewrites.spawn(async move {
-                            service.environment_changed(workspace).await;
-                        });
+                    Some(Event::WorkspaceEnvChanged { workspace }) => {
+                        queue(workspace, Change::Environment, &mut queues);
                     }
-                    Ok(Event::WorkspaceShellInitChanged { workspace }) => {
-                        let service = service.clone();
-                        rewrites.spawn(async move {
-                            service.shell_init_changed(workspace).await;
-                        });
+                    Some(Event::WorkspaceShellInitChanged { workspace }) => {
+                        queue(workspace, Change::ShellInit, &mut queues);
                     }
-                    Ok(Event::GlobalEnvChanged {}) => {
-                        let service = service.clone();
-                        rewrites.spawn(async move {
-                            service.all_environments_changed().await;
-                        });
+                    Some(Event::GlobalEnvChanged {}) => {
+                        for workspace in service.running() {
+                            queue(workspace, Change::Environment, &mut queues);
+                        }
                     }
-                    Ok(Event::RequestRulesChanged {}) => service.all_request_rules_changed(),
-                    Ok(Event::PendingClosed { workspace, id, state, .. }) => {
+                    Some(Event::RequestRulesChanged {}) => service.all_request_rules_changed(),
+                    Some(Event::PendingClosed { workspace, id, state, .. }) => {
                         service.pending_closed(&workspace, id, state == PendingEnd::Allowed);
                     }
-                    Ok(_) => {}
-                    Err(RecvError::Lagged(_)) => {
-                        // Each recovery runs on its own: a guest that is slow to answer holds up
-                        // neither the events that follow nor the other recoveries.
-                        let git = service.clone();
-                        rewrites.spawn(async move {
-                            git.all_git_changed().await;
-                        });
-                        let service = service.clone();
-                        rewrites.spawn(async move {
-                            service.all_environments_changed().await;
-                            service.all_shell_inits_changed().await;
-                        });
-                    }
-                    Err(RecvError::Closed) => break,
+                    Some(_) => {}
+                    None => break,
                 },
-                Some(_) = rewrites.join_next() => {}
+                Some(_) = queues.join_next() => {}
             }
         }
     })
+}
+
+/// Adds `change` to `workspace`'s queue, unless it already waits there, and starts the queue's
+/// task when none runs.
+fn enqueue<G: Changes>(
+    waiting: &Waiting,
+    service: &G,
+    queues: &mut JoinSet<()>,
+    workspace: WorkspaceId,
+    change: Change,
+) {
+    let mut map = waiting.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(queued) = map.get_mut(&workspace) {
+        if !queued.contains(&change) {
+            queued.push(change);
+        }
+        return;
+    }
+    map.insert(workspace.clone(), vec![change]);
+    drop(map);
+    let (waiting, service) = (Arc::clone(waiting), service.clone());
+    queues.spawn(async move {
+        while let Some(change) = next(&waiting, &workspace) {
+            match change {
+                Change::Authors => service.rewrite_authors(workspace.clone()).await,
+                Change::Environment => service.environment_changed(workspace.clone()).await,
+                Change::ShellInit => service.shell_init_changed(workspace.clone()).await,
+            }
+        }
+    });
+}
+
+/// The next change of `workspace`'s queue, or `None` after taking the workspace out of the map
+/// (under the same lock, so a change queued later starts a new task).
+fn next(waiting: &Waiting, workspace: &WorkspaceId) -> Option<Change> {
+    let mut map = waiting.lock().unwrap_or_else(PoisonError::into_inner);
+    let queued = map.get_mut(workspace)?;
+    if queued.is_empty() {
+        map.remove(workspace);
+        return None;
+    }
+    Some(queued.remove(0))
 }
 
 #[cfg(test)]

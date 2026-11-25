@@ -97,10 +97,6 @@ impl<R: Runtime + Clone> crate::changes::Changes for HostWorkspaces<R> {
         Self::rewrite_authors(self, &workspace).await;
     }
 
-    async fn all_git_changed(&self) {
-        Self::all_git_changed(self).await;
-    }
-
     fn all_request_rules_changed(&self) {
         for name in self.inner.injection.running_workspaces() {
             Self::decrypt_changed(self, &name);
@@ -111,16 +107,8 @@ impl<R: Runtime + Clone> crate::changes::Changes for HostWorkspaces<R> {
         Self::environment_changed(self, &workspace).await;
     }
 
-    async fn all_environments_changed(&self) {
-        // Together: a credential store that is slow for one workspace's secrets holds up no other.
-        futures_util::future::join_all(
-            self.inner
-                .injection
-                .running_workspaces()
-                .iter()
-                .map(|name| Self::environment_changed(self, name)),
-        )
-        .await;
+    fn running(&self) -> Vec<WorkspaceId> {
+        self.inner.injection.running_workspaces()
     }
 
     fn shell_init_changed(&self, workspace: WorkspaceId) -> impl Future<Output = ()> + Send {
@@ -131,25 +119,12 @@ impl<R: Runtime + Clone> crate::changes::Changes for HostWorkspaces<R> {
     fn pending_closed(&self, workspace: &WorkspaceId, id: i64, allowed: bool) {
         self.tools_pending_closed(workspace, id, allowed);
     }
-
-    fn all_shell_inits_changed(&self) -> impl Future<Output = ()> + Send {
-        let names: Vec<WorkspaceId> = self
-            .state()
-            .slots
-            .values()
-            .map(|slot| slot.record.id.clone())
-            .collect();
-        for name in names {
-            Self::shell_init_changed(self, &name);
-        }
-        std::future::ready(())
-    }
 }
 
 /// Runs when an author rewrite starts, before it waits for its workspace's rewrite lock, and
 /// returns once the rewrite may go on; the value it returns is dropped when the rewrite ends. Tests
-/// use it to hold one rewrite back and see the rewrites of a workspace run out of order. A host
-/// without one lets every rewrite go on at once.
+/// use it to hold one rewrite back and see what waits behind it. A host without one lets every
+/// rewrite go on at once.
 pub type RewriteGate = Arc<dyn Fn(&WorkspaceId) -> BoxFuture<'static, Box<dyn Send>> + Send + Sync>;
 
 /// What the service is built from.

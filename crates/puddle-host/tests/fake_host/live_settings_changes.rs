@@ -566,6 +566,8 @@ async fn a_credential_for_a_port_puddle_never_decrypts_is_refused_and_an_old_one
 struct HeldRewrite {
     armed: AtomicBool,
     arrived: AtomicBool,
+    /// How many rewrites reached the gate.
+    started: AtomicUsize,
     ended: AtomicBool,
     release: tokio::sync::Notify,
 }
@@ -587,6 +589,7 @@ impl HeldRewrite {
         Arc::new(move |_| {
             let held = held.clone();
             Box::pin(async move {
+                held.started.fetch_add(1, Ordering::SeqCst);
                 let this_one = held.armed.swap(false, Ordering::SeqCst);
                 if this_one {
                     held.arrived.store(true, Ordering::SeqCst);
@@ -599,7 +602,8 @@ impl HeldRewrite {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_author_rewrite_that_runs_after_a_newer_change_applies_the_newest_settings() {
+async fn a_change_that_comes_while_an_author_rewrite_runs_waits_for_it_and_the_newest_settings_win()
+{
     let rig = Rig::named_ids();
     let held = Arc::new(HeldRewrite::default());
     *rig.rewrite_gate.lock().unwrap() = Some(held.gate());
@@ -621,6 +625,7 @@ async fn an_author_rewrite_that_runs_after_a_newer_change_applies_the_newest_set
         .unwrap();
 
     // The store announces each change itself. The rewrite for the attach starts first and waits at the gate.
+    let before = held.started.load(Ordering::SeqCst);
     held.armed.store(true, Ordering::SeqCst);
     host.store()
         .attach_identity(&name("acme"), old.id, None)
@@ -629,17 +634,28 @@ async fn an_author_rewrite_that_runs_after_a_newer_change_applies_the_newest_set
         held.arrived.load(Ordering::SeqCst)
     })
     .await;
-    // The detach comes after, and its rewrite runs through: nothing is left to rewrite or to say.
+    // The detach comes after: what the workspace decrypts follows at once, and its rewrite waits
+    // in the workspace's queue behind the held one.
     host.store().detach_identity(&name("acme"), old.id).unwrap();
     eventually("the detach ends the problem", APPLY, || {
         !has_problem(&host, "git-credentials:acme")
     })
     .await;
+    assert_eq!(
+        held.started.load(Ordering::SeqCst),
+        before + 1,
+        "a second rewrite of the workspace ran while the first waited"
+    );
 
-    // The attach rewrite now goes on, last. It must apply the settings as they are now.
+    // The attach rewrite now goes on and reads the settings as they are now; the detach's runs
+    // after it.
     held.release.notify_one();
     eventually("the attach rewrite ends", APPLY, || {
         held.ended.load(Ordering::SeqCst)
+    })
+    .await;
+    eventually("the detach rewrite ran", APPLY, || {
+        held.started.load(Ordering::SeqCst) == before + 2
     })
     .await;
     assert!(

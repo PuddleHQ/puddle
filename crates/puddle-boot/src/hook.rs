@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Running the hook: after every create, start and re-adoption, behind the gate.
 
+use std::future::Future;
 use std::time::{Duration, Instant};
 
 use puddle_compute::{ComputeError, ExecOutput, Runtime, Sandbox, SandboxSpec};
@@ -169,6 +170,38 @@ pub enum BootError {
         /// Set when stopping it failed too.
         stop_error: Option<Box<ComputeError>>,
     },
+    /// The [`Keeper`] did not take the sandbox over (Puddle is shutting down); Puddle stopped it
+    /// before the hook ran.
+    #[error("workspace {sandbox:?} was not taken over and {}: {reason}", stop_text(.stop_error.as_deref()))]
+    NotKept {
+        /// The sandbox.
+        sandbox: String,
+        /// What the keeper said.
+        reason: String,
+        /// Set when stopping it failed too.
+        stop_error: Option<Box<ComputeError>>,
+    },
+}
+
+/// Who owns a sandbox from the moment the runtime has made or started it, before the boot hook
+/// runs in it: Puddle's lifecycle, which trims and stops it at shutdown. The boot goes on with a
+/// handle that does not own the VM, so a boot that is ended half-way (a shutdown that ends the
+/// operations still running) does not end the VM by dropping the owning handle.
+pub trait Keeper<S>: Sync {
+    /// Takes over `sandbox`, the handle [`Runtime::create`] or [`Runtime::start`] gave, and
+    /// returns the handle the boot goes on with. An error (shutting down) gives `sandbox` back
+    /// with the reason; the boot stops it and fails with [`BootError::NotKept`].
+    fn keep(&self, sandbox: S) -> impl Future<Output = Result<S, (S, String)>> + Send;
+}
+
+/// The [`Keeper`] of a caller that owns the sandbox through the handle it gets back.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CallerKeeps;
+
+impl<S: Send> Keeper<S> for CallerKeeps {
+    fn keep(&self, sandbox: S) -> impl Future<Output = Result<S, (S, String)>> + Send {
+        std::future::ready(Ok(sandbox))
+    }
 }
 
 /// What [`BootError::Hook`] says became of the sandbox: stopped, or still up because the stop
@@ -255,6 +288,23 @@ impl BootHook {
         plan: &BootPlan,
         gate: &Gate,
     ) -> Result<GatedSandbox<R::Sandbox>, BootError> {
+        self.create_kept(runtime, spec, plan, gate, &CallerKeeps)
+            .await
+    }
+
+    /// [`BootHook::create`], with `keeper` taking the sandbox over as soon as it exists.
+    ///
+    /// # Errors
+    ///
+    /// As [`BootHook::create`], and [`BootError::NotKept`].
+    pub async fn create_kept<R: Runtime>(
+        &self,
+        runtime: &R,
+        spec: SandboxSpec,
+        plan: &BootPlan,
+        gate: &Gate,
+        keeper: &impl Keeper<R::Sandbox>,
+    ) -> Result<GatedSandbox<R::Sandbox>, BootError> {
         let merge_tool = plan.merge_tool();
         let mut needed = vec![BOOT_SH_GUEST, AGENT_SUPERVISE_GUEST];
         if let Some(agent) = plan.agent() {
@@ -273,6 +323,7 @@ impl BootHook {
         let _boot = gate.lock_boot().await;
         let booting = Booting::open(gate);
         let sandbox = runtime.create(spec).await?;
+        let sandbox = kept(sandbox, keeper).await?;
         self.finish(sandbox, plan, booting).await
     }
 
@@ -289,9 +340,27 @@ impl BootHook {
         plan: &BootPlan,
         gate: &Gate,
     ) -> Result<GatedSandbox<R::Sandbox>, BootError> {
+        self.start_kept(runtime, name, plan, gate, &CallerKeeps)
+            .await
+    }
+
+    /// [`BootHook::start`], with `keeper` taking the sandbox over as soon as it runs.
+    ///
+    /// # Errors
+    ///
+    /// As [`BootHook::start`], and [`BootError::NotKept`].
+    pub async fn start_kept<R: Runtime>(
+        &self,
+        runtime: &R,
+        name: &SandboxName,
+        plan: &BootPlan,
+        gate: &Gate,
+        keeper: &impl Keeper<R::Sandbox>,
+    ) -> Result<GatedSandbox<R::Sandbox>, BootError> {
         let _boot = gate.lock_boot().await;
         let booting = Booting::open(gate);
         let sandbox = runtime.start(name).await?;
+        let sandbox = kept(sandbox, keeper).await?;
         self.finish(sandbox, plan, booting).await
     }
 
@@ -375,6 +444,19 @@ impl Drop for Booting<'_> {
         if let Some(previous) = self.previous.take() {
             self.gate.settle(previous);
         }
+    }
+}
+
+/// Hands `sandbox` to `keeper` before anything runs in it; when the keeper refuses, stops it and
+/// fails.
+async fn kept<S: Sandbox>(sandbox: S, keeper: &impl Keeper<S>) -> Result<S, BootError> {
+    match keeper.keep(sandbox).await {
+        Ok(sandbox) => Ok(sandbox),
+        Err((sandbox, reason)) => Err(BootError::NotKept {
+            sandbox: sandbox.name().to_string(),
+            reason,
+            stop_error: sandbox.stop().await.err().map(Box::new),
+        }),
     }
 }
 

@@ -415,3 +415,20 @@ fn a_company_signal_code_is_its_wire_name() {
         assert_eq!(wire, signal.code());
     }
 }
+
+#[test]
+fn a_protocol_is_its_wire_name_and_an_ssh_line_carries_it() {
+    for protocol in [ConnectionProtocol::Http, ConnectionProtocol::Ssh] {
+        assert_eq!(serde_json::to_value(protocol).unwrap(), protocol.as_str());
+    }
+    assert_eq!(ConnectionProtocol::Http.as_str(), "http");
+    assert_eq!(ConnectionProtocol::Ssh.as_str(), "ssh");
+    assert_eq!(
+        HttpRequestLine::new("GET", "/a").protocol(),
+        ConnectionProtocol::Http
+    );
+    let line = HttpRequestLine::ssh("git-receive-pack", "/o/r.git");
+    assert_eq!(line.protocol(), ConnectionProtocol::Ssh);
+    assert_eq!(line.method(), "git-receive-pack");
+    assert_eq!(line.path(), "/o/r.git");
+}

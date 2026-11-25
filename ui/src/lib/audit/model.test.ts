@@ -526,6 +526,7 @@ describe("a record as a row", () => {
       connection(1, {
         host: "github.com",
         port: 22,
+        protocol: "ssh",
         method,
         path,
         reason: "rule",
@@ -544,6 +545,7 @@ describe("a record as a row", () => {
       connection(1, {
         host: "github.com",
         port: 22,
+        protocol: "ssh",
         method: "git-receive-pack",
         path: "/acme/other",
         decision: "blocked",
@@ -558,6 +560,7 @@ describe("a record as a row", () => {
     const http = row(
       connection(2, {
         host: "github.com",
+        protocol: "http",
         method: "POST",
         path: "/acme/other/git-receive-pack",
         decision: "blocked",
@@ -567,11 +570,27 @@ describe("a record as a row", () => {
     );
     expect(http.detail).toMatch(/^POST \/acme\/other\/git-receive-pack · /);
   });
+  it("words a method by the record's protocol, not by its spelling", () => {
+    const base = { host: "github.com", path: "/acme/app", reason: "rule" };
+    const http = row(
+      connection(1, {
+        ...base,
+        protocol: "http",
+        method: "git-receive-pack",
+      }).record,
+    );
+    expect(http.detail).toMatch(/^git-receive-pack \/acme\/app · /);
+    const newer = row(
+      connection(2, { ...base, protocol: "ssh", method: "git-archive" }).record,
+    );
+    expect(newer.detail).toMatch(/^SSH: git-archive \/acme\/app · /);
+  });
   it("words a command or a channel request Puddle refused over SSH", () => {
     const command = row(
       connection(1, {
         host: "github.com",
         port: 22,
+        protocol: "ssh",
         method: "ssh-command",
         path: "/",
         decision: "blocked",
@@ -586,6 +605,7 @@ describe("a record as a row", () => {
       connection(2, {
         host: "github.com",
         port: 22,
+        protocol: "ssh",
         method: "ssh-channel",
         path: "/",
         decision: "blocked",

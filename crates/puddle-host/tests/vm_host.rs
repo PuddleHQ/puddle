@@ -5637,3 +5637,88 @@ async fn vm_host_a_restart_of_puddle_keeps_the_sandbox_and_its_root_disk() {
     let down = vm.host.shutdown().await;
     assert!(down.sandboxes.all_stopped(), "{down:?}");
 }
+
+/// A reset of the root disk loses what the dialog says and nothing else: a package installed with
+/// apt, a file in the home directory and a cache file are gone after the stop, the reset and the
+/// next start, while the volume's own file and a git checkout on it, with its commit, are as they
+/// were. The package is built in the guest and installed from the file, so apt does the install and
+/// no third-party mirror is involved.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_host_a_reset_of_the_root_disk_loses_packages_and_home_files_and_keeps_the_volume() {
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        ..
+    } = start_vm_host("resetloses").await;
+    let name = format!("{}-resetloses", settings.prefix.as_str());
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let id = create_bare(&api, &mut events, &name).await;
+    let sandbox = WorkspaceId::new(&id).unwrap();
+
+    // On the root disk: a package, a home file and a cache file. On the volume: a file and a
+    // checkout with one commit.
+    install_root_disk_probe(&runtime, &sandbox).await;
+    guest(
+        &runtime,
+        &sandbox,
+        "set -e; mkdir -p \"$HOME/.cache\"; echo cached > \"$HOME/.cache/probe\"; sync",
+    )
+    .await;
+    guest(
+        &runtime,
+        &sandbox,
+        &format!(
+            "set -e; mkdir -p /workspaces/{id}/app; cd /workspaces/{id}/app; \
+             git init -q; git -c user.name=t -c user.email=t@example.org commit -q --allow-empty -m kept; \
+             echo kept > notes.txt; echo volume > /workspaces/{id}/volume-file; sync"
+        ),
+    )
+    .await;
+    assert_eq!(
+        root_disk_probe(&runtime, &sandbox).await,
+        "installed\ninstall ok installed\nkept",
+        "the probe is there before the reset"
+    );
+    let boot_before = boot_id_of(&runtime, &sandbox).await;
+
+    rebuild_sandbox(&api, &mut events, &id).await;
+
+    assert_ne!(
+        boot_id_of(&runtime, &sandbox).await,
+        boot_before,
+        "the guest started again"
+    );
+    let gone = guest(
+        &runtime,
+        &sandbox,
+        "command -v puddle-keep-probe >/dev/null && echo command-there || echo command-gone; \
+         dpkg-query -W -f='${Status}\n' puddle-keep-probe 2>/dev/null | grep -q 'install ok installed' \
+           && echo package-there || echo package-gone; \
+         test -e \"$HOME/keep-probe-file\" && echo home-there || echo home-gone; \
+         test -e \"$HOME/.cache/probe\" && echo cache-there || echo cache-gone",
+    )
+    .await;
+    assert_eq!(
+        gone.trim(),
+        "command-gone\npackage-gone\nhome-gone\ncache-gone",
+        "the reset removed the package, the home file and the cache"
+    );
+    let kept = guest(
+        &runtime,
+        &sandbox,
+        &format!(
+            "cat /workspaces/{id}/volume-file; cd /workspaces/{id}/app; git log --format=%s; cat notes.txt"
+        ),
+    )
+    .await;
+    assert_eq!(
+        kept.trim(),
+        "volume\nkept\nkept",
+        "the volume file and the checkout (one commit and its file) are untouched"
+    );
+
+    let down = host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+}

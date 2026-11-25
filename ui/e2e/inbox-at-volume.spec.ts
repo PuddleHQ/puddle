@@ -8,7 +8,7 @@ import { slowdown } from "./cpu-throttle.ts";
 import { type Backend, expect, test } from "./fixture";
 import { availableParallelism, loadavg } from "node:os";
 import { loadFactor } from "../scripts/load-budget.ts";
-import { staysEmpty } from "./support";
+import { pickFromRowMenu, staysEmpty } from "./support";
 
 const SLOWDOWN = slowdown();
 
@@ -512,7 +512,7 @@ test.describe("1000 rules", () => {
           `td.host span.mono:text-is("added${i}.volume.example.org")`,
         ),
       });
-      await row.getByRole("button", { name: /^Delete rule/ }).click();
+      await pickFromRowMenu(row, /^Delete rule/);
       await page
         .getByRole("alertdialog", { name: "Delete this rule?" })
         .getByRole("button", { name: "Delete rule" })

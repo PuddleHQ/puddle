@@ -29,6 +29,7 @@ fn facts() -> RestoreFacts {
             name: "TOKEN".into(),
             secret_id: "env-no-such-value".into(),
         }],
+        token_refs: Vec::new(),
     }
 }
 
@@ -247,6 +248,21 @@ async fn the_preview_says_which_disks_are_here_which_secrets_lack_a_value_and_wh
         secret("LACKS", "restore-no-value"),
         secret("BADID", "not a valid id!"),
     ];
+    let token = |identity: &str, id: &str| puddle_api::IdentityTokenRef {
+        identity: identity.into(),
+        host: "github.com".into(),
+        secret_id: id.into(),
+    };
+    api.secrets
+        .set(
+            &StoredId::new("restore-token-here").unwrap(),
+            &Secret::new("x".into()),
+        )
+        .unwrap();
+    facts.token_refs = vec![
+        token("has", "restore-token-here"),
+        token("lacks", "restore-token-lost"),
+    ];
     fake.set_facts(facts);
 
     let reply = api
@@ -254,6 +270,10 @@ async fn the_preview_says_which_disks_are_here_which_secrets_lack_a_value_and_wh
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
     let json = reply.json();
+    assert_eq!(
+        json["identity_tokens_needing_value"],
+        serde_json::json!([{"identity": "lacks", "host": "github.com"}])
+    );
     let disks: Vec<(&str, &str)> = json["workspaces"]
         .as_array()
         .unwrap()

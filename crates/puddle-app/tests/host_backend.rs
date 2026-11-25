@@ -153,6 +153,82 @@ fn get(url: &url::Url, token: &str, path: &str) -> (u16, String) {
     })
 }
 
+/// One HTTP/1.1 POST with the token; returns the status code and the body.
+fn post(url: &url::Url, token: &str, path: &str, content_type: &str, body: &[u8]) -> (u16, String) {
+    tauri::async_runtime::block_on(async {
+        let host = format!("127.0.0.1:{}", url.port().unwrap());
+        let mut stream = TcpStream::connect(&host).await.unwrap();
+        let head = format!(
+            "POST {path} HTTP/1.1\r\nHost: {host}\r\nAuthorization: Bearer {token}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        stream.write_all(head.as_bytes()).await.unwrap();
+        stream.write_all(body).await.unwrap();
+        let mut reply = Vec::new();
+        stream.read_to_end(&mut reply).await.unwrap();
+        let reply = String::from_utf8_lossy(&reply).into_owned();
+        let (head, body) = reply.split_once("\r\n\r\n").unwrap();
+        (
+            head.split(' ').nth(1).unwrap().parse().unwrap(),
+            body.to_owned(),
+        )
+    })
+}
+
+/// A backup archive of a data folder that a host started and stopped once.
+fn backup_of_a_fresh_machine() -> Vec<u8> {
+    let dir = puddle_test_kit::private_tempdir();
+    let options = options_in(dir.path());
+    let backend = start(&options, &Machine::default()).unwrap();
+    tauri::async_runtime::block_on(backend.shutdown()).unwrap();
+    let mut archive =
+        puddle_host::backup_archive(&puddle_host::HostPaths::new(dir.path().join("data"))).unwrap();
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut archive.file, &mut bytes).unwrap();
+    bytes
+}
+
+#[test]
+fn a_confirmed_restore_restarts_the_app_and_a_started_host_alone_does_not() {
+    let backup = backup_of_a_fresh_machine();
+    let dir = puddle_test_kit::private_tempdir();
+    let options = options_in(dir.path());
+    let backend = start(&options, &Machine::default()).unwrap();
+    let app = app();
+    let (restarted, seen) = std::sync::mpsc::channel();
+    shell::restart_on_restore(app.handle(), &backend, move |_| {
+        restarted.send(()).unwrap();
+    });
+    let (url, token) = (backend.url().clone(), backend.token().to_owned());
+
+    let (status, body) = post(
+        &url,
+        &token,
+        "/api/restore/preview",
+        "application/gzip",
+        &backup,
+    );
+    assert_eq!(status, 200, "{body}");
+    assert!(
+        seen.recv_timeout(std::time::Duration::from_millis(300))
+            .is_err(),
+        "choosing the file does not restart the app"
+    );
+    let staging: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let confirm = serde_json::json!({"staging_id": staging["staging_id"], "mode": "add"});
+    let (status, body) = post(
+        &url,
+        &token,
+        "/api/restore/apply",
+        "application/json",
+        confirm.to_string().as_bytes(),
+    );
+    assert_eq!(status, 200, "{body}");
+    seen.recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the confirmed restore restarts the app");
+    tauri::async_runtime::block_on(backend.shutdown()).unwrap();
+}
+
 #[test]
 fn the_window_opens_on_the_hosts_api_with_its_token_and_the_system_check_answers() {
     let dir = puddle_test_kit::private_tempdir();

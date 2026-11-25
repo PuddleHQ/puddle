@@ -650,6 +650,11 @@ impl puddle_types::EventSink for StopDuringRaise {
         let Some(desk) = self.desk.get().cloned() else {
             return;
         };
+        // Only the raise is under test: the stop's own clearing emits an event too, and it can
+        // land before the test reads the result.
+        if self.stopped_meanwhile.lock().unwrap().is_some() {
+            return;
+        }
         let workspace = self.workspace.clone();
         let (done, finished) = std::sync::mpsc::channel();
         std::thread::spawn(move || {

@@ -83,15 +83,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
         // Where a slow start went (a restart took 128 s in a first-day walk, with nothing to say
         // which part): the boot of the virtual machine, or what runs after it.
-        tracing::info!(
-            workspace = %name,
-            restarted_in_place = restarted,
-            look_ms = millis(looked),
-            boot_ms = millis(booted.saturating_sub(looked)),
-            settle_ms = millis(began.elapsed().saturating_sub(booted)),
-            total_ms = millis(began.elapsed()),
-            "workspace start timings"
+        let (look_ms, boot_ms) = (millis(looked), millis(booted.saturating_sub(looked)));
+        let (settle_ms, total_ms) = (
+            millis(began.elapsed().saturating_sub(booted)),
+            millis(began.elapsed()),
         );
+        tracing::info!(workspace = %name, restarted_in_place = restarted, look_ms, boot_ms, settle_ms, total_ms, "workspace start timings");
         self.refresh_checkouts_later(&record.id);
         Ok(())
     }

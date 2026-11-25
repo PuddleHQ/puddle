@@ -75,7 +75,7 @@ stage() {
     ) >"$xtask_dir/xtask.log" 2>&1 &
     xtask_pid=$!
     timed "guest agent" build_agent
-    timed "puddle command line (release)" cargo build --release --locked --manifest-path "$root/crates/puddle/Cargo.toml"
+    timed "Puddle command line (release)" cargo build --release --locked --manifest-path "$root/crates/puddle/Cargo.toml"
     # Tauri names a sidecar `<name>-<target triple>` and installs it beside the shell as `<name>`.
     cp "$(target_dir)/release/puddle.exe" "$stage/bin/puddle-$triple.exe"
     timed "wait for the runtime and code-server" wait "$xtask_pid" || {

@@ -248,7 +248,14 @@ export class WorkspaceStore {
           void this.refresh();
           return;
         }
-        this.#put({ ...w, status: event.status });
+        // What the new state admits is the server's to say: offer nothing until the record
+        // comes back. A change during an operation is read when the operation ends.
+        if (w.busy === null) {
+          this.#put({ ...w, status: event.status, actions: [] });
+          void this.refresh();
+        } else {
+          this.#put({ ...w, status: event.status });
+        }
         // Nothing installs in a workspace that is down, and the next start tells afresh.
         if (isDown(event.status) && id in this.tools) {
           const { [id]: _gone, ...rest } = this.tools;

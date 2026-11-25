@@ -96,6 +96,8 @@ const NOOPS = {
   onStop: () => {},
   onConnect: () => {},
   onDismiss: () => {},
+  onRename: () => {},
+  onDelete: () => {},
 };
 
 describe("the workspace id stays out of what a person reads", () => {

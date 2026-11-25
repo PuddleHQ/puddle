@@ -7,40 +7,6 @@ use super::*;
 /// How far a count may drift from its baseline once the churn is over.
 const DRIFT: usize = 5;
 
-/// Set in the copy of this binary that [`alone`] starts.
-const ALONE: &str = "PUDDLE_CHURN_ALONE";
-
-/// Runs `body`, the test `churn::<test>`, with no other test in the process. The counts are the
-/// whole process's, and under `cargo test` the other tests of this binary open and close
-/// descriptors and threads at the same time (a churn run once counted 74 descriptors of theirs).
-/// So unless nextest already gave the test a process of its own, a copy of this binary runs just
-/// that test, and its exit is the verdict.
-async fn alone<F: Future<Output = ()>>(test: &str, body: impl FnOnce() -> F) {
-    let own_process = std::env::var_os(ALONE).is_some()
-        || std::env::var("NEXTEST_EXECUTION_MODE").as_deref() == Ok("process-per-test");
-    if own_process {
-        body().await;
-    } else {
-        let name = format!("churn::{test}");
-        let out = std::process::Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", &name, "--nocapture", "--test-threads=1"])
-            .env(ALONE, "1")
-            .output()
-            .unwrap();
-        let report = format!(
-            "--- stdout\n{}\n--- stderr\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
-        assert!(out.status.success(), "{name} failed alone\n{report}");
-        // An unknown name runs no test and still exits 0.
-        assert!(
-            report.contains("1 passed"),
-            "{name} did not run alone\n{report}"
-        );
-    }
-}
-
 /// What this process holds right now: open descriptors and threads (Linux `/proc/self`).
 #[derive(Clone, Copy, Debug)]
 struct Holdings {
@@ -125,52 +91,43 @@ async fn create_stop_delete(api: &Api) {
 #[tokio::test(flavor = "multi_thread")]
 async fn two_hundred_create_start_stop_delete_cycles_leave_the_descriptors_and_threads_where_they_were()
  {
-    alone("two_hundred_create_start_stop_delete_cycles_leave_the_descriptors_and_threads_where_they_were", || async {
-        let rig = Rig::new();
-        let host = rig.start().await;
-        let api = api(&host);
-        let (before, after) = churn(200, || create_stop_delete(&api)).await;
-        assert_eq!(after.drift_from(before), None);
-        assert!(volume_names(&rig).await.is_empty(), "a volume is left");
-        host.shutdown().await;
-    })
-    .await;
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let (before, after) = churn(200, || create_stop_delete(&api)).await;
+    assert_eq!(after.drift_from(before), None);
+    assert!(volume_names(&rig).await.is_empty(), "a volume is left");
+    host.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn five_hundred_event_stream_connects_and_disconnects_leave_the_descriptors_and_threads_where_they_were()
  {
-    alone("five_hundred_event_stream_connects_and_disconnects_leave_the_descriptors_and_threads_where_they_were", || async {
-        let rig = Rig::new();
-        let host = rig.start().await;
-        let api = api(&host);
-        let (before, after) = churn(500, || async {
-            drop(api.events().await);
-        })
-        .await;
-        assert_eq!(after.drift_from(before), None);
-        host.shutdown().await;
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let (before, after) = churn(500, || async {
+        drop(api.events().await);
     })
     .await;
+    assert_eq!(after.drift_from(before), None);
+    host.shutdown().await;
 }
 
 /// The check itself: a descriptor leaked in every cycle is reported.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_cycle_that_leaks_one_descriptor_is_reported() {
-    alone("a_cycle_that_leaks_one_descriptor_is_reported", || async {
-        let rig = Rig::new();
-        let host = rig.start().await;
-        let api = api(&host);
-        let (before, after) = churn(20, || async {
-            Box::leak(Box::new(std::fs::File::open("/proc/self/status").unwrap()));
-            drop(api.events().await);
-        })
-        .await;
-        assert!(
-            after.drift_from(before).is_some(),
-            "{before:?} then {after:?}"
-        );
-        host.shutdown().await;
+    let rig = Rig::new();
+    let host = rig.start().await;
+    let api = api(&host);
+    let (before, after) = churn(20, || async {
+        Box::leak(Box::new(std::fs::File::open("/proc/self/status").unwrap()));
+        drop(api.events().await);
     })
     .await;
+    assert!(
+        after.drift_from(before).is_some(),
+        "{before:?} then {after:?}"
+    );
+    host.shutdown().await;
 }

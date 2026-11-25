@@ -64,7 +64,7 @@ async fn hostile_hg26_every_listener_the_host_side_opens_is_loopback_and_registe
         Arc::new(
             Store::open_in_memory(Arc::new(ManualClock::new(NOW)), Limits::default()).unwrap(),
         ),
-        Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>,
+        Arc::new(MemorySettings::default()),
         Arc::new(EventHub::default()),
         Arc::new(ManualClock::new(NOW)),
     )

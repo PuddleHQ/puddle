@@ -62,6 +62,12 @@ pub struct WorkspaceRepository {
     pub url: String,
     /// The checkout it is cloned into, directly under the volume root.
     pub directory: CheckoutDir,
+    /// The branch checked out in it, from the last time Puddle listed the workspace's checkouts
+    /// (when the Git tab opened or the editor attached); `null` when no listing was made since
+    /// Puddle started, the checkout is not there, or HEAD is detached. Never listed just for this
+    /// answer.
+    #[serde(default)]
+    pub branch: Option<String>,
 }
 
 impl From<domain::Repository> for WorkspaceRepository {
@@ -70,6 +76,7 @@ impl From<domain::Repository> for WorkspaceRepository {
             entry: r.entry,
             url: r.url.as_str().to_owned(),
             directory: r.directory,
+            branch: None,
         }
     }
 }
@@ -194,6 +201,16 @@ impl Workspace {
             identities: Vec::new(),
             allowed_hosts: Vec::new(),
         }
+    }
+
+    /// The same workspace, with the branch each repository's checkout had at the last listing
+    /// (`branches` maps a checkout directory to its branch).
+    #[must_use]
+    pub fn with_branches(mut self, branches: &std::collections::BTreeMap<String, String>) -> Self {
+        for repository in &mut self.repositories {
+            repository.branch = branches.get(repository.directory.as_str()).cloned();
+        }
+        self
     }
 
     /// The same workspace, with the disks that are at or over the warning threshold.

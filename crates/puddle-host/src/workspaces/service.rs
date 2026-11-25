@@ -682,6 +682,10 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         Box::pin(async move { self.restore_orphan_volume(id, owner, repository, git).await })
     }
 
+    fn known_branches(&self, id: &WorkspaceId) -> std::collections::BTreeMap<String, String> {
+        self.known_branches_of(id)
+    }
+
     fn checkouts<'a>(
         &'a self,
         id: &'a WorkspaceId,

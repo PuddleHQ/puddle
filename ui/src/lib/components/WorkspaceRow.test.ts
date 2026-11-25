@@ -15,6 +15,8 @@ function mount(over: Record<string, unknown> = {}, w = workspace("demo")) {
     start: vi.fn(),
     stop: vi.fn(),
     connect: vi.fn(),
+    rename: vi.fn(),
+    remove: vi.fn(),
     dismiss: vi.fn(),
   };
   render(WorkspaceRow, {
@@ -24,6 +26,8 @@ function mount(over: Record<string, unknown> = {}, w = workspace("demo")) {
       onStart: calls.start,
       onStop: calls.stop,
       onConnect: calls.connect,
+      onRename: calls.rename,
+      onDelete: calls.remove,
       onDismiss: calls.dismiss,
       ...over,
     },
@@ -104,6 +108,53 @@ describe("WorkspaceRow", () => {
       await screen.findByRole("menuitem", { name: "Open details" }),
     );
     expect(goto).toHaveBeenCalledWith("/workspaces/w-demo");
+  });
+
+  it("opens the workspace's terminal tab from the menu", async () => {
+    const { goto } = await import("$app/navigation");
+    mount();
+    await fireEvent.keyDown(
+      screen.getByRole("button", { name: "More about demo" }),
+      { key: "Enter" },
+    );
+    await fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Terminal of demo" }),
+    );
+    expect(goto).toHaveBeenCalledWith("/workspaces/w-demo/terminal");
+  });
+
+  it("asks to rename or delete the workspace from the menu, stopped or running", async () => {
+    for (const status of ["stopped", "running"] as const) {
+      const calls = mount({}, workspace("demo", { status }));
+      for (const [item, call] of [
+        ["Rename demo", calls.rename],
+        ["Delete demo", calls.remove],
+      ] as const) {
+        await fireEvent.keyDown(
+          screen.getByRole("button", { name: "More about demo" }),
+          { key: "Enter" },
+        );
+        await fireEvent.click(
+          await screen.findByRole("menuitem", { name: item }),
+        );
+        expect(call).toHaveBeenCalledOnce();
+        expect(call.mock.calls[0]?.[0].name).toBe("demo");
+      }
+      cleanup();
+    }
+  });
+
+  it("shows the branch after the repository, and nothing before one is known", () => {
+    const w = workspace("demo");
+    const withBranch = (branch: string | null) => ({
+      ...w,
+      repositories: w.repositories.map((r) => ({ ...r, branch })),
+    });
+    mount({}, withBranch("main"));
+    expect(screen.getByRole("article")).toHaveTextContent("acme/demo main");
+    cleanup();
+    mount({}, withBranch(null));
+    expect(screen.getByRole("article")).not.toHaveTextContent("main");
   });
 
   it("keeps Stop in the menu of a running workspace, and not of a stopped one", async () => {

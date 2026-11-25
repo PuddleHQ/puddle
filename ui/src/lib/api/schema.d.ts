@@ -7357,6 +7357,13 @@ export interface components {
          *     table's spelling.
          */
         WorkspaceRepository: {
+            /**
+             * @description The branch checked out in it, from the last time Puddle listed the workspace's checkouts
+             *     (when the Git tab opened or the editor attached); `null` when no listing was made since
+             *     Puddle started, the checkout is not there, or HEAD is detached. Never listed just for this
+             *     answer.
+             */
+            branch?: string | null;
             /** @description The checkout it is cloned into, directly under the volume root. */
             directory: components["schemas"]["CheckoutDir"];
             /**

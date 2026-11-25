@@ -57,6 +57,18 @@ test.describe("the checkouts on the disk", () => {
     ).toBeEnabled();
   });
 
+  test("the workspaces list shows the branch once the checkouts were listed", async ({
+    page,
+    backend,
+  }) => {
+    await open(page, backend);
+    await expect(section(page)).toBeVisible();
+    await page.goto("/workspaces");
+    const dev = page.getByRole("article", { name: "dev" });
+    await expect(dev).toContainText("acme/api");
+    await expect(dev.locator(".branch")).toHaveText("main");
+  });
+
   test("shows what the guest says as text and runs none of it", async ({
     page,
     backend,

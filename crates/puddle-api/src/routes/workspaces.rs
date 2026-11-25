@@ -124,14 +124,18 @@ async fn views(state: &AppState, records: Vec<WorkspaceRecord>) -> Vec<Workspace
     records
         .into_iter()
         .zip(direct)
-        .map(|(record, d)| present(record, d))
+        .map(|(record, d)| {
+            let branches = state.workspaces.known_branches(&record.id);
+            present(record, d).with_branches(&branches)
+        })
         .collect()
 }
 
 /// One workspace as the API shows it.
 pub(super) async fn view(state: &AppState, record: WorkspaceRecord) -> Workspace {
     let d = direct_ssh_of_one(state, &record).await;
-    present(record, d)
+    let branches = state.workspaces.known_branches(&record.id);
+    present(record, d).with_branches(&branches)
 }
 
 fn present(record: WorkspaceRecord, d: DirectSsh) -> Workspace {

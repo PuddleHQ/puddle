@@ -561,11 +561,16 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         id: &WorkspaceId,
     ) -> Result<crate::editor_file::Found, WorkspaceError> {
         let workspaces = &self.inner.workspaces;
+        let began = self.inner.clock.now_ms();
         let list = match workspaces.list_checkouts(gated.ungated(), id).await {
             Err(WorkspaceError::GitMissing { .. }) => {
                 workspaces.list_checkout_names(gated.ungated(), id).await?
             }
-            other => other?,
+            Ok(list) => {
+                self.keep_listing(id, began, &list).await;
+                list
+            }
+            Err(e) => return Err(e),
         };
         Ok(crate::editor_file::Found::from_listing(&list))
     }

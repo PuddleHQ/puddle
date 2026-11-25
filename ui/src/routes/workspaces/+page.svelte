@@ -83,6 +83,8 @@
           onStart={actions.start}
           onStop={actions.stop}
           onConnect={actions.connect}
+          onRename={actions.openRename}
+          onDelete={actions.askDelete}
           onDismiss={actions.dismissProgress}
         />
       </li>

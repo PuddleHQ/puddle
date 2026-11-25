@@ -23,6 +23,7 @@ fn without_entries(list: &Value) -> Value {
         .unwrap()
         .iter_mut()
         .map(|r| {
+            r.as_object_mut().unwrap().remove("branch");
             let entry = r.as_object_mut().unwrap().remove("entry").unwrap();
             EntryId::new(entry.as_str().unwrap()).unwrap()
         })
@@ -169,7 +170,8 @@ async fn create_is_accepted_busy_and_finishes_with_progress_events() {
             "repositories": [{
                 "entry": ws["repositories"][0]["entry"],
                 "url": REPO,
-                "directory": "api"
+                "directory": "api",
+                "branch": null
             }],
             "start_folder": null,
             "session_user": "agent",

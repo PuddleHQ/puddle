@@ -24978,7 +24978,8 @@
         "required": [
           "entry",
           "url",
-          "directory"
+          "directory",
+          "branch"
         ],
         "properties": {
           "branch": {

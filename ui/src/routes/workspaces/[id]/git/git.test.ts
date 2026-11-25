@@ -55,6 +55,7 @@ beforeEach(() => {
           entry: "e-Docs",
           url: "https://dev.azure.com/contoso/Platform/_git/Docs",
           directory: "Docs",
+          branch: null,
         },
       ],
     }),
@@ -234,16 +235,19 @@ describe("identities on a workspace", () => {
             entry: "e-api",
             url: "https://github.com/acme/api.git",
             directory: "api",
+            branch: null,
           },
           {
             entry: "e-Docs",
             url: "https://dev.azure.com/contoso/Platform/_git/Docs",
             directory: "Docs",
+            branch: null,
           },
           {
             entry: "e-tools",
             url: "https://gitlab.example.org/team/tools.git",
             directory: "tools",
+            branch: null,
           },
         ],
       }),
@@ -266,7 +270,12 @@ describe("identities on a workspace", () => {
     workspaces.list = [
       workspace("odd", {
         repositories: [
-          { entry: "e-c", url: "https://github.com/a/b/c", directory: "c" },
+          {
+            entry: "e-c",
+            url: "https://github.com/a/b/c",
+            directory: "c",
+            branch: null,
+          },
         ],
       }),
     ];

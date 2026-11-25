@@ -38,6 +38,7 @@ describe("what a checkout says about itself", () => {
       entry: "e-api",
       url: "https://github.com/acme/api.git",
       directory: "api",
+      branch: null,
     };
     expect(remoteDiffers(checkout("api"))).toBe(false);
     expect(
@@ -71,6 +72,7 @@ describe("what a checkout says about itself", () => {
             entry: "e-api",
             url: "https://github.com/a/b/c",
             directory: "api",
+            branch: null,
           },
           remote_url: "https://github.com/a/b/d",
         }),
@@ -98,8 +100,18 @@ describe("which identity serves a repository", () => {
 
 describe("the list entries that are not on the disk", () => {
   const entries = [
-    { entry: "e-a", url: "https://github.com/acme/a.git", directory: "a" },
-    { entry: "e-b", url: "https://github.com/acme/b.git", directory: "b" },
+    {
+      entry: "e-a",
+      url: "https://github.com/acme/a.git",
+      directory: "a",
+      branch: null,
+    },
+    {
+      entry: "e-b",
+      url: "https://github.com/acme/b.git",
+      directory: "b",
+      branch: null,
+    },
   ];
 
   it("are the ones the listing names, in list order", () => {

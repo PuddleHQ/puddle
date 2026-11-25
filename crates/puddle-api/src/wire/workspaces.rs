@@ -106,6 +106,7 @@ pub struct WorkspaceRepository {
     /// Puddle started, the checkout is not there, or HEAD is detached. Never listed just for this
     /// answer.
     #[serde(default)]
+    #[schema(required = true)]
     pub branch: Option<String>,
 }
 

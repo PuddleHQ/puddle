@@ -182,6 +182,7 @@ describe("WorkspaceRow", () => {
       entry: `e-${n}`,
       url: `https://github.com/acme/${n}.git`,
       directory: n,
+      branch: null,
     });
     mount({}, workspace("demo", { repositories: [repo("api")] }));
     expect(screen.getByRole("article")).not.toHaveTextContent("more");
@@ -205,6 +206,7 @@ describe("WorkspaceRow", () => {
       entry: `e-${n}`,
       url: `https://github.com/acme/${n}.git`,
       directory: n,
+      branch: null,
     }));
     mount(
       {

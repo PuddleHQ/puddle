@@ -7374,7 +7374,7 @@ export interface components {
              *     Puddle started, the checkout is not there, or HEAD is detached. Never listed just for this
              *     answer.
              */
-            branch?: string | null;
+            branch: string | null;
             /** @description The checkout it is cloned into, directly under the volume root. */
             directory: components["schemas"]["CheckoutDir"];
             /**

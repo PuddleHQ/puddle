@@ -529,6 +529,14 @@ const WORKSPACE_OPS: Record<
     done: "SSH agent question answered",
     failed: "Answering the SSH agent question failed",
   },
+  audit_retention_changed: {
+    done: "Activity log retention changed",
+    failed: "Changing the activity log retention failed",
+  },
+  audit_pruned: {
+    done: "Activity log pruned by hand",
+    failed: "Pruning the activity log failed",
+  },
   git_repaired: {
     done: "Git repaired after a crash",
     failed: "Repairing git after a crash failed",

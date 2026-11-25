@@ -57,7 +57,7 @@ impl BundledRuntime {
         let path = layout.msb_path();
         let found = read_embedded_version(&path).map_err(|reason| RuntimeError::Unreadable {
             path: path.clone(),
-            reason,
+            reason: reason.to_string(),
         })?;
         let status = check_version(expected, found.as_deref(), dev).map_err(|refusal| {
             let expected = expected.to_string();

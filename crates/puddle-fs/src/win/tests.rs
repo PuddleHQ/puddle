@@ -97,6 +97,6 @@ fn an_access_list_with_a_deny_entry_is_not_owner_only() {
     drop(create_new_with(&path, &descriptor).unwrap());
     assert_eq!(
         dacl_is_owner_only(&File::open(&path).unwrap()).unwrap(),
-        Err("entry 0 is not a plain allow entry".to_owned())
+        Err(NotOwnerOnly::NotPlainAllow { index: 0 })
     );
 }

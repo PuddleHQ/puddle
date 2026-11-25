@@ -85,6 +85,7 @@ fn a_key_that_cannot_be_opened_says_which_and_why() {
     let Err(why) = RegistryWatch::start_at(missing, Arc::new(|| {}), &on_problem) else {
         panic!("a key that does not exist cannot be watched");
     };
+    let why = why.to_string();
     assert!(why.contains(missing) && why.contains("error 2"), "{why}");
 }
 
@@ -92,14 +93,19 @@ fn a_key_that_cannot_be_opened_says_which_and_why() {
 fn no_working_part_gives_no_watch_and_every_part_that_failed_is_reported() {
     let (on_problem, seen) = problems();
     let none = assemble(
-        Err("winhttp part failed".into()),
-        Err("registry part failed".into()),
+        Err(WatchProblem::NoProxyNotification),
+        Err(WatchProblem::ThreadNotStarted {
+            cause: "registry part failed".into(),
+        }),
         &on_problem,
     );
     assert!(none.is_none());
     assert_eq!(
         *seen.lock().unwrap(),
-        ["winhttp part failed", "registry part failed"]
+        [
+            "the WinHTTP proxy change notification is not available on this Windows version",
+            "the registry watch thread could not start: registry part failed"
+        ]
     );
 }
 
@@ -108,9 +114,16 @@ fn one_working_part_is_a_watch_and_the_other_is_still_reported() {
     let (on_problem, seen) = problems();
     let registry = RegistryWatch::start(Arc::new(|| {}), &on_problem)
         .expect("the Internet Settings key can be watched on every Windows");
-    let guard = assemble(Err("winhttp part failed".into()), Ok(registry), &on_problem);
+    let guard = assemble(
+        Err(WatchProblem::NoProxyNotification),
+        Ok(registry),
+        &on_problem,
+    );
     assert!(guard.is_some());
-    assert_eq!(*seen.lock().unwrap(), ["winhttp part failed"]);
+    assert_eq!(
+        *seen.lock().unwrap(),
+        ["the WinHTTP proxy change notification is not available on this Windows version"]
+    );
 }
 
 /// An unregister call that fails the way WinHTTP may (an error code).

@@ -9,6 +9,36 @@
 
 use crate::{connect, merge_file, mise, mise_install, mise_tools};
 
+/// Why a subcommand's arguments were refused. It displays as the text `main` prints to stderr
+/// before it exits 2: the reason, when there is one, then the usage text.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum UsageError {
+    /// The arguments fit no form of the subcommand.
+    #[error("{0}")]
+    Shape(&'static str),
+    /// The first argument names no subcommand.
+    #[error("unknown argument {0:?}\n{USAGE}")]
+    Unknown(String),
+    /// One argument is in the right place with a value the subcommand refuses.
+    #[error("bad {what} {value:?}\n{usage}")]
+    BadValue {
+        /// What the argument is, e.g. `port`.
+        what: &'static str,
+        /// The refused text, shortened when long.
+        value: String,
+        /// The subcommand's usage text.
+        usage: &'static str,
+    },
+    /// A tool name, version or hash failed its own validation.
+    #[error("{reason}\n{usage}")]
+    Invalid {
+        /// The validation failure.
+        reason: puddle_types::ValidationError,
+        /// The subcommand's usage text.
+        usage: &'static str,
+    },
+}
+
 /// What the command line asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
@@ -27,7 +57,7 @@ pub enum Command {
     /// List or edit the tools of a workspace's root mise file, or ask mise for its registry.
     MiseTools(mise_tools::Request),
     /// Anything else: print this usage error, exit 2.
-    Usage(String),
+    Usage(UsageError),
 }
 
 /// Usage text.
@@ -55,9 +85,8 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Command {
         [first, rest @ ..] if first.as_ref() == "mise-tools" => {
             mise_tools::Request::parse(rest).map_or_else(Command::Usage, Command::MiseTools)
         }
-        [first, ..] => Command::Usage(format!(
-            "unknown argument {:?}\n{USAGE}",
-            first.as_ref().chars().take(64).collect::<String>()
+        [first, ..] => Command::Usage(UsageError::Unknown(
+            first.as_ref().chars().take(64).collect::<String>(),
         )),
     }
 }

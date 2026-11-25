@@ -5009,6 +5009,26 @@ async fn terminal_end(
     }
 }
 
+/// The prompt reads `user@<name>`, and the workspace id is nowhere in it.
+async fn assert_prompt_shows_name(link: &mut puddle_api::TerminalLink, user: &str, id: &str) {
+    let typed = "echo \"prompt=<${PS1@P}>\"; echo end=$((20 + 22))\r";
+    link.input
+        .send(puddle_api::TerminalInput::Bytes(typed.as_bytes().to_vec()))
+        .await
+        .unwrap();
+    let seen = terminal_text_until(link, "end=42").await;
+    assert!(
+        seen.contains(&format!("prompt=<{user}@play ground:")),
+        "{seen:?}"
+    );
+    let shown = seen
+        .rsplit("prompt=<")
+        .next()
+        .and_then(|rest| rest.split('>').next())
+        .unwrap_or_default();
+    assert!(!shown.contains(id), "{seen:?}");
+}
+
 /// K and W tiers. A terminal on a real guest: the host's own SSH connection to the runtime's server
 /// grants a pty and a login shell as the session user, in the start folder; the shell's exit
 /// status reaches the host, and a stop ends a terminal that is still open with `stopped`.
@@ -5085,23 +5105,7 @@ async fn vm_host_a_terminal_is_a_shell_as_the_session_user_in_the_start_folder()
         "{seen:?}"
     );
 
-    // The prompt reads `user@<name>`, and the id is nowhere in it.
-    let typed = "echo \"prompt=<${PS1@P}>\"; echo end=$((20 + 22))\r";
-    link.input
-        .send(puddle_api::TerminalInput::Bytes(typed.as_bytes().to_vec()))
-        .await
-        .unwrap();
-    let seen = terminal_text_until(&mut link, "end=42").await;
-    assert!(
-        seen.contains(&format!("prompt=<{user}@play ground:")),
-        "{seen:?}"
-    );
-    let shown = seen
-        .rsplit("prompt=<")
-        .next()
-        .and_then(|rest| rest.split('>').next())
-        .unwrap_or_default();
-    assert!(!shown.contains(&name), "{seen:?}");
+    assert_prompt_shows_name(&mut link, &user, &name).await;
 
     // The shell's own exit ends the session with its status.
     link.input

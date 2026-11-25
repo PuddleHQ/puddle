@@ -99,8 +99,13 @@ pub use request_match::{
 pub use session_user::SessionUser;
 pub use tool::{ToolName, ToolVersion, ToolsFileHash};
 
-/// Puddle's version, from the workspace manifest.
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Puddle's version: `PUDDLE_BUILD_VERSION` when the build sets it (ci/build-msi.sh stamps a CI build
+/// of the unversioned develop line `0.0.<run number>`, so an upgrade test can require a newer build),
+/// else the workspace manifest's.
+pub const VERSION: &str = match option_env!("PUDDLE_BUILD_VERSION") {
+    Some(stamped) => stamped,
+    None => env!("CARGO_PKG_VERSION"),
+};
 
 /// The line a Puddle binary prints for `--version`: the program name and Puddle's version.
 ///

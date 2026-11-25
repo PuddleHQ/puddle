@@ -27,7 +27,7 @@ use super::{
 };
 use crate::counted::Counted;
 use crate::destination::BoxFuture;
-use crate::proxy::admit;
+use crate::proxy::{Seen, admit, refuse_not_running};
 use crate::request_target::Target;
 use crate::terminate::h1::{BoxError, UpBody};
 use crate::terminate::{self, Outcome};
@@ -158,6 +158,11 @@ impl Leg<'_> {
         let handler = &self.cx.handler;
         let proxy = &handler.proxy;
         let https = EgressRequest::new(handler.workspace.clone(), self.host.clone(), 443);
+        if matches!(proxy.seen(&https.workspace), Seen::NotRunning) {
+            let (refusal, event) = refuse_not_running(&https);
+            self.cx.leg_refused(event);
+            return Err(GitSshFailure::new(refusal.message));
+        }
         let (admitted, event) = admit(proxy, &https).await;
         let admitted = admitted.map_err(|refusal| {
             self.cx.leg_refused(event);

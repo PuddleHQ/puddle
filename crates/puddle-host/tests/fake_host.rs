@@ -11,12 +11,18 @@
 
 mod support;
 
+#[cfg(target_os = "linux")]
+#[path = "fake_host/api_latency.rs"]
+mod api_latency;
 #[path = "fake_host/attach_places.rs"]
 mod attach_places;
 #[path = "fake_host/backup_restore.rs"]
 mod backup_restore;
 #[path = "fake_host/backup_round_trip.rs"]
 mod backup_round_trip;
+#[cfg(target_os = "linux")]
+#[path = "fake_host/churn.rs"]
+mod churn;
 #[path = "fake_host/cleanup_and_problems.rs"]
 mod cleanup_and_problems;
 #[cfg(unix)]
@@ -108,9 +114,9 @@ use puddle_certs::{CorporateRoots, SOURCES, StoreSnapshot};
 use puddle_compute::fake::{ExecContext, FakeRuntime, Fault, Op};
 use puddle_compute::{ExecOutput, ExecRequest, ImageConfig, Runtime};
 use puddle_host::{
-    DevCertSource, FreeSpaceTiming, GuestSettings, Host, HostConfig, HostError, HostPaths,
-    PREPARE_STEPS, Platform, RewriteGate, RuntimeFactory, RuntimeInputs, SHUTDOWN_STEPS,
-    START_STEPS, Step, prepare,
+    FreeSpaceTiming, GuestSettings, Host, HostConfig, HostError, HostPaths, PREPARE_STEPS,
+    Platform, RewriteGate, RuntimeFactory, RuntimeInputs, SHUTDOWN_STEPS, START_STEPS, Step,
+    prepare,
 };
 use puddle_netpolicy::EndpointKind;
 use puddle_runtime::{RuntimeLayout, RuntimeVersion};
@@ -1316,7 +1322,7 @@ impl Rig {
         options
             .rewrite_gate
             .clone_from(&self.rewrite_gate.lock().unwrap());
-        options.dev_cert = Some(self.dev_cert.clone() as Arc<dyn DevCertSource>);
+        options.dev_cert = Some(self.dev_cert.clone());
         let taken = self.ids.lock().unwrap().clone();
         if let Some(ids) = taken {
             options.workspace_ids = Some(ids);

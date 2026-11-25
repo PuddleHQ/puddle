@@ -102,10 +102,52 @@ unsafe impl Send for WinHttpWatch {}
 // SAFETY: see above; no shared mutation.
 unsafe impl Sync for WinHttpWatch {}
 
+/// Why a part of the change watch could not start. It displays as the problem line given to
+/// `on_problem` and logged.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub(super) enum WatchProblem {
+    /// `winhttp.dll` could not be loaded.
+    #[error("winhttp.dll could not be loaded: {cause}")]
+    LoadFailed {
+        /// The operating system's words.
+        cause: String,
+    },
+    /// The DLL has no proxy change notification exports.
+    #[error("the WinHTTP proxy change notification is not available on this Windows version")]
+    NoProxyNotification,
+    /// WinHTTP refused the registration.
+    #[error("the WinHTTP proxy change registration was refused (error {code})")]
+    RegistrationRefused {
+        /// WinHTTP's error code.
+        code: u32,
+    },
+    /// The Internet Settings key could not be opened for notification.
+    #[error(
+        "the registry key HKCU\\{key} could not be opened for change notification (error {code})"
+    )]
+    KeyNotOpened {
+        /// The key, below `HKCU`.
+        key: String,
+        /// The Win32 error code.
+        code: u32,
+    },
+    /// The events the registry watch waits on could not be created.
+    #[error("the registry watch could not create its events: {cause}")]
+    EventsNotCreated {
+        /// The operating system's words.
+        cause: String,
+    },
+    /// The watch thread could not be spawned.
+    #[error("the registry watch thread could not start: {cause}")]
+    ThreadNotStarted {
+        /// The operating system's words.
+        cause: String,
+    },
+}
+
 impl WinHttpWatch {
     /// Registers `on_change` with WinHTTP, or says why it could not.
-    // string-error-ok: the text is the problem line given to `on_problem` and logged; no caller branches on a kind
-    fn register(on_change: &ChangeCallback) -> Result<Self, String> {
+    fn register(on_change: &ChangeCallback) -> Result<Self, WatchProblem> {
         let library = wide("winhttp.dll");
         // SAFETY: valid terminated name; the reserved file handle is null as required. A bare name
         // would use the DLL search order unless the module is already loaded, so the search is
@@ -118,10 +160,9 @@ impl WinHttpWatch {
             )
         };
         if module.is_null() {
-            return Err(format!(
-                "winhttp.dll could not be loaded: {}",
-                std::io::Error::last_os_error()
-            ));
+            return Err(WatchProblem::LoadFailed {
+                cause: std::io::Error::last_os_error().to_string(),
+            });
         }
         // SAFETY: valid module and NUL-terminated ASCII names.
         let (register, unregister) = unsafe {
@@ -137,10 +178,7 @@ impl WinHttpWatch {
             )
         };
         let (Some(register), Some(unregister)) = (register, unregister) else {
-            return Err(
-                "WinHTTP's proxy change notification is not available on this Windows version"
-                    .to_owned(),
-            );
+            return Err(WatchProblem::NoProxyNotification);
         };
         // SAFETY: the exports have exactly these signatures (winhttp.h).
         let (register, unregister): (Register, Unregister) = unsafe {
@@ -163,9 +201,7 @@ impl WinHttpWatch {
         };
         if code != 0 {
             CALLBACKS.remove(id);
-            return Err(format!(
-                "WinHTTP refused the proxy change registration (error {code})"
-            ));
+            return Err(WatchProblem::RegistrationRefused { code });
         }
         Ok(Self {
             registration,
@@ -261,8 +297,10 @@ fn watch_loop(
 }
 
 impl RegistryWatch {
-    // string-error-ok: the text is the problem line given to `on_problem` and logged; no caller branches on a kind
-    fn start(on_change: ChangeCallback, on_problem: &ProblemCallback) -> Result<Self, String> {
+    fn start(
+        on_change: ChangeCallback,
+        on_problem: &ProblemCallback,
+    ) -> Result<Self, WatchProblem> {
         Self::start_at(INTERNET_SETTINGS, on_change, on_problem)
     }
 
@@ -271,8 +309,7 @@ impl RegistryWatch {
         key_name: &str,
         on_change: ChangeCallback,
         on_problem: &ProblemCallback,
-        // string-error-ok: the text is the problem line given to `on_problem` and logged; no caller branches on a kind
-    ) -> Result<Self, String> {
+    ) -> Result<Self, WatchProblem> {
         let wide_name = wide(key_name);
         let mut key: HKEY = std::ptr::null_mut();
         // SAFETY: valid terminated key name and out-pointer.
@@ -286,9 +323,10 @@ impl RegistryWatch {
             )
         };
         if opened != ERROR_SUCCESS {
-            return Err(format!(
-                "the registry key HKCU\\{key_name} could not be opened for change notification (error {opened})"
-            ));
+            return Err(WatchProblem::KeyNotOpened {
+                key: key_name.to_owned(),
+                code: opened,
+            });
         }
         // SAFETY: anonymous auto-reset event for the registry, manual-reset for stop.
         let (changed, stop) = unsafe {
@@ -309,9 +347,9 @@ impl RegistryWatch {
                     CloseHandle(stop);
                 }
             }
-            return Err(format!(
-                "the registry watch could not create its events: {why}"
-            ));
+            return Err(WatchProblem::EventsNotCreated {
+                cause: why.to_string(),
+            });
         }
         let (key, changed, stop_for_thread) =
             (SendHandle(key), SendHandle(changed), SendHandle(stop));
@@ -350,7 +388,9 @@ impl RegistryWatch {
                 // failure to create a thread.
                 // SAFETY: `stop` is ours alone here.
                 unsafe { CloseHandle(stop) };
-                return Err(format!("the registry watch thread could not start: {err}"));
+                return Err(WatchProblem::ThreadNotStarted {
+                    cause: err.to_string(),
+                });
             }
         };
         Ok(Self {
@@ -395,13 +435,12 @@ impl WatchGuard for Guard {}
 /// The guard for what could be registered, reporting each part that could not be to
 /// `on_problem`. `None` when neither part works: nothing would ever call `on_change`.
 fn assemble(
-    // string-error-ok: the text is the problem line given to `on_problem` and logged; no caller branches on a kind
-    winhttp: Result<WinHttpWatch, String>,
-    registry: Result<RegistryWatch, String>,
+    winhttp: Result<WinHttpWatch, WatchProblem>,
+    registry: Result<RegistryWatch, WatchProblem>,
     on_problem: &ProblemCallback,
 ) -> Option<Box<dyn WatchGuard>> {
-    let winhttp = winhttp.map_err(|why| on_problem(why)).ok();
-    let registry = registry.map_err(|why| on_problem(why)).ok();
+    let winhttp = winhttp.map_err(|why| on_problem(why.to_string())).ok();
+    let registry = registry.map_err(|why| on_problem(why.to_string())).ok();
     if winhttp.is_none() && registry.is_none() {
         return None;
     }

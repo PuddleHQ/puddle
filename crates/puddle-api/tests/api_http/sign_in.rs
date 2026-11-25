@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, NoNames, PublicHost, Remote,
-    RemoteServing, RunningApi, Services, SettingsRepo, reset_account,
+    RemoteServing, RunningApi, Services, reset_account,
 };
 use puddle_store::{Clock as _, Limits, ManualClock, Store, UserName};
 use serde_json::{Value, json};
@@ -63,6 +63,18 @@ pub(super) async fn site_built(
         &Arc<ManualClock>,
     ) -> Option<Arc<dyn puddle_api::WorkspaceService>>,
 ) -> Site {
+    site_reaping(multi_user, ApiConfig::default().reap_every, workspaces).await
+}
+
+/// Like [`site_built`], with the admin reaper looking every `reap_every`.
+pub(super) async fn site_reaping(
+    multi_user: bool,
+    reap_every: std::time::Duration,
+    workspaces: impl FnOnce(
+        &Arc<EventHub>,
+        &Arc<ManualClock>,
+    ) -> Option<Arc<dyn puddle_api::WorkspaceService>>,
+) -> Site {
     let clock = Arc::new(ManualClock::new(START_MS));
     let events = Arc::new(EventHub::default());
     let dir = tempfile::tempdir().unwrap();
@@ -75,7 +87,7 @@ pub(super) async fn site_built(
     let made = workspaces(&events, &clock);
     let mut services = Services::new(
         store.clone(),
-        Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>,
+        Arc::new(MemorySettings::default()),
         events,
         clock.clone(),
     )
@@ -89,6 +101,7 @@ pub(super) async fn site_built(
         RemoteServing::new(vec![PublicHost::parse(HOST).unwrap()], None).unwrap(),
     ));
     config.multi_user = multi_user;
+    config.reap_every = reap_every;
     let token = ApiToken::generate().unwrap();
     let server = ApiServer::bind(config, token.clone(), services)
         .await
@@ -1159,7 +1172,7 @@ async fn with_remote_serving_off_there_is_nobody_to_sign_in_to() {
     let store = Arc::new(Store::open_in_memory(clock.clone(), Limits::default()).unwrap());
     let services = Services::new(
         store.clone(),
-        Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>,
+        Arc::new(MemorySettings::default()),
         events,
         clock,
     )
@@ -1198,7 +1211,7 @@ async fn without_accounts_the_routes_answer_unavailable() {
     let store = Arc::new(Store::open_in_memory(clock.clone(), Limits::default()).unwrap());
     let services = Services::new(
         store,
-        Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>,
+        Arc::new(MemorySettings::default()),
         Arc::new(EventHub::default()),
         clock,
     )

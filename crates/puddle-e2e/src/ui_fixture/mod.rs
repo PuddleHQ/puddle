@@ -24,13 +24,12 @@ use std::time::Duration;
 
 use puddle_api::wire::{CredentialSource, DevCertificate, FoundAccount, FoundVia};
 use puddle_api::{
-    ApiConfig, ApiServer, ApiToken, BackupService, ConnectionInfo, CredentialService,
-    DevCertService, DoctorService, EventHub, FakeBackup, FakeCredentials, FakeDevCert, FakeDoctor,
-    FakeLauncher, FakeLearned, FakeNetworkHealth, FakePorts, FakeProxySignIns, FakeTerminals,
-    FakeWorkspaces, Found, FoundList, Launcher, LearnedService, Listing, MemorySettings,
-    NetworkHealthService, Operation, PortsService, ProxySignInService, RemoteNote, RepoFindings,
-    RepoService, Repository, RepositoryDraft, RunningApi, Services, SettingsRepo, ShellInitCheck,
-    StartFolder, Unsaved, WorkspaceRecord, check_repositories, entry_id_from_text,
+    ApiConfig, ApiServer, ApiToken, ConnectionInfo, EventHub, FakeBackup, FakeCredentials,
+    FakeDevCert, FakeDoctor, FakeLauncher, FakeLearned, FakeNetworkHealth, FakePorts,
+    FakeProxySignIns, FakeTerminals, FakeWorkspaces, Found, FoundList, Listing, MemorySettings,
+    Operation, RemoteNote, RepoFindings, Repository, RepositoryDraft, RunningApi, Services,
+    SettingsRepo, ShellInitCheck, StartFolder, Unsaved, WorkspaceRecord, check_repositories,
+    entry_id_from_text,
 };
 use puddle_api::{NoNames, PublicHost, Remote, RemoteServing};
 use puddle_netpolicy::StaticSignals;
@@ -270,22 +269,20 @@ impl Fixture {
         let clock = Arc::new(ManualClock::new(start));
         let events = Arc::new(EventHub::default());
         let store = Arc::new(
-            Store::open_in_memory(clock.clone() as Arc<dyn Clock>, Limits::default())
+            Store::open_in_memory(clock.clone(), Limits::default())
                 .map_err(|err| err.to_string())?
                 .with_events(events.clone()),
         );
         let settings = Arc::new(MemorySettings::default());
         let workspaces = FakeWorkspaces::with_options(
             events.clone(),
-            clock.clone() as Arc<dyn Clock>,
-            Arc::new(FakeLauncher::new()) as Arc<dyn Launcher>,
+            clock.clone(),
+            Arc::new(FakeLauncher::new()),
             Duration::from_millis(scenario.workspace_step_delay_ms),
         );
         let proxy_sign_ins = Arc::new(FakeProxySignIns::new());
-        let network = Arc::new(
-            FakeNetworkHealth::new(clock.clone() as Arc<dyn Clock>)
-                .with_sign_ins(proxy_sign_ins.clone()),
-        );
+        let network =
+            Arc::new(FakeNetworkHealth::new(clock.clone()).with_sign_ins(proxy_sign_ins.clone()));
         let credentials = Arc::new(FakeCredentials::new());
         let repos = Arc::new(repos::HeldRepos::new(credentials.clone()));
         let doctor = Arc::new(FakeDoctor::new());
@@ -332,26 +329,26 @@ impl Fixture {
         for _ in 0..100 {
             let services = Services::new(
                 state.store.clone(),
-                state.settings.clone() as Arc<dyn SettingsRepo>,
+                state.settings.clone(),
                 state.events.clone(),
-                state.clock.clone() as Arc<dyn Clock>,
+                state.clock.clone(),
             )
             .with_workspaces(Arc::new(state.workspaces.clone()))
-            .with_network_health(state.network.clone() as Arc<dyn NetworkHealthService>)
+            .with_network_health(state.network.clone())
             // A private-access client is active, so an address in 100.64.0.0/10 is the company's.
             .with_company_signals(Arc::new(StaticSignals::new().with_private_access_client()))
-            .with_credentials(state.credentials.clone() as Arc<dyn CredentialService>)
+            .with_credentials(state.credentials.clone())
             .with_secret_store(state.secrets.clone())
-            .with_repos(state.repos.clone() as Arc<dyn RepoService>)
-            .with_doctor(state.doctor.clone() as Arc<dyn DoctorService>)
-            .with_backup(state.backup.clone() as Arc<dyn BackupService>)
-            .with_restore(state.restore.clone() as Arc<dyn puddle_api::RestoreService>)
-            .with_dev_cert(state.dev_cert.clone() as Arc<dyn DevCertService>)
+            .with_repos(state.repos.clone())
+            .with_doctor(state.doctor.clone())
+            .with_backup(state.backup.clone())
+            .with_restore(state.restore.clone())
+            .with_dev_cert(state.dev_cert.clone())
             .with_problems(state.problems.clone())
-            .with_ports(state.ports.clone() as Arc<dyn PortsService>)
-            .with_learned(state.learned.clone() as Arc<dyn LearnedService>)
+            .with_ports(state.ports.clone())
+            .with_learned(state.learned.clone())
             .with_terminals(Arc::new(FakeTerminals::new()))
-            .with_proxy_sign_ins(state.proxy_sign_ins.clone() as Arc<dyn ProxySignInService>);
+            .with_proxy_sign_ins(state.proxy_sign_ins.clone());
             let mut config = ApiConfig::with_port(self.port.load(Ordering::SeqCst));
             let mut services = services;
             if let Some(secrets) = &state.account_secrets {

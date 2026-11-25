@@ -83,7 +83,8 @@ fn no_per_user_folder_is_an_error_unless_an_option_names_one() {
         root.path(),
         Err(puddle_fs::DataDirError::NoBase),
     )
-    .unwrap_err();
+    .unwrap_err()
+    .to_string();
     assert!(err.contains("per-user data folder"), "{err}");
 }
 
@@ -163,7 +164,8 @@ fn an_unusable_config_file_is_an_error_not_a_backup_of_the_wrong_folder() {
         root.path(),
         Ok(wrong),
     )
-    .unwrap_err();
+    .unwrap_err()
+    .to_string();
     assert!(err.contains("missing.toml"), "{err}");
     assert!(!dest.exists());
 }

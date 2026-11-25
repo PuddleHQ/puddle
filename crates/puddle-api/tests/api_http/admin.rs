@@ -9,7 +9,10 @@ use std::time::Duration;
 use puddle_api::{FakeWorkspaces, WorkspaceService};
 use serde_json::{Value, json};
 
-use super::sign_in::{Req, Site, access_token, pw, site_built};
+use super::sign_in::{Req, Site, access_token, pw, site_reaping};
+
+/// The reaper's timer in these tests, so a look that no notice caused comes soon.
+const REAP_EVERY: Duration = Duration::from_millis(10);
 
 const REPO: &str = "https://github.com/acme/api.git";
 
@@ -26,7 +29,7 @@ async fn admin_site(multi_user: bool) -> Admin {
 /// operation is still under way when the next look comes.
 async fn admin_site_slow(multi_user: bool, step_delay: Duration) -> Admin {
     let made: std::sync::Mutex<Option<Arc<FakeWorkspaces>>> = std::sync::Mutex::new(None);
-    let site = site_built(multi_user, |events, clock| {
+    let site = site_reaping(multi_user, REAP_EVERY, |events, clock| {
         let fake = Arc::new(FakeWorkspaces::with_options(
             events.clone(),
             clock.clone(),
@@ -34,7 +37,7 @@ async fn admin_site_slow(multi_user: bool, step_delay: Duration) -> Admin {
             step_delay,
         ));
         *made.lock().unwrap() = Some(fake.clone());
-        Some(fake as Arc<dyn WorkspaceService>)
+        Some(fake)
     })
     .await;
     let workspaces = made.lock().unwrap().take().unwrap();
@@ -86,7 +89,7 @@ impl Admin {
 
     /// Waits until the background deletion has removed the user.
     async fn gone(&self, name: &str) {
-        // The reaper also looks on a 10 s timer, so a missed notice costs up to that.
+        // The reaper also looks on a timer (REAP_EVERY here), so a missed notice costs up to that.
         puddle_test_kit::eventually_async(
             &format!("{name} is removed"),
             Duration::from_secs(30),
@@ -546,7 +549,7 @@ async fn a_deletion_whose_workspace_step_fails_is_finished_at_a_later_look() {
 
 #[tokio::test]
 async fn a_workspace_still_busy_is_left_alone_until_it_is_idle() {
-    let admin = admin_site_slow(true, Duration::from_millis(300)).await;
+    let admin = admin_site_slow(true, Duration::from_millis(30)).await;
     admin.site.setup().await;
     let (ann, ann_id) = admin.user("Ann", pw("ann password three")).await;
     let (_bob, bob_id) = admin.user("Bob", pw("bob password three")).await;

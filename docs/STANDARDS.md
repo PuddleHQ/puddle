@@ -418,6 +418,15 @@ request (`Reverts #<number>` or the commit's 8-character SHA).
 
 - Measured by `cargo llvm-cov nextest` over the whole workspace on Linux, in every CI run; the UI by
   vitest's v8 coverage (`npm test`).
+- **The totals count only code compiled into what Puddle ships.** Every test runs, but the Rust totals (the
+  floors, the ratchet, the CI job summary) leave out the files of the crates no shipped binary depends on
+  (`cargo llvm-cov report --ignore-filename-regex`). `scripts/coverage-crates.txt` names the shipped binaries
+  (`ship`) and the workspace crates that are not part of one (`test-only`: test harnesses and build tooling);
+  `scripts/coverage-crates.py` takes the dependency closure of the shipped binaries from `cargo metadata`
+  (normal and build dependencies, all features) and fails the `coverage` gate when a workspace crate is neither
+  in it nor listed `test-only`, or a `test-only` crate is in it. A new crate needs no entry while a shipped binary
+  depends on it; a new harness crate gets a `test-only` line. The lcov report stays whole, so the diff gate
+  and the 100 % crates still see every file.
 - **Gate: lines ≥ 92 %, regions ≥ 90 %** (workspace totals, floors in `scripts/check.sh`), and a
   **ratchet**: coverage may not fall more than 0.05 points below `scripts/coverage-baseline.json`, the best
   value reached so far (rounded down to 0.1). The floors and the baseline only go up; lowering either needs
@@ -534,8 +543,9 @@ request (`Reverts #<number>` or the commit's 8-character SHA).
   branch of a decision (allow/deny/pending, each toggle) has a test. A change that lowers a
   crate's coverage says why in the commit.
 - Code that can't run in CI (Windows-only code on Linux, VM paths) is covered by its own tier
-  (Windows job, L3/L4), not excluded from the report. Exclusions from the report
-  (`--ignore-filename-regex`) only for generated code, listed in `scripts/check.sh` with a comment;
+  (Windows job, L3/L4), not excluded from the report. Exclusions from the totals are the test-only crates
+  above and nothing finer (no single file), so a shipped crate's unreachable file is covered by its tier or
+  listed in the diff-gate exclusions;
   exclusions from the diff gate are the file above.
 
 ### Mutation testing

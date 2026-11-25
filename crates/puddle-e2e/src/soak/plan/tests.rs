@@ -74,3 +74,14 @@ fn each_loop_starts_a_round_every_period_while_the_loops_run() {
     assert_eq!(agent.first(), Some(&0));
     assert_eq!(agent.last(), Some(&465));
 }
+
+#[test]
+fn the_web_app_window_is_five_playbook_minutes_in_every_profile() {
+    assert_eq!(FULL.w4_every(), Duration::from_secs(10));
+    assert_eq!(FULL.w4_window_secs(), 300);
+    assert_eq!(HOSTED.w4_every(), Duration::from_millis(3750));
+    assert_eq!(HOSTED.w4_window_secs(), 112);
+    // A smoke hour is 60 s: the window is 5 s, not five hours.
+    assert_eq!(SMOKE.w4_every(), Duration::from_secs(1));
+    assert_eq!(SMOKE.w4_window_secs(), 5);
+}

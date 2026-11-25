@@ -10,8 +10,8 @@ use std::time::Duration;
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, BackupService, CredentialService, DevCertService,
     DoctorService, EventHub, FakeCredentials, FakeLauncher, FakeLearned, FakePorts,
-    FakeProxySignIns, FakeRepos, FakeTerminals, FakeWorkspaces, Launcher, MemorySettings,
-    NetworkHealthService, NoNames, RepoService, RestoreService, RunningApi, Services, SettingsRepo,
+    FakeProxySignIns, FakeRepos, FakeTerminals, FakeWorkspaces, MemorySettings,
+    NetworkHealthService, NoNames, RestoreService, RunningApi, Services,
 };
 use puddle_netpolicy::CompanySignals;
 use puddle_secrets::MemoryStore;
@@ -215,13 +215,13 @@ async fn start_inner(options: Options) -> Api {
     let workspaces = FakeWorkspaces::with_options(
         events.clone(),
         clock.clone(),
-        launcher.clone() as Arc<dyn Launcher>,
+        launcher.clone(),
         Duration::ZERO,
     );
     let token = ApiToken::generate().unwrap();
     let services = Services::new(
         store.clone(),
-        settings.clone() as Arc<dyn SettingsRepo>,
+        settings.clone(),
         events.clone(),
         clock.clone(),
     )
@@ -238,16 +238,15 @@ async fn start_inner(options: Options) -> Api {
     let secrets = Arc::new(MemoryStore::new());
     let services = services.with_secret_store(secrets.clone());
     let credentials = Arc::new(FakeCredentials::new());
-    let services = services.with_credentials(
-        own_credentials.unwrap_or_else(|| credentials.clone() as Arc<dyn CredentialService>),
-    );
+    let services =
+        services.with_credentials(own_credentials.unwrap_or_else(|| credentials.clone()));
     let services = doctor.into_iter().fold(services, Services::with_doctor);
     let services = backup.into_iter().fold(services, Services::with_backup);
     let services = restore.into_iter().fold(services, Services::with_restore);
     let services = dev_cert.into_iter().fold(services, Services::with_dev_cert);
     let repos = Arc::new(FakeRepos::new());
     let services = if with_repos {
-        services.with_repos(repos.clone() as Arc<dyn RepoService>)
+        services.with_repos(repos.clone())
     } else {
         services
     };

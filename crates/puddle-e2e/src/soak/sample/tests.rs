@@ -544,3 +544,15 @@ async fn a_windows_sample_holds_handles_threads_commit_and_free_ram_for_the_run_
         );
     }
 }
+
+#[test]
+fn requests_during_a_planned_restart_are_not_counted() {
+    let mut w = W4Window::default();
+    w.record(10, true);
+    w.pause(true);
+    w.record(20, false);
+    w.record(30, false);
+    w.pause(false);
+    w.record(40, true);
+    assert_eq!(w.fail_share(50, 300), Some(0.0));
+}

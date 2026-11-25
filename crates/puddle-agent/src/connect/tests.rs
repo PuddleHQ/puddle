@@ -95,7 +95,7 @@ fn anything_else_is_a_usage_error() {
         vec!["[::1]x", "22"],
         vec![long.as_str(), "22"],
     ] {
-        let err = Request::parse(&args).unwrap_err();
+        let err = Request::parse(&args).unwrap_err().to_string();
         assert!(err.contains(USAGE), "{args:?}: {err}");
     }
 }
@@ -550,7 +550,9 @@ fn networks_are_checked_when_parsed() {
         "172.17.0.0/x",
         "::1/64",
     ] {
-        let err = Request::parse(&["--local-net", bad, "h", "22"]).unwrap_err();
+        let err = Request::parse(&["--local-net", bad, "h", "22"])
+            .unwrap_err()
+            .to_string();
         assert!(
             err.contains("bad network") && err.contains(USAGE),
             "{bad}: {err}"

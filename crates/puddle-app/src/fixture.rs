@@ -47,7 +47,7 @@ pub(crate) async fn start(port: u16) -> Result<Backend, BackendError> {
         .map_err(|e| fixture("seed", &e))?;
     let events = Arc::new(EventHub::default());
     let problems = Arc::new(Problems::new(events.clone()));
-    let settings = Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>;
+    let settings: Arc<dyn SettingsRepo> = Arc::new(MemorySettings::default());
     let services = Services::new(store.clone(), settings.clone(), events.clone(), clock)
         .with_problems(problems.clone());
     let server =

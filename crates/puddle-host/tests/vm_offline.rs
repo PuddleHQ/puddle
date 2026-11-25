@@ -47,7 +47,7 @@ async fn vm_a_workspace_with_a_cached_image_starts_while_the_pull_route_is_dead(
     }
     let mut options = named_id_options();
     options.discovery = Some(Discovery::new(
-        Arc::clone(&os) as _,
+        os.clone(),
         puddle_upstream::Config::default(),
     ));
     let vm = start_vm_host_with("cached", options).await;

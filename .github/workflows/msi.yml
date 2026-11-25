@@ -95,11 +95,11 @@ on:
         required: false
         default: ""
       plant_footprint:
-        description: "Run the msi job's install test with a planted installer breakage (no-shortcut, wrong-shortcut-target, visible-at-login, data-lost, slow-install or no-refusal) and expect it to fail: shows that each footprint check catches the breakage it guards against"
+        description: "Run the msi job's install test with a planted installer breakage (no-shortcut, wrong-shortcut-target, visible-at-login, data-lost, slow-install, no-refusal or kill-skipped) and expect it to fail: shows that each footprint check catches the breakage it guards against"
         required: false
         default: ""
       plant_breakage:
-        description: "Run the upgrade job with a planted breakage (drop-table, empty-env or empty-pending) and expect it to fail: shows that the upgrade's state checks catch a migration that loses data"
+        description: "Run the upgrade job with a planted breakage (drop-table, empty-env, empty-pending or route-throws) and expect it to fail: shows that the upgrade's state checks catch a migration that loses data and a screen that throws"
         required: false
         default: ""
 
@@ -114,6 +114,8 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
+  # ci/build-msi.sh: while the workspace is 0.0.0, programs and MSIs of this workflow report 0.0.<run number>.
+  BUILD_NUMBER: ${{ github.run_number }}
 
 jobs:
   msi:
@@ -176,6 +178,9 @@ jobs:
       - name: UI build (the shell embeds it)
         if: steps.changed.outputs.run == 'true'
         shell: bash
+        env:
+          # A by-hand run planting `route-throws` builds the UI with its Activity screen throwing (ui/src/lib/plant.ts).
+          VITE_PUDDLE_PLANT_ROUTE_THROW: ${{ inputs.plant_breakage == 'route-throws' && 'activity' || '' }}
         run: cd ui && npm ci --ignore-scripts --no-audit --no-fund && npm run build
       - name: stage the runtime, code-server, agent and CLI
         if: steps.changed.outputs.run == 'true'
@@ -197,7 +202,7 @@ jobs:
         run: |
           # The folder Tauri reads is seeded from the cache or a retried download (ci/build-msi.sh, ci/fetch-wix.sh).
           export FETCH_CACHE_DIR="$HOME/wix-cache"
-          current=$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)
+          current=$(ci/build-msi.sh version)
           next=${current%.*}.$(( ${current##*.} + 1 ))
           echo "current=$current next=$next"
           ci/build-msi.sh bundle "$RUNNER_TEMP/msi-stage" "$RUNNER_TEMP/msi-out" "$current"

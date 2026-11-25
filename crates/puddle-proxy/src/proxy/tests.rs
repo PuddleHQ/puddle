@@ -348,7 +348,21 @@ async fn ssh_is_blocked_before_the_policy_is_asked() {
     policy.allow(&host("github.com"));
     let p = proxy(policy.clone(), StaticResolver::new());
     let req = request("github.com").with_protocol(ProtocolHint::Ssh);
-    let refusal = admit(&p, &req).await.unwrap_err();
+    let head = Head {
+        method: "CONNECT".into(),
+        uri: "github.com:443".into(),
+        version: "HTTP/1.1".into(),
+        headers: vec![],
+    };
+    let plan = plan::ConnectionPlan::new(
+        &p,
+        &p.seen(&req.workspace),
+        &req,
+        &head,
+        plan::GuestHints::of(&req, &head),
+    );
+    assert!(matches!(plan, plan::ConnectionPlan::SshRefused));
+    let (refusal, _) = admit::refuse_ssh(&p, &req).await;
     assert_eq!(header(&refusal, "x-puddle-decision"), Some("blocked"));
     assert_eq!(
         header(&refusal, "x-puddle-blocked"),
@@ -518,7 +532,7 @@ async fn the_audit_event_follows_each_admit_path() {
     // Name stage: SSH to a Git host's name never reaches the rules.
     let p = proxy(Arc::new(StaticPolicy::new()), resolver());
     let req = request("gitlab.com").with_protocol(ProtocolHint::Ssh);
-    let (_, e) = super::admit(&p, &req).await;
+    let (_, e) = admit::refuse_ssh(&p, &req).await;
     assert_eq!(
         kind(&e),
         (
@@ -1540,7 +1554,9 @@ mod termination {
         let proxy = terminating_proxy();
         for from_container in [false, true] {
             assert_eq!(
-                proxy.skipped(&at("github.com", 443, workspace()), from_container),
+                proxy
+                    .seen(&workspace())
+                    .skipped(&at("github.com", 443, workspace()), from_container),
                 None
             );
         }

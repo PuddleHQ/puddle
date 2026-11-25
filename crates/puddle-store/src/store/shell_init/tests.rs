@@ -28,7 +28,7 @@ fn store_with_events() -> (Store, Arc<Seen>) {
     let seen = Arc::new(Seen::default());
     let store = Store::open_in_memory(Arc::new(ManualClock::new(5)), Limits::default())
         .unwrap()
-        .with_events(Arc::clone(&seen) as Arc<dyn EventSink>);
+        .with_events(seen.clone());
     for name in ["a", "b"] {
         crate::testing::own(&store, &ws(name));
     }

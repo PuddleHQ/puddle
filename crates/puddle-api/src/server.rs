@@ -101,6 +101,9 @@ pub struct ApiConfig {
     /// Whether users other than the owner may sign in. Off by default: everything belongs to the
     /// one owner.
     pub multi_user: bool,
+    /// How often the admin reaper looks for deletions to finish when nobody asks. Tests shorten
+    /// it; the default is the production interval.
+    pub reap_every: Duration,
 }
 
 impl Default for ApiConfig {
@@ -117,6 +120,7 @@ impl Default for ApiConfig {
             ui,
             remote: None,
             multi_user: false,
+            reap_every: crate::admin::REAP_EVERY,
         }
     }
 }
@@ -514,23 +518,22 @@ fn tls_acceptor(identity: &crate::remote::TlsIdentity) -> Result<TlsAcceptor, Se
 }
 
 /// Binds the network listener and registers its address, before anything serves.
-async fn bind_network(
+fn bind_network(
     network: &NetworkListener,
     endpoints: &PuddleEndpoints,
 ) -> Result<BoundNetwork, ServeError> {
     let endpoint = network.endpoint();
     let requested = SocketAddr::new(endpoint.interface(), endpoint.port());
     let tls = tls_acceptor(network.tls())?;
-    let bound = async {
-        let listener = TcpListener::bind(requested).await?;
+    let bound = || {
+        let (listener, registration) = endpoints.bind(requested, EndpointKind::RemoteApi)?;
         let addr = listener.local_addr()?;
-        Ok::<_, io::Error>((listener, addr))
+        Ok::<_, io::Error>((TcpListener::from_std(listener)?, addr, registration))
     };
-    let (listener, addr) = bound.await.map_err(|source| ServeError::BindNetwork {
+    let (listener, addr, registration) = bound().map_err(|source| ServeError::BindNetwork {
         addr: requested,
         source,
     })?;
-    let registration = endpoints.register(addr, EndpointKind::RemoteApi);
     tracing::info!(%addr, "api listening for a reverse proxy (TLS)");
     Ok(BoundNetwork {
         listener,
@@ -609,12 +612,12 @@ async fn refresh_front_addresses(addresses: Arc<FrontAddresses>, mut stop: watch
 }
 
 /// Binds the network listener when remote serving has one.
-async fn bind_network_for(
+fn bind_network_for(
     config: &ApiConfig,
     endpoints: &PuddleEndpoints,
 ) -> Result<Option<BoundNetwork>, ServeError> {
     match config.remote.as_ref().and_then(Remote::network_listener) {
-        Some(network) => Ok(Some(bind_network(network, endpoints).await?)),
+        Some(network) => Ok(Some(bind_network(network, endpoints)?)),
         None => Ok(None),
     }
 }
@@ -693,6 +696,7 @@ fn admin_for(
         services.store.clone(),
         sign_in.clone(),
         services.workspaces.clone(),
+        config.reap_every,
     )))
 }
 
@@ -749,13 +753,14 @@ impl ApiServer {
             port: config.port,
             source,
         };
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, config.port))
-            .await
+        // Registered before anything can serve, so there is no moment a guest could reach it.
+        let (listener, registration) = services
+            .endpoints
+            .bind((Ipv4Addr::LOCALHOST, config.port), EndpointKind::Api)
             .map_err(bind_err)?;
         let addr = listener.local_addr().map_err(bind_err)?;
-        // Registered before anything can serve, so there is no moment a guest could reach it.
-        let registration = services.endpoints.register(addr, EndpointKind::Api);
-        let network = bind_network_for(&config, &services.endpoints).await?;
+        let listener = TcpListener::from_std(listener).map_err(bind_err)?;
+        let network = bind_network_for(&config, &services.endpoints)?;
         let fronts_names =
             OptionFuture::from(config.remote.as_ref().map(|r| front_blocks(r, &services))).await;
         let (stop, shutdown) = watch::channel(false);

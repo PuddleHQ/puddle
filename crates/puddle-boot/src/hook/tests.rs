@@ -11,7 +11,10 @@ fn the_report_lists_the_files_the_hook_put_back() {
         ..Default::default()
     };
     assert_eq!(report.replaced_files(), ["/etc/a b", "/etc/c"]);
-    assert_eq!(BootReport::default().replaced_files(), [] as [&str; 0]);
+    assert_eq!(
+        BootReport::default().replaced_files(),
+        <[&str; 0]>::default()
+    );
 }
 
 #[test]
@@ -77,9 +80,12 @@ fn the_report_names_the_kubernetes_tools_the_hook_found() {
     );
     assert_eq!(
         said("puddle-boot: ready\n").kubernetes_tools(),
-        [] as [&str; 0]
+        <[&str; 0]>::default()
     );
-    assert_eq!(BootReport::default().kubernetes_tools(), [] as [&str; 0]);
+    assert_eq!(
+        BootReport::default().kubernetes_tools(),
+        <[&str; 0]>::default()
+    );
 }
 
 #[test]

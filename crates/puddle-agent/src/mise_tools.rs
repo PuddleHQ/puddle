@@ -38,6 +38,7 @@ use std::path::{Component, Path, PathBuf};
 
 use puddle_types::{ToolName, ToolVersion, ToolsFileHash};
 
+use crate::cli::UsageError;
 use crate::download::sha256_of;
 use crate::mise_install::{CONFIG_FILES, MiseFailed, config_folders, last_line};
 
@@ -89,16 +90,17 @@ impl Request {
     /// # Errors
     ///
     /// The usage text for anything else, with the refused value named.
-    // string-error-ok: the usage text is the whole contract: main prints it to stderr and exits 2, nothing matches on a kind
-    pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<Self, String> {
+    pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<Self, UsageError> {
         let args: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
-        let refuse = |why: String| format!("{why}\n{USAGE}");
-        let bad = |e: puddle_types::ValidationError| refuse(e.to_string());
+        let bad = |reason| UsageError::Invalid {
+            reason,
+            usage: USAGE,
+        };
         let [root, op, rest @ ..] = args.as_slice() else {
-            return Err(USAGE.to_owned());
+            return Err(UsageError::Shape(USAGE));
         };
         if root.is_empty() {
-            return Err(USAGE.to_owned());
+            return Err(UsageError::Shape(USAGE));
         }
         let operation = match (*op, rest) {
             ("list", []) => Operation::List,
@@ -113,7 +115,7 @@ impl Request {
             ),
             ("registry", []) => Operation::Registry,
             ("versions", [name]) => Operation::Versions(ToolName::new(name).map_err(bad)?),
-            _ => return Err(USAGE.to_owned()),
+            _ => return Err(UsageError::Shape(USAGE)),
         };
         Ok(Self {
             root: PathBuf::from(root),

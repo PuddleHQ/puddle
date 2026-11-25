@@ -19,9 +19,7 @@ use std::net::{SocketAddr, TcpListener};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use puddle_api::{
-    ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, Services, SettingsRepo,
-};
+use puddle_api::{ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, Services};
 use puddle_boot::{
     BOOT_SH, BootHook, BootPlan, Gate, GatedSandbox, with_boot_mounts, write_assets,
 };
@@ -202,7 +200,7 @@ async fn start_api(endpoints: &PuddleEndpoints) -> puddle_api::RunningApi {
         Arc::new(
             Store::open_in_memory(Arc::new(ManualClock::new(NOW)), Limits::default()).unwrap(),
         ),
-        Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>,
+        Arc::new(MemorySettings::default()),
         Arc::new(EventHub::default()),
         Arc::new(ManualClock::new(NOW)),
     )

@@ -74,7 +74,7 @@ impl Forwards {
         let mut tcp = match connect(port).await {
             Ok(tcp) => tcp,
             Err(reason) => {
-                answer(&mut stream, &Answer::refused(&reason)).await;
+                answer(&mut stream, &Answer::refused(&reason.to_string())).await;
                 return;
             }
         };
@@ -128,18 +128,37 @@ where
     true
 }
 
-/// What the user is told when the connect failed with `failure`.
-pub(crate) fn failure_text(failure: io::ErrorKind, port: u16) -> String {
-    if failure == io::ErrorKind::ConnectionRefused {
-        format!("nothing in the workspace listens on port {port}")
-    } else {
-        format!("the workspace did not take a connection on port {port} ({failure})")
+/// Why the connect to a guest port failed; it displays as the reason the user is told.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub(crate) enum ConnectFailure {
+    /// Nothing listens on the port, on either address family.
+    #[error("nothing in the workspace listens on port {port}")]
+    NothingListens {
+        /// The guest port.
+        port: u16,
+    },
+    /// Some other failure, or the connect took too long.
+    #[error("the workspace did not take a connection on port {port} ({kind})")]
+    Failed {
+        /// The guest port.
+        port: u16,
+        /// What went wrong.
+        kind: io::ErrorKind,
+    },
+}
+
+impl ConnectFailure {
+    fn new(kind: io::ErrorKind, port: u16) -> Self {
+        if kind == io::ErrorKind::ConnectionRefused {
+            Self::NothingListens { port }
+        } else {
+            Self::Failed { port, kind }
+        }
     }
 }
 
 /// Connects to `port` on the guest's loopback, IPv4 then IPv6; the reason is for the user.
-// string-error-ok: the text is only shown to the user as the reason a connection failed; no caller branches on a kind
-pub(crate) async fn connect(port: u16) -> Result<TcpStream, String> {
+pub(crate) async fn connect(port: u16) -> Result<TcpStream, ConnectFailure> {
     let v4 = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let v6 = SocketAddr::from((Ipv6Addr::LOCALHOST, port));
     // What went wrong, preferring a failure other than "refused": one family refusing is the
@@ -153,7 +172,7 @@ pub(crate) async fn connect(port: u16) -> Result<TcpStream, String> {
             Err(_) => failure = io::ErrorKind::TimedOut,
         }
     }
-    Err(failure_text(failure, port))
+    Err(ConnectFailure::new(failure, port))
 }
 
 #[cfg(test)]

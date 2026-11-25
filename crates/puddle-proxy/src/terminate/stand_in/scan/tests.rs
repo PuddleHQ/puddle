@@ -441,7 +441,7 @@ fn rig(on: bool) -> Rig {
     let sink = Arc::new(CollectingSink::default());
     let report = Arc::new(AnswerReport::new(
         Arc::new(ForeignCredentialWarning::new(move || on)),
-        Arc::clone(&sink) as Arc<dyn EventSink>,
+        sink.clone(),
         workspace(),
         host(),
     ));

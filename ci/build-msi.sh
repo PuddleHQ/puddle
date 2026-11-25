@@ -12,12 +12,19 @@
 #   ci/build-msi.sh shell <stage-dir>
 #       Builds the shell in release mode (the slow step). Needs `cargo tauri` on PATH
 #       (ci/fetch-tauri-cli.sh).
+#   ci/build-msi.sh version
+#       Prints the version the other steps build (the workspace's, or the stamp below).
 #   ci/build-msi.sh bundle <stage-dir> <out-dir> [<version>]
 #       Has Tauri's WiX bundler pack the built shell with the staged files into
 #       <out-dir>/Puddle_<version>_x64_en-US.msi, from the template in crates/puddle-app/wix/.
 #       <version> is numeric `major.minor.patch` and defaults to the workspace's. The program's own
 #       version resource stays the workspace's whatever <version> is. First seeds the WiX toolset in the
 #       folder Tauri reads (ci/fetch-wix.sh: retry, cache, checksum), so Tauri never downloads it itself.
+#
+# Version stamp: while the workspace is the unversioned develop line (0.0.0), setting BUILD_NUMBER
+# (the CI run number) makes every program this script compiles report 0.0.<BUILD_NUMBER> and the
+# default package version the same, so a later build is strictly newer than an earlier one
+# (the upgrade test requires it). A numbered workspace version is left alone.
 #
 # Why the staged files are named in a generated overlay and not in tauri.conf.json: Tauri checks
 # every resource and sidecar path on each build of the crate, so listing them in the committed file
@@ -49,6 +56,8 @@ stage() {
     [ ! -e "$stage" ] || fail "$stage exists"
     [ -f "$root/ui/build/index.html" ] || fail "the UI is not built: cd ui && npm ci && npm run build"
     cd "$root"
+    PUDDLE_BUILD_VERSION=$(workspace_version)
+    export PUDDLE_BUILD_VERSION
     mkdir -p "$stage/bin"
     cargo xtask runtime --out "$stage/runtime"
     cargo xtask code-server --out "$stage/runtime/code-server" --licenses "$stage/runtime/licenses"
@@ -84,14 +93,26 @@ staged() {
     [ -d "$1/runtime" ] && [ -f "$1/bin/puddle-$triple.exe" ] || fail "$1 is not a staged folder (run '$0 stage' first)"
 }
 
-workspace_version() { awk -F'"' '/^version = / { print $2; exit }' "$root/Cargo.toml"; }
+workspace_version() {
+    cargo_version=$(awk -F'"' '/^version = / { print $2; exit }' "$root/Cargo.toml")
+    if [ "$cargo_version" = 0.0.0 ] && [ -n "${BUILD_NUMBER:-}" ]; then
+        case "$BUILD_NUMBER" in
+        *[!0-9]*) fail "BUILD_NUMBER '$BUILD_NUMBER' is not a number" ;;
+        esac
+        echo "0.0.$BUILD_NUMBER"
+    else
+        echo "$cargo_version"
+    fi
+}
 
 # The release build of the shell, without packing it: the slow step, done once.
 shell() {
     [ "$#" -eq 1 ] || fail "usage: $0 shell <stage-dir>"
     staged "$1"
     stage=$(cd "$1" && pwd)
-    cfg=$(overlay "$stage" "$(workspace_version)")
+    PUDDLE_BUILD_VERSION=$(workspace_version)
+    export PUDDLE_BUILD_VERSION
+    cfg=$(overlay "$stage" "$PUDDLE_BUILD_VERSION")
     cd "$app"
     cargo tauri build --no-bundle --ci --config "$cfg" -- --locked
 }
@@ -128,12 +149,13 @@ bundle() {
     echo "build-msi: $out/$(basename "$1")"
 }
 
-[ "$#" -ge 1 ] || fail "usage: $0 stage|shell|bundle ..."
+[ "$#" -ge 1 ] || fail "usage: $0 stage|shell|bundle|version ..."
 cmd=$1
 shift
 case "$cmd" in
 stage) stage "$@" ;;
 shell) shell "$@" ;;
 bundle) bundle "$@" ;;
+version) workspace_version ;;
 *) fail "unknown command $cmd" ;;
 esac

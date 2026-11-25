@@ -6,11 +6,11 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use puddle_api::{
-    FakeNetworkHealth, HostNetworkHealth, NetworkHealthService, PullProxyState,
-    forward_network_changes, forward_proxy_sign_in_failures,
+    FakeNetworkHealth, HostNetworkHealth, PullProxyState, forward_network_changes,
+    forward_proxy_sign_in_failures,
 };
 use puddle_certs::{CorporateRoots, SOURCES, StoreSnapshot};
-use puddle_store::{Clock, ManualClock};
+use puddle_store::ManualClock;
 use puddle_types::fixture::{assert_absent, canary, password};
 use puddle_upstream::{
     BasicAuth, Behaviour, Chain, ChainConfig, Config, Credentials, Destination, Discovery, FakeOs,
@@ -44,7 +44,7 @@ async fn the_report_needs_the_token() {
 #[tokio::test]
 async fn the_fake_serves_a_direct_machine_stamped_with_the_clock_until_it_is_told_otherwise() {
     let clock = Arc::new(ManualClock::new(START_MS));
-    let fake = Arc::new(FakeNetworkHealth::new(clock.clone() as Arc<dyn Clock>));
+    let fake = Arc::new(FakeNetworkHealth::new(clock.clone()));
     let api = start_with_network(fake.clone()).await;
     let reply = api.get("/api/network-health").await;
     assert_eq!(reply.status, 200, "{}", reply.body);
@@ -121,7 +121,7 @@ async fn the_real_report_shows_the_setup_and_never_a_secret() {
 
     let clock = Arc::new(ManualClock::new(START_MS));
     let health = Arc::new(
-        HostNetworkHealth::new(discovery.clone(), clock as Arc<dyn Clock>)
+        HostNetworkHealth::new(discovery.clone(), clock)
             .with_chain(chain)
             .with_company_signals(Arc::new(
                 puddle_netpolicy::StaticSignals::new()
@@ -134,7 +134,7 @@ async fn the_real_report_shows_the_setup_and_never_a_secret() {
         SystemTime::now(),
     )));
     health.set_pull_proxy(PullProxyState::ViaUpstream);
-    let api = start_with_network(health.clone() as Arc<dyn NetworkHealthService>).await;
+    let api = start_with_network(health.clone()).await;
 
     let reply = api.get("/api/network-health").await;
     assert_eq!(reply.status, 200, "{}", reply.body);
@@ -212,7 +212,7 @@ async fn a_machine_with_no_proxy_and_an_issuing_ca_reports_no_proxy_and_intermed
         .await;
     assert_eq!(decision.route.hops(), [Hop::Direct]);
     let clock = Arc::new(ManualClock::new(START_MS));
-    let health = Arc::new(HostNetworkHealth::new(discovery, clock as Arc<dyn Clock>));
+    let health = Arc::new(HostNetworkHealth::new(discovery, clock));
     health.set_roots(Arc::new(CorporateRoots::select(
         &snapshot,
         SystemTime::now(),
@@ -247,7 +247,7 @@ async fn puddles_own_proxy_modes_are_reported_as_they_were_set() {
             },
         );
         let clock = Arc::new(ManualClock::new(START_MS));
-        let health = Arc::new(HostNetworkHealth::new(discovery, clock as Arc<dyn Clock>));
+        let health = Arc::new(HostNetworkHealth::new(discovery, clock));
         let api = start_with_network(health).await;
         api.get("/api/network-health").await.json()
     };
@@ -288,8 +288,7 @@ async fn sign_in_result(behaviour: Behaviour, auth: Arc<dyn puddle_upstream::Pro
         .connect(&Request::new(&dest, Form::Tunnel, &[]).name_ok(true))
         .await;
     let clock = Arc::new(ManualClock::new(START_MS));
-    let health =
-        Arc::new(HostNetworkHealth::new(discovery, clock as Arc<dyn Clock>).with_chain(chain));
+    let health = Arc::new(HostNetworkHealth::new(discovery, clock).with_chain(chain));
     let api = start_with_network(health).await;
     let body = api.get("/api/network-health").await.json();
     drop(target);
@@ -347,7 +346,7 @@ async fn a_setup_that_does_not_work_as_set_is_listed_in_the_report_without_a_sec
     let discovery = Discovery::new(os, Config::default());
     assert!(discovery.watch().is_none());
     let clock = Arc::new(ManualClock::new(START_MS));
-    let health = Arc::new(HostNetworkHealth::new(discovery, clock as Arc<dyn Clock>));
+    let health = Arc::new(HostNetworkHealth::new(discovery, clock));
     let api = start_with_network(health).await;
 
     let reply = api.get("/api/network-health").await;
@@ -381,11 +380,7 @@ async fn a_setup_that_does_not_work_as_set_is_listed_in_the_report_without_a_sec
     // A healthy setup lists nothing.
     let quiet = Discovery::new(FakeOs::new(ProxyConfig::default()), Config::default());
     let clock = Arc::new(ManualClock::new(START_MS));
-    let api = start_with_network(Arc::new(HostNetworkHealth::new(
-        quiet,
-        clock as Arc<dyn Clock>,
-    )))
-    .await;
+    let api = start_with_network(Arc::new(HostNetworkHealth::new(quiet, clock))).await;
     assert_eq!(
         api.get("/api/network-health").await.json()["proxy"]["problems"],
         json!([])
@@ -396,7 +391,7 @@ async fn a_setup_that_does_not_work_as_set_is_listed_in_the_report_without_a_sec
 async fn a_pull_proxy_that_is_off_is_never_reported_as_using_the_upstream() {
     let discovery = Discovery::new(FakeOs::new(ProxyConfig::default()), Config::default());
     let clock = Arc::new(ManualClock::new(START_MS));
-    let health = Arc::new(HostNetworkHealth::new(discovery, clock as Arc<dyn Clock>));
+    let health = Arc::new(HostNetworkHealth::new(discovery, clock));
     health.set_pull_proxy(PullProxyState::Off);
     let api = start_with_network(health).await;
     let body = api.get("/api/network-health").await.json();
@@ -412,7 +407,7 @@ async fn a_pull_proxy_that_is_off_is_never_reported_as_using_the_upstream() {
 async fn a_pull_proxy_that_leaves_directly_is_active_without_the_upstream() {
     let discovery = Discovery::new(FakeOs::new(ProxyConfig::default()), Config::default());
     let clock = Arc::new(ManualClock::new(START_MS));
-    let health = Arc::new(HostNetworkHealth::new(discovery, clock as Arc<dyn Clock>));
+    let health = Arc::new(HostNetworkHealth::new(discovery, clock));
     health.set_pull_proxy(PullProxyState::Direct);
     let api = start_with_network(health).await;
     let body = api.get("/api/network-health").await.json();
@@ -427,10 +422,7 @@ async fn a_network_change_is_an_event_and_the_next_report_shows_it() {
     let os = FakeOs::new(ProxyConfig::default());
     let discovery = Discovery::new(os, Config::default());
     let clock = Arc::new(ManualClock::new(START_MS));
-    let health = Arc::new(HostNetworkHealth::new(
-        discovery.clone(),
-        clock as Arc<dyn Clock>,
-    ));
+    let health = Arc::new(HostNetworkHealth::new(discovery.clone(), clock));
     let api = start_with_network(health).await;
     let _forwarder = forward_network_changes(&discovery, api.events.clone());
     let mut stream = Stream::open(&api, "").await;
@@ -471,9 +463,7 @@ async fn a_proxy_that_turns_the_sign_in_down_is_an_event_naming_the_proxy_and_th
             .with_timeouts(Duration::from_millis(500), Duration::from_millis(400)),
     );
     let clock = Arc::new(ManualClock::new(START_MS));
-    let health = Arc::new(
-        HostNetworkHealth::new(discovery, clock as Arc<dyn Clock>).with_chain(chain.clone()),
-    );
+    let health = Arc::new(HostNetworkHealth::new(discovery, clock).with_chain(chain.clone()));
     let api = start_with_network(health).await;
     let _forwarder = forward_proxy_sign_in_failures(&chain, api.events.clone());
     let mut stream = Stream::open(&api, "").await;
@@ -501,10 +491,7 @@ async fn a_proxy_that_turns_the_sign_in_down_is_an_event_naming_the_proxy_and_th
 async fn the_sign_in_failure_forwarder_ends_with_the_chain_it_listens_to() {
     let discovery = Discovery::new(FakeOs::new(ProxyConfig::default()), Config::default());
     let chain = Chain::new(discovery, Arc::new(puddle_upstream::NoAuth));
-    let forwarder = forward_proxy_sign_in_failures(
-        &chain,
-        Arc::new(puddle_types::NullSink) as Arc<dyn puddle_types::EventSink>,
-    );
+    let forwarder = forward_proxy_sign_in_failures(&chain, Arc::new(puddle_types::NullSink));
     drop(chain);
     tokio::time::timeout(Duration::from_secs(2), forwarder)
         .await
@@ -516,11 +503,11 @@ async fn the_sign_in_failure_forwarder_ends_with_the_chain_it_listens_to() {
 async fn company_certificates_the_hosts_own_tls_checks_left_out_are_listed_without_a_secret() {
     let discovery = Discovery::new(FakeOs::new(ProxyConfig::default()), Config::default());
     let clock = Arc::new(ManualClock::new(START_MS));
-    let health = Arc::new(HostNetworkHealth::new(discovery, clock as Arc<dyn Clock>));
+    let health = Arc::new(HostNetworkHealth::new(discovery, clock));
     let roots = CorporateRoots::select(&root_snapshot(), SystemTime::now());
     let synced = roots.certificates()[0].der().to_vec();
     // Before anything is recorded the list is there and empty.
-    let api = start_with_network(health.clone() as Arc<dyn NetworkHealthService>).await;
+    let api = start_with_network(health.clone()).await;
     assert_eq!(
         api.get("/api/network-health").await.json()["roots"]["left_out_of_tls"],
         json!([])

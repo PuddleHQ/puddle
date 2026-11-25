@@ -152,11 +152,7 @@ impl SshRig {
         keys: Vec<GitSshHostKey>,
     ) -> Self {
         let upstream = Arc::new(upstream);
-        let git_ssh = GitSsh::new(
-            Arc::clone(&upstream) as Arc<dyn GitSshUpstream>,
-            keys.clone(),
-        )
-        .with_limits(limits);
+        let git_ssh = GitSsh::new(upstream.clone(), keys.clone()).with_limits(limits);
         let host: Handler = Arc::new(|_: &Recorded| Reply::ok("never asked"));
         Self::serving(git_ssh, &keys, host, &[], upstream).await
     }
@@ -1337,7 +1333,7 @@ impl SshRig {
             asked: Mutex::new(Vec::new()),
         });
         let keys = vec![host_key()];
-        let upstream = GitSshHttps::new(Arc::clone(&accounts) as Arc<dyn GitSshAccounts>);
+        let upstream = GitSshHttps::new(accounts.clone());
         let git = GitSsh::new(Arc::new(upstream), keys.clone());
         (
             Self::serving(git, &keys, host, allow, Arc::default()).await,
@@ -1438,10 +1434,11 @@ async fn a_push_a_rule_on_method_and_path_refuses_inside_the_https_leg_is_record
         .unwrap(),
     ]);
     let keys = vec![host_key()];
-    let upstream = GitSshHttps::new(Arc::new(Accounts {
+    let accounts = Arc::new(Accounts {
         account: GitSshAccount::Unnamed,
         asked: Mutex::new(Vec::new()),
-    }) as Arc<dyn GitSshAccounts>);
+    });
+    let upstream = GitSshHttps::new(accounts);
     let t = SshRig::serving_ruled(
         GitSsh::new(Arc::new(upstream), keys.clone()),
         &keys,
@@ -1651,10 +1648,7 @@ async fn a_workspace_with_keys_of_its_own_start_is_served_with_them_and_not_the_
     let keys = Arc::new(start_keys().clone());
     let decoy = host_key();
     let upstream = Arc::new(Recording::default());
-    let git_ssh = GitSsh::new(
-        Arc::clone(&upstream) as Arc<dyn GitSshUpstream>,
-        vec![decoy.clone()],
-    );
+    let git_ssh = GitSsh::new(upstream.clone(), vec![decoy.clone()]);
     let world = GitRig::world();
     let pki = Pki::new();
     let server = crate::terminate_support::FakeServer::tls(

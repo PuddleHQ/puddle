@@ -639,20 +639,23 @@ fn run(cmd: &Command) -> Result<(), String> {
         .ca
         .clone()
         .unwrap_or_else(|| info_path.with_extension("ca.pem"));
-    let cleanup = CleanupOnSignal::start()?;
-    let lab = Lab::start(&cmd.plan, &ca)?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| e.to_string())?;
-    // Listening before the info file exists: a script that signals the lab as soon as it is ready
-    // must get a clean stop, not the default action of a signal nobody handles yet.
-    let signals = {
-        let _entered = runtime.enter();
-        Signals::listen()?
+    // The guard covers the start only: when the scope ends the run's own handlers are in place,
+    // and its pieces stop on drop from there on.
+    let (lab, runtime, signals) = {
+        let _cleanup = CleanupOnSignal::start()?;
+        let lab = Lab::start(&cmd.plan, &ca)?;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| e.to_string())?;
+        // Listening before the info file exists: a script that signals the lab as soon as it is
+        // ready must get a clean stop, not the default action of a signal nobody handles yet.
+        let signals = {
+            let _entered = runtime.enter();
+            Signals::listen()?
+        };
+        (lab, runtime, signals)
     };
-    // The run's own handlers are in place, and its pieces stop on drop from here on.
-    drop(cleanup);
     // Written last and in one go: a script waits for the file.
     let part = info_path.with_extension("part");
     std::fs::write(&part, lab.info().to_string())

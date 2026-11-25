@@ -242,3 +242,20 @@ describe("the hint kept in the page", () => {
     expect(customFrom(null)).toEqual(NO_CUSTOM);
   });
 });
+
+describe("status colours", () => {
+  it("each preset has its own success, danger and warning in both schemes", () => {
+    for (const scheme of ["light", "dark"] as const) {
+      const seen = new Map<string, string>();
+      for (const preset of PRESETS) {
+        const t = PALETTES[preset][scheme];
+        const key = [t.success, t.danger, t.warning].join(" ");
+        expect(
+          seen.get(key),
+          `${preset} ${scheme} repeats ${seen.get(key)}`,
+        ).toBeUndefined();
+        seen.set(key, preset);
+      }
+    }
+  });
+});

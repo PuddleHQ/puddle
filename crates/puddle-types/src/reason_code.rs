@@ -104,11 +104,15 @@ pub enum ReasonCode {
     ProtocolUnsupported,
     /// An HTTP/2 connection past its limit of open streams.
     StreamLimit,
+    /// The host holds no termination for the workspace (it stopped, or a start failed), so the
+    /// proxy refuses every connection of it instead of passing them with no rules on method and
+    /// path.
+    WorkspaceNotRunning,
 }
 
 impl ReasonCode {
     /// Every code, in declaration order.
-    pub const ALL: [Self; 41] = [
+    pub const ALL: [Self; 42] = [
         Self::Rule,
         Self::NoRule,
         Self::Suppressed,
@@ -150,6 +154,7 @@ impl ReasonCode {
         Self::RequestTimeout,
         Self::ProtocolUnsupported,
         Self::StreamLimit,
+        Self::WorkspaceNotRunning,
     ];
 
     /// The name the record and the API use.
@@ -197,6 +202,7 @@ impl ReasonCode {
             Self::RequestTimeout => "request_timeout",
             Self::ProtocolUnsupported => "protocol_unsupported",
             Self::StreamLimit => "stream_limit",
+            Self::WorkspaceNotRunning => "workspace_not_running",
         }
     }
 }

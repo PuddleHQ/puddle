@@ -31,8 +31,8 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWrite
 use crate::counted::ByteCounts;
 use crate::http::{Body, Head};
 use crate::proxy::{
-    ClientReader, Proxy, ProxyConfig, Refusal, WorkspaceHandler, admit, parse_request,
-    read_request, refuse, refuse_by_request_rule,
+    ClientReader, Proxy, ProxyConfig, Refusal, Seen, WorkspaceHandler, admit, parse_request,
+    read_request, refuse, refuse_by_request_rule, refuse_not_running,
 };
 use crate::request_target::Target;
 use crate::terminate::h1::{
@@ -280,6 +280,13 @@ where
     let target = &incoming.target;
     let request = EgressRequest::new(handler.workspace.clone(), target.host.clone(), target.port)
         .with_protocol(ProtocolHint::Http);
+    let seen = proxy.seen(&request.workspace);
+    if matches!(seen, Seen::NotRunning) {
+        return (
+            Flow::Stop,
+            not_running(guest.writer, &request, incoming).await,
+        );
+    }
     let (admitted, mut event) = match proxy
         .admit_distribution_point(
             &request,
@@ -304,7 +311,7 @@ where
         }
     };
     if let Some((refusal, change)) = refuse_by_request_rule(
-        &proxy.seen(&request.workspace),
+        &seen,
         &request,
         &incoming.head,
         Some(&incoming.parsed.target),
@@ -340,6 +347,21 @@ where
         *kept = Some(conn);
     }
     (flow, event)
+}
+
+/// Answers a plain-HTTP request of a workspace the host holds no termination for.
+async fn not_running<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    request: &EgressRequest,
+    incoming: &Incoming,
+) -> ConnectionEvent {
+    let (refusal, mut event) = refuse_not_running(request);
+    event.http = Some(HttpRequestLine::new(
+        incoming.head.method.as_str(),
+        &incoming.parsed.target,
+    ));
+    refuse(writer, &refusal).await;
+    event
 }
 
 /// Connects out for a plain-HTTP request to `target` and starts HTTP/1.1 on the connection.

@@ -21161,7 +21161,8 @@
           "head_too_large",
           "request_timeout",
           "protocol_unsupported",
-          "stream_limit"
+          "stream_limit",
+          "workspace_not_running"
         ]
       },
       "ReasonPrefix": {

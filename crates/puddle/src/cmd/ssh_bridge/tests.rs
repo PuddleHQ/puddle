@@ -29,3 +29,25 @@ fn causes_are_chained() {
         "the connection to the workspace broke: os said no"
     );
 }
+
+#[test]
+fn a_finished_session_is_reported_only_when_asked() {
+    use puddle_ssh::bridge::BridgeError;
+    let done: Result<_, BridgeError> = Ok("ServerClosed, sent 3");
+    let mut quiet = Vec::new();
+    assert_eq!(finish(&done, false, &mut quiet), ExitCode::SUCCESS);
+    assert_eq!(quiet, Vec::<u8>::new());
+    let mut loud = Vec::new();
+    assert_eq!(finish(&done, true, &mut loud), ExitCode::SUCCESS);
+    let line = String::from_utf8(loud).unwrap();
+    assert_eq!(line, "puddle: ssh bridge ended: \"ServerClosed, sent 3\"\n");
+    let mut failed = Vec::new();
+    assert_eq!(
+        finish(&Err::<(), _>(BridgeError::NotPuddle), false, &mut failed),
+        ExitCode::FAILURE
+    );
+    assert_eq!(
+        String::from_utf8(failed).unwrap(),
+        "puddle: the SSH endpoint did not answer as Puddle does\n"
+    );
+}

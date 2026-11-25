@@ -69,7 +69,7 @@ import { fileURLToPath } from "node:url";
 import { Uia } from "./uia.mjs";
 import { onChildEnd } from "./child-end.mjs";
 import { GiveUp, until } from "./poll.mjs";
-import { debugPortPolicy, inspectTerminal } from "./terminal-render.mjs";
+import { debugPortPolicy, inspectContextMenu, inspectTerminal } from "./terminal-render.mjs";
 import { breakThePage } from "./broken-page.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -656,6 +656,16 @@ async function terminalRendering() {
   for (const c of report.checks) check(`terminal rendering: ${c.name}`, c.ok, c.detail);
   writeFileSync(join(out, "terminal-render.json"), JSON.stringify(report.dump, null, 2));
   if (report.checks.some((c) => !c.ok)) screenshot("terminal-rendering");
+  let menu;
+  try {
+    menu = await inspectContextMenu(DEBUG_PORT);
+  } catch (err) {
+    check("the terminal's right-click menu could be driven over DevTools", false, String(err?.message ?? err));
+    return;
+  }
+  for (const c of menu.checks) check(`terminal menu: ${c.name}`, c.ok, c.detail);
+  writeFileSync(join(out, "terminal-menu.json"), JSON.stringify(menu.dump, null, 2));
+  if (menu.checks.some((c) => !c.ok)) screenshot("terminal-menu");
 }
 
 /** The guest's clock, in seconds. */

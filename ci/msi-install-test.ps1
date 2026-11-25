@@ -1083,7 +1083,7 @@ $StartMenuLink = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\$
 # Whether a shortcut's target is the installed program; the problem as text, or $null.
 function Find-ShortcutProblem([string]$Target, [string]$Expected) {
     if ([string]::IsNullOrEmpty($Target)) { return 'the Start menu shortcut has no target' }
-    if ($Target -ine $Expected) { return "the Start menu shortcut opens $Target, not $Expected" }
+    if ($Target -ne $Expected) { return "the Start menu shortcut opens $Target, not $Expected" }
     $null
 }
 

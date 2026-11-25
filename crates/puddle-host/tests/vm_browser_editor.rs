@@ -913,8 +913,7 @@ async fn vm_browser_code_server_first_open_follows_the_systems_colour_scheme_and
     guest(&runtime, &sandbox, EDITOR_UP).await;
 
     // The file the agent seeded before the server's first start.
-    let settings_file =
-        format!("/workspaces/{name}/.puddle/code-server/user-data/User/settings.json");
+    let settings_file = "/workspace/.puddle/code-server/user-data/User/settings.json".to_string();
     let seeded = guest(&runtime, &sandbox, &format!("cat {settings_file}")).await;
     assert!(
         seeded.contains(r#""window.autoDetectColorScheme": true"#),
@@ -1375,7 +1374,7 @@ impl Editor {
             .await;
         assert_eq!(end["step"], "done", "{end}");
         let editor = Self {
-            root: format!("/workspaces/{name}"),
+            root: "/workspace".to_string(),
             vm,
             shell,
             api,

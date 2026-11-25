@@ -99,7 +99,7 @@ impl Proxy {
 pub(crate) struct GuestHints {
     /// The request announced SSH, or its first bytes were an SSH identification line.
     ssh: bool,
-    /// The agent marked the client as in a container (PX-65).
+    /// The agent marked the client as in a container (`x-puddle-origin: container`).
     from_container: bool,
 }
 

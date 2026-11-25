@@ -29,6 +29,7 @@ mod jwt_logins;
 mod log_canary;
 mod logins;
 mod openai_login;
+mod parity;
 mod perf;
 mod plain_http_window;
 mod real_az;

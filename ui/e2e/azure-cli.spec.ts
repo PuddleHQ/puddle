@@ -96,8 +96,8 @@ test("adds the Azure CLI to an identity by tenant and organisation, and checks i
   await expect(dialog).toBeHidden();
   await expect(
     page
-      .locator("[data-identity-id]")
-      .filter({ has: page.getByRole("heading", { name: "Fabrikam" }) }),
+      .locator("tr[data-identity-id]")
+      .filter({ has: page.getByRole("link", { name: "Fabrikam" }) }),
   ).toContainText("Azure CLI · fabrikam.com");
 });
 

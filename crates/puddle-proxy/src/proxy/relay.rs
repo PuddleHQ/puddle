@@ -20,7 +20,7 @@ use crate::token_gate::{self};
 use crate::upstream::connect_out;
 use puddle_upstream::RouteWatch;
 
-use super::admit::{note_block, refuse_ssh};
+use super::admit::{note_block, refuse_not_running, refuse_ssh};
 use super::plan::{Admitted, ConnectionPlan, GuestHints, Splice};
 use super::{GuestReader, Proxy, WorkspaceHandler, admit, apply_reason, refuse, tunnel};
 
@@ -45,10 +45,11 @@ pub(super) async fn relay(
         } => {
             return crate::ssh_git::serve(handler, reader, request, git, &termination, host).await;
         }
+        ConnectionPlan::NotRunning => {
+            return refused(&mut reader, refuse_not_running(request)).await;
+        }
         ConnectionPlan::SshRefused => {
-            let (refusal, event) = refuse_ssh(proxy, request).await;
-            refuse(reader.get_mut(), &refusal).await;
-            return event;
+            return refused(&mut reader, refuse_ssh(proxy, request).await).await;
         }
         ConnectionPlan::Admit(plan) => plan,
     };
@@ -137,6 +138,15 @@ pub(super) async fn relay(
         &mut event,
     )
     .await;
+    event
+}
+
+/// Sends a refusal made before admission and returns the audit record that goes with it.
+async fn refused(
+    reader: &mut GuestReader,
+    (refusal, event): (super::Refusal, ConnectionEvent),
+) -> ConnectionEvent {
+    refuse(reader.get_mut(), &refusal).await;
     event
 }
 

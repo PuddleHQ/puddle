@@ -2,7 +2,7 @@
 //! The sampler's Windows readings: which processes of the machine are Puddle's, and the machine's
 //! memory and commit charge. The decisions (a process's name, the prefix match, the tree below the
 //! run's own server, the units) are plain functions the tests call on any system; the system
-//! calls that fill them are in [`native`] and exist only on Windows.
+//! calls that fill them are in the `native` module and exist only on Windows.
 
 /// One process of a snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]

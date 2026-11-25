@@ -125,6 +125,9 @@ pub(crate) struct Splice {
 
 /// What the proxy does with one `CONNECT` whose destination is known.
 pub(crate) enum ConnectionPlan<'p> {
+    /// The host holds no termination for the workspace: refused before anything else, so a guest
+    /// whose VM outlives its stop reaches nothing.
+    NotRunning,
     /// Puddle's own SSH server for a Git host (no admission: its upstream leg is admitted).
     GitSsh {
         git: &'p GitSsh,
@@ -165,6 +168,9 @@ impl<'p> ConnectionPlan<'p> {
         head: &Head,
         hints: GuestHints,
     ) -> Self {
+        if matches!(seen, Seen::NotRunning) {
+            return Self::NotRunning;
+        }
         let termination = seen.termination();
         // A client that waits for the server's identification before it sends its own
         // (`ssh-keyscan`) sends nothing that marks it as SSH. Port 22 of a Git host whose SSH

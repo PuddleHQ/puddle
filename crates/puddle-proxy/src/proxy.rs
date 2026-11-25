@@ -47,10 +47,10 @@ mod refusal;
 mod relay;
 
 use admit::resolve_destination;
-pub(crate) use admit::{Unresolved, admit};
+pub(crate) use admit::{Unresolved, admit, refuse_not_running};
 pub use config::ProxyConfig;
 pub(crate) use forward::{connect_first, tunnel};
-use plan::Seen;
+pub(crate) use plan::Seen;
 pub(crate) use plan::is_git_ssh_name;
 pub(crate) use refusal::{Refusal, refuse};
 use relay::relay;

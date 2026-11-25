@@ -444,7 +444,7 @@ async function firstRunToCreateForm() {
       await copyTheReport();
     }
     if (step.id === "interception") {
-      const mode = await uia.waitFor("the recommended interception mode", { window: MAIN, role: "radio", nameRegex: "except a known list" });
+      const mode = await uia.waitFor("the recommended interception mode", { window: MAIN, role: "radio", nameRegex: "except sites known to break" });
       check("the recommended interception mode is preselected", mode.checked === true, JSON.stringify(mode));
     }
     if (step.id === "connect") {

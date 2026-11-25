@@ -2021,6 +2021,7 @@ dependencies = [
  "puddle-agent-proto",
  "puddle-fd-limit",
  "puddle-fs",
+ "puddle-ipc",
  "puddle-log",
  "puddle-types",
  "rustix",
@@ -2099,6 +2100,7 @@ version = "0.0.0"
 dependencies = [
  "getrandom 0.4.3",
  "puddle-fs",
+ "puddle-types",
  "rustix",
  "thiserror",
  "tokio",

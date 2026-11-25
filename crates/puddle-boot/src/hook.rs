@@ -383,7 +383,10 @@ fn classify(result: Result<ExecOutput, ComputeError>) -> Result<String, BootFail
     match result {
         Ok(out) if out.status.success() => Ok(out.stdout_text().into_owned()),
         Ok(out) => {
-            let stderr = tail(out.stderr_text().trim_end());
+            let mut stderr = tail(out.stderr_text().trim_end());
+            if out.stderr_truncated {
+                stderr.push_str("\n(the rest of the output was cut)");
+            }
             // `sh` itself missing: 127 with no word from the hook and no mention of the script
             // (a missing script mount also gives 127 under bash, but names the script).
             if out.status.code == 127

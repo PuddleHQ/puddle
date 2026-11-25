@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use puddle_compute::{ComputeError, ExecOutput, ExecRequest, Runtime, Sandbox as _};
 use puddle_types::{Event, Problem, ToolsState, WorkspaceId};
-use puddle_workspace::WORKSPACES_ROOT;
+use puddle_workspace::WORKSPACE_DIR;
 
 use super::{HostWorkspaces, guest_text, last_stderr_line, tools_key};
 
@@ -85,6 +85,12 @@ fn read_install(outcome: Result<ExecOutput, ComputeError>) -> (Report, Option<St
         Ok(out) => out,
         Err(e) => return (Report::default(), Some(e.to_string())),
     };
+    if out.stdout_truncated {
+        return (
+            Report::default(),
+            Some("the guest's report was longer than the output cap and was cut".to_owned()),
+        );
+    }
     let Some(report) = parse_report(&out.stdout_text()) else {
         return (
             Report::default(),
@@ -248,10 +254,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         report_only: bool,
         timeout: Duration,
     ) -> Option<Result<ExecOutput, ComputeError>> {
-        let mut args = vec![
-            "mise-install".to_owned(),
-            format!("{WORKSPACES_ROOT}/{name}"),
-        ];
+        let mut args = vec!["mise-install".to_owned(), WORKSPACE_DIR.to_owned()];
         if report_only {
             args.push("--missing".to_owned());
         }

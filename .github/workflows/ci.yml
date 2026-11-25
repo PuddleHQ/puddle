@@ -341,7 +341,7 @@ jobs:
           "$RUNNER_TEMP/forgejo/forgejo" --version
           echo "PUDDLE_FORGEJO_BIN=$RUNNER_TEMP/forgejo/forgejo" >> "$GITHUB_ENV"
       - name: Forgejo download cache (save on a miss)
-        if: ${{ !cancelled() && steps.forgejo.outcome == 'success' && steps.forgejo-cache.outputs.cache-hit != 'true' }}
+        if: ${{ !cancelled() && github.ref == 'refs/heads/develop' && steps.forgejo.outcome == 'success' && steps.forgejo-cache.outputs.cache-hit != 'true' }}
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -398,8 +398,10 @@ jobs:
           PUDDLE_REQUIRE_FORGEJO: "1"
           PUDDLE_REQUIRE_NODE: "1"
           PUDDLE_REQUIRE_SSH_CLIENTS: "1"
+          PUDDLE_REQUIRE_SSHD: "1"
           PUDDLE_REQUIRE_TOOLS: "1"
           PUDDLE_REQUIRE_VSOCK: "1"
+          PUDDLE_REQUIRE_CAPTURE_NETNS: "1"
           PUDDLE_REQUIRE_BUSYBOX: "1"
           PUDDLE_REQUIRE_NON_ROOT: "1"
           PUDDLE_REQUIRE_OS_CREDENTIAL_STORE: "1"
@@ -538,6 +540,12 @@ jobs:
       - name: silent skips (a test that returns early must fail in the job that provides its prerequisite)
         if: ${{ !cancelled() }}
         run: scripts/check.sh silent-skips
+      - name: silent revert (a pull request that undoes a merged commit must name it)
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: scripts/check.sh silent-revert
       - name: early-exit pipes (grep -q after a pipe is a SIGPIPE coin toss under pipefail)
         if: ${{ !cancelled() }}
         run: scripts/check.sh early-exit-pipes
@@ -762,6 +770,12 @@ jobs:
       - name: workflow-yaml (every workflow and action file parses)
         if: ${{ !cancelled() }}
         run: scripts/check.sh workflow-yaml
+      - name: silent revert (a pull request that undoes a merged commit must name it)
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: scripts/check.sh silent-revert
       - name: gitleaks download cache (the script still checks the pin)
         if: ${{ !cancelled() }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

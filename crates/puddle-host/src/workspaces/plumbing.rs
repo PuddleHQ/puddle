@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use puddle_agent_proto::host_control::{HostMessage, HostReply};
 use puddle_api::{Operation, Repository, WorkspaceError, WorkspaceRecord, admit_idle};
-use puddle_compute::{ImageConfig, Runtime};
+use puddle_compute::{ImageConfig, PullPhase, PullProgress, Runtime};
 use puddle_ports::Ports;
 use puddle_settings::{WorkspaceSettings, host_cpu_count, resolve, resolve_on_host};
 use puddle_store::{Actor, NewWorkspaceOp, WorkspaceOpKind, WorkspaceOpOutcome};
@@ -286,6 +286,25 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             step,
             detail,
             repository: None,
+            bytes_done: None,
+            bytes_total: None,
+        });
+    }
+
+    /// A pull's count as the step it belongs to (downloading or unpacking), with the bytes done
+    /// and, when known, the bytes in all.
+    fn progress_pull(&self, name: &WorkspaceId, pull: PullProgress) {
+        let step = match pull.phase {
+            PullPhase::Downloading => WorkspaceStep::PullingImage,
+            PullPhase::Unpacking => WorkspaceStep::UnpackingImage,
+        };
+        self.inner.events.emit(Event::WorkspaceProgress {
+            workspace: name.clone(),
+            step,
+            detail: None,
+            repository: None,
+            bytes_done: Some(pull.done),
+            bytes_total: pull.total,
         });
     }
 
@@ -297,6 +316,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             step: WorkspaceStep::Cloning,
             detail: Some(repository.url.as_str().to_owned()),
             repository: Some(repository.directory.clone()),
+            bytes_done: None,
+            bytes_total: None,
         });
     }
 
@@ -897,7 +918,20 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 Some(record.image.clone()),
             );
         }
-        let config = self.image_config(&image).await?;
+        let config = if announce_pull {
+            let throttle = PullThrottle::default();
+            let report = |pull: PullProgress| {
+                if throttle.lets_through(pull) {
+                    self.progress_pull(&record.id, pull);
+                }
+            };
+            self.inner
+                .runtime
+                .pull_image_reporting(&image, &report)
+                .await?
+        } else {
+            self.image_config(&image).await?
+        };
         Ok((image, config))
     }
 
@@ -971,5 +1005,26 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         if let Some(slot) = self.state().slots.get_mut(id) {
             slot.volume_missing = true;
         }
+    }
+}
+
+/// Keeps a pull's reports to the ones a person can see change: a new phase, a whole percent more
+/// when the total is known, and every 8 MiB when it is not. msb reports per chunk, many times a
+/// second.
+#[derive(Default)]
+pub(super) struct PullThrottle(Mutex<Option<(PullPhase, u64)>>);
+
+impl PullThrottle {
+    pub(super) fn lets_through(&self, pull: PullProgress) -> bool {
+        const UNKNOWN_TOTAL_STEP: u64 = 8 * 1024 * 1024;
+        let at = match pull.total {
+            Some(total) if total > 0 => pull.done.min(total).saturating_mul(100) / total,
+            _ => pull.done / UNKNOWN_TOTAL_STEP,
+        };
+        let key = (pull.phase, at);
+        let mut last = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let new = *last != Some(key);
+        *last = Some(key);
+        new
     }
 }

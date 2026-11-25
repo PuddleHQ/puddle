@@ -307,10 +307,10 @@ struct GuestState {
     editor: Option<EditorServer>,
     /// The development certificate this start gave the guest, so a re-planned boot keeps it.
     dev_cert: Option<puddle_certs::devcert::GuestDevCert>,
-    /// Where login shells land: what the saved start folder was at this start, or when it last
-    /// changed.
+    /// Where login shells land ([`crate::editor_file::terminal_folder`]) at this start, or when
+    /// the start folder last changed.
     start_folder: Option<StartFolder>,
-    /// The volume's mount point, `/workspaces/<id>`.
+    /// The volume's mount point, `/workspace`.
     root: GuestPath,
     /// The multi-root file the editor opens when the workspace has two or more checkouts, as the
     /// last attach wrote it; `None` has the hook take Puddle's lines out of it.
@@ -773,3 +773,6 @@ mod checkout_refusal_tests;
 
 #[cfg(test)]
 mod workspace_error_tests;
+
+#[cfg(test)]
+mod pull_throttle_tests;

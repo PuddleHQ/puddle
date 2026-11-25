@@ -181,7 +181,7 @@ impl TerminalService for NoTerminals {
 
 /// An in-memory service for tests and the UI fixture: every workspace runs and the shell is a
 /// stand-in that echoes what it is typed. `exit N` ends it with status `N`; `size` prints the
-/// rows and columns it was last given; `colors` prints a sample in ANSI colours; `vanish` drops the session without an end.
+/// rows and columns it was last given; `hostname` prints the id of the workspace it belongs to; `colors` prints a sample in ANSI colours; `vanish` drops the session without an end.
 #[derive(Debug, Default)]
 pub struct FakeTerminals {
     stopped: Mutex<Vec<WorkspaceId>>,
@@ -238,6 +238,7 @@ impl TerminalService for FakeTerminals {
         size: TerminalSize,
     ) -> BoxFuture<'_, Result<TerminalLink, TerminalError>> {
         let checked = self.check(workspace);
+        let workspace = workspace.clone();
         let refused = self
             .refuse_next
             .lock()
@@ -248,7 +249,7 @@ impl TerminalService for FakeTerminals {
             if let Some(error) = refused {
                 return Err(error);
             }
-            Ok(fake_shell(size))
+            Ok(fake_shell(workspace, size))
         })
     }
 }
@@ -257,7 +258,7 @@ impl TerminalService for FakeTerminals {
 /// each followed by a reset, one per line.
 const COLOR_SAMPLE: &[u8] = b"\x1b[31mred-text\x1b[0m\r\n\x1b[1;32mbold-green\x1b[0m\r\n\x1b[38;5;208mpalette-orange\x1b[0m\r\n\x1b[38;2;12;200;250mtrue-cyan\x1b[0m\r\n\x1b[4munderlined\x1b[0m\r\n";
 
-fn fake_shell(mut size: TerminalSize) -> TerminalLink {
+fn fake_shell(workspace: WorkspaceId, mut size: TerminalSize) -> TerminalLink {
     let (input, mut from_page) = mpsc::channel(64);
     let (to_page, output) = mpsc::channel(64);
     tokio::spawn(async move {
@@ -297,6 +298,9 @@ fn fake_shell(mut size: TerminalSize) -> TerminalLink {
                             }
                             if text == "colors" {
                                 answer.extend_from_slice(COLOR_SAMPLE);
+                            }
+                            if text == "hostname" {
+                                answer.extend_from_slice(format!("{workspace}\r\n").as_bytes());
                             }
                             if text == "size" {
                                 answer.extend_from_slice(

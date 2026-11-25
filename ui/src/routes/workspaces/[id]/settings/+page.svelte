@@ -440,7 +440,9 @@
                 </select>
               </td>
               <td class="from">
-                <span class="chip">{sourceLabel(row.source)}</span>
+                {#if row.source !== "default"}<span class="meta"
+                    >{sourceLabel(row.source)}</span
+                  >{/if}
                 {#if row.source === "workspace"}
                   <button
                     type="button"
@@ -630,7 +632,6 @@
   }
   table {
     width: 100%;
-    max-width: 64rem;
     border-collapse: collapse;
   }
   thead th {
@@ -667,12 +668,6 @@
   }
   .from {
     white-space: nowrap;
-  }
-  .chip {
-    padding: 0 var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-pill);
-    font-size: var(--text-sm);
   }
   .reset {
     margin-inline-start: var(--space-2);

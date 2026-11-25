@@ -337,6 +337,10 @@ pub struct BootPlanBuilder {
 }
 
 impl BootPlan {
+    /// The most of the boot hook's stdout and stderr the host keeps (256 KiB each): a hostile
+    /// guest cannot grow host memory through it.
+    pub const HOOK_MAX_OUTPUT: usize = 256 * 1024;
+
     /// A builder for a sandbox of an image with `image`'s config (from
     /// [`puddle_compute::Runtime::pull_image`]). By default the plan starts the agent with
     /// [`AgentConfig::default`].
@@ -516,6 +520,7 @@ impl BootPlan {
         .with_env(&env)
         .with_stdin(self.render())
         .with_timeout(timeout)
+        .with_max_output(Self::HOOK_MAX_OUTPUT)
     }
 }
 

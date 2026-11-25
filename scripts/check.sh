@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # The quality gates, in one place: git hooks, CI and humans all run this script, so the gates
 # can't drift apart. Usage: scripts/check.sh <gate>...   Gates:
-#   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, git-pins, mutants-exclusions, silent-skips, early-exit-pipes, spawn, workflow-yaml, test-hooks, quality, secrets, clippy, clippy-windows, dormant, deny, advisories, notices, openapi, test, rustdoc, doc, coverage,
+#   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, git-pins, mutants-exclusions, silent-skips, silent-revert, early-exit-pipes, spawn, workflow-yaml, test-hooks, quality, secrets, clippy, clippy-windows, dormant, deny, advisories, notices, openapi, test, rustdoc, doc, coverage,
 #   coverage-ratchet, diff-coverage, diff-coverage-fast, coverage-determinism, mutants,
 #   ui, ui-licences, ui-audit, ui-e2e
 #   fast     = fmt typos spdx shellcheck hooks platform-literals standalone git-pins mutants-exclusions silent-skips early-exit-pipes spawn workflow-yaml test-hooks   (pre-commit hook)
@@ -211,13 +211,9 @@ run_gate() {
         git ls-files -z -- '*.sh' '.githooks/*' | xargs -0 shellcheck
         ;;
     hooks)
-        scripts/check-test-git-env.sh --self-test && scripts/check-test-git-env.sh && scripts/pre-push-test.sh && scripts/check-spdx-test.sh && scripts/diff-coverage-crates-test.sh && scripts/mutants-test.sh && scripts/diff-base-test.sh && scripts/check-tmp-test.sh && scripts/check-socket-guard-test.sh && scripts/check-enclosing-repo-test.sh && scripts/cap-test-memory-test.sh && scripts/check-sets-test.sh && scripts/rustdoc-gate-test.sh && scripts/gate-sched-test.sh && scripts/check-gate-exit.sh --self-test && scripts/check-gate-exit.sh &&
-            scripts/target-names-test.sh --self-test && scripts/target-names-test.sh && scripts/coverage-run-test.sh && scripts/dead-resolver-test.sh && scripts/coverage-cargo-test.sh && scripts/coverage-determinism.sh --self-test && scripts/flake-lints-test.sh && scripts/flake-rules-test.sh &&
-            ci/fetch-msb-test.sh && ci/fetch-gitleaks-test.sh && ci/fetch-code-server-test.sh && ci/check-mise-pin-test.sh && ci/check-az-contract-test.sh && ci/fetch-forgejo-test.sh && ci/fetch-vscode-test.sh && ci/fetch-gateway-test.sh && ci/fetch-tauri-cli-test.sh && ci/fetch-wix-test.sh && ci/fetch-baseline-msi-test.sh && ci/check-runtime-layout-test.sh && ci/check-dormant-release-test.sh && ci/fetch-real-tools-test.sh && ci/github-rest/check-test.sh &&
-            ci/scope-test.sh && ci/cargo-fetch-test.sh && ci/apt-setup-test.sh && ci/free-disk-test.sh && ci/advisories-issue-test.sh && ci/deny-fresh-test.sh && ci/quality-issue-test.sh && ci/lab-override-check-test.sh && ci/cache-drop-test.sh && ci/disk-watch-test.sh &&
-            ci/should-run-test.sh && ci/nightly-issue-test.sh && ci/cancel-group-test.sh && ci/bisect-red-test.sh && ci/cache-gc-test.sh && ci/tools-cache-heal-test.sh && ci/dependabot-auto-merge-test.sh && ci/merge-queue-sweep-test.sh && ci/cancel-dissolved-groups-test.sh && ci/dependabot-notices-test.sh && ci/raise-coverage-baseline-test.sh && ci/test-vm-skip-policy.sh && ci/stress-test.sh && ci/fake-host-starved-test.sh && ci/vm-tests-report-test.sh && ci/vm-partition-test.sh &&
-            ci/fork-upkeep.py self-test && ci/fork-upkeep.py lint && ci/fork-upkeep-issue-test.sh &&
-            scripts/check-hooks-tmpdir-test.sh
+        # The self-tests of the scripts, in scripts/hooks-gate.list, a few at a time (one `&&` chain took 133 s, and 3 times that with the
+        # long-TMPDIR reruns of scripts/check-hooks-tmpdir-test.sh).
+        scripts/hooks-gate.sh
         ;;
     git-env)
         # Through the coverage gate's build (same arguments), so it compiles no test binary of its own.
@@ -257,6 +253,8 @@ run_gate() {
     # A test that returns early because a prerequisite is missing passes without testing; this fails
     # the hidden forms (docs/STANDARDS.md, "Skipped tests").
     silent-skips) scripts/check-silent-skips.sh --self-test && scripts/check-silent-skips.sh ;;
+    # A change that undoes a merged commit of the last 14 days without naming it (self-test only here; CI passes the PR's base).
+    silent-revert) scripts/check-silent-revert.sh --self-test && scripts/check-silent-revert.sh ;;
     early-exit-pipes) scripts/check-early-exit-pipes.sh --self-test && scripts/check-early-exit-pipes.sh ;;
     workflow-yaml) python3 -I scripts/check-workflow-yaml.py --self-test && python3 -I scripts/check-workflow-yaml.py ;;
     spawn) python3 -I scripts/check-spawn.py --self-test && python3 -I scripts/check-spawn.py ;;

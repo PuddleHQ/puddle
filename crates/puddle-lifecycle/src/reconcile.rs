@@ -237,7 +237,19 @@ async fn reconcile_sandbox<R: Runtime>(
                 StopOutcome::Panicked => {}
             },
             // The VM went down between list and get: nothing left to stop.
-            Err(ComputeError::InvalidState { .. }) => down = true,
+            Err(ComputeError::InvalidState { status, .. }) if status.is_down() => down = true,
+            // `get` refuses a VM that is not running (starting, draining, paused: a dead Puddle
+            // left it mid-stop), and stop needs a connection. End it by name instead.
+            Err(ComputeError::InvalidState { status: held, .. }) => {
+                match runtime.kill(&name).await {
+                    Ok(()) => {
+                        tracing::info!(sandbox = %name, status = %held, "reconcile: VM that refuses connections killed by name");
+                        report.stopped.push(name.clone());
+                        down = true;
+                    }
+                    Err(e) => report.fail(name.as_str(), "kill", &e),
+                }
+            }
             Err(e) => report.fail(name.as_str(), "stop", &e),
         }
     }

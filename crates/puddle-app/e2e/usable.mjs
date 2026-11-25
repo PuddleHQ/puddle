@@ -24,9 +24,11 @@
 //   9. a new request makes no notification while the window is in front, and exactly one, naming the
 //      workspace and the host, while it is minimized;
 //  10. Activity's "Export JSON lines" saves a .jsonl file in Downloads, one valid JSON record a line;
-//  11. the tray's "Quit Puddle" with the workspace running leaves no `puddle-app`, `puddle` or `msb` process
+//  11. the close button still hides the window when the page failed to load (broken-page.mjs refuses
+//      every request and reloads, so the window shows the browser's error page);
+//  12. the tray's "Quit Puddle" with the workspace running leaves no `puddle-app`, `puddle` or `msb` process
 //      within 90 s, and a new start lists the workspace as stopped.
-// Steps 7 to 11 run in the direct run only (below): the shell does not change behind a proxy.
+// Steps 7 to 12 run in the direct run only (below): the shell does not change behind a proxy.
 //
 // Windows notifications are read from the Action Center's history for the app's AppUserModelID (the
 // Start menu shortcut's, the `identifier` in tauri.conf.json), and the window's buttons are pressed with
@@ -68,6 +70,7 @@ import { Uia } from "./uia.mjs";
 import { onChildEnd } from "./child-end.mjs";
 import { GiveUp, until } from "./poll.mjs";
 import { debugPortPolicy, inspectTerminal } from "./terminal-render.mjs";
+import { breakThePage } from "./broken-page.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const local = process.env.LOCALAPPDATA;
@@ -441,7 +444,7 @@ async function firstRunToCreateForm() {
       await copyTheReport();
     }
     if (step.id === "interception") {
-      const mode = await uia.waitFor("the recommended interception mode", { window: MAIN, role: "radio", nameRegex: "except a known list" });
+      const mode = await uia.waitFor("the recommended interception mode", { window: MAIN, role: "radio", nameRegex: "except sites known to break" });
       check("the recommended interception mode is preselected", mode.checked === true, JSON.stringify(mode));
     }
     if (step.id === "connect") {
@@ -606,6 +609,33 @@ async function terminalTab(startFolder) {
   const lines = (await terminalLines()).filter((l) => l.trim()).slice(-12).join(" ¦ ");
   check("the terminal reads agent, the start folder and sudo-ok", user && folder && sudo, `whoami ${user}, pwd ${startFolder} ${folder}, sudo ${sudo}; lines: ${lines}`);
   await terminalRendering();
+}
+
+/**
+ * The close button on a page that failed to load: the window's page is made to fail on purpose (every
+ * request refused, then a reload shows the browser's error page), and the close button still hides the
+ * window in the tray, the app keeps running, and the window comes back from a second start.
+ */
+async function closeOnABrokenPage() {
+  mainWindow("front");
+  const broken = await breakThePage(DEBUG_PORT);
+  // The control: Puddle's own navigation is gone from the window, so the close below is pressed on a page
+  // that is not Puddle's.
+  const gone = await until("Puddle's navigation to be gone", async () => (await uia.find(inMain("link", "Workspaces"))).length === 0, 30_000, 1000).then(() => true, () => false);
+  check("the main window's page failed to load on purpose (the control)", gone && broken.refused.length > 0, `refused: ${broken.refused.join(", ")}; navigation gone: ${gone}`);
+  try {
+    const hidden = [];
+    for (const round of [1, 2]) {
+      mainWindow("front");
+      mainWindow("close");
+      const s = await windowBecomes(`the window to hide on the broken page (close ${round})`, (w) => !w.visible).catch(() => mainWindow());
+      hidden.push(!s.visible && !appExited);
+      await reopen().catch(() => {});
+    }
+    check("the close button hides the window in the tray on a page that failed to load", hidden.every(Boolean), `hidden after each close: ${hidden.join(", ")}; exited: ${appExited}`);
+  } finally {
+    await broken.restore();
+  }
 }
 
 /** Colours, font, size and a mouse selection of the terminal, read from the page over the policy's DevTools port. */
@@ -842,7 +872,7 @@ try {
   check("a workspace made from the lab forge's private repository is running", running.status === "running", `${running.status}, image ${running.image}`);
   // The create allowed the forge itself before the first clone, so nobody approves it and nobody
   // clones again: the checkout is there and the rule says who made it.
-  const checkout = `/workspaces/${id}/app/package.json`;
+  const checkout = `/workspace/app/package.json`;
   const rules = (await api("GET", "/api/rules")).json?.rules ?? [];
   const grant = rules.find((r) => r.pattern === forge && r.effect === "allow" && r.scope?.type === "workspace" && r.scope.workspace === id);
   check("the create made an allow rule for the forge, marked as made by the create", grant?.created_by === "workspace_create", JSON.stringify(grant ?? rules));
@@ -894,8 +924,8 @@ try {
     { root: true, within: 900_000, ok: (r) => /apt=0/.test(r.text) },
   );
   check("nodejs and npm install from the distribution's archive after the approvals", /apt=0/.test(aptDone.text), `after ${aptDone.attempts} tries: ${aptDone.text.slice(-300)}`);
-  const rootDir = (await guest(id, "find /workspaces -maxdepth 3 -name package.json -not -path '*/node_modules/*' | head -1 | xargs dirname")).text.trim().split("\n").pop();
-  check("the checkout is in the workspace", rootDir.startsWith("/workspaces/"), rootDir);
+  const rootDir = (await guest(id, "find /workspace -maxdepth 2 -name package.json -not -path '*/node_modules/*' | head -1 | xargs dirname")).text.trim().split("\n").pop();
+  check("the checkout is in the workspace", rootDir.startsWith("/workspace/"), rootDir);
   const build = await guest(id, `cd ${rootDir} && node --version && npm --version && npm install --no-audit --no-fund 2>&1 | tail -2 && npm run build 2>&1 && npm test 2>&1 | tail -8 && node dist/app.js`);
   check("npm run build and npm test pass in the workspace", build.code === 0 && /build ok/.test(build.text) && /hello from usable/.test(build.text), build.text.slice(-500));
 
@@ -947,10 +977,11 @@ try {
   if (!company) {
     const listed = (await api("GET", "/api/workspaces")).json?.workspaces?.find((w) => w.id === id);
     const phase = (what, run) => run().catch((err) => check(`${what} ran to the end`, false, String(err?.message ?? err)));
-    await phase("the Terminal tab", () => terminalTab(listed?.start_folder ?? `/workspaces/${id}`));
+    await phase("the Terminal tab", () => terminalTab(listed?.start_folder ?? "/workspace"));
     await phase("the close button", () => closeToTray(id));
     await phase("the request notifications", () => requestNotifications(id));
     await phase("the Activity export", exportActivity);
+    await phase("the close button on a broken page", closeOnABrokenPage);
     await phase("the tray's Quit", () => quitFromTheTray(id));
   }
 

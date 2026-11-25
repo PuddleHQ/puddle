@@ -111,7 +111,8 @@
       </p>{/if}
   </td>
   <td class="from">
-    <span class="chip">{sourceLabel(source)}</span>
+    {#if source !== "default"}<span class="chip">{sourceLabel(source)}</span
+      >{/if}
     {#if source === "workspace"}
       <button
         type="button"

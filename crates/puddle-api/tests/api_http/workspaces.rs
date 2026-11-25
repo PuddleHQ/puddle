@@ -167,7 +167,47 @@ async fn create_is_accepted_busy_and_finishes_with_progress_events() {
         .collect();
     assert_eq!(
         steps,
-        ["preparing_volume", "pulling_image", "cloning", "done"]
+        [
+            "preparing_volume",
+            "pulling_image",
+            "pulling_image",
+            "pulling_image",
+            "pulling_image",
+            "unpacking_image",
+            "cloning",
+            "done"
+        ]
+    );
+    // The download counts up to its total; the other steps carry no count.
+    let counts: Vec<_> = stream
+        .data()
+        .iter()
+        .filter(|e| e["type"] == "workspace_progress" && !e["bytes_done"].is_null())
+        .map(|e| {
+            (
+                e["step"].clone(),
+                e["bytes_done"].clone(),
+                e["bytes_total"].clone(),
+            )
+        })
+        .collect();
+    let total = json!(400 * 1024 * 1024_u64);
+    assert_eq!(
+        counts,
+        [
+            (
+                json!("pulling_image"),
+                json!(100 * 1024 * 1024_u64),
+                total.clone()
+            ),
+            (
+                json!("pulling_image"),
+                json!(240 * 1024 * 1024_u64),
+                total.clone()
+            ),
+            (json!("pulling_image"), total.clone(), total),
+            (json!("unpacking_image"), json!(0), Value::Null),
+        ]
     );
     let cloning: Vec<_> = stream
         .data()

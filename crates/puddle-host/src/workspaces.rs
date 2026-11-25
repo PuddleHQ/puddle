@@ -773,3 +773,6 @@ mod checkout_refusal_tests;
 
 #[cfg(test)]
 mod workspace_error_tests;
+
+#[cfg(test)]
+mod pull_throttle_tests;

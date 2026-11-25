@@ -253,7 +253,8 @@ async fn steps_pause_for_the_configured_delay() {
         "nothing before the first pause ends"
     );
     fake.idle().await;
-    assert_eq!(steps(&sink).len(), 4);
+    // The volume, the pull and its four reports (three downloading, one unpacking), the clone.
+    assert_eq!(steps(&sink).len(), 8);
     assert!(format!("{fake:?}").contains("workspaces"));
 }
 

@@ -36,6 +36,7 @@ import {
   sortWorkspaces,
   canRename,
   statusLabel,
+  byteCountText,
   operationOfStep,
   statusTone,
   stepLabel,
@@ -118,6 +119,7 @@ describe("words", () => {
     const steps: Step[] = [
       "preparing_volume",
       "pulling_image",
+      "unpacking_image",
       "cloning",
       "starting",
       "syncing",
@@ -151,6 +153,26 @@ describe("words", () => {
       of: 1,
     });
     expect(stepPosition("creating", "stopping")).toBeNull();
+  });
+});
+
+describe("image download counts", () => {
+  it("prints bytes done of the total with a whole percent, and just the bytes without a total", () => {
+    const mib = 1024 * 1024;
+    expect(byteCountText({ done: 120 * mib, total: 480 * mib })).toBe(
+      "120 MB of 480 MB, 25 %",
+    );
+    expect(byteCountText({ done: 0, total: 480 * mib })).toBe(
+      "0 B of 480 MB, 0 %",
+    );
+    expect(byteCountText({ done: 3 * mib, total: null })).toBe("3.0 MB");
+    expect(byteCountText(null)).toBeNull();
+  });
+
+  it("never reads past 100 % when the count overshoots", () => {
+    expect(byteCountText({ done: 2048, total: 1024 })).toBe(
+      "2.0 KB of 1.0 KB, 100 %",
+    );
   });
 });
 

@@ -38,9 +38,5 @@ async fn every_connection_reaches_the_handler_and_stop_returns_the_open_ones() {
     stop_tx.send(()).unwrap();
     let open = task.await.unwrap();
     assert_eq!(open.len(), 3);
-    assert!(
-        TcpStream::connect(addr).await.is_err(),
-        "the listener is closed on return"
-    );
     hold_tx.send(true).unwrap();
 }

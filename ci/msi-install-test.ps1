@@ -45,7 +45,7 @@
 #     that holds files keeps the data folder and the volume, and a reinstall lists the same workspace id
 #     with its files byte for byte.
 # Usage: pwsh ci/msi-install-test.ps1 -Msi <first.msi> [-UpgradeMsi <newer.msi>] [-LogDir <dir>] [-PlantFootprint <breakage>]
-# -PlantFootprint (no-shortcut, wrong-shortcut-target, visible-at-login, data-lost, slow-install, no-refusal)
+# -PlantFootprint (no-shortcut, wrong-shortcut-target, visible-at-login, data-lost, slow-install, no-refusal, kill-skipped)
 # makes one of those footprint checks see the breakage it guards against; the run must then fail (the msi
 # workflow's dispatch input plant_footprint runs it so and expects the failure).
 #        pwsh ci/msi-install-test.ps1 -BaselineMsi <older.msi> -UpgradeMsi <newer.msi> [-LogDir <dir>] [-PlantBreakage drop-table|empty-env|empty-pending]
@@ -65,7 +65,7 @@ param(
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'CrossVersion')][string]$LogDir = $(if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }),
     [Parameter(ParameterSetName = 'CrossVersion')][ValidateSet('', 'drop-table', 'empty-env', 'empty-pending')][string]$PlantBreakage = '',
-    [Parameter(ParameterSetName = 'Run')][ValidateSet('', 'no-shortcut', 'wrong-shortcut-target', 'visible-at-login', 'data-lost', 'slow-install', 'no-refusal')][string]$PlantFootprint = '',
+    [Parameter(ParameterSetName = 'Run')][ValidateSet('', 'no-shortcut', 'wrong-shortcut-target', 'visible-at-login', 'data-lost', 'slow-install', 'no-refusal', 'kill-skipped')][string]$PlantFootprint = '',
     [Parameter(Mandatory = $true, ParameterSetName = 'SelfTest')][switch]$SelfTest
 )
 $ErrorActionPreference = 'Stop'
@@ -708,7 +708,9 @@ function Test-HardKill {
 
     Step "TerminateProcess on puddle-app.exe ($($app.Id)) with $($runtime.Count) runtime processes running"
     $clock = [System.Diagnostics.Stopwatch]::StartNew()
-    Stop-Process -Id $app.Id -Force
+    # -PlantFootprint kill-skipped: the app is not ended, as if the kill did not reach it; the
+    # runtime processes then outlive the 5 s bar and the step must fail.
+    if ($PlantFootprint -ne 'kill-skipped') { Stop-Process -Id $app.Id -Force }
     $ids = @($runtime | ForEach-Object { $_.Id })
     Wait-Until "runtime processes still run 5 s after the kill: $(($runtime | ForEach-Object { "$($_.Name) $($_.Id)" }) -join ', ')" 5 {
         @(Get-Process -Id $ids -ErrorAction SilentlyContinue).Count -eq 0

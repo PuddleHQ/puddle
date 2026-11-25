@@ -286,6 +286,57 @@ async fn vm_a_stop_the_vm_never_answers_ends_by_force() {
     assert!(status.unwrap().is_down());
 }
 
+/// A VM in `Draining` (msb marks it so once the guest has accepted a stop's shutdown request) is
+/// ended by `Runtime::kill` by name, which is what a restarted Puddle does to the VM a dead one
+/// left that way (`get` refuses a VM in that state). A process that ignores SIGTERM keeps the
+/// guest from powering off until the grace period ends, so the real msb state stays `Draining`
+/// for a while; the test polls the list for it while the stop waits, then kills.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_kill_ends_a_vm_stuck_in_draining() {
+    use puddle_types::WorkspaceStatus;
+
+    let settings = support::settings();
+    let rt = support::runtime(&settings).await;
+    let s = spec(&settings, "drain");
+    let n = s.name.clone();
+    let sb = rt.create(s).await.expect("create");
+    let stubborn =
+        "setsid sh -c 'trap \"\" TERM; while :; do sleep 1; done' </dev/null >/dev/null 2>&1 &";
+    assert!(sh(&sb, stubborn).await.status.success());
+
+    let drive = async {
+        let seen = eventually_async(
+            "the VM reads Draining while its stop waits for a process that ignores SIGTERM",
+            Duration::from_secs(20),
+            || async {
+                let all = rt.list().await.ok()?;
+                all.into_iter()
+                    .find(|i| i.name == n.as_str() && i.status == WorkspaceStatus::Draining)
+            },
+        )
+        .await;
+        let refused = rt.get(&n).await.is_err();
+        let killed = rt.kill(&n).await;
+        (seen.status, refused, killed)
+    };
+    let (_stop, (seen, refused, killed)) = tokio::join!(sb.stop(), drive);
+    let after = rt
+        .list()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|i| i.name == n.as_str())
+        .map(|i| i.status);
+    cleanup(&rt, &[&n]).await;
+    assert_eq!(seen, WorkspaceStatus::Draining);
+    assert!(refused, "get connected to a draining VM");
+    killed.expect("kill by name ends a draining VM");
+    assert!(
+        after.is_some_and(WorkspaceStatus::is_down),
+        "after the kill the sandbox reads {after:?}"
+    );
+}
+
 /// The other side of the bar above: a stop the guest answers is not by force.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn vm_a_stop_the_guest_answers_is_not_by_force() {

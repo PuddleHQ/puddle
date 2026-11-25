@@ -48,7 +48,7 @@
 # -PlantFootprint (no-shortcut, wrong-shortcut-target, visible-at-login, data-lost, slow-install, no-refusal)
 # makes one of those footprint checks see the breakage it guards against; the run must then fail (the msi
 # workflow's dispatch input plant_footprint runs it so and expects the failure).
-#        pwsh ci/msi-install-test.ps1 -BaselineMsi <older.msi> -UpgradeMsi <newer.msi> [-LogDir <dir>] [-PlantBreakage drop-table|empty-env|empty-pending]
+#        pwsh ci/msi-install-test.ps1 -BaselineMsi <older.msi> -UpgradeMsi <newer.msi> [-LogDir <dir>] [-PlantBreakage drop-table|empty-env|empty-pending|route-throws]
 # -PlantBreakage damages the older build's data after its quit, as a broken migration would; the run must then
 # fail (the msi workflow's dispatch input plant_breakage runs it so and expects the failure).
 #        pwsh ci/msi-install-test.ps1 -SelfTest      (the helpers' own checks; needs no MSI)
@@ -64,7 +64,7 @@ param(
     [Parameter(Mandatory = $true, ParameterSetName = 'CrossVersion')][string]$UpgradeMsi = '',
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'CrossVersion')][string]$LogDir = $(if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }),
-    [Parameter(ParameterSetName = 'CrossVersion')][ValidateSet('', 'drop-table', 'empty-env', 'empty-pending')][string]$PlantBreakage = '',
+    [Parameter(ParameterSetName = 'CrossVersion')][ValidateSet('', 'drop-table', 'empty-env', 'empty-pending', 'route-throws')][string]$PlantBreakage = '',
     [Parameter(ParameterSetName = 'Run')][ValidateSet('', 'no-shortcut', 'wrong-shortcut-target', 'visible-at-login', 'data-lost', 'slow-install', 'no-refusal')][string]$PlantFootprint = '',
     [Parameter(Mandatory = $true, ParameterSetName = 'SelfTest')][switch]$SelfTest
 )

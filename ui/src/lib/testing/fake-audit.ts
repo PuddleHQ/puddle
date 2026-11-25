@@ -42,6 +42,7 @@ export function connection(
       refused_reason: null,
       category: null,
       signal: null,
+      protocol: null,
       method: null,
       path: null,
       path_truncated: false,

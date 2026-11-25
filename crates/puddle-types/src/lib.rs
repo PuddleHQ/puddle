@@ -49,7 +49,8 @@ mod tool;
 
 pub use connection::{
     ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOrigin, ConnectionOutcome,
-    ConnectionReason, HttpRequestLine, NullConnectionLog, RefusedReason, request_path,
+    ConnectionProtocol, ConnectionReason, HttpRequestLine, NullConnectionLog, RefusedReason,
+    request_path,
 };
 pub use cpus::CpuCount;
 pub use error::ValidationError;

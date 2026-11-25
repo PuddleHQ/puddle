@@ -32,6 +32,7 @@ import {
   parseMemoryGib,
   repoUrlProblem,
   resolveRepoAddress,
+  SSH_HOSTS,
   sshAsHttps,
   sortWorkspaces,
   canRename,
@@ -327,6 +328,24 @@ describe("repository URLs", () => {
         }
       },
     );
+
+    it("knows the Git hosts the proxy ends SSH for, and no others", () => {
+      // The same list drives the proxy's table and the host's reader.
+      const listed = (
+        JSON.parse(
+          readFileSync(
+            resolve(
+              process.cwd(),
+              "../crates/puddle-store/tests/data/repo-urls.json",
+            ),
+            "utf8",
+          ),
+        ) as { ssh_hosts: { ssh: string; https: string }[] }
+      ).ssh_hosts;
+      expect(SSH_HOSTS).toEqual(
+        Object.fromEntries(listed.map(({ ssh, https }) => [ssh, https])),
+      );
+    });
 
     it("names what to use when the address cannot be read", () => {
       expect(repoUrlProblem("git@github.com:")).toBe(

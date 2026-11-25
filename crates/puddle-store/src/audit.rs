@@ -9,8 +9,8 @@
 use std::io;
 
 use puddle_types::{
-    ConnectionDecision, ConnectionEvent, ConnectionOrigin, ConnectionOutcome, ConnectionReason,
-    LocalCategory, WorkspaceId, request_path,
+    ConnectionDecision, ConnectionEvent, ConnectionOrigin, ConnectionOutcome, ConnectionProtocol,
+    ConnectionReason, LocalCategory, WorkspaceId, request_path,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -120,7 +120,12 @@ pub struct ConnectionRecord {
     /// it existed.
     #[serde(default)]
     pub answer_credentials: Vec<String>,
-    /// HTTP method: plain-HTTP requests, tunnels that carry plain HTTP, terminated hosts.
+    /// What `method` and `path` are: `http` or `ssh` (Git over SSH, where `method` is the
+    /// command). `null` with no `method`; absent in records written before it existed.
+    #[serde(default)]
+    pub protocol: Option<ConnectionProtocol>,
+    /// HTTP method: plain-HTTP requests, tunnels that carry plain HTTP, terminated hosts; for
+    /// `protocol: ssh` the Git command.
     pub method: Option<String>,
     /// HTTP path without query string, where `method` is set.
     pub path: Option<String>,
@@ -136,8 +141,12 @@ pub struct ConnectionRecord {
 
 impl ConnectionRecord {
     pub(crate) fn from_event(ts: u64, event: &ConnectionEvent) -> Self {
-        let (method, path) = event.http.as_ref().map_or((None, None), |http| {
-            (Some(http.method().to_owned()), Some(http.path().to_owned()))
+        let (protocol, method, path) = event.http.as_ref().map_or((None, None, None), |http| {
+            (
+                Some(http.protocol()),
+                Some(http.method().to_owned()),
+                Some(http.path().to_owned()),
+            )
         });
         Self {
             ts,
@@ -166,6 +175,7 @@ impl ConnectionRecord {
             scrubbed_stand_ins: event.scrubbed_stand_ins.clone(),
             foreign_credentials: event.foreign_credentials.clone(),
             answer_credentials: event.answer_credentials.clone(),
+            protocol,
             method,
             path,
             path_truncated: false,
@@ -221,6 +231,7 @@ impl ConnectionRecord {
             scrubbed_stand_ins: Vec::new(),
             foreign_credentials: Vec::new(),
             answer_credentials: Vec::new(),
+            protocol: None,
             method: None,
             path: None,
             path_truncated: false,

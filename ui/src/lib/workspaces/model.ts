@@ -270,7 +270,7 @@ const SSH_HOST =
 /** The SSH names of the Git hosts Puddle serves over SSH, with the HTTPS host each one stands for
  * (`PathForm` in the proxy's `ssh_git/grammar.rs`; the host reads them the same way,
  * `ssh_address_as_https` in `puddle-store`). */
-const SSH_HOSTS: Record<string, string> = {
+export const SSH_HOSTS: Record<string, string> = {
   "github.com": "github.com",
   "ssh.github.com": "github.com",
   "gitlab.com": "gitlab.com",

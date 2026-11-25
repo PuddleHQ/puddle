@@ -69,7 +69,7 @@ stage() {
     xtask_dir=$(mktemp -d)
     (
         set -eu
-        export CARGO_TARGET_DIR=$xtask_dir/target
+        export CARGO_TARGET_DIR="$xtask_dir"/target
         timed "runtime folder (xtask build, downloads, notices)" cargo xtask runtime --out "$stage/runtime"
         timed "code-server" cargo xtask code-server --out "$stage/runtime/code-server" --licenses "$stage/runtime/licenses"
     ) >"$xtask_dir/xtask.log" 2>&1 &

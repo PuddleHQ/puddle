@@ -81,6 +81,20 @@ impl Profile {
         self.at(5).max(Duration::from_secs(1))
     }
 
+    /// The pause between the web-app requests: 10 s in the full profile, 1/6 playbook minute
+    /// elsewhere, never under a second.
+    #[must_use]
+    pub fn w4_every(self) -> Duration {
+        (self.at(1) / 6).max(Duration::from_secs(1))
+    }
+
+    /// Seconds the failed-request share covers: 5 playbook minutes (300 s in the full profile), at
+    /// least two requests.
+    #[must_use]
+    pub fn w4_window_secs(self) -> u64 {
+        self.at(5).max(self.w4_every() * 2).as_secs().max(2)
+    }
+
     /// How long the sampler runs alone before the workloads start: 15 playbook minutes.
     #[must_use]
     pub const fn sampler_alone(self) -> Duration {

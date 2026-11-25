@@ -513,6 +513,17 @@ impl Proxy {
             })
     }
 
+    /// How a refusal names `workspace`: its name, or its id when the policy knows none.
+    pub(crate) async fn workspace_label(&self, workspace: &WorkspaceId) -> String {
+        let policy = Arc::clone(&self.policy);
+        let id = workspace.clone();
+        tokio::task::spawn_blocking(move || policy.workspace_name(&id))
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| workspace.to_string())
+    }
+
     /// Hands `event` to the connection log on a blocking thread (it may write to SQLite).
     pub(crate) async fn record(&self, event: ConnectionEvent) {
         let log = Arc::clone(&self.log);

@@ -101,6 +101,9 @@ pub struct ApiConfig {
     /// Whether users other than the owner may sign in. Off by default: everything belongs to the
     /// one owner.
     pub multi_user: bool,
+    /// How often the admin reaper looks for deletions to finish when nobody asks. Tests shorten
+    /// it; the default is the production interval.
+    pub reap_every: Duration,
 }
 
 impl Default for ApiConfig {
@@ -117,6 +120,7 @@ impl Default for ApiConfig {
             ui,
             remote: None,
             multi_user: false,
+            reap_every: crate::admin::REAP_EVERY,
         }
     }
 }
@@ -693,6 +697,7 @@ fn admin_for(
         services.store.clone(),
         sign_in.clone(),
         services.workspaces.clone(),
+        config.reap_every,
     )))
 }
 

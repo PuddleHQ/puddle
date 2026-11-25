@@ -6828,6 +6828,7 @@ name = "puddle-test-kit"
 version = "0.0.0"
 dependencies = [
  "cpu-time",
+ "serde_json",
  "tempfile",
  "tokio",
  "tracing",

@@ -126,13 +126,13 @@ jobs:
         run: ci/fetch-msb.sh "$RUNNER_TEMP/msb"
       - name: guest agent (static musl build)
         run: echo "AGENT=$PWD/$(ci/build-agent.sh --locked)" >> "$GITHUB_ENV"
-      - name: the program (release, with serve) and puddle-soak
+      - name: the program (optimised soak profile, with serve) and puddle-soak
         run: |
-          cargo build --locked --release -p puddle --features serve
+          cargo build --locked --profile soak -p puddle --features serve
           cargo build --locked -p puddle-e2e --bin puddle-soak
       - name: the day (profile ${{ env.PROFILE }})
         run: |
-          target/debug/puddle-soak run --profile "$PROFILE" --puddle target/release/puddle \
+          target/debug/puddle-soak run --profile "$PROFILE" --puddle target/soak/puddle \
             --runtime "$RUNNER_TEMP/msb" --agent "$AGENT" --scripts ci/soak \
             --out "$RUNNER_TEMP/soak" --min-ram-gib 10 --min-disk-gib 20
       - name: summary

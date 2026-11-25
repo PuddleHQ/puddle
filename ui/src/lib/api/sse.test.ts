@@ -182,6 +182,80 @@ describe("eventStream", () => {
     expect(t.resyncs).toEqual(["reconnect"]);
   });
 
+  it("reconnects with a resync when an open stream goes silent, and says so", async () => {
+    vi.useFakeTimers();
+    try {
+      // The first body never sends a byte and never ends: a half-open connection.
+      const t = setup([
+        () => sse([status("one")], t.controller.signal),
+        () => sse([status("two")]),
+      ]);
+      const errors: string[] = [];
+      const seen: PuddleEvent[] = [];
+      const run = (async () => {
+        for await (const event of eventStream({
+          ...t.base,
+          onError: (reason) => errors.push(reason),
+        })) {
+          seen.push(event);
+          if (seen.length === 2) break;
+        }
+      })();
+      await vi.advanceTimersByTimeAsync(44_000);
+      expect(t.fetch).toHaveBeenCalledTimes(1);
+      expect(errors).toEqual([]);
+      await vi.advanceTimersByTimeAsync(2000);
+      await run;
+      expect(errors).toEqual(["the event stream went silent for 45 s"]);
+      expect(t.fetch).toHaveBeenCalledTimes(2);
+      expect(t.resyncs).toEqual(["reconnect"]);
+      expect(t.states).toContain("reconnecting");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("counts a keep-alive comment as life", async () => {
+    vi.useFakeTimers();
+    try {
+      let push: (text: string) => void = () => undefined;
+      const t = setup([
+        () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                push = (text) => controller.enqueue(enc.encode(text));
+              },
+            }),
+          ),
+      ]);
+      const errors: string[] = [];
+      const seen: PuddleEvent[] = [];
+      const run = (async () => {
+        for await (const event of eventStream({
+          ...t.base,
+          onError: (reason) => errors.push(reason),
+        })) {
+          seen.push(event);
+        }
+      })();
+      for (let i = 0; i < 4; i += 1) {
+        await vi.advanceTimersByTimeAsync(30_000);
+        push(": keep-alive\n\n");
+      }
+      push(status("late"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(errors).toEqual([]);
+      expect(t.fetch).toHaveBeenCalledTimes(1);
+      expect(seen).toHaveLength(1);
+      t.controller.abort();
+      await vi.advanceTimersByTimeAsync(100_000);
+      await run;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps backing off against a server that answers 200 and closes without a message", async () => {
     const empty = () => sse([]);
     const t = setup([empty, empty, empty, empty, () => sse([status("up")])]);

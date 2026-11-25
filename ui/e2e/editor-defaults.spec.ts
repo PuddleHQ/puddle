@@ -34,6 +34,11 @@ const workspaceEditor = async (
   };
 };
 
+// Exact: the "Use the global setting again for <label>" button also carries the label, and while
+// a reset is in flight it is still on the page next to the field.
+const field = (page: Page, label: string) =>
+  page.getByLabel(label, { exact: true });
+
 const row = (page: Page, name: string) =>
   page.locator(`[data-setting="${name}"]`);
 
@@ -50,19 +55,19 @@ test("defaults set in Settings reach a workspace with their source, and a worksp
   ).toBeVisible();
 
   // Global: a theme and a font size, each saved with its own button.
-  await page.getByLabel("Editor colour theme").fill("Default Dark Modern");
+  await field(page, "Editor colour theme").fill("Default Dark Modern");
   await page.getByRole("button", { name: "Save Editor colour theme" }).click();
   await expect
     .poll(async () => (await globalEditor(request, backend)).colour_theme)
     .toBe("Default Dark Modern");
-  await page.getByLabel("Font size (pixels)").fill("16");
+  await field(page, "Font size (pixels)").fill("16");
   await page.getByRole("button", { name: "Save Font size (pixels)" }).click();
   await expect
     .poll(async () => (await globalEditor(request, backend)).font_size)
     .toBe(16);
-  await page
-    .getByLabel("Extensions to install")
-    .fill("Rust-Lang.Rust-Analyzer\nesbenp.prettier-vscode");
+  await field(page, "Extensions to install").fill(
+    "Rust-Lang.Rust-Analyzer\nesbenp.prettier-vscode",
+  );
   await page
     .getByRole("button", { name: "Save Extensions to install" })
     .click();
@@ -74,7 +79,7 @@ test("defaults set in Settings reach a workspace with their source, and a worksp
   );
 
   // A value the API would refuse is held back with the reason.
-  await page.getByLabel("Font size (pixels)").fill("99");
+  await field(page, "Font size (pixels)").fill("99");
   await expect(page.getByRole("alert")).toContainText("8 to 40");
   await expect(
     page.getByRole("button", { name: "Save Font size (pixels)" }),
@@ -83,11 +88,11 @@ test("defaults set in Settings reach a workspace with their source, and a worksp
 
   // The workspace inherits all of it and says so.
   await page.goto("/workspaces/web-shop/settings");
-  await expect(page.getByLabel("Editor colour theme")).toHaveValue(
+  await expect(field(page, "Editor colour theme")).toHaveValue(
     "Default Dark Modern",
   );
   await expect(row(page, "editor-theme")).toContainText("Global setting");
-  await expect(page.getByLabel("Font size (pixels)")).toHaveValue("16");
+  await expect(field(page, "Font size (pixels)")).toHaveValue("16");
   await expect(row(page, "editor-keybindings")).not.toContainText(
     "Puddle's default",
   );
@@ -98,7 +103,7 @@ test("defaults set in Settings reach a workspace with their source, and a worksp
   ).toHaveCount(0);
 
   // One workspace field is overridden; the others still follow the global value.
-  await page.getByLabel("Editor colour theme").fill("Solarized Dark");
+  await field(page, "Editor colour theme").fill("Solarized Dark");
   await page.getByRole("button", { name: "Save Editor colour theme" }).click();
   await expect
     .poll(
@@ -114,7 +119,7 @@ test("defaults set in Settings reach a workspace with their source, and a worksp
   await expectNoAxeViolations(page, "/workspaces/web-shop/settings");
 
   // An empty list overrides the global extensions with none.
-  await page.getByLabel("Extensions to install").fill("");
+  await field(page, "Extensions to install").fill("");
   await page
     .getByRole("button", { name: "Save Extensions to install" })
     .click();
@@ -137,7 +142,7 @@ test("defaults set in Settings reach a workspace with their source, and a worksp
         (await workspaceEditor(request, backend)).overrides.editor.colour_theme,
     )
     .toBeNull();
-  await expect(page.getByLabel("Editor colour theme")).toHaveValue(
+  await expect(field(page, "Editor colour theme")).toHaveValue(
     "Default Dark Modern",
   );
   await expect(row(page, "editor-theme")).toContainText("Global setting");

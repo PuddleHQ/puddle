@@ -356,6 +356,7 @@ impl Store {
         }
         conn.pragma_update(None, "journal_mode", "wal")?;
         conn.pragma_update(None, "synchronous", "normal")?;
+        conn.pragma_update(None, "journal_size_limit", audit_retention::WAL_LIMIT_BYTES)?;
         let mut store = Self::init(conn, clock, limits)?;
         // Before anything is served, so no decision waits on the rebuild.
         audit_retention::rebuild_older_file_on_open(&lock(&store.conn));

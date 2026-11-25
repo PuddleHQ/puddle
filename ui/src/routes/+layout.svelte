@@ -10,6 +10,7 @@
   import { page } from "$app/state";
   import Notices from "#lib/components/Notices.svelte";
   import Sidebar from "#lib/components/Sidebar.svelte";
+  import WaitingStrip from "#lib/components/WaitingStrip.svelte";
   import SignInGate from "#lib/components/SignInGate.svelte";
   import { documentTitle, frameFor } from "#lib/nav.ts";
   import { api } from "#lib/api/client.ts";
@@ -170,6 +171,7 @@
           refreshes every few seconds meanwhile.
         </p>
       {/if}
+      {#if !welcome}<WaitingStrip />{/if}
       <Notices />
       <main
         id="main"

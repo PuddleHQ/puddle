@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
+  import HostName from "./HostName.svelte";
   import ArrowDown from "@lucide/svelte/icons/arrow-down";
   import ArrowUp from "@lucide/svelte/icons/arrow-up";
   import { absoluteTime, relativeTime } from "#lib/format/relative-time.ts";
@@ -123,12 +124,7 @@
           class:off={!rule.enabled}
         >
           <td class="host">
-            <span
-              class="mono"
-              title={rule.pattern_kind === "suffix"
-                ? "This host and every subdomain of it"
-                : undefined}>{patternLabel(rule)}</span
-            >
+            <HostName host={patternLabel(rule)} />
             {#if !rule.enabled}<span class="meta">off</span>{/if}
           </td>
           <td>

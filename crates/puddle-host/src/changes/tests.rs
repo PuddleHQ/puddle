@@ -295,3 +295,20 @@ async fn the_task_ends_when_the_hub_is_gone() {
         .unwrap()
         .unwrap();
 }
+
+#[tokio::test]
+async fn a_change_still_running_when_the_task_is_aborted_has_let_go_of_the_service_by_then() {
+    let hub = EventHub::default();
+    let fake = Fake::default();
+    let _held = fake.hold("alpha");
+    let task = follow_hub(&hub, &fake);
+    hub.emit(env_changed("alpha"));
+    calls_after(&fake, 1).await;
+    task.abort();
+    let _ = task.await;
+    assert_eq!(
+        Arc::strong_count(&fake.calls),
+        1,
+        "a queue still holds the service after the follower ended"
+    );
+}

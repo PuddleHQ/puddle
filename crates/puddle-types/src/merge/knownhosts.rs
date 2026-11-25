@@ -6,7 +6,9 @@
 //! then one end line) is replaced where it stands; a file whose markers were damaged (one
 //! removed, a block duplicated, the end before the begin) loses each begin-to-end block and each
 //! lone marker line, keeps every other line (also one between two blocks), and gets the block at
-//! its end again. The file is line-based, so no
+//! its end again. A lone begin marker therefore costs the user nothing but that line and the comment under it, and a hand
+//! edit between two of Puddle's markers is Puddle's to overwrite: the block carries a
+//! comment line that says so. The file is line-based, so no
 //! content makes it unparsable; only a NUL byte, invalid UTF-8 or more than [`crate::MAX_MERGE_FILE`]
 //! bytes is refused.
 
@@ -26,12 +28,19 @@ pub(super) const END: &str = "# puddle: end";
 pub(super) struct Markers {
     pub(super) begin: &'static str,
     pub(super) end: &'static str,
+    /// A comment line written under `begin`, or `None`.
+    pub(super) note: Option<&'static str>,
 }
+
+/// The comment line Puddle writes right under the begin marker of the known-hosts block.
+pub(super) const NOTE: &str =
+    "# managed by Puddle; hand edits between these markers are overwritten";
 
 /// The markers of `ssh_known_hosts`.
 const HOSTS: Markers = Markers {
     begin: BEGIN,
     end: END,
+    note: Some(NOTE),
 };
 
 /// The most a block may hold, so a rewrite never nears the file limit by itself.
@@ -59,7 +68,8 @@ pub(super) fn invalid(value: &str) -> Option<&'static str> {
 /// The block with its markers.
 fn block(m: &Markers, entries: &[MergeEntry]) -> String {
     let body = entries.first().map_or("", MergeEntry::value);
-    format!("{}\n{body}\n{}\n", m.begin, m.end)
+    let note = m.note.map(|n| format!("{n}\n")).unwrap_or_default();
+    format!("{}\n{note}{body}\n{}\n", m.begin, m.end)
 }
 
 /// Which marker a line is, if any.
@@ -69,8 +79,12 @@ enum Marker {
     End,
 }
 
+fn marker_text(line: &str) -> &str {
+    line.trim_end_matches(['\r', '\n'])
+}
+
 fn marker(m: &Markers, line: &str) -> Option<Marker> {
-    let line = line.trim_end_matches(['\r', '\n']);
+    let line = marker_text(line);
     if line == m.begin {
         Some(Marker::Begin)
     } else if line == m.end {
@@ -108,6 +122,11 @@ fn without(m: &Markers, lines: &[&str]) -> (String, usize, bool) {
                     _ => {
                         lone = true;
                         i += 1;
+                        if m.note
+                            .is_some_and(|n| lines.get(i).is_some_and(|l| marker_text(l) == n))
+                        {
+                            i += 1;
+                        }
                     }
                 }
             }

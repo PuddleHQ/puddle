@@ -230,12 +230,12 @@ async fn a_follower_gets_every_event_it_wants_where_a_stream_of_the_same_hub_lag
         stream.recv().await,
         Err(broadcast::error::RecvError::Lagged(_))
     ));
+    // Emitting is synchronous: every event the follower gets is in its feed already.
+    assert_eq!(follower.len(), 100, "it got only the events it wants");
     for i in 0..100 {
-        let event = follower.try_recv().unwrap();
+        let event = follower.recv().await.unwrap();
         assert_eq!(event.workspace(), Some(&name(&format!("w{i}"))));
     }
-    // The events it does not want never reach it.
-    assert!(follower.try_recv().is_err());
     assert_eq!(hub.subscribers(), 1, "a follower is not a stream");
 }
 

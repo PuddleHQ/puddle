@@ -40,7 +40,7 @@ use super::{Mode, Termination, h2, response, ws};
 use crate::http::{self, HeadError};
 use crate::opened::Opened;
 use crate::proxy::{Proxy, ProxyConfig, Refusal, refuse};
-use crate::target::Target;
+use crate::request_target::Target;
 use crate::upstream::{Admitted, connect_out};
 
 /// The upstream client's read buffer cap, which bounds a response head: heads up to this size are

@@ -615,6 +615,9 @@ the Rust gates, not parallel compilation. `notices` is skipped when Cargo.lock, 
 run (stamp in the target directory; `CHECK_NO_SKIP=1` runs it anyway). A test target must not be named like a
 dependency (`scripts/target-names-test.sh`): `cargo llvm-cov` clears old build output by target name, so a test
 called `http` made every coverage run rebuild the `http` crate and everything that depends on it.
+No tracked directory may be named `target` (`scripts/no-target-dirs-test.sh`, the `hooks` gate): tools that clean, copy or
+ignore Cargo's output folder by name also take a source module of that name, and two `target/tests.rs` files vanished
+from a dozen task worktrees that way. Name the module for what it holds (`request_target`).
 
 `ui-e2e` is the slowest gate (two browsers against the built UI) and the one that flakes most on a loaded
 machine, so a push does not wait for it: the pre-push hook runs `pre-push`, and `ci.yml` runs `ui-e2e` on the

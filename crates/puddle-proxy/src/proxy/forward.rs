@@ -13,9 +13,9 @@ use puddle_netpolicy::block_message;
 
 use crate::http::{self, Body, Head};
 use crate::opened::{ESTABLISHED, Opened};
+use crate::request_target::Target;
 use crate::ssh;
 use crate::tap::RequestTap;
-use crate::target::Target;
 use crate::terminate::{self};
 use crate::token_gate::{self, TokenGate};
 use crate::upstream::ProxyForm;

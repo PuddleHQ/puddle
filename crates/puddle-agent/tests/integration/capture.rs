@@ -95,6 +95,10 @@ fn missing_prerequisite() -> Option<String> {
 /// returns); inside the namespace returns `true` and the caller runs its body. Where the machine
 /// lacks a prerequisite it returns `false` after printing why, unless `PUDDLE_REQUIRE_CAPTURE_NETNS`
 /// is set, which makes that a failure.
+#[expect(
+    clippy::print_stderr,
+    reason = "a local run without a namespace or tool says that it skipped"
+)]
 async fn enter(test: &str) -> bool {
     if std::env::var_os(CHILD).is_some() {
         return true;

@@ -252,6 +252,7 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
         sandbox: &WorkspaceId,
         probe: &Path,
         out: &Path,
+        logs: &Path,
     ) -> String {
         // The patch is read when the git extension starts, so it must not be written while the window is still
         // starting after the reload before this one: the extension would load it at once, run the probe in a
@@ -290,10 +291,26 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
             marker.trim().parse::<u64>().ok()
         })
         .await;
-        let who = eventually_async("the command ran on this computer", SHOWS, || async {
-            std::fs::read(probe).ok().filter(|b| !b.is_empty())
-        })
-        .await;
+        // A plain wait left only a timeout when the local terminal never ran the command (nightly 2026-11-25):
+        // the screenshot, the dialogs, the extension's own error and the window logs say what the window did.
+        let deadline = std::time::Instant::now() + SHOWS;
+        let who = loop {
+            if let Some(found) = std::fs::read(probe).ok().filter(|b| !b.is_empty()) {
+                break found;
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = window.screenshot(&out.join("u7c-no-command.png")).await;
+                let shows = window_shows(window).await;
+                let said =
+                    shell(runtime, sandbox, "cat /tmp/u7c-ran.err 2>/dev/null || true").await;
+                copy_tree(logs, &out.join("vsc-logs-u7c-no-command"));
+                panic!(
+                    "the command never ran on this computer within {SHOWS:?}; the extension said {said:?}; the window shows {shows}"
+                );
+            }
+            // flake-ok: a poll of a file the window's terminal writes, with a deadline and a report
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        };
         let who: String = String::from_utf8_lossy(&who)
             .chars()
             .filter(|c| *c != '\0' && *c != '\u{feff}')
@@ -717,8 +734,15 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
     /// U7c: guest code makes the window run a command on this computer (the documented trust).
     /// Closes the window and returns who ran it.
     async fn phase_hostile_code(s: &Story, mut window: VsCodeWindow) -> String {
-        let who =
-            hostile_code_runs_here(&mut window, &s.runtime, &s.sandbox, &s.probe, &s.out).await;
+        let who = hostile_code_runs_here(
+            &mut window,
+            &s.runtime,
+            &s.sandbox,
+            &s.probe,
+            &s.out,
+            &s.scratch.path().join("vsc-user").join("logs"),
+        )
+        .await;
         window.screenshot(&s.out.join("u7c.png")).await.unwrap();
         assert!(!who.is_empty(), "the probe file is empty");
         window.close().await.expect("the window closes");
@@ -788,8 +812,15 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
                 .is_some_and(|a| a.contains("Git: https://github.com")),
             "the git extension in the profile's window never asked the person for github.com: {asked:?}, askpass said {said}"
         );
-        let who_again =
-            hostile_code_runs_here(&mut window, &s.runtime, &s.sandbox, &s.probe, &s.out).await;
+        let who_again = hostile_code_runs_here(
+            &mut window,
+            &s.runtime,
+            &s.sandbox,
+            &s.probe,
+            &s.out,
+            &s.scratch.path().join("vsc-user").join("logs"),
+        )
+        .await;
         assert_eq!(
             who_again, who,
             "the same user runs the command in the profile"

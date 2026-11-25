@@ -324,7 +324,11 @@ run_gate() {
         "$cargo" test --locked --doc --workspace $skip_app --no-fail-fast
         # the fake-host and HTTP suites are the integration tests that exercise the layer; the
         # others of the workspace need a VM (vm_*) or a UI build
-        "$cargo" test --locked -p puddle-host --test fake_host
+        # The churn tests count the descriptors and threads of their whole process, so each runs
+        # alone, as under nextest (one process per test): beside 340 parallel tests in one
+        # process their counts drift by hundreds and the run fails without a leak.
+        "$cargo" test --locked -p puddle-host --test fake_host -- --skip churn::
+        "$cargo" test --locked -p puddle-host --test fake_host -- churn:: --test-threads=1
         "$cargo" test --locked -p puddle-api --test api_http
         "$cargo" test --locked -p puddle --test cli --test serve_config
         "$cargo" test --locked -p puddle-settings --test properties

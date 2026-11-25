@@ -15,6 +15,9 @@ mod support;
 mod attach_places;
 #[path = "fake_host/backup_restore.rs"]
 mod backup_restore;
+#[cfg(target_os = "linux")]
+#[path = "fake_host/churn.rs"]
+mod churn;
 #[path = "fake_host/cleanup_and_problems.rs"]
 mod cleanup_and_problems;
 #[cfg(unix)]

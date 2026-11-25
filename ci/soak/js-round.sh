@@ -4,6 +4,10 @@
 # Quiet on success; on failure pnpm's own output goes to stderr so the soak log
 # shows why (the silent reporter hid a broken install).
 set -eu
+# vite's playwright-chromium postinstall downloads a browser from the Playwright CDN, which the
+# guest's egress does not reach (ERR_SOCKET_CLOSED). The round installs and builds; vite's browser
+# tests are not part of it, so the download is skipped.
+export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 cd vite
 rm -rf node_modules
 log=$(mktemp)

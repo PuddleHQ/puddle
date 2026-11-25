@@ -493,6 +493,8 @@ impl Run {
                 return Err(format!("setup of {}: exit {code}\n{out}", s.name));
             }
         }
+        // The web app answers on this computer's port 3000 only once it is forwarded.
+        self.setup_web().await;
         Ok(())
     }
 
@@ -1061,7 +1063,7 @@ pub async fn run(opts: Options) -> Result<Outcome, String> {
     if opts.workloads() {
         run.create_spaces().await?;
         run.setup().await?;
-        // Not before the app answers (setup_web ran in create_spaces): the minutes it took to
+        // Not before the app answers (`setup` started and forwarded it): the minutes it took to
         // start are not failures.
         sampler.lock().await.watch_web_app(
             Target {

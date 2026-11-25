@@ -29,6 +29,7 @@ use puddle_store::{
     Actor, Author, Coverage, CredentialBinding, Effect, IdentityDraft, NewRule, Pattern, Scope,
 };
 use puddle_types::{WorkspaceId, WorkspaceStatus};
+use puddle_vm_tests::transparency::{Comparison, STEPS_SCRIPT, create_problems, parse_steps};
 use puddle_vm_tests::{RuntimePair, Settings};
 use serde_json::json;
 use support::{Api, TestDevCert, ended, named_id_options};
@@ -2998,8 +2999,11 @@ fn identity_for(label: &str, hosts: impl Iterator<Item = &'static &'static str>)
 
 /// A workspace for a radar: the hosts allowed, the identity attached when `terminate` is set (a
 /// host with no injection, so nothing is added to a request), and the workspace created and
-/// running.
-async fn radar_workspace(tag: &str, terminate: bool) -> (VmHost, WorkspaceId, Api) {
+/// running; with the seconds each step of its create lasted.
+async fn radar_workspace(
+    tag: &str,
+    terminate: bool,
+) -> (VmHost, WorkspaceId, Api, Vec<(String, f64)>) {
     let vm = start_vm_host_with(tag, options_without_injection()).await;
     let name = format!("{}-{tag}", vm.settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
@@ -3044,6 +3048,7 @@ async fn radar_workspace(tag: &str, terminate: bool) -> (VmHost, WorkspaceId, Ap
         Some("done"),
         "{end}"
     );
+    let create_steps = events.step_seconds(&name);
     // An identity reaches a workspace through a repository it clones or by being attached, and
     // this workspace has no repository: without the attachment its decrypt set is empty and every
     // registry is spliced, whatever `terminate` says.
@@ -3065,7 +3070,7 @@ async fn radar_workspace(tag: &str, terminate: bool) -> (VmHost, WorkspaceId, Ap
         )
         .await;
     }
-    (vm, sandbox, api)
+    (vm, sandbox, api, create_steps)
 }
 
 /// The connection records of the audit so far.
@@ -3444,7 +3449,7 @@ enum RadarMode {
 async fn radar(tag: &str, mode: RadarMode) {
     let terminate = mode == RadarMode::Terminate;
     let no_proxy = mode == RadarMode::NoProxy;
-    let (vm, sandbox, api) = Box::pin(radar_workspace(tag, terminate)).await;
+    let (vm, sandbox, api, _) = Box::pin(radar_workspace(tag, terminate)).await;
     // The run means nothing if the registries are not decrypted when they should be (or are when
     // they should not be): the issuer the guest sees says which.
     let issuer = guest(&vm.runtime, &sandbox, &issuer_script("registry.npmjs.org")).await;
@@ -3547,6 +3552,242 @@ async fn vm_radar_package_managers_cold_with_the_registries_spliced() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_radar_package_managers_cold_with_no_proxy_setting_through_the_stub_dns() {
     Box::pin(radar("radn", RadarMode::NoProxy)).await;
+}
+
+/// The transparency ratio of the real tools (docs/qa 05 S3d, S4c, S7b; 01 S3.2b): the steps of
+/// [`STEPS_SCRIPT`] (a large download, npm's cold and warm `--prefer-offline` install, `cargo fetch`)
+/// run on this host with no Puddle, before and after the same steps in a workspace behind the proxy
+/// with the registries decrypted (the heavier path). No step may take more than twice the host's
+/// time, the download keeps half the host's MiB/s, and each step of the workspace's create stays
+/// under its ceiling. Named `vm_perf_`, so it runs on the nightly and a dispatch only: a wall-clock
+/// bar on a shared runner is too noisy to gate a merge. The judges are unit-tested against a
+/// slowed workspace in `puddle-vm-tests` (`transparency::tests`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_perf_transparency_package_tools_keep_to_twice_the_hosts_time_and_half_its_speed() {
+    let (vm, sandbox, api, create_steps) = Box::pin(radar_workspace("perft", true)).await;
+    eprintln!("TRANSPARENCY create steps: {create_steps:?}");
+    let create_issues = create_problems(&create_steps);
+
+    let host_run = || async {
+        // From this crate's folder: a rustup shim there finds the repository's pinned toolchain.
+        let out = tokio::time::timeout(
+            Duration::from_mins(20),
+            tokio::process::Command::new("bash")
+                .arg("-c")
+                .arg(STEPS_SCRIPT)
+                .current_dir(env!("CARGO_MANIFEST_DIR"))
+                .output(),
+        )
+        .await
+        .expect("the host run took over 20 minutes")
+        .expect("run bash");
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        eprintln!("TRANSPARENCY host run:\n{text}");
+        parse_steps(&text).expect("the host's step lines parse")
+    };
+    let handle = vm.runtime.get(&sandbox.sandbox_name()).await.unwrap();
+    let exec = |script: String| {
+        let handle = &handle;
+        async move {
+            let out = handle
+                .exec(
+                    ExecRequest::sh(script)
+                        .as_user("root")
+                        .with_timeout(Duration::from_mins(40)),
+                )
+                .await
+                .unwrap();
+            format!("{}{}", out.stdout_text(), out.stderr_text())
+        }
+    };
+
+    let before = host_run().await;
+    // The tools come as the upstream tarballs, not as apt packages: Debian's `npm` and `cargo` pull
+    // hundreds of packages (a half-hour install through the proxy, one request each), and that
+    // install is not the step under test. Only curl, certificates and xz come from apt.
+    for site in ["nodejs.org", "static.rust-lang.org"] {
+        vm.host
+            .store()
+            .as_user(puddle_store::UserId::OWNER)
+            .add_rule(&NewRule {
+                scope: Scope::Workspace(sandbox.clone()),
+                pattern: Pattern::parse(site).unwrap(),
+                effect: Effect::Allow,
+                expires_at: None,
+                created_by: Actor::Cli,
+            })
+            .unwrap();
+    }
+    let tools = exec(
+        "set -e; export DEBIAN_FRONTEND=noninteractive; apt-get update -qq; apt-get install -y -qq --no-install-recommends curl ca-certificates xz-utils; \
+         mkdir -p /opt/tools && cd /opt/tools; \
+         curl -fsSL --retry 4 --retry-all-errors https://nodejs.org/dist/v20.18.1/node-v20.18.1-linux-x64.tar.xz | tar -xJ; \
+         curl -fsSL --retry 4 --retry-all-errors https://static.rust-lang.org/dist/cargo-1.99.0-x86_64-unknown-linux-gnu.tar.xz | tar -xJ; \
+         ln -sf /opt/tools/node-v20.18.1-linux-x64/bin/* /usr/local/bin/; \
+         curl -fsSL --retry 4 --retry-all-errors https://static.rust-lang.org/dist/rustc-1.99.0-x86_64-unknown-linux-gnu.tar.xz | tar -xJ; \
+         ln -sf /opt/tools/cargo-1.99.0-x86_64-unknown-linux-gnu/cargo/bin/cargo /usr/local/bin/cargo; \
+         ln -sf /opt/tools/rustc-1.99.0-x86_64-unknown-linux-gnu/rustc/bin/rustc /usr/local/bin/rustc; \
+         npm --version; cargo --version; rustc --version; echo tools=0"
+            .to_owned(),
+    )
+    .await;
+    assert!(
+        tools.contains("tools=0"),
+        "the guest's tools did not install:\n{tools}"
+    );
+    let text = exec(format!(
+        "bash -s <<'PUDDLE_EOF'\n{STEPS_SCRIPT}\nPUDDLE_EOF"
+    ))
+    .await;
+    eprintln!("TRANSPARENCY workspace run:\n{text}");
+    let guest = parse_steps(&text).expect("the workspace's step lines parse");
+    let after = host_run().await;
+
+    let comparison = Comparison::new(vec![before, after], guest);
+    eprintln!("TRANSPARENCY\n{}", comparison.table());
+    let stop = api
+        .post(&format!("/api/workspaces/{}/stop", sandbox.as_str()), "")
+        .await;
+    assert_eq!(stop.status, 202, "{}", stop.body);
+    let down = vm.host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
+    let mut problems = comparison.problems();
+    problems.extend(create_issues);
+    assert_eq!(problems, Vec::<String>::new(), "{}", comparison.table());
+}
+
+/// A timed trace of the cold npm install, run on the host and in the workspace: curl's phase times
+/// for fresh and reused connections to the registry, then `npm install` with every request timed.
+const NPM_TRACE_SCRIPT: &str = r#"set -u
+W=$(mktemp -d "${TMPDIR:-/tmp}/npm-trace.XXXXXX") || exit 1
+trap 'rm -rf "$W"' EXIT
+export npm_config_cache="$W/npm-cache"
+U=https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz
+for i in 1 2 3 4 5 6; do
+  curl -s -o /dev/null -w 'TRACE fresh dns=%{time_namelookup} conn=%{time_connect} tls=%{time_appconnect} ttfb=%{time_starttransfer} total=%{time_total}\n' $U
+done
+curl -s -o /dev/null -w 'TRACE reuse conns=%{num_connects} ttfb=%{time_starttransfer} total=%{time_total}\n' $U $U $U $U $U $U
+mkdir -p "$W/np"
+cat > "$W/np/package.json" <<'JSON'
+{"name":"transparency","version":"1.0.0","dependencies":{
+ "next":"14.2.15","react":"18.3.1","react-dom":"18.3.1","typescript":"5.6.3","eslint":"8.57.1",
+ "eslint-config-next":"14.2.15","jest":"29.7.0","webpack":"5.95.0","@babel/core":"7.25.8",
+ "@babel/preset-env":"7.25.8","tailwindcss":"3.4.14","postcss":"8.4.47","rollup":"4.24.0","vite":"5.4.9",
+ "@angular/cli":"18.2.9","@nestjs/core":"10.4.5","@nestjs/cli":"10.4.5","express":"4.21.1","lodash":"4.17.21"}}
+JSON
+vmstat 5 > "$W/vmstat.log" 2>&1 & VM=$!
+t0=$(date +%s.%N)
+(cd "$W/np" && npm install --no-audit --no-fund --ignore-scripts --loglevel=http) > "$W/npm.log" 2>&1
+rc=$?
+t1=$(date +%s.%N)
+kill $VM 2>/dev/null
+awk 'NR>2 {n++; us+=$13; sy+=$14; id+=$15; wa+=$16; if ($15<5) sat++} END {printf "TRACE vmstat samples=%d us=%.0f sy=%.0f id=%.0f wa=%.0f saturated_samples=%d\n", n, us/n, sy/n, id/n, wa/n, sat}' "$W/vmstat.log"
+echo "TRACE npm rc=$rc wall=$(awk "BEGIN {printf \"%.1f\", $t1 - $t0}")"
+grep 'http fetch' "$W/npm.log" | grep -o '[0-9]*ms' | tr -d ms | sort -n | awk '{ a[NR] = $1; s += $1 } END { printf "TRACE npm_requests n=%d sum_ms=%d p50_ms=%d p90_ms=%d max_ms=%d\n", NR, s, a[int(NR/2)+1], a[int(NR*0.9)+1], a[NR] }'
+grep 'http fetch' "$W/npm.log" | grep -c '\.tgz' | sed 's/^/TRACE tarball_requests /'
+grep 'http fetch' "$W/npm.log" | head -3 | sed 's/^/TRACE sample /'
+echo "TRACE nproc=$(nproc) mem_kb=$(awk '/MemTotal/ {print $2}' /proc/meminfo)"
+t0=$(date +%s.%N)
+(cd "$W/np" && rm -rf node_modules && npm install --no-audit --no-fund --ignore-scripts --offline) > "$W/off.log" 2>&1
+t1=$(date +%s.%N)
+echo "TRACE npm_offline rc=$? wall=$(awk "BEGIN {printf \"%.1f\", $t1 - $t0}")"
+head -c 300000000 /dev/urandom > "$W/rand.bin"
+t0=$(date +%s.%N); gzip -1 -c "$W/rand.bin" | wc -c > /dev/null; t1=$(date +%s.%N)
+echo "TRACE cpu_gzip wall=$(awk "BEGIN {printf \"%.1f\", $t1 - $t0}")"
+t0=$(date +%s.%N); (cd "$W" && mkdir x && cd x && for i in $(seq 1 3000); do echo $i > f$i; done; cat ../rand.bin > big; sync); t1=$(date +%s.%N)
+echo "TRACE fs_write wall=$(awk "BEGIN {printf \"%.1f\", $t1 - $t0}")"
+exit 0
+"#;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_perf_npm_trace_cold_install_host_and_workspace() {
+    Box::pin(npm_trace("npmtr", true)).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_perf_npm_trace_cold_install_host_and_workspace_spliced() {
+    Box::pin(npm_trace("npmts", false)).await;
+}
+
+async fn npm_trace(tag: &str, terminate: bool) {
+    let (vm, sandbox, api, _create_steps) = Box::pin(radar_workspace(tag, terminate)).await;
+    let run_host = || async {
+        let out = tokio::process::Command::new("bash")
+            .arg("-c")
+            .arg(NPM_TRACE_SCRIPT)
+            .output()
+            .await
+            .expect("run bash");
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
+    };
+    let handle = vm.runtime.get(&sandbox.sandbox_name()).await.unwrap();
+    let exec = |script: String| {
+        let handle = &handle;
+        async move {
+            let out = handle
+                .exec(
+                    ExecRequest::sh(script)
+                        .as_user("root")
+                        .with_timeout(Duration::from_mins(40)),
+                )
+                .await
+                .unwrap();
+            format!("{}{}", out.stdout_text(), out.stderr_text())
+        }
+    };
+    eprintln!("NPMTRACE host before:\n{}", run_host().await);
+    vm.host
+        .store()
+        .as_user(puddle_store::UserId::OWNER)
+        .add_rule(&NewRule {
+            scope: Scope::Workspace(sandbox.clone()),
+            pattern: Pattern::parse("nodejs.org").unwrap(),
+            effect: Effect::Allow,
+            expires_at: None,
+            created_by: Actor::Cli,
+        })
+        .unwrap();
+    let tools = exec(
+        "set -e; export DEBIAN_FRONTEND=noninteractive; apt-get update -qq; apt-get install -y -qq --no-install-recommends curl ca-certificates xz-utils; \
+         mkdir -p /opt/tools && cd /opt/tools; \
+         curl -fsSL --retry 4 --retry-all-errors https://nodejs.org/dist/v20.18.1/node-v20.18.1-linux-x64.tar.xz | tar -xJ; \
+         ln -sf /opt/tools/node-v20.18.1-linux-x64/bin/* /usr/local/bin/; npm --version; echo tools=0"
+            .to_owned(),
+    )
+    .await;
+    assert!(tools.contains("tools=0"), "tools:\n{tools}");
+    let before = audit_connections(&vm.host).len();
+    let text = exec(format!("bash -s <<'PUDDLE_EOF'\n{NPM_TRACE_SCRIPT}\nPUDDLE_EOF")).await;
+    eprintln!("NPMTRACE workspace:\n{text}");
+    let records = audit_connections(&vm.host);
+    let npm: Vec<_> = records
+        .iter()
+        .skip(before)
+        .filter(|r| r["host"] == "registry.npmjs.org")
+        .collect();
+    let stamps: Vec<f64> = npm.iter().filter_map(|r| r["ts"].as_f64()).collect();
+    eprintln!(
+        "NPMTRACE audit: registry.npmjs.org connection records={} first_ts={:?} last_ts={:?} sample={}",
+        npm.len(),
+        stamps.iter().copied().reduce(f64::min),
+        stamps.iter().copied().reduce(f64::max),
+        npm.first().map_or_else(String::new, ToString::to_string)
+    );
+    eprintln!("NPMTRACE host after:\n{}", run_host().await);
+    let stop = api
+        .post(&format!("/api/workspaces/{}/stop", sandbox.as_str()), "")
+        .await;
+    assert_eq!(stop.status, 202, "{}", stop.body);
+    let down = vm.host.shutdown().await;
+    assert!(down.sandboxes.all_stopped(), "{down:?}");
 }
 
 /// The variable that turns [`vm_host_second_process_probe`] from a no-op into the second

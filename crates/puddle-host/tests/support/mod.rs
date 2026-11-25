@@ -192,6 +192,7 @@ impl Api {
             stream,
             buf: String::new(),
             seen: Vec::new(),
+            seen_at: Vec::new(),
         };
         // The response head tells the stream is open: events emitted from here on are seen.
         events
@@ -229,6 +230,8 @@ pub(crate) struct Events {
     stream: TcpStream,
     buf: String,
     pub(crate) seen: Vec<Value>,
+    /// When each event of `seen` was parsed (the same index).
+    seen_at: Vec<Instant>,
 }
 
 impl Events {
@@ -238,6 +241,7 @@ impl Events {
             stream,
             buf: String::new(),
             seen: Vec::new(),
+            seen_at: Vec::new(),
         }
     }
 
@@ -285,6 +289,7 @@ impl Events {
                     .collect();
                 if let Ok(value) = serde_json::from_str::<Value>(&data) {
                     self.seen.push(value.clone());
+                    self.seen_at.push(Instant::now());
                     if pred(&value) {
                         return value;
                     }
@@ -309,6 +314,38 @@ impl Events {
             .iter()
             .filter(|e| e["type"] == "workspace_progress" && e["workspace"] == workspace)
             .filter_map(|e| e["step"].as_str().map(str::to_owned))
+            .collect()
+    }
+
+    /// Each progress step of `workspace` with the seconds it lasted: from its event (sent as the
+    /// step begins) to the next one of the workspace. `done` and `failed` end an operation, so
+    /// they last 0 whatever the workspace does next.
+    pub(crate) fn step_seconds(&self, workspace: &str) -> Vec<(String, f64)> {
+        let marks: Vec<(String, Instant)> = self
+            .seen
+            .iter()
+            .zip(&self.seen_at)
+            .filter(|(event, _)| {
+                event["type"] == "workspace_progress" && event["workspace"] == workspace
+            })
+            .filter_map(|(event, at)| Some((event["step"].as_str()?.to_owned(), *at)))
+            .collect();
+        let ends = marks
+            .iter()
+            .skip(1)
+            .map(|(_, at)| *at)
+            .chain(marks.last().map(|(_, at)| *at));
+        marks
+            .iter()
+            .zip(ends)
+            .map(|((step, at), end)| {
+                let secs = if matches!(step.as_str(), "done" | "failed") {
+                    0.0
+                } else {
+                    end.saturating_duration_since(*at).as_secs_f64()
+                };
+                (step.clone(), secs)
+            })
             .collect()
     }
 }

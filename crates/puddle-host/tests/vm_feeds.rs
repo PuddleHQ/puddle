@@ -128,7 +128,7 @@ echo "tool=npm-basic rc=${{PIPESTATUS[0]}} installed=$(test -f node_modules/{NPM
 /// fetches the dependency plugin and its dependencies from it on every run. This fills one warm
 /// repository, with retries and a growing wait, and a run copies it: no tool run depends on
 /// Central answering at that moment. The warm-up fetches an unrelated artifact, never the feed's.
-const MVN_WARM: &str = r#"mvn_warm() {
+const MVN_WARM: &str = r"mvn_warm() {
   for i in 1 2 3 4 5 6; do
     mvn -B -q -Dmaven.repo.local=/tmp/m2w org.apache.maven.plugins:maven-dependency-plugin:3.8.1:get \
       -Dartifact=junit:junit:4.13.2 >/tmp/mvn-warm.log 2>&1 && return 0
@@ -137,7 +137,7 @@ const MVN_WARM: &str = r#"mvn_warm() {
   cat /tmp/mvn-warm.log
 }
 mvn_warm
-"#;
+";
 
 /// The same installs with no credential at all: each must fail, or a pass above proves nothing.
 fn control_script() -> String {

@@ -37,6 +37,6 @@ async fn a_named_pipe_is_dialled_and_a_missing_one_is_an_error() {
     let name = format!(r"\\.\pipe\puddle-agent-dial-{}", std::process::id());
     let _server = ServerOptions::new().create(&name).unwrap();
     dial_unix(std::path::Path::new(&name)).await.unwrap();
-    let missing = format!(r"{name}-missing");
+    let missing = format!("{name}-missing");
     assert!(dial_unix(std::path::Path::new(&missing)).await.is_err());
 }

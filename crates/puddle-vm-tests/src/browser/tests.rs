@@ -89,6 +89,7 @@ async fn a_hung_node_reports_what_it_printed_and_how_far_it_got() {
             &[],
             "",
             Duration::from_secs(3),
+            Duration::from_secs(120),
         )
         .await
         .expect_err("hang");
@@ -101,6 +102,24 @@ async fn a_hung_node_reports_what_it_printed_and_how_far_it_got() {
     ] {
         assert!(said.contains(part), "{part} not in {said}");
     }
+}
+
+#[tokio::test]
+async fn a_node_that_never_prints_ends_at_the_start_limit() {
+    let err = Node::from_env()
+        .run_after_first_output(
+            ["-e", "setInterval(()=>{},1000)"],
+            &[],
+            "",
+            Duration::from_secs(60),
+            Duration::from_secs(2),
+        )
+        .await
+        .expect_err("hang");
+    assert!(
+        matches!(err, HarnessError::NodeHung { limit, .. } if limit == Duration::from_secs(2)),
+        "{err}"
+    );
 }
 
 #[tokio::test]

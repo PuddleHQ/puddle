@@ -110,11 +110,11 @@ impl Node {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        self.run_timed(args, envs, stdin, budget, false).await
+        self.run_timed(args, envs, stdin, budget, None).await
     }
 
     /// Like [`Node::run`], but the budget starts when node prints its first byte (to stdout or
-    /// stderr), so a slow start under load does not eat it. Until then only [`START_LIMIT`]
+    /// stderr), so a slow start under load does not eat it. Until then only `start_limit`
     /// applies, so a node that never prints still ends in [`HarnessError::NodeHung`].
     ///
     /// # Errors
@@ -126,12 +126,14 @@ impl Node {
         envs: &[(&str, &OsStr)],
         stdin: &str,
         budget: Duration,
+        start_limit: Duration,
     ) -> Result<NodeOutput, HarnessError>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        self.run_timed(args, envs, stdin, budget, true).await
+        self.run_timed(args, envs, stdin, budget, Some(start_limit))
+            .await
     }
 
     async fn run_timed<I, S>(
@@ -140,7 +142,7 @@ impl Node {
         envs: &[(&str, &OsStr)],
         stdin: &str,
         budget: Duration,
-        budget_starts_at_output: bool,
+        start_limit: Option<Duration>,
     ) -> Result<NodeOutput, HarnessError>
     where
         I: IntoIterator<Item = S>,
@@ -173,21 +175,17 @@ impl Node {
             .stderr
             .take()
             .map(|pipe| progress.drain(pipe, Stream::Err));
-        let budget = if budget_starts_at_output {
-            let first = tokio::time::timeout(START_LIMIT, progress.first_output.notified()).await;
-            // Never printed: the start limit was the whole budget, and the error names it.
-            if first.is_ok() {
-                budget
-            } else {
-                Duration::ZERO
+        let (budget, reported) = match start_limit {
+            Some(limit) => {
+                let first = tokio::time::timeout(limit, progress.first_output.notified()).await;
+                // Never printed: the start limit was the whole budget, and the error names it.
+                if first.is_ok() {
+                    (budget, budget)
+                } else {
+                    (Duration::ZERO, limit)
+                }
             }
-        } else {
-            budget
-        };
-        let reported = if budget.is_zero() {
-            START_LIMIT
-        } else {
-            budget
+            None => (budget, budget),
         };
         let waited = tokio::time::timeout(budget, async {
             let status = child.wait().await;
@@ -224,9 +222,6 @@ impl Node {
         })
     }
 }
-
-/// How long [`Node::run_after_first_output`] waits for node's first byte.
-const START_LIMIT: Duration = Duration::from_secs(120);
 
 #[derive(Clone, Copy)]
 enum Stream {

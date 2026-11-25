@@ -26,6 +26,15 @@ describe("HostName", () => {
   });
 });
 
+describe("HostName without a port", () => {
+  it("draws no port and no wildcard mark", () => {
+    const { container } = render(HostName, { props: { host: "example.com" } });
+    expect(container.querySelector(".port")).toBeNull();
+    expect(container.querySelector(".wild")).toBeNull();
+    expect(container.textContent).toBe("example.com");
+  });
+});
+
 describe("AllowDenyPair", () => {
   it("is Allow then Deny, and Deny alone when only that is possible", async () => {
     const onAllow = vi.fn();

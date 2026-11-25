@@ -45,4 +45,28 @@ describe("hostParts", () => {
     expect(guessRegistrable("www.example.com")).toBe("example.com");
     expect(guessRegistrable("localhost")).toBe("localhost");
   });
+
+  it("returns a short name and an IP literal unchanged", () => {
+    expect(guessRegistrable("example.com")).toBe("example.com");
+    expect(guessRegistrable("10.0.0.5")).toBe("10.0.0.5");
+  });
+
+  it("drops a leading dot and lets an explicit port win over a written one", () => {
+    expect(hostParts(".example.com:80", { port: 443 })).toMatchObject({
+      wildcard: false,
+      main: "example.com",
+      port: 443,
+      usualPort: true,
+    });
+  });
+
+  it("keeps the host whole when the given registrable domain is not its suffix", () => {
+    expect(
+      hostParts("a.example.com", { registrable: "other.org" }),
+    ).toMatchObject({
+      lead: "",
+      main: "a.example.com",
+      port: null,
+    });
+  });
 });

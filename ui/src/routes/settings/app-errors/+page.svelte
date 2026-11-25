@@ -72,7 +72,7 @@
     <ol class="list" aria-label="App errors">
       {#each errors as error, i (`${error.at}-${i}`)}
         <li class="card">
-          <p class="meta">
+          <p class="meta wrap">
             <b>{KIND_LABEL[error.kind]}</b>
             <span title={absoluteTime(error.at)}
               >{relativeTime(error.at, now)}</span

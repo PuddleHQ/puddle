@@ -113,7 +113,7 @@
     <h3 id="{id}-name">
       <SetChip name={set.name} fill={set.fill} variant="chip" />
     </h3>
-    {#if does !== null}<span class="meta">{does}</span>{/if}
+    {#if does !== null}<span class="meta wrap">{does}</span>{/if}
     {#if set.changed_at !== null}
       <span class="meta">Updated by Puddle {changed(set.changed_at)}</span>
     {/if}

@@ -267,7 +267,7 @@
     }
     th,
     td {
-      padding-inline: var(--space-2);
+      padding-inline: var(--space-1);
     }
   }
 </style>

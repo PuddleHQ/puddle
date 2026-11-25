@@ -297,6 +297,65 @@ async fn the_workspaces_reconnection_grace_reaches_the_editor_server_at_the_next
     host.shutdown().await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn the_editor_defaults_reach_the_guest_as_one_file_and_leave_with_the_last_one() {
+    const FILE: &str = "/etc/puddle/editor-defaults.json";
+    let rig = Rig::named_ids();
+    let mut config = rig.config();
+    config.guest.code_server = Some(fake_code_server(&rig));
+    let host = rig.start_with(config).await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    let last = || rig.guest.plan_files(rig.guest.boots() - 1);
+    assert!(!last().contains_key(FILE), "nothing set, no file");
+
+    stop_and_wait(&api, &mut events, "acme").await;
+    let global = api
+        .put(
+            "/api/settings",
+            &json!({"workspace_defaults": {"editor": {"colour_theme": "Default Dark Modern", "font_size": 15}}})
+                .to_string(),
+        )
+        .await;
+    assert_eq!(global.status, 200, "{}", global.body);
+    let own = api
+        .put(
+            "/api/settings/workspaces/acme",
+            &json!({"overrides": {"editor": {"font_size": 18, "extensions": ["Rust-Lang.Rust-Analyzer"]}}})
+                .to_string(),
+        )
+        .await;
+    assert_eq!(own.status, 200, "{}", own.body);
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    let file = last().remove(FILE).expect("the defaults file is planned");
+    let planned: serde_json::Value = serde_json::from_slice(&file).unwrap();
+    assert_eq!(
+        planned,
+        json!({"colour_theme": "Default Dark Modern", "font_size": 18, "extensions": ["rust-lang.rust-analyzer"]})
+    );
+
+    stop_and_wait(&api, &mut events, "acme").await;
+    for body in
+        [json!({"workspace_defaults": {"editor": {"colour_theme": null, "font_size": null}}})]
+    {
+        let reply = api.put("/api/settings", &body.to_string()).await;
+        assert_eq!(reply.status, 200, "{}", reply.body);
+    }
+    let reply = api
+        .put(
+            "/api/settings/workspaces/acme",
+            &json!({"overrides": {"editor": {"font_size": null, "extensions": null}}}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    api.post("/api/workspaces/acme/start", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    assert!(!last().contains_key(FILE), "unset again, no file");
+    host.shutdown().await;
+}
+
 /// What the first boot of `acme` told the agent about its editor server.
 async fn editor_env_of_a_new_workspace(
     rig: &Rig,

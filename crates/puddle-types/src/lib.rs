@@ -66,7 +66,8 @@ pub use interception::{CURATED_PASS_THROUGH, InterceptionMode};
 pub use local::{CompanySignal, LocalCategory};
 pub use memory::MemoryMib;
 pub use merge::{
-    MAX_MERGE_FILE, MergeEntry, MergeFormat, MergeRefusal, MergeSpec, Merged, Unmerged, unmerge,
+    MAX_MERGE_FILE, MergeEntry, MergeFormat, MergeRefusal, MergeSpec, Merged, Unmerged,
+    parse as parse_merge_file, unmerge,
 };
 pub use name::{
     CheckoutDir, EntryId, ImageRef, ImageRefLit, RESERVED_WORKSPACE_NAMES, SandboxName, VolumeName,

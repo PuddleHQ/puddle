@@ -129,7 +129,39 @@ fn retired_ids_of_both_sides_stay_retired() {
 }
 
 #[test]
-fn lists_in_different_formats_are_not_merged() {
+fn lists_in_formats_three_and_four_merge_into_format_four_with_an_owner_each() {
+    let dir = tempfile::tempdir().unwrap();
+    let v4 = r#"{"version":4,"workspaces":[{"id":"ws-one","name":"One","owner":7}]}"#;
+    let v3 = r#"{"version":3,"workspaces":[{"id":"ws-two","name":"Two"}]}"#;
+    // A backup in format 3 into a machine in format 4, and the other way round.
+    for (name, here, there) in [("a", v4, v3), ("b", v3, v4)] {
+        let here = write(dir.path(), &format!("here-{name}.json"), here);
+        let there = write(dir.path(), &format!("there-{name}.json"), there);
+        check_book_versions(&here, &there).unwrap();
+        let new = dir.path().join(format!("new-{name}.json"));
+        book(ApplyMode::Add, &here, &there, &new, &restored()).unwrap();
+        let merged = read(&new);
+        assert_eq!(merged["version"], 4, "{merged}");
+        let mut owners: Vec<(String, i64)> = entries_of(merged.as_object().unwrap())
+            .iter()
+            .map(|e| {
+                (
+                    e["id"].as_str().unwrap().to_owned(),
+                    e["owner"].as_i64().unwrap(),
+                )
+            })
+            .collect();
+        owners.sort();
+        assert_eq!(
+            owners,
+            [("ws-one".into(), 7), ("ws-two".into(), 7)],
+            "{merged}"
+        );
+    }
+}
+
+#[test]
+fn lists_in_a_format_older_than_three_are_refused_and_the_message_says_why() {
     let dir = tempfile::tempdir().unwrap();
     let here = write(
         dir.path(),
@@ -139,13 +171,21 @@ fn lists_in_different_formats_are_not_merged() {
     let there = write(
         dir.path(),
         "there.json",
-        r#"{"version":3,"workspaces":[{"id":"ws-two","name":"Two"}]}"#,
+        r#"{"version":2,"workspaces":[{"id":"ws-two","name":"Two"}]}"#,
     );
     let err = check_book_versions(&here, &there).unwrap_err();
     assert!(
-        err.contains("format 3") && err.contains("format 4"),
+        err.contains("format 2") && err.contains("format 4"),
         "{err}"
     );
+    assert!(
+        err.contains("the backup's format 2 describes workspaces differently"),
+        "{err}"
+    );
+    assert!(err.contains("choose Replace"), "{err}");
+    // The same the other way round names this machine's list.
+    let err = check_book_versions(&there, &here).unwrap_err();
+    assert!(err.contains("this machine's format 2"), "{err}");
     let err = book(
         ApplyMode::Add,
         &here,

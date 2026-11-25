@@ -390,6 +390,26 @@ pub fn unmerge(
     Ok(Unmerged { merged, empty })
 }
 
+/// Parses `bytes` as a document of `format` (JSON or JSON with comments) into a value of any
+/// top-level type, so a caller can read what a file holds before it edits it.
+///
+/// # Errors
+///
+/// A [`MergeRefusal`] when the bytes are too large, not UTF-8 or not valid in the format, or
+/// `format` is not a JSON one.
+pub fn parse(format: MergeFormat, bytes: &[u8]) -> Result<serde_json::Value, MergeRefusal> {
+    let Some(dialect) = dialect(format) else {
+        return Err(MergeRefusal::Syntax {
+            format: "JSON",
+            reason: "the format is not JSON".to_owned(),
+        });
+    };
+    let Some(original) = text(Some(bytes))? else {
+        return Ok(serde_json::Value::Null);
+    };
+    json::parse_any(dialect, &original)
+}
+
 /// The JSON engine's dialect for a format; `None` for a format with an engine of its own.
 fn dialect(format: MergeFormat) -> Option<json::Dialect> {
     match format {

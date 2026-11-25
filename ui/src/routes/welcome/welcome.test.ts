@@ -404,7 +404,7 @@ describe("interception step", () => {
         name: "Which hosts should Puddle decrypt?",
       }),
     ).toHaveFocus();
-    expect(radio(/except a known list/)).toBeChecked();
+    expect(radio(/except sites known to break/)).toBeChecked();
     expect(screen.getByText("recommended")).toBeInTheDocument();
     expect(h.interception.bodies).toEqual([]);
     expect(screen.getByRole("link", { name: "Back" })).toHaveAttribute(
@@ -413,10 +413,26 @@ describe("interception step", () => {
     );
   });
 
+  it("names the mechanism and keeps the long text behind More details", async () => {
+    render(Interception);
+    await screen.findByRole("group", { name: "Interception" });
+    expect(
+      screen.getByText(/reads \(MITMs\) HTTPS traffic to monitor it/),
+    ).toBeVisible();
+    expect(screen.getByText(/change this later in Settings/)).toBeVisible();
+    const more = screen.getByText("More details");
+    expect(more.closest("details")).not.toHaveAttribute("open");
+    await fireEvent.click(more);
+    expect(more.closest("details")).toHaveAttribute("open");
+    expect(screen.getByText(/own certificate, which/)).toBeVisible();
+    expect(screen.getByText(/credential injection/)).toBeVisible();
+    expect(screen.getByText(/no credential is injected/)).toBeVisible();
+  });
+
   it("saves the chosen mode and goes to the next step", async () => {
     render(Interception);
     await screen.findByRole("group", { name: "Interception" });
-    await fireEvent.click(radio(/^Decrypt every host\b(?! except)/));
+    await fireEvent.click(radio(/^Read all HTTPS traffic/));
     await fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await waitFor(() => expect(nav.goto).toHaveBeenCalledWith("/welcome/look"));
     expect(h.interception.bodies).toEqual([{ mode: "all" }]);
@@ -430,7 +446,9 @@ describe("interception step", () => {
     };
     render(Interception);
     await screen.findByRole("group", { name: "Interception" });
-    await waitFor(() => expect(radio(/only hosts Puddle has/)).toBeChecked());
+    await waitFor(() =>
+      expect(radio(/only where a rule needs it/)).toBeChecked(),
+    );
   });
 
   it("says why the setting could not be read and offers no choice", async () => {

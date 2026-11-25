@@ -249,8 +249,8 @@ async fn vm_soak_busy_build_keeps_the_heartbeat_stops_in_time_and_resumes() {
     // The busy stretch: a look once a minute. The workspace stays running and the job alive.
     let started = Instant::now();
     let mut paused = false;
+    // flake-ok: a fixed stretch of load is the thing under test; each minute is checked, not waited for
     while started.elapsed() < busy {
-        // flake-ok: a fixed stretch of load is the thing under test; each minute is checked, not waited for
         tokio::time::sleep(Duration::from_secs(60).min(busy.saturating_sub(started.elapsed())))
             .await;
         if broken("route-pause") && !paused && started.elapsed() > busy / 2 {
@@ -308,6 +308,7 @@ async fn vm_soak_busy_build_keeps_the_heartbeat_stops_in_time_and_resumes() {
     let stopped_in = change(&api, &workspace, "stop").await;
     eprintln!("Stop on a busy workspace: {stopped_in:?}");
     assert_eq!(status(&api, &workspace).await, "stopped");
+    // flake-ok: the bar is the spec's 75 s for a Stop on a busy workspace, a product limit on a VM host, not a margin
     assert!(
         stopped_in < Duration::from_secs(stop_bar),
         "Stop took {stopped_in:?}, bar {stop_bar} s"

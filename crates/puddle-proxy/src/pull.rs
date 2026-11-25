@@ -33,7 +33,7 @@
 //! Pulls leave through the company proxy route when one is set ([`PullProxy::with_upstream`]),
 //! and connect directly otherwise.
 
-use std::fmt::{self, Write as _};
+use std::fmt;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -53,7 +53,7 @@ use subtle::ConstantTimeEq;
 use tokio::io::BufReader;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Semaphore;
-use tokio::task::{JoinHandle, JoinSet};
+use tokio::task::JoinHandle;
 use tracing::Instrument;
 
 use crate::coalesce::Coalescing;
@@ -102,14 +102,7 @@ impl PullToken {
     pub fn generate() -> io::Result<Self> {
         let mut bytes = zeroize::Zeroizing::new([0u8; TOKEN_BYTES]);
         getrandom::fill(&mut *bytes).map_err(|err| io::Error::other(err.to_string()))?;
-        let text = bytes
-            .iter()
-            .fold(String::with_capacity(TOKEN_BYTES * 2), |mut text, b| {
-                // writing into a `String` cannot fail
-                let _ = write!(text, "{b:02x}");
-                text
-            });
-        Ok(Self(text))
+        Ok(Self(puddle_types::hex_lower(&*bytes)))
     }
 
     /// The token text.
@@ -372,23 +365,18 @@ struct Shared {
 }
 
 async fn accept_loop(listener: TcpListener, shared: Arc<Shared>) {
-    let mut conns = JoinSet::new();
-    loop {
-        tokio::select! {
-            accepted = listener.accept() => match accepted {
-                Ok((stream, peer)) => {
-                    let shared = Arc::clone(&shared);
-                    let span = tracing::debug_span!("pull", %peer);
-                    conns.spawn(async move { serve(&shared, stream).await }.instrument(span));
-                }
-                Err(err) => {
-                    tracing::warn!(error = %err, "image-pull proxy accept failed");
-                    tokio::time::sleep(ACCEPT_BACKOFF).await;
-                }
-            },
-            Some(_) = conns.join_next(), if !conns.is_empty() => {}
-        }
-    }
+    puddle_ipc::accept_tcp(
+        listener,
+        ACCEPT_BACKOFF,
+        "image-pull proxy",
+        std::future::pending(),
+        |conns, stream, peer| {
+            let shared = Arc::clone(&shared);
+            let span = tracing::debug_span!("pull", %peer);
+            conns.spawn(async move { serve(&shared, stream).await }.instrument(span));
+        },
+    )
+    .await;
 }
 
 /// Whether `head` carries exactly one `Proxy-Authorization: Basic` header with `credentials`.

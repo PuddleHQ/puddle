@@ -31,6 +31,7 @@ mod fill;
 #[cfg(any(test, feature = "testing"))]
 pub mod fixture;
 mod guest;
+mod hex;
 mod host;
 mod interception;
 mod local;
@@ -82,6 +83,7 @@ pub use source_name::{
 };
 pub use source_spec::{AZURE_DEVOPS_HOST, SourceSpec, TokenScope};
 
+pub use hex::hex_lower;
 pub use percent::{escape_at, hex_digit, percent_decoded, percent_decoded_bytes};
 pub use policy::{
     BlockReason, Decision, EgressRequest, PatternKind, PendingId, PendingOutcome, Policy,

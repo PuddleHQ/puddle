@@ -82,6 +82,8 @@ test("the owner sees the same card on the admin screen", async ({
   await backend.control.reset("multi-user");
   await backend.signIn(page);
   await page.goto("/admin");
+  // The owner alone sees the totals and the log behind this toggle.
+  await page.getByRole("button", { name: "Show server details" }).click();
   const card = page.getByRole("region", { name: "Activity log" });
   await expect(card.getByLabel(/Keep the activity log for/)).toHaveValue("90");
 });

@@ -79,10 +79,13 @@ mod start_failures_and_trust;
 mod start_folder_and_dev_cert;
 #[path = "fake_host/startup_and_api.rs"]
 mod startup_and_api;
+#[cfg(feature = "mise")] // needs the managed mise layer, dormant in the shipped build
 #[path = "fake_host/terminals_and_mise.rs"]
 mod terminals_and_mise;
+#[cfg(feature = "mise")] // needs the managed mise layer, dormant in the shipped build
 #[path = "fake_host/tools_edit.rs"]
 mod tools_edit;
+#[cfg(feature = "mise")] // needs the managed mise layer, dormant in the shipped build
 #[path = "fake_host/tools_install.rs"]
 mod tools_install;
 #[path = "fake_host/workspace_list_at_start.rs"]
@@ -588,6 +591,7 @@ impl Guest {
     }
 
     /// The installs (not the reports) `mise-install` ran.
+    #[cfg(feature = "mise")]
     fn tool_installs(&self) -> usize {
         self.tools_runs
             .lock()
@@ -2066,6 +2070,7 @@ async fn wait_for_problem(host: &Host<FakeRuntime>, key: &str) -> puddle_types::
 
 // ---- the managed tools' environment -----------------------------------------------------------
 
+#[cfg(feature = "mise")]
 async fn restart(api: &Api, events: &mut support::Events, id: &'static str) {
     api.post(&format!("/api/workspaces/{id}/stop"), "").await;
     events.until(ended(id), Duration::from_secs(20)).await;
@@ -2075,6 +2080,7 @@ async fn restart(api: &Api, events: &mut support::Events, id: &'static str) {
 
 // ---- mise after a start -----------------------------------------------------------------------
 
+#[cfg(feature = "mise")]
 fn mise_fetches(rig: &Rig) -> Vec<(Vec<String>, Option<String>)> {
     rig.guest.mise_fetches.lock().unwrap().clone()
 }

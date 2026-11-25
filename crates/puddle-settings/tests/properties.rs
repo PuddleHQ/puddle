@@ -219,13 +219,15 @@ proptest! {
         explicit in any::<bool>(),
     ) {
         g.tools.mise = if explicit { Some(true) } else { None };
+        // a build without the `mise` feature answers Off whatever is stored
+        let on = |trust| if puddle_settings::Tools::AVAILABLE { MiseMode::On { trust } } else { MiseMode::Off };
         let want = if s.tools.mise.unwrap_or(true) {
-            MiseMode::On { trust: s.tools.repo_code.unwrap_or(true) }
+            on(s.tools.repo_code.unwrap_or(true))
         } else {
             MiseMode::Off
         };
         prop_assert_eq!(mise_mode(&g, Some(&s)), want);
-        prop_assert_eq!(mise_mode(&g, None), MiseMode::On { trust: true });
+        prop_assert_eq!(mise_mode(&g, None), on(true));
     }
 
     #[test]
@@ -323,7 +325,8 @@ proptest! {
         let g = GlobalSettings::from_document(gdoc).unwrap();
         let s = WorkspaceSettings::from_document(sdoc).unwrap();
         prop_assert!(g.unknown_fields.is_empty() && s.unknown_fields.is_empty());
-        prop_assert_eq!(mise_mode(&g.settings, Some(&s.settings)), MiseMode::On { trust: true });
+        let on = if puddle_settings::Tools::AVAILABLE { MiseMode::On { trust: true } } else { MiseMode::Off };
+        prop_assert_eq!(mise_mode(&g.settings, Some(&s.settings)), on);
     }
 
     #[test]

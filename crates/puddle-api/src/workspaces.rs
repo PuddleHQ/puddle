@@ -20,12 +20,14 @@ use puddle_types::{
 use sha2::{Digest, Sha256};
 
 mod admission;
+mod image_note;
 mod launch;
 pub mod phase;
 mod repositories;
 mod service;
 
 pub use admission::{admit_delete_fingerprint, admit_grow_size, not_found};
+pub use image_note::describe_image;
 pub use launch::{
     BrowserTarget, CONNECTION_TOKEN_COOKIE, DesktopTarget, EditorLogin, EditorSignIn, LaunchError,
     Launcher, OpenTarget,

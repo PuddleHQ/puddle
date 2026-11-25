@@ -64,9 +64,17 @@ fn mise_mode_answers() {
     use crate::GlobalSettings;
     let mut global = GlobalSettings::default();
     let mut ws = WorkspaceSettings::default();
-    assert_eq!(mise_mode(&global, None), MiseMode::On { trust: true });
+    // a build without the `mise` feature answers Off whatever is stored
+    let on = |trust| {
+        if crate::Tools::AVAILABLE {
+            MiseMode::On { trust }
+        } else {
+            MiseMode::Off
+        }
+    };
+    assert_eq!(mise_mode(&global, None), on(true));
     ws.tools.repo_code = Some(false);
-    assert_eq!(mise_mode(&global, Some(&ws)), MiseMode::On { trust: false });
+    assert_eq!(mise_mode(&global, Some(&ws)), on(false));
     ws.tools.mise = Some(false);
     assert_eq!(mise_mode(&global, Some(&ws)), MiseMode::Off);
     ws.tools.mise = Some(true);

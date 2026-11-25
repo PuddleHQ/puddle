@@ -109,6 +109,13 @@ pub trait WorkspaceService: Send + Sync {
     /// Every workspace, ordered by id.
     fn list(&self) -> BoxFuture<'_, Result<Vec<WorkspaceRecord>, WorkspaceError>>;
 
+    /// One line from the default image's own labels that says what it is, or `None` while they
+    /// are not known (the image is still being downloaded, or says nothing). It never waits for
+    /// a download.
+    fn default_image_description(&self) -> Option<String> {
+        None
+    }
+
     /// Every workspace's id and display name, from memory with no other work: routing a request
     /// by its `Host` asks on every request, which [`WorkspaceService::list`] is too slow for.
     fn names(&self) -> Vec<(WorkspaceId, String)>;

@@ -21,6 +21,9 @@ testing = []
 # soak workflow can prove its judge fails a leak (`soak.yml`, job `canary`). Never in a shipped
 # program: scripts/check-test-hooks.sh fails a release tree that turns it on.
 soak-planted-leak = []
+# The managed mise layer (dormant in v0.1), see puddle-settings. Only the tests that need the layer
+# read it: the code asks `puddle_settings::Tools::AVAILABLE`.
+mise = ["puddle-settings/mise"]
 
 [dependencies]
 argon2 = { workspace = true }

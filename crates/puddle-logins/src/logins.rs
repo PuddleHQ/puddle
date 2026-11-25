@@ -130,6 +130,11 @@ struct Inner {
     capture: tokio::sync::Mutex<()>,
     /// How long a call on the credential store may take, in milliseconds.
     store_timeout_ms: AtomicU64,
+    /// Held by the blocking thread of each store call until the call returns, so a call that was
+    /// given up on keeps the next one waiting: its write cannot land after a later one.
+    store_gate: Arc<tokio::sync::Mutex<()>>,
+    /// How many store calls were given up on.
+    store_timeouts: AtomicU64,
     /// The stand-in of each slot that has one.
     slots: Mutex<BTreeMap<(&'static str, Slot), String>>,
     /// The earlier stand-ins of a slot whose stand-in is made again at every exchange, newest
@@ -280,6 +285,8 @@ impl Logins {
                 store_timeout_ms: AtomicU64::new(
                     u64::try_from(STORE_TIMEOUT.as_millis()).unwrap_or(u64::MAX),
                 ),
+                store_gate: Arc::default(),
+                store_timeouts: AtomicU64::new(0),
                 slots: Mutex::new(BTreeMap::new()),
                 retired: Mutex::new(BTreeMap::new()),
             }),
@@ -335,11 +342,34 @@ impl Logins {
     ) -> Result<T, VaultError> {
         let vault = self.inner.vault.clone();
         let limit = Duration::from_millis(self.inner.store_timeout_ms.load(Ordering::Relaxed));
-        match tokio::time::timeout(limit, tokio::task::spawn_blocking(move || call(&vault))).await {
+        let gate = Arc::clone(&self.inner.store_gate);
+        let run = async move {
+            let turn = gate.lock_owned().await;
+            tokio::task::spawn_blocking(move || {
+                let result = call(&vault);
+                drop(turn);
+                result
+            })
+            .await
+        };
+        match tokio::time::timeout(limit, run).await {
             Ok(Ok(result)) => result,
-            // The call was cut off or panicked: the store is not usable now.
-            Ok(Err(_)) | Err(_) => Err(VaultError::Unavailable),
+            // The call panicked: the store is not usable now.
+            Ok(Err(_)) => Err(VaultError::Unavailable),
+            Err(_) => {
+                self.inner.store_timeouts.fetch_add(1, Ordering::Relaxed);
+                Err(VaultError::Unavailable)
+            }
         }
+    }
+
+    /// Waits until the store call that was given up on has returned (ten times the store timeout
+    /// at most), so what it wrote is in the store before the caller puts the old entries back.
+    async fn settle_store(&self) {
+        let limit = Duration::from_millis(self.inner.store_timeout_ms.load(Ordering::Relaxed))
+            .saturating_mul(10);
+        // Timing out is fine: the put back then runs behind the late write and may not land.
+        let _ = tokio::time::timeout(limit, self.inner.store_gate.lock()).await;
     }
 
     /// Puts a pair into the registry and the slots: the stand-in the workspace holds and the real
@@ -749,8 +779,10 @@ impl Logins {
         // An answer with several tokens is kept whole or not at all: what the store held before
         // goes back when a later token cannot be written, so it never holds a pair that did not
         // come from one answer. One token needs no copy: its write is the whole change. Only the
-        // slots written before the failure go back: a write that timed out (a locked store) may
-        // still land later, and putting its slot back would only wait out the timeout again.
+        // slots written before the failure go back, and the failed one too when its write timed
+        // out: that write may still land, so the put back waits for it first. A write the store
+        // refused wrote nothing, and putting its slot back would only wait out a locked store's
+        // timeout again.
         let before = if slots.len() > 1 {
             self.saved(profile, &slots).await?
         } else {
@@ -758,13 +790,18 @@ impl Logins {
         };
         for (written, (slot, real, stand_in)) in writes.into_iter().enumerate() {
             let (stand_in, real) = (stand_in.clone(), real.clone());
+            let timeouts = self.inner.store_timeouts.load(Ordering::Relaxed);
             if self
                 .store(move |vault| vault.write(profile, slot, &stand_in, &real))
                 .await
                 .is_err()
             {
-                self.put_back(profile, before.into_iter().take(written))
-                    .await;
+                let mut back = written;
+                if self.inner.store_timeouts.load(Ordering::Relaxed) != timeouts {
+                    self.settle_store().await;
+                    back += 1;
+                }
+                self.put_back(profile, before.into_iter().take(back)).await;
                 return Err(Problem::StoreUnavailable);
             }
         }

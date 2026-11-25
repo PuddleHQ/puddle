@@ -23,6 +23,7 @@ mod audit_record;
 mod auth;
 mod consent;
 mod credentials;
+mod default_image;
 mod doctor;
 mod environment;
 mod first_run;
@@ -72,6 +73,7 @@ pub use credentials::{
     CheckRequest, CheckResult, FoundAccount, FoundAccounts, FoundProblem, FoundVia, SignInRequest,
     SignInStarted, StoreTokenRequest, StoredToken,
 };
+pub use default_image::DefaultImage;
 pub use doctor::{DoctorCheck, DoctorReport, DoctorStatus};
 pub use environment::{
     EnvKind, EnvList, EnvScope, EnvSetRequest, EnvVariable, SecretPlace, SecretText, WorkspaceEnv,

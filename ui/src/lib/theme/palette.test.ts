@@ -250,8 +250,10 @@ describe("status colours", () => {
       for (const preset of PRESETS) {
         const t = PALETTES[preset][scheme];
         const key = [t.success, t.danger, t.warning].join(" ");
-        expect(seen.get(key), `${preset} ${scheme} repeats ${seen.get(key)}`)
-          .toBeUndefined();
+        expect(
+          seen.get(key),
+          `${preset} ${scheme} repeats ${seen.get(key)}`,
+        ).toBeUndefined();
         seen.set(key, preset);
       }
     }

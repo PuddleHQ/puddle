@@ -12,7 +12,7 @@ use tokio::time::Instant;
 use crate::error::SourceError;
 use crate::readlog::{ReadLog, ReadUse};
 use crate::sources::{Credential, Fetch};
-use crate::spec::SourceSpec;
+use puddle_types::SourceSpec;
 
 /// How long a value of one source kind is trusted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

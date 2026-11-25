@@ -157,6 +157,25 @@ async function choose(item: string | RegExp) {
   await fireEvent.click(await screen.findByRole("menuitem", { name: item }));
 }
 
+// The first render of this page, its first open dialog and its first role queries build what every
+// later test reuses. That cost fell on the first test, where a loaded host (load 91, 12 s loop lag)
+// turned a 0.4 s test into 7.4 s against the 5 s limit. A top-level await has no test clock, so the
+// file pays it here once, as vitest.setup.ts does for what every page shares.
+{
+  seed();
+  await loaded();
+  await fireEvent.click(screen.getByRole("button", { name: /Add rule/ }));
+  await screen.findByRole("dialog");
+  screen.getAllByRole("option", { hidden: true });
+  rows();
+  cleanup();
+  api.rules = [];
+  rulesStore.rules = [];
+  rulesStore.status = "loading";
+  ruleSets.status = "loading";
+  requestRulesStore.status = "loading";
+}
+
 describe("workspace ids", () => {
   it("stay behind the names in the table, the filter and the add form", async () => {
     workspaces.list = [{ ...fakeWorkspace("Shop"), id: "g07jxx5q" }];

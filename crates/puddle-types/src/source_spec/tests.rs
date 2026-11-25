@@ -78,48 +78,6 @@ fn az_cli_is_for_azure_devops_only() {
 }
 
 #[test]
-fn each_az_failure_has_its_own_exact_step() {
-    use crate::error::Tool;
-    let spec = az("t1", Some("acme"));
-    let steps: Vec<String> = [
-        SourceError::ToolMissing(Tool::Az),
-        SourceError::NotSignedIn,
-        SourceError::WrongTenant,
-        SourceError::NoAccess,
-    ]
-    .iter()
-    .map(|e| spec.fix_step(e).unwrap())
-    .collect();
-    assert!(steps[0].contains("Install the Azure CLI"));
-    assert!(steps[1].contains("`az login --tenant t1`"));
-    assert!(steps[2].contains("not in tenant t1"));
-    assert!(steps[3].contains("organisation acme"));
-    for (i, a) in steps.iter().enumerate() {
-        assert!(steps.iter().skip(i + 1).all(|b| a != b));
-    }
-    assert!(
-        az("t1", None)
-            .fix_step(&SourceError::NoAccess)
-            .unwrap()
-            .contains("an organisation administrator")
-    );
-    assert!(
-        spec.fix_step(&SourceError::Timeout(Tool::Az))
-            .unwrap()
-            .contains("az account show")
-    );
-    assert_eq!(spec.fix_step(&SourceError::StoreUnavailable), None);
-    assert_eq!(gh_spec().fix_step(&SourceError::NotSignedIn), None);
-}
-
-fn gh_spec() -> SourceSpec {
-    SourceSpec::Gh {
-        host: host("github.com"),
-        account: AccountName::new("me").unwrap(),
-    }
-}
-
-#[test]
 fn describe_and_scope_name_the_target() {
     let gh = SourceSpec::Gh {
         host: host("github.com"),

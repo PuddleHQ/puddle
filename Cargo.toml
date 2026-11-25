@@ -284,6 +284,12 @@ tokio-yamux = { path = "vendor/tokio-yamux" }
 lto = "thin"
 codegen-units = 1
 
+# The soak workflow runs an optimised `puddle` with the dormant `serve` feature on. It is a test
+# build, never shipped, so it has its own profile: ci/check-dormant-release.sh keeps `--release`
+# builds free of dormant features.
+[profile.soak]
+inherits = "release"
+
 [profile.dev.package.libsqlite3-sys]
 opt-level = 3
 

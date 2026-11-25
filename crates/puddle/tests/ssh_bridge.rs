@@ -77,12 +77,13 @@ mod openssh {
 
     impl SshTarget for Sshd {
         type Error = std::io::Error;
+        type Refusal = String;
 
         fn label(&self) -> String {
             "sshd".into()
         }
 
-        fn admit(&self) -> impl Future<Output = Result<(), String>> {
+        fn admit(&self) -> impl Future<Output = Result<(), Self::Refusal>> {
             std::future::ready(Ok(()))
         }
 

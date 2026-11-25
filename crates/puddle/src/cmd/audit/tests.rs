@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use std::sync::Arc;
 
+use puddle_host::HostPaths;
 use puddle_store::{Limits, ManualClock, Store};
 
 use super::*;
@@ -107,14 +108,18 @@ fn prune_deletes_only_records_older_than_the_days_and_status_says_so() {
         done.contains("deleted 0 records older than 60 days"),
         "{done}"
     );
-    let err = execute(&args_in(dir.path(), Action::Prune(Some(0)))).unwrap_err();
+    let err = execute(&args_in(dir.path(), Action::Prune(Some(0))))
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("1 to 3650"), "{err}");
 }
 
 #[test]
 fn a_missing_data_folder_is_said_so() {
     let empty = tempfile::tempdir().unwrap();
-    let err = execute(&args_in(empty.path(), Action::Status)).unwrap_err();
+    let err = execute(&args_in(empty.path(), Action::Status))
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("no database"), "{err}");
 }
 

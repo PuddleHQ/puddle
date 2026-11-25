@@ -40,7 +40,7 @@ fn settings_that_are_not_valid_say_so_and_the_window_still_gets_defaults() {
     let repo = MemorySettings::default();
     repo.save_global(json!({"ui": {"close_behaviour": "explode"}}))
         .unwrap();
-    let reason = read_prefs(&repo).unwrap_err();
+    let reason = read_prefs(&repo).unwrap_err().to_string();
     assert!(reason.starts_with("the settings are not valid"), "{reason}");
     assert_eq!(prefs_or_default(&repo), UiPrefs::default());
 }

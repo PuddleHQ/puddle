@@ -114,10 +114,11 @@ fn starting_outside_a_runtime_is_refused() {
     struct Never;
     impl SshTarget for Never {
         type Error = io::Error;
+        type Refusal = String;
         fn label(&self) -> String {
             "never".into()
         }
-        fn admit(&self) -> impl Future<Output = Result<(), String>> {
+        fn admit(&self) -> impl Future<Output = Result<(), Self::Refusal>> {
             std::future::ready(Err("never".into()))
         }
         fn serve<S: SshStream>(&self, _stream: S) -> impl Future<Output = Result<(), Self::Error>> {

@@ -36,12 +36,13 @@ struct Banner;
 
 impl SshTarget for Banner {
     type Error = io::Error;
+    type Refusal = String;
 
     fn label(&self) -> String {
         "banner".into()
     }
 
-    fn admit(&self) -> impl Future<Output = Result<(), String>> {
+    fn admit(&self) -> impl Future<Output = Result<(), Self::Refusal>> {
         std::future::ready(Ok(()))
     }
 

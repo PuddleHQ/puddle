@@ -1150,7 +1150,10 @@ fn spawn_watchers<R: Runtime + Clone>(
         editor_windows.clone(),
     ));
     let space_watch = AbortOnDrop(crate::space_watch::spawn(
-        crate::space_watch::DriveOf(shared.config.paths.data().to_path_buf()),
+        crate::space_watch::space_or_drive(
+            shared.options.free_space.clone(),
+            shared.config.paths.data(),
+        ),
         shared.config.free_space,
         shared.settings.clone(),
         shared.events.clone(),

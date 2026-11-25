@@ -6,9 +6,9 @@
 //! for the unlock. So the check here writes a throwaway value and deletes it again.
 
 use crate::keyring_store::{KeyringStore, keyring_available};
-use crate::name::StoredId;
 use crate::secret::Secret;
 use crate::store::SecretStore;
+use puddle_types::StoredId;
 
 /// The service the throwaway entry of [`probe_os_store`] is filed under, apart from the one that
 /// holds Puddle's own values.

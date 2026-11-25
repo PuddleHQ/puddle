@@ -82,7 +82,8 @@ mod story {
     use puddle_test_kit::eventually_async;
     use puddle_types::WorkspaceId;
     use puddle_vm_tests::{
-        BROWSER_MODULES_VAR, Node, VsCodeLaunch, VsCodeRelease, VsCodeWindow, local_terminal_probe,
+        Attached, BROWSER_MODULES_VAR, Node, VsCodeLaunch, VsCodeRelease, VsCodeWindow,
+        local_terminal_probe,
     };
     use serde_json::json;
 
@@ -144,6 +145,31 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
                 copy_tree(&path, &to.join(entry.file_name()));
             } else {
                 let _ = std::fs::copy(&path, to.join(entry.file_name()));
+            }
+        }
+    }
+
+    /// Waits until `window` is attached. When it is not, the picture of the window, what its dialogs
+    /// say and the window logs so far go into the artifact before the test fails: a window that never
+    /// attaches (the second profile's window in a nightly run) left only a timeout, and the
+    /// logs of the later windows were copied only at the end of the story.
+    async fn attached_or_report(
+        s: &Story,
+        window: &mut VsCodeWindow,
+        name: &str,
+    ) -> Result<Attached, String> {
+        match window.attached(UP).await {
+            Ok(up) => Ok(up),
+            Err(error) => {
+                let _ = window.screenshot(&s.out.join(format!("{name}.png"))).await;
+                let shows = window_shows(window).await;
+                copy_tree(
+                    &s.scratch.path().join("vsc-user").join("logs"),
+                    &s.out.join(format!("vsc-logs-{name}")),
+                );
+                Err(format!(
+                    "{name}: the window never attached: {error}; the window shows {shows}"
+                ))
             }
         }
     }
@@ -497,7 +523,9 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
             .start(&s.release, &s.node, &s.modules, &s.out.join("code.log"))
             .await
             .expect("VS Code starts");
-        let up = window.attached(UP).await.expect("attached");
+        let up = attached_or_report(s, &mut window, "attach-failed")
+            .await
+            .expect("attached");
         window
             .screenshot(&s.out.join("attached.png"))
             .await
@@ -645,7 +673,9 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
             )
             .await
             .expect("VS Code starts with the local server on");
-        window.attached(UP).await.expect("attached again");
+        attached_or_report(s, &mut window, "attach-again-failed")
+            .await
+            .expect("attached again");
         let opened = window
             .terminal("echo $$ > /tmp/u8b.pid; exec sleep 100000")
             .await;
@@ -731,7 +761,9 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
             )
             .await
             .expect("VS Code starts in the profile");
-        window.attached(UP).await.expect("attached again");
+        attached_or_report(s, &mut window, "profile-attach-failed")
+            .await
+            .expect("attached again");
         s.wait_for_git_socket("ls /tmp/vscode-git-*.sock 2>/dev/null | head -n 1 || true")
             .await;
         // The first window's server may have left its socket behind, so ask until the live extension

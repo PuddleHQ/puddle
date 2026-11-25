@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use super::*;
 use proptest::prelude::*;
-use puddle_secrets::{AccountName, StoredId, TokenScope};
+use puddle_types::{AccountName, StoredId, TokenScope};
 
 #[test]
 fn an_identity_id_shows_as_its_number() {

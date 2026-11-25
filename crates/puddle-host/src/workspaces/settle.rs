@@ -82,6 +82,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             root: &guest.root,
             start_folder: guest.start_folder.as_ref(),
             editor_file: guest.editor_file.as_ref(),
+            editor_defaults: guest.editor_defaults.as_ref(),
             session_user: guest.session_user,
             ssh_agent: guest.ssh_agent,
             mise: guest.mise.as_ref(),

@@ -6,4 +6,5 @@
 pub mod l2;
 pub mod lab;
 pub mod pull_lab;
+pub mod soak;
 pub mod ui_fixture;

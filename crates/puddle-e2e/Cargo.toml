@@ -19,6 +19,10 @@ name = "puddle-ui-fixture"
 path = "src/bin/puddle-ui-fixture.rs"
 
 [[bin]]
+name = "puddle-soak"
+path = "src/bin/puddle-soak.rs"
+
+[[bin]]
 name = "puddle-lab"
 path = "src/bin/puddle-lab.rs"
 

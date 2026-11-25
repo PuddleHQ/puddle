@@ -64,8 +64,9 @@ pub use pending::{
 };
 pub use recorder::{ConnectionRecorder, RECORD_PROBLEM};
 pub use restore::{
-    DatabasePreview, DatabaseRefusal, PartCounts, RestoreMode, RestoredDatabase, SecretEnv,
-    StagedDatabase, check_staged_database, migrate_database, preview_merge, restore_database,
+    DatabasePreview, DatabaseRefusal, IdentityToken, PartCounts, RestoreMode, RestoredDatabase,
+    SecretEnv, StagedDatabase, check_staged_database, migrate_database, preview_merge,
+    restore_database,
 };
 pub use rule::{Actor, Effect, NewRule, Precedence, Rule, RuleEdit, Scope};
 pub use schema::SCHEMA_VERSION;

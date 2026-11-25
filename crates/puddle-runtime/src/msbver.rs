@@ -29,6 +29,7 @@ pub const MAX_VERSION_BYTES: u64 = 256;
 ///
 /// A message when the file can't be opened, isn't an ELF/PE/COFF file, or has more than one,
 /// an empty, an oversized or a non-UTF-8 version section.
+// string-error-ok: the text is printed by the build and the doctor as is; no caller branches on a kind
 pub fn read_embedded_version(path: &Path) -> Result<Option<String>, String> {
     let file = File::open(path).map_err(|e| e.to_string())?;
     let cache = ReadCache::new(file);

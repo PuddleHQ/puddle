@@ -110,7 +110,7 @@ async fn vm_host_creates_a_workspace_with_progress_and_stops_cleanly() {
     let handle = runtime.get(&sandbox.sandbox_name()).await.unwrap();
     let out = handle
         .exec(
-            ExecRequest::sh("git -C /workspace/Hello-World log --oneline | head -1".to_string())
+            ExecRequest::sh("git -C /workspace/Hello-World log --oneline | head -1".to_owned())
                 .as_user("root")
                 .with_timeout(Duration::from_secs(60)),
         )
@@ -858,7 +858,7 @@ async fn vm_host_starts_a_workspace_from_a_checkout_on_this_computer() {
         "{problems}"
     );
 
-    let clone = "/workspace/shop".to_string();
+    let clone = "/workspace/shop".to_owned();
     let refs = guest(
         &runtime,
         &sandbox,
@@ -1205,7 +1205,7 @@ async fn vm_host_clones_a_public_repository_when_the_identity_is_not_signed_in_a
         .await;
     // The clone went through the decrypting proxy with no credential and the repository arrived.
     assert_eq!(end["step"], "done", "{end}");
-    let clone = "/workspace/Hello-World".to_string();
+    let clone = "/workspace/Hello-World".to_owned();
     let log = guest(
         &runtime,
         &sandbox,
@@ -3744,7 +3744,7 @@ async fn check_editor_session(runtime: &MsbRuntime, sandbox: &WorkspaceId) -> St
         "login 302",
         // Signed in, the client is sent to the folder the editor opens.
         "signed-in 302 http://127.0.0.1:41337/?folder=/workspace"
-            .to_string()
+            .to_owned()
             .as_str(),
         "on-command-lines 0",
         "grace-300",
@@ -3774,7 +3774,7 @@ echo "volume=$(awk '$2=="/workspace"{print $1}' /proc/mounts)"
 echo "root=$(awk '$2=="/"{print $1" "$3}' /proc/mounts | tail -1)"
 echo "size=$(df -P -B1 /var/lib/docker | awk 'NR==2{print $2}')"
 echo "marker=$(cat /var/lib/docker/puddle-marker 2>/dev/null)""#
-        .to_string()
+        .to_owned()
 }
 
 /// The value of `key=` in the guest's reply, empty when the line is missing (the assertions on it
@@ -3967,7 +3967,7 @@ async fn vm_host_runs_the_editor_server_and_its_data_survives_a_rebuilt_sandbox(
     assert_eq!(end["step"], "done", "{end}");
 
     editor_up(&runtime, &sandbox).await;
-    let data = "/workspace/.puddle/code-server".to_string();
+    let data = "/workspace/.puddle/code-server".to_owned();
     let password = check_editor_session(&runtime, &sandbox).await;
     // A new workspace's server runs as its session user, agent, and its folders are agent's. The
     // match is anchored on the program so this script's own shell, whose command line holds the
@@ -4236,7 +4236,7 @@ async fn vm_host_the_editor_server_opens_a_window_with_every_checkout() {
     assert_eq!(end["step"], "done", "{end}");
     editor_up(&runtime, &sandbox).await;
 
-    let root = "/workspace".to_string();
+    let root = "/workspace".to_owned();
     let file = format!("{root}/.puddle/editor/{name}.code-workspace");
     // The sign-in the client of the editor makes, and where it is sent.
     let lands = || {
@@ -4922,7 +4922,7 @@ async fn vm_host_a_login_shell_lands_in_the_start_folder_and_a_missing_one_opens
         .until(ended(name_static), Duration::from_secs(600))
         .await;
     assert_eq!(end["step"], "done", "{end}");
-    let root = "/workspace".to_string();
+    let root = "/workspace".to_owned();
     let set = |path: &'static str| {
         let (api, url) = (&api, format!("/api/workspaces/{name}/start-folder"));
         async move { api.put(&url, &json!({ "path": path }).to_string()).await }
@@ -5042,7 +5042,7 @@ async fn vm_host_a_terminal_is_a_shell_as_the_session_user_in_the_start_folder()
         .to_owned();
     assert_ne!(user, "root", "the session user is not root");
 
-    let root = "/workspace".to_string();
+    let root = "/workspace".to_owned();
     guest(&runtime, &sandbox, &format!("mkdir -p {root}/play/src")).await;
     let reply = api
         .put(

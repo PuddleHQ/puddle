@@ -191,7 +191,7 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
 - **Lints** (`[workspace.lints]` in `Cargo.toml`): clippy `pedantic` plus a set of restriction
   lints (`unwrap_used`, `expect_used`, `panic`, `indexing_slicing`, `todo`, `print_stdout`, …),
   all denied in CI with `-D warnings`. To silence one, use `#[expect(lint, reason = "…")]` on the
-  smallest item; never `#[allow]` (itself linted), never crate-wide without a written reason.
+  smallest item; never `#[allow]` or `#![allow]` (the gate fails both, `ban-allow`; `cfg_attr(<cfg>, expect(..))` for a lint that fires under one cfg only), never crate-wide without a written reason. `fuzz/` is its own workspace and carries a copy of this table; `scripts/check.sh clippy` lints it too.
   Tests may unwrap, expect, panic and index (`clippy.toml`).
 - **Unsafe:** every crate root (`lib.rs`, `main.rs`, each `src/bin/*.rs` and `build.rs`) says `#![forbid(unsafe_code)]`, and the quality
   gate fails a root that does not. A crate that needs FFI on one platform (Windows pipe DACLs, say) says
@@ -280,7 +280,7 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   that cross crates live in `puddle-types` or are converted at the boundary.
 - **Binaries:** `puddle` maps errors to a user message and an exit code at the top; it may use
   `anyhow` only in `main`-level glue, never in the libraries (`deny.toml` bans it with a list of the crates that may depend on it).
-- Don't stringly-type errors, don't discard them (`let _ =` on a `Result` needs a comment), and
+- Don't stringly-type errors (the gate fails a `Result<_, String>` in production code, `ban-result-string`, unless a `// string-error-ok: <why>` comment on or within three lines above says the text is the whole contract), don't discard them (`let _ =` on a `Result` needs a comment), and
   don't log *and* return the same error (the handler that consumes it logs it).
 - Error messages are lower-case, no trailing period, and never contain secret values. The quality gate fails a `#[error("...")]` that starts with a capital or ends with a period (`ban-error-capital`, `ban-error-period`), and a `#[serde(untagged)]` (`ban-untagged`, ADR 0002).
 

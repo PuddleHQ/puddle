@@ -69,6 +69,7 @@ impl Request {
     /// # Errors
     ///
     /// A usage message.
+    // string-error-ok: the usage text is the whole contract: main prints it to stderr and exits 2, nothing matches on a kind
     pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<Self, String> {
         let args: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
         let request = |action, state: &str, key: &str, file: &str| Self {

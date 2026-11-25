@@ -19,6 +19,7 @@ use crate::SettingsError;
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Migration {
     pub(crate) from: u32,
+    // string-error-ok: the text is the migration's failure message, logged with the step's number; no caller branches on a kind
     pub(crate) apply: fn(&mut Map<String, Value>) -> Result<(), String>,
 }
 
@@ -36,6 +37,7 @@ pub(crate) const WORKSPACE: &[Migration] = &[];
     clippy::unnecessary_wraps,
     reason = "has the signature of Migration::apply"
 )]
+// string-error-ok: the text is the migration's failure message, logged with the step's number; no caller branches on a kind
 fn workspace_defaults(m: &mut Map<String, Value>) -> Result<(), String> {
     if !m.contains_key("workspace_defaults")
         && let Some(v) = m.remove("sandbox_defaults")

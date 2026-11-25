@@ -130,11 +130,13 @@ pub fn run(args: &VaultAdminArgs) -> ExitCode {
     }
 }
 
+// string-error-ok: a subcommand's error is the line main prints before exiting 1; nothing matches on a kind
 fn execute(args: &VaultAdminArgs) -> Result<Report, String> {
     execute_with(args, &SecretSetup::default())
 }
 
 /// [`execute`] with the setup given, so a test never reads this machine's key folder.
+// string-error-ok: a subcommand's error is the line main prints before exiting 1; nothing matches on a kind
 fn execute_with(args: &VaultAdminArgs, setup: &SecretSetup) -> Result<Report, String> {
     let data = match data_folder::configured_here(&args.flags).map_err(|e| e.to_string())? {
         Some(dir) => dir,

@@ -515,12 +515,8 @@ async fn vm_radar_tools_install_after_the_start_and_a_second_start_installs_noth
         .collect();
     assert!(since.is_empty(), "the second start installed: {since:?}");
     let made = made_between(&before, &connections(&api, &name).await);
-    let tool_hosts: Vec<_> = made
-        .keys()
-        .filter(|h| HOSTS.iter().any(|t| h.starts_with(t)))
-        .collect();
     assert!(
-        tool_hosts.is_empty(),
+        !made.keys().any(|h| HOSTS.iter().any(|t| h.starts_with(t))),
         "the second start reached tool hosts: {made:?}"
     );
 

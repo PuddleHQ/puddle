@@ -10,7 +10,7 @@
 //! (`Stub::answer`); what is checked here is which bytes of the transport reach it, in which order, and
 //! how the answer leaves.
 
-#![allow(
+#![expect(
     clippy::expect_used,
     clippy::panic,
     reason = "a fuzz check reports a broken invariant, and a rig that cannot be set up, by panicking"

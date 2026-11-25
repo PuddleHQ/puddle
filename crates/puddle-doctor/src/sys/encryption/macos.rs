@@ -30,6 +30,7 @@ pub(crate) fn disk_encryption(dir: Option<&Path>) -> DiskEncryptionFacts {
     }
 }
 
+// string-error-ok: the text becomes one finding's detail line; no caller branches on a kind
 fn run(program: &str, args: &[&str]) -> Result<String, String> {
     match launch::run(puddle_process::command(program).args(args), LIMIT) {
         ProcessOutcome::Exited {

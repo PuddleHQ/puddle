@@ -7,10 +7,9 @@
 //! can be revoked (the next request with its token is a `401`), and the device flow answers with a
 //! fixed code until the test approves it.
 
-#![allow(
+#![expect(
     clippy::unwrap_used,
     clippy::expect_used,
-    clippy::panic,
     clippy::indexing_slicing,
     reason = "test code: a panic is how a test fails"
 )]

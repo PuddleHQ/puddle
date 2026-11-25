@@ -894,6 +894,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         &self,
         name: &WorkspaceId,
         cpus: CpuCount,
+        // string-error-ok: the text is the refusal shown to the user; the caller maps it to one API error
     ) -> Result<(), String> {
         let repo = self.inner.settings.as_ref();
         let _lock = repo.lock().await;

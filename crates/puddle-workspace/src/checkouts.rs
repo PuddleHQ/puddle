@@ -205,6 +205,7 @@ fn judge_remote(raw: &str) -> (Option<String>, Option<RemoteNote>) {
 }
 
 /// Parses the script's output (see `guest/checkouts.sh`).
+// string-error-ok: the text is the message shown to the user for a guest or folder answer it cannot use; no caller branches on a kind
 pub(crate) fn parse(stdout: &str) -> Result<CheckoutList, String> {
     let mut list = CheckoutList::default();
     let mut errors = 0_usize;

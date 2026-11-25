@@ -1013,7 +1013,7 @@ where
     async fn replace_unauthorized(&mut self, refusal: InjectRefusal) -> Flow {
         tracing::info!(host = %self.cx.target.host, code = %refusal.code(), "401 replaced: the credential for this request was Puddle's to choose");
         self.upstream = None;
-        self.outcome.refused.get_or_insert(refusal.code());
+        self.outcome.refused.get_or_insert_with(|| refusal.code());
         self.refuse(&refusal.to_refusal()).await
     }
 

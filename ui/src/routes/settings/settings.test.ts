@@ -1061,6 +1061,32 @@ describe("the Git defaults for new workspaces", () => {
     saved.mockRestore();
   });
 
+  it("explain each switch by its state, and save the pull switch by its own name", async () => {
+    identities.gitDefaults = {
+      only_push_listed: false,
+      only_pull_listed: true,
+    };
+    const saved = vi
+      .spyOn(identities, "setGitDefaults")
+      .mockResolvedValue({ ok: true });
+    await open();
+    const pull = await screen.findByRole("switch", {
+      name: "Only pull from allowed repositories",
+    });
+    await waitFor(() => expect(pull).toBeChecked());
+    expect(
+      screen.getByText(/Off: a push may go to any repository/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/may fetch only from a repository/),
+    ).toBeInTheDocument();
+    await fireEvent.click(pull);
+    await waitFor(() =>
+      expect(saved).toHaveBeenCalledWith({ only_pull_listed: false }),
+    );
+    saved.mockRestore();
+  });
+
   it("put a refused change back and say why", async () => {
     identities.gitDefaults = {
       only_push_listed: true,

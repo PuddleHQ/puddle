@@ -122,6 +122,40 @@ describe("the page order", () => {
   });
 });
 
+describe("dragging an identity", () => {
+  const order = () => rows().map((r) => r.getAttribute("data-identity-id"));
+
+  it("leaves the order alone when it is dropped on itself or nothing was dragged", async () => {
+    render(Page);
+    await screen.findByText("Work");
+    await fireEvent.drop(row("Work"));
+    await fireEvent.dragStart(row("Work"));
+    await fireEvent.dragOver(row("Personal"));
+    await fireEvent.drop(row("Work"));
+    expect(order()).toEqual(["1", "2", "3"]);
+  });
+
+  it("ends a drag without a drop and ignores a hover when nothing is dragged", async () => {
+    render(Page);
+    await screen.findByText("Work");
+    await fireEvent.dragOver(row("Personal"));
+    await fireEvent.dragStart(row("Commits only"));
+    await fireEvent.dragEnd(row("Commits only"));
+    await fireEvent.drop(row("Work"));
+    expect(order()).toEqual(["1", "2", "3"]);
+  });
+
+  it("says so when the new order is refused", async () => {
+    render(Page);
+    await screen.findByText("Work");
+    api.down = true;
+    await fireEvent.dragStart(row("Commits only"));
+    await fireEvent.drop(row("Work"));
+    await waitFor(() => expect(order()).toEqual(["1", "2", "3"]));
+    await waitFor(() => expect(lastToast()).toBeTruthy());
+  });
+});
+
 describe("the identities list", () => {
   it("shows each identity with its author, credentials, default badge and use", async () => {
     render(Page);

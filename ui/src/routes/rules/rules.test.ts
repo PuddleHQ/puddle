@@ -1074,6 +1074,16 @@ describe("method and path rules", () => {
     window.history.replaceState({}, "", "/rules");
   });
 
+  it("opens the new-rule form with only the host when the address names no workspace", async () => {
+    window.history.replaceState({}, "", "/rules?new-rule=ads.example.net");
+    render(RulesPage);
+    const dialog = await screen.findByRole("dialog", { name: "Add a rule" });
+    expect(within(dialog).getByLabelText(/^Host/)).toHaveValue(
+      "ads.example.net",
+    );
+    window.history.replaceState({}, "", "/rules");
+  });
+
   it("ignores a rule named in the address that is not a number", async () => {
     window.history.replaceState({}, "", "/rules?request-rule=abc");
     requestApi.rules = [requestRule(1)];

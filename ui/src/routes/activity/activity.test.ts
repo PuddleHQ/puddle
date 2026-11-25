@@ -270,6 +270,28 @@ describe("the activity page", () => {
       await waitFor(() => expect(rows()).toHaveLength(2));
       expect(screen.getByLabelText("Time range")).toHaveValue("7d");
     });
+    it("says a single record in the last 7 days in the singular", async () => {
+      api.entries = [
+        connection(1, { host: "old.test", ts: Date.now() - 3 * 86_400_000 }),
+      ];
+      render(ActivityPage);
+      expect(
+        await screen.findByRole("button", {
+          name: /Show the last 7 days \(1\s+record\)/,
+        }),
+      ).toBeInTheDocument();
+    });
+    it("says 'at least' when the last 7 days hold more than one page", async () => {
+      api.entries = Array.from({ length: 205 }, (_, i) =>
+        connection(i + 1, { ts: Date.now() - 3 * 86_400_000 }),
+      );
+      render(ActivityPage);
+      expect(
+        await screen.findByRole("button", {
+          name: /Show the last 7 days \(200\+\s+records\)/,
+        }),
+      ).toBeInTheDocument();
+    });
     it("says nothing has been recorded when no filter is set", async () => {
       api.entries = [];
       window.history.replaceState({}, "", "/activity?range=all");

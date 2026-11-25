@@ -9,10 +9,8 @@ set -eu
 for v in $(git rev-parse --local-env-vars); do unset "$v"; done
 unset CARGO_TARGET_DIR CHECK_TMPDIR
 here=$(cd "$(dirname "$0")" && pwd)
-fail() {
-    echo "check-enclosing-repo-test: $*" >&2
-    exit 1
-}
+# shellcheck disable=SC1091 # the helper sits in scripts/
+. "$(dirname "$0")/../scripts/test-fail.sh"
 # Under /var/tmp, not the caller's TMPDIR: a gate run's own TMPDIR is a long chk.* dir, and the limit cases below build
 # paths from the root up to the 68-byte limit.
 root=$(mktemp -d /var/tmp/chk-encl.XXXXXX)

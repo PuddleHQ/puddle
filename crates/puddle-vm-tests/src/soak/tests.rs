@@ -7,7 +7,7 @@ fn steady(n: i64) -> Vec<i64> {
 
 #[test]
 fn a_steady_heartbeat_passes() {
-    let gaps = judge_heartbeat(&steady(600), 500).unwrap();
+    let gaps = judge_heartbeat(&steady(600), &steady(600), 500).unwrap();
     assert_eq!(gaps.count, 0);
 }
 
@@ -15,7 +15,7 @@ fn a_steady_heartbeat_passes() {
 fn a_route_paused_for_ten_seconds_fails_the_heartbeat() {
     let mut ticks = steady(300);
     ticks.extend((310..610).map(|t| t + 1_000));
-    let err = judge_heartbeat(&ticks, 500).unwrap_err();
+    let err = judge_heartbeat(&ticks, &steady(600), 500).unwrap_err();
     assert!(err.contains("11 s"), "{err}");
 }
 
@@ -23,16 +23,43 @@ fn a_route_paused_for_ten_seconds_fails_the_heartbeat() {
 fn a_gap_of_exactly_the_bar_passes_and_one_second_more_fails() {
     let mut ticks = steady(100);
     ticks.push(1_099 + HEARTBEAT_MAX_GAP_SECS);
-    assert!(judge_heartbeat(&ticks, 50).is_ok());
+    assert!(judge_heartbeat(&ticks, &steady(100), 50).is_ok());
     let mut ticks = steady(100);
     ticks.push(1_099 + HEARTBEAT_MAX_GAP_SECS + 1);
-    assert!(judge_heartbeat(&ticks, 50).is_err());
+    assert!(judge_heartbeat(&ticks, &steady(100), 50).is_err());
+}
+
+#[test]
+fn a_gap_the_guests_own_probe_shares_is_the_runners_stall_and_passes() {
+    let mut ticks = steady(300);
+    ticks.extend(1_308..1_600);
+    let mut probe = steady(300);
+    probe.extend(1_308..1_600);
+    let gaps = judge_heartbeat(&ticks, &probe, 100).unwrap();
+    assert_eq!(gaps.longest, 9);
+}
+
+#[test]
+fn a_gap_beside_a_probe_that_kept_ticking_is_the_routes_and_fails() {
+    let mut ticks = steady(300);
+    ticks.extend(1_310..1_600);
+    let err = judge_heartbeat(&ticks, &steady(600), 100).unwrap_err();
+    assert!(err.contains("11 s"), "{err}");
+}
+
+#[test]
+fn a_probe_stall_elsewhere_excuses_nothing() {
+    let mut ticks = steady(300);
+    ticks.extend(1_310..1_600);
+    let mut probe = steady(100);
+    probe.extend(1_110..1_600);
+    assert!(judge_heartbeat(&ticks, &probe, 100).is_err());
 }
 
 #[test]
 fn a_heartbeat_that_never_ran_is_not_a_clean_one() {
-    assert!(judge_heartbeat(&[], 1).is_err());
-    assert!(judge_heartbeat(&steady(10), 500).is_err());
+    assert!(judge_heartbeat(&[], &[], 1).is_err());
+    assert!(judge_heartbeat(&steady(10), &steady(10), 500).is_err());
 }
 
 #[test]

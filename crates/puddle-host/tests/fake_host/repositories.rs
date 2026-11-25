@@ -1175,3 +1175,28 @@ async fn a_host_on_a_version_1_list_shows_one_repository_in_its_checkout_and_a_r
     assert!(saved["workspaces"][0].get("repo_url").is_none(), "{saved}");
     host.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_workspaces_list_shows_each_checkouts_branch_from_the_listing_made_at_the_attach() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "adds").await;
+    eventually("the background listing", Duration::from_secs(10), || {
+        !rig.guest.listings.lock().unwrap().is_empty()
+    })
+    .await;
+    // Before anything asks for the checkouts: only the listing the attach made can have kept it.
+    let list = api.get("/api/workspaces/adds").await.json();
+    assert!(
+        list["repositories"][0]["branch"].is_string(),
+        "the attach's listing is kept for the list: {list}"
+    );
+    let listed = checkouts_of(&api, "adds").await;
+    assert_eq!(
+        list["repositories"][0]["branch"], listed["checkouts"][0]["branch"],
+        "{list}"
+    );
+    host.shutdown().await;
+}

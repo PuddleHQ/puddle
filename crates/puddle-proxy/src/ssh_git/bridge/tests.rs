@@ -511,13 +511,13 @@ fn an_object_id_is_forty_or_sixty_four_lower_case_hex_digits() {
 async fn a_refusal_puddle_gave_reaches_the_guest_in_its_own_words() {
     let mut host = Host2::answering([Reply::Status(
         StatusCode::FORBIDDEN,
-        "\npuddle: push to bound.test/acme/web is not on this workspace's push list\n",
+        "\npuddle: Blocked this push: bound.test/acme/web is not in this workspace's allowed repositories for push\n",
     )]);
     let (out, result) = session(&mut host, &command(GitService::Receive, None), b"").await;
     assert_eq!(out, "");
     assert_eq!(
         result.unwrap_err().message,
-        "push to bound.test/acme/web is not on this workspace's push list"
+        "Blocked this push: bound.test/acme/web is not in this workspace's allowed repositories for push"
     );
 }
 

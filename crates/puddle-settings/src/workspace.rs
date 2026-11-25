@@ -95,11 +95,13 @@ pub enum MiseMode {
 /// it off the answer is [`MiseMode::Off`] whatever the workspace stores.
 ///
 /// ```
-/// use puddle_settings::{GlobalSettings, MiseMode, WorkspaceSettings, mise_mode};
+/// use puddle_settings::{GlobalSettings, MiseMode, Tools, WorkspaceSettings, mise_mode};
 /// let mut ws = WorkspaceSettings::default();
 /// ws.tools.mise = Some(true);
 /// let mut global = GlobalSettings::default();
-/// assert_eq!(mise_mode(&global, Some(&ws)), MiseMode::On { trust: true });
+/// // a build without the `mise` feature answers Off whatever is stored
+/// let on = if Tools::AVAILABLE { MiseMode::On { trust: true } } else { MiseMode::Off };
+/// assert_eq!(mise_mode(&global, Some(&ws)), on);
 /// global.tools.mise = Some(false);
 /// assert_eq!(mise_mode(&global, Some(&ws)), MiseMode::Off);
 /// ```

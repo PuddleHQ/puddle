@@ -81,8 +81,7 @@
         <p class="error" id="{id}-error" role="alert">{shown}</p>
       {:else}
         <p class="hint" id="{id}-hint">
-          The workspace id, <span class="mono">{workspace.id}</span>, stays as
-          it is.
+          The new name shows everywhere, and in the prompt of new terminals.
         </p>
       {/if}
     </div>

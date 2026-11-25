@@ -23,6 +23,7 @@ mod audit_record;
 mod auth;
 mod consent;
 mod credentials;
+mod default_image;
 mod doctor;
 mod environment;
 mod first_run;
@@ -57,8 +58,8 @@ pub use app_icon::{AppIconChoice, AppIcons, BuiltInIcon, CustomIcon};
 pub use audit::{
     AuditEntry, AuditOutcome, AuditPage, AuditPending, AuditRequestRule, AuditRequestRuleScope,
     AuditRetentionRequest, AuditRule, AuditRuleScope, AuditRuleSet, AuditSize, AuditType,
-    ConnectionDecision, ConnectionOrigin, ConnectionOutcome, PendingExpiryReason, RuleDeleteReason,
-    RuleSwitchKind, WorkspaceOpKind, WorkspaceOpOutcome,
+    ConnectionDecision, ConnectionOrigin, ConnectionOutcome, ConnectionProtocol,
+    PendingExpiryReason, RuleDeleteReason, RuleSwitchKind, WorkspaceOpKind, WorkspaceOpOutcome,
 };
 pub use audit_record::AuditRecord;
 pub use auth::{
@@ -72,6 +73,7 @@ pub use credentials::{
     CheckRequest, CheckResult, FoundAccount, FoundAccounts, FoundProblem, FoundVia, SignInRequest,
     SignInStarted, StoreTokenRequest, StoredToken,
 };
+pub use default_image::DefaultImage;
 pub use doctor::{DoctorCheck, DoctorReport, DoctorStatus};
 pub use environment::{
     EnvKind, EnvList, EnvScope, EnvSetRequest, EnvVariable, SecretPlace, SecretText, WorkspaceEnv,
@@ -150,8 +152,8 @@ pub use ui_errors::{UiError, UiErrorKind, UiErrorList, UiErrorReport};
 pub use workspaces::{
     AttachMode, AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest, FindingList,
     GrowRootDiskRequest, NewRepositoryRequest, NewWorkspaceRequest, RenameWorkspaceRequest,
-    RepoFindings, SessionUserRequest, Workspace, WorkspaceList, WorkspaceLookupConflict,
-    WorkspaceMatch, WorkspaceOperation, WorkspaceRepository,
+    RepoFindings, SessionUserRequest, Workspace, WorkspaceAction, WorkspaceList,
+    WorkspaceLookupConflict, WorkspaceMatch, WorkspaceOperation, WorkspaceRepository,
 };
 
 // ---------------------------------------------------------------------------------------------

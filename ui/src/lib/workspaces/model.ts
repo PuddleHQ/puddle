@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// What the workspace screens decide without the server: which buttons make sense for a state,
-// the words for states and progress steps, and the checks a create form can make before it asks.
+// What the workspace screens decide without the server: the words for states and progress steps,
+// and the checks a create form can make before it asks. Which buttons a state offers comes from
+// the server (`Workspace.actions`).
 // Pure TypeScript, no DOM.
 import type { components } from "#lib/api/schema.d.ts";
 import { bytesLabel } from "#lib/audit/model.ts";
@@ -11,7 +12,10 @@ export type Operation = components["schemas"]["WorkspaceOperation"];
 export type Step = components["schemas"]["WorkspaceStep"];
 export type DeleteCheck = components["schemas"]["DeleteCheck"];
 
-/** States with no VM: the workspace can be started or deleted. */
+/** What the user can ask of a workspace; `Workspace.actions` lists the ones its state admits. */
+export type Action = components["schemas"]["WorkspaceAction"];
+
+/** States with no VM. Which buttons a state offers is the server's `actions`, not this. */
 export function isDown(status: Status): boolean {
   return (
     status === "created" ||
@@ -21,32 +25,9 @@ export function isDown(status: Status): boolean {
   );
 }
 
-/** Nothing is changing the workspace right now. */
-export const isIdle = (w: Workspace): boolean => w.busy === null;
-
-export const canStart = (w: Workspace): boolean =>
-  isIdle(w) && isDown(w.status);
-export const canStop = (w: Workspace): boolean =>
-  isIdle(w) && w.status === "running";
-export const canAttach = canStop;
-export const canDelete = (w: Workspace): boolean =>
-  isIdle(w) && isDown(w.status);
-export const canReclaim = (w: Workspace): boolean =>
-  isIdle(w) && (w.status === "running" || w.status === "stopped");
-/** The root disk goes with the sandbox, so a reset needs the workspace down. */
-export const canResetRootDisk = (w: Workspace): boolean =>
-  isIdle(w) && (w.status === "stopped" || w.status === "crashed");
-
-/**
- * A root disk can grow while the workspace runs, or waits for its next start when it is down;
- * only a start or stop in progress (and any other operation) holds it back.
- */
-export const canGrowRootDisk = (w: Workspace): boolean =>
-  isIdle(w) &&
-  w.root_disk_size_mib !== null &&
-  w.status !== "starting" &&
-  w.status !== "draining" &&
-  w.status !== "volume_missing";
+/** Whether the server says `w`'s state admits `action` now. */
+export const allows = (w: Workspace, action: Action): boolean =>
+  w.actions.includes(action);
 
 /**
  * The largest root disk size the form offers, in whole GiB. A limit of the form, not of the API
@@ -270,7 +251,7 @@ const SSH_HOST =
 /** The SSH names of the Git hosts Puddle serves over SSH, with the HTTPS host each one stands for
  * (`PathForm` in the proxy's `ssh_git/grammar.rs`; the host reads them the same way,
  * `ssh_address_as_https` in `puddle-store`). */
-const SSH_HOSTS: Record<string, string> = {
+export const SSH_HOSTS: Record<string, string> = {
   "github.com": "github.com",
   "ssh.github.com": "github.com",
   "gitlab.com": "gitlab.com",

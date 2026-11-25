@@ -64,15 +64,15 @@ pub use assets::{
     CODE_SERVER_GUEST, MOUNT_DIR_GUEST, with_boot_mounts, with_code_server_mount, write_assets,
 };
 pub use gate::{Gate, GateState, GatedError, GatedSandbox, NotReady};
-pub use hook::{BootError, BootFailure, BootHook, BootReport, STDERR_LIMIT};
+pub use hook::{BootError, BootFailure, BootHook, BootReport, CallerKeeps, Keeper, STDERR_LIMIT};
 pub use machine::{
     MACHINE_SETTINGS_GUEST, MACHINE_SETTINGS_RELATIVE, machine_settings, machine_settings_path,
 };
 pub use plan::{
     AgentConfig, BASH_RC_GUEST, BootPlan, BootPlanBuilder, CA_DIR_GUEST, DEFAULT_AGENT_PORT,
     ENV_FILE_GUEST, GIT_AUTHOR_DIR_GUEST, GIT_CONFIG_GUEST, GitAuthorRule, GitIdentity, ImageValue,
-    MAX_GIT_AUTHOR_GLOBS, MAX_GIT_AUTHOR_RULES, PATH_FILE_GUEST, PLAN_HEADER, PlanError,
-    START_FOLDER_FILE_GUEST, SUDOERS_ENV_GUEST, SUDOERS_SESSION_GUEST, ZSH_ENV_GUEST,
-    start_folder_file,
+    MAX_GIT_AUTHOR_GLOBS, MAX_GIT_AUTHOR_RULES, PATH_FILE_GUEST, PLAN_HEADER,
+    PROMPT_NAME_FILE_GUEST, PlanError, START_FOLDER_FILE_GUEST, SUDOERS_ENV_GUEST,
+    SUDOERS_SESSION_GUEST, ZSH_ENV_GUEST, prompt_name_file, start_folder_file,
 };
 pub use puddle_types::ApplyKind;

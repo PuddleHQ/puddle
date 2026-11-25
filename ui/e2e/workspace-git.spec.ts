@@ -62,10 +62,10 @@ test("is a tab of the workspace page and shows identities, switches and the tabl
   await expect(ids).toContainText("Work");
   await expect(ids).toContainText("github.com: acme, acme-labs");
   await expect(
-    page.getByRole("switch", { name: "Only push to listed repos" }),
+    page.getByRole("switch", { name: "Only push to allowed repositories" }),
   ).toBeChecked();
   await expect(
-    page.getByRole("switch", { name: "Only pull from listed repos" }),
+    page.getByRole("switch", { name: "Only pull from allowed repositories" }),
   ).not.toBeChecked();
   await expect(
     table(page).getByRole("checkbox", {
@@ -98,10 +98,10 @@ test("a toggle and a switch are saved at once and survive a reload", async ({
     }),
   ).toBeChecked();
   await page
-    .getByRole("switch", { name: "Only pull from listed repos" })
+    .getByRole("switch", { name: "Only pull from allowed repositories" })
     .click();
   await expect(
-    page.getByRole("switch", { name: "Only pull from listed repos" }),
+    page.getByRole("switch", { name: "Only pull from allowed repositories" }),
   ).toBeChecked();
   await page.reload();
   await expect(
@@ -110,7 +110,7 @@ test("a toggle and a switch are saved at once and survive a reload", async ({
     }),
   ).toBeChecked();
   await expect(
-    page.getByRole("switch", { name: "Only pull from listed repos" }),
+    page.getByRole("switch", { name: "Only pull from allowed repositories" }),
   ).toBeChecked();
   await expect(
     page.getByText(
@@ -341,11 +341,13 @@ test("the default for the two switches is inherited by new workspaces and overri
 }) => {
   await backend.control.reset("git-identities");
   await backend.signIn(page);
-  await page.goto("/identities");
+  await page.goto("/settings/editor-and-git");
   const pull = page.getByRole("switch", {
-    name: "Only pull from listed repos",
+    name: "Only pull from allowed repositories",
   });
-  const push = page.getByRole("switch", { name: "Only push to listed repos" });
+  const push = page.getByRole("switch", {
+    name: "Only push to allowed repositories",
+  });
   await expect(push).toBeChecked();
   await expect(pull).not.toBeChecked();
   await pull.click();
@@ -364,30 +366,32 @@ test("the default for the two switches is inherited by new workspaces and overri
   expect(made.status()).toBe(202);
   await page.goto("/workspaces/inherits/git");
   await expect(
-    page.getByRole("switch", { name: "Only pull from listed repos" }),
+    page.getByRole("switch", { name: "Only pull from allowed repositories" }),
   ).toBeChecked();
   await expect(
-    page.getByRole("switch", { name: "Only push to listed repos" }),
+    page.getByRole("switch", { name: "Only push to allowed repositories" }),
   ).not.toBeChecked();
 
   // It overrides one switch; a later change of the default moves only the other.
   await page
-    .getByRole("switch", { name: "Only pull from listed repos" })
+    .getByRole("switch", { name: "Only pull from allowed repositories" })
     .click();
   await expect(
-    page.getByRole("switch", { name: "Only pull from listed repos" }),
+    page.getByRole("switch", { name: "Only pull from allowed repositories" }),
   ).not.toBeChecked();
-  await page.goto("/identities");
+  await page.goto("/settings/editor-and-git");
   await page
-    .getByRole("switch", { name: "Only pull from listed repos" })
+    .getByRole("switch", { name: "Only pull from allowed repositories" })
     .click();
-  await page.getByRole("switch", { name: "Only push to listed repos" }).click();
+  await page
+    .getByRole("switch", { name: "Only push to allowed repositories" })
+    .click();
   await page.goto("/workspaces/inherits/git");
   await expect(
-    page.getByRole("switch", { name: "Only pull from listed repos" }),
+    page.getByRole("switch", { name: "Only pull from allowed repositories" }),
   ).not.toBeChecked();
   await expect(
-    page.getByRole("switch", { name: "Only push to listed repos" }),
+    page.getByRole("switch", { name: "Only push to allowed repositories" }),
   ).toBeChecked();
 
   // "Use the default again" drops the workspace's own pull value: it follows the default from then on.
@@ -396,20 +400,20 @@ test("the default for the two switches is inherited by new workspaces and overri
   ).toHaveCount(1);
   await page
     .getByRole("button", {
-      name: "Use the default again for Only pull from listed repos",
+      name: "Use the default again for Only pull from allowed repositories",
     })
     .click();
   await expect(
     page.getByRole("button", { name: /Use the default again/ }),
   ).toHaveCount(0);
   await expect(page.getByText(/It follows the default/)).toHaveCount(2);
-  await page.goto("/identities");
+  await page.goto("/settings/editor-and-git");
   await page
-    .getByRole("switch", { name: "Only pull from listed repos" })
+    .getByRole("switch", { name: "Only pull from allowed repositories" })
     .click();
   await page.goto("/workspaces/inherits/git");
   await expect(
-    page.getByRole("switch", { name: "Only pull from listed repos" }),
+    page.getByRole("switch", { name: "Only pull from allowed repositories" }),
   ).toBeChecked();
 });
 
@@ -469,10 +473,12 @@ test("keyboard only: toggle a box, flip a switch and add a repository", async ({
       name: "Pull github.com/acme/web-shop",
     }),
   ).not.toBeChecked();
-  await page.getByRole("switch", { name: "Only push to listed repos" }).focus();
+  await page
+    .getByRole("switch", { name: "Only push to allowed repositories" })
+    .focus();
   await page.keyboard.press("Space");
   await expect(
-    page.getByRole("switch", { name: "Only push to listed repos" }),
+    page.getByRole("switch", { name: "Only push to allowed repositories" }),
   ).not.toBeChecked();
   await page.getByLabel("Add a repository").focus();
   await page.keyboard.type("https://github.com/acme/keys");

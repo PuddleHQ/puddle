@@ -8768,6 +8768,67 @@
         }
       }
     },
+    "/api/workspaces/default-image": {
+      "get": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "The image a create boots when the form names none, with a line from the image's own labels\nthat says what is in it. The line is `null` until the host has read the labels.",
+        "operationId": "default_image",
+        "responses": {
+          "200": {
+            "description": "the default image",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DefaultImage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/workspaces/lookup": {
       "get": {
         "tags": [
@@ -10117,7 +10178,7 @@
         "tags": [
           "identities"
         ],
-        "summary": "Sets \"only push to listed repos\" and \"only pull from listed repos\"; a switch left out stays. `use_default_push` or `use_default_pull` drops the workspace's own\nvalue, so that switch follows the default again.",
+        "summary": "Sets \"only push to allowed repositories\" and \"only pull from allowed repositories\"; a switch left out stays. `use_default_push` or `use_default_pull` drops the workspace's own\nvalue, so that switch follows the default again.",
         "operationId": "set_git_switches",
         "parameters": [
           {
@@ -14835,6 +14896,7 @@
               "scrubbed_stand_ins",
               "foreign_credentials",
               "answer_credentials",
+              "protocol",
               "method",
               "path",
               "path_truncated",
@@ -14924,7 +14986,7 @@
                   "string",
                   "null"
                 ],
-                "description": "HTTP method, where the proxy saw the request in clear."
+                "description": "HTTP method, where the proxy saw the request in clear; for `protocol: ssh` the Git\ncommand or the refusal (`ssh-command`, `ssh-channel`)."
               },
               "origin": {
                 "$ref": "#/components/schemas/ConnectionOrigin",
@@ -14968,6 +15030,17 @@
                 "format": "int32",
                 "description": "The requested port.",
                 "minimum": 0
+              },
+              "protocol": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/ConnectionProtocol",
+                    "description": "What `method` and `path` are: `http`, or `ssh` for Git over SSH. `null` when there is\nno `method`. Records written before it existed read as `http` when they have a\n`method`."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "reason": {
                 "type": "string",
@@ -16502,6 +16575,14 @@
           "timeout"
         ]
       },
+      "ConnectionProtocol": {
+        "type": "string",
+        "description": "What the `method` and `path` of a connection record are.",
+        "enum": [
+          "http",
+          "ssh"
+        ]
+      },
       "Consent": {
         "oneOf": [
           {
@@ -16907,6 +16988,27 @@
           }
         },
         "additionalProperties": false
+      },
+      "DefaultImage": {
+        "type": "object",
+        "description": "`GET /api/workspaces/default-image`: the image a create without one boots.",
+        "required": [
+          "image",
+          "description"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "One line that says what is in the image, read from the image's own labels; `null` while\nthey are not known yet (the image is still downloading, or its labels say nothing)."
+          },
+          "image": {
+            "type": "string",
+            "description": "The image reference, as the create uses it."
+          }
+        }
       },
       "DeleteCheck": {
         "type": "object",
@@ -18983,14 +19085,14 @@
               "boolean",
               "null"
             ],
-            "description": "\"Only pull from listed repos\"."
+            "description": "\"Only pull from allowed repositories\"."
           },
           "only_push_listed": {
             "type": [
               "boolean",
               "null"
             ],
-            "description": "\"Only push to listed repos\"."
+            "description": "\"Only push to allowed repositories\"."
           }
         },
         "additionalProperties": false
@@ -24570,6 +24672,7 @@
           "memory_mib",
           "status",
           "busy",
+          "actions",
           "created_at",
           "disk_size_mib",
           "disk_used_mib",
@@ -24583,6 +24686,13 @@
           "allowed_hosts"
         ],
         "properties": {
+          "actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceAction"
+            },
+            "description": "What the workspace's state admits now, from the same rules the calls are checked by:\noffer these and grey out the rest. Empty while an operation runs."
+          },
           "allowed_hosts": {
             "type": "array",
             "items": {
@@ -24713,6 +24823,20 @@
             "description": "The workspace's state."
           }
         }
+      },
+      "WorkspaceAction": {
+        "type": "string",
+        "description": "Something the user can ask of a workspace. A workspace lists the ones its state admits now in\n`actions`; the call for any other is refused with 409.",
+        "enum": [
+          "start",
+          "stop",
+          "attach",
+          "delete",
+          "reclaim",
+          "reset_root_disk",
+          "grow_root_disk",
+          "add_repository"
+        ]
       },
       "WorkspaceEnv": {
         "type": "object",
@@ -24903,7 +25027,9 @@
           "root_disk_grown",
           "ssh_agent_signed",
           "ssh_agent_refused",
-          "ssh_agent_answered"
+          "ssh_agent_answered",
+          "audit_retention_changed",
+          "audit_pruned"
         ]
       },
       "WorkspaceOpOutcome": {
@@ -24956,9 +25082,17 @@
         "required": [
           "entry",
           "url",
-          "directory"
+          "directory",
+          "branch"
         ],
         "properties": {
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The branch checked out in it, from the last time Puddle listed the workspace's checkouts\n(when the Git tab opened or the editor attached); `null` when no listing was made since\nPuddle started, the checkout is not there, or HEAD is detached. Never listed just for this\nanswer."
+          },
           "directory": {
             "$ref": "#/components/schemas/CheckoutDir",
             "description": "The checkout it is cloned into, directly under the volume root."
@@ -25067,14 +25201,14 @@
               "boolean",
               "null"
             ],
-            "description": "\"Only pull from listed repos\": the workspace's own value."
+            "description": "\"Only pull from allowed repositories\": the workspace's own value."
           },
           "only_push_listed": {
             "type": [
               "boolean",
               "null"
             ],
-            "description": "\"Only push to listed repos\": the workspace's own value."
+            "description": "\"Only push to allowed repositories\": the workspace's own value."
           },
           "use_default_pull": {
             "type": "boolean",

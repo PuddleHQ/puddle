@@ -20,14 +20,14 @@ use puddle_types::{
 use sha2::{Digest, Sha256};
 
 mod admission;
+mod image_note;
 mod launch;
+pub mod phase;
 mod repositories;
 mod service;
 
-pub use admission::{
-    admit_delete_fingerprint, admit_delete_status, admit_grow_size, admit_idle,
-    admit_reset_root_disk, admit_settled, admit_start, admit_stop, not_found,
-};
+pub use admission::{admit_delete_fingerprint, admit_grow_size, not_found};
+pub use image_note::describe_image;
 pub use launch::{
     BrowserTarget, CONNECTION_TOKEN_COOKIE, DesktopTarget, EditorLogin, EditorSignIn, LaunchError,
     Launcher, OpenTarget,
@@ -576,11 +576,7 @@ fn id_for_name(name: &DisplayName) -> Result<WorkspaceId, puddle_types::Validati
         return Ok(id);
     }
     let digest = Sha256::digest(name.as_str().to_lowercase().as_bytes());
-    let hex = digest.iter().take(4).fold(String::new(), |mut out, b| {
-        // writing into a `String` cannot fail
-        let _ = fmt::Write::write_fmt(&mut out, format_args!("{b:02x}"));
-        out
-    });
+    let hex = puddle_types::hex_lower(digest.get(..4).unwrap_or_default());
     WorkspaceId::new(&format!("workspace-{hex}"))
 }
 
@@ -870,14 +866,7 @@ fn fingerprint(check: &DeleteCheck) -> String {
     if check.volume_missing {
         put("volume_missing");
     }
-    hash.finalize()
-        .iter()
-        .fold(String::with_capacity(64), |mut out, byte| {
-            use std::fmt::Write as _;
-            // writing into a `String` cannot fail
-            let _ = write!(out, "{byte:02x}");
-            out
-        })
+    puddle_types::hex_lower(&hash.finalize())
 }
 
 #[cfg(test)]

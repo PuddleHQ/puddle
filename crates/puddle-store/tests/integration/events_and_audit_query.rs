@@ -504,6 +504,7 @@ fn connection(ts: u64, workspace: &str, host: &str, decision: ConnectionDecision
         scrubbed_stand_ins: Vec::new(),
         foreign_credentials: Vec::new(),
         answer_credentials: Vec::new(),
+        protocol: None,
         method: None,
         path: None,
         path_truncated: false,

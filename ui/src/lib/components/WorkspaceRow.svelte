@@ -13,15 +13,14 @@
   import { relativeTime } from "#lib/format/relative-time.ts";
   import type { OomEvent, Progress } from "#lib/stores/workspaces.svelte.ts";
   import {
-    canAttach,
-    canStart,
-    canStop,
+    allows,
     diskPercent,
     formatMib,
     isDown,
     type Workspace,
   } from "#lib/workspaces/model.ts";
   import { repoLabel } from "#lib/workspaces/repo-label.ts";
+  import { tabHref } from "#lib/workspaces/tabs.ts";
   import "#lib/theme/controls.css";
 
   let {
@@ -34,6 +33,8 @@
     onStart,
     onStop,
     onConnect,
+    onRename,
+    onDelete,
     onDismiss,
   }: {
     workspace: Workspace;
@@ -47,6 +48,8 @@
     onStart: (w: Workspace) => void;
     onStop: (w: Workspace) => void;
     onConnect: (w: Workspace) => void;
+    onRename: (w: Workspace) => void;
+    onDelete: (w: Workspace) => void;
     onDismiss: (w: Workspace) => void;
   } = $props();
 
@@ -76,6 +79,7 @@
     <p class="repo" title={first?.url}>
       {#if first}
         {repoLabel(first.url)}
+        {#if first.branch}<span class="branch">{first.branch}</span>{/if}
         {#if workspace.repositories.length > 1}
           <span class="more">and {workspace.repositories.length - 1} more</span>
         {/if}
@@ -99,7 +103,7 @@
         <button
           type="button"
           class="btn primary"
-          disabled={!canStart(workspace)}
+          disabled={!allows(workspace, "start")}
           onclick={() => onStart(workspace)}
         >
           <Play aria-hidden="true" size={16} />Start
@@ -109,7 +113,7 @@
         <button
           type="button"
           class="btn primary"
-          disabled={!canAttach(workspace)}
+          disabled={!allows(workspace, "attach")}
           onclick={() => onConnect(workspace)}
         >
           <Plug aria-hidden="true" size={16} />Connect
@@ -130,15 +134,33 @@
             >
               Open details
             </DropdownMenu.Item>
+            <DropdownMenu.Item
+              class="row-menu-item"
+              onSelect={() => goto(tabHref(workspace.id, "terminal"))}
+            >
+              Terminal <span class="visually-hidden">of {workspace.name}</span>
+            </DropdownMenu.Item>
+            <DropdownMenu.Item
+              class="row-menu-item"
+              onSelect={() => onRename(workspace)}
+            >
+              Rename <span class="visually-hidden">{workspace.name}</span>
+            </DropdownMenu.Item>
             {#if !down}
               <DropdownMenu.Item
                 class="row-menu-item"
-                disabled={!canStop(workspace)}
+                disabled={!allows(workspace, "stop")}
                 onSelect={() => onStop(workspace)}
               >
                 Stop <span class="visually-hidden">{workspace.name}</span>
               </DropdownMenu.Item>
             {/if}
+            <DropdownMenu.Item
+              class="row-menu-item"
+              onSelect={() => onDelete(workspace)}
+            >
+              Delete <span class="visually-hidden">{workspace.name}</span>
+            </DropdownMenu.Item>
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
@@ -245,6 +267,10 @@
   }
   .more {
     font-family: var(--font-sans);
+  }
+  .branch::before {
+    content: "·";
+    margin: 0 var(--space-1);
   }
   .full {
     color: var(--color-warning);

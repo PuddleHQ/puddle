@@ -3,7 +3,7 @@
   import { takeRecommendedMode } from "#lib/stores/interception.svelte.ts";
   import { finishFlow } from "#lib/welcome/finish.ts";
   import StepHeading from "#lib/welcome/StepHeading.svelte";
-  import { around } from "#lib/welcome/steps.ts";
+  import { around, WELCOME_ROOT } from "#lib/welcome/steps.ts";
   import "#lib/theme/controls.css";
 
   let leaving = $state(false);
@@ -35,10 +35,20 @@
   >
   <a class="btn primary" href={around("welcome").next}>Get started</a>
 </div>
+<p class="import">
+  Moving from another computer?
+  <a class="btn" href={`${WELCOME_ROOT}/import`}>Import a backup</a>
+</p>
 
 <style>
   .body {
     margin: 0;
+  }
+  .import {
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+    text-align: right;
   }
   .actions {
     display: flex;

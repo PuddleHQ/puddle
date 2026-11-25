@@ -26,6 +26,7 @@ import {
   identityStatus,
   labelProblem,
   moved,
+  movedTo,
   needsOrg,
   signedOutCheck,
   tenantProblem,
@@ -313,6 +314,14 @@ describe("small helpers", () => {
     expect(moved([1, 2, 3], 1, -1)).toEqual([1, 2, 3]);
     expect(moved([1, 2, 3], 3, 1)).toEqual([1, 2, 3]);
     expect(moved([1, 2, 3], 9, 1)).toEqual([1, 2, 3]);
+  });
+
+  it("moves an item to where another sits", () => {
+    expect(movedTo([1, 2, 3], 3, 1)).toEqual([3, 1, 2]);
+    expect(movedTo([1, 2, 3], 1, 3)).toEqual([2, 3, 1]);
+    expect(movedTo([1, 2, 3], 2, 2)).toEqual([1, 2, 3]);
+    expect(movedTo([1, 2, 3], 9, 1)).toEqual([1, 2, 3]);
+    expect(movedTo([1, 2, 3], 1, 9)).toEqual([1, 2, 3]);
   });
 
   it("says how many workspaces use an identity", () => {

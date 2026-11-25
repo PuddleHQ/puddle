@@ -1694,6 +1694,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/default-image": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The image a create boots when the form names none, with a line from the image's own labels
+         *     that says what is in it. The line is `null` until the host has read the labels.
+         */
+        get: operations["default_image"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/lookup": {
         parameters: {
             query?: never;
@@ -1912,7 +1932,7 @@ export interface paths {
         };
         get?: never;
         /**
-         * Sets "only push to listed repos" and "only pull from listed repos"; a switch left out stays. `use_default_push` or `use_default_pull` drops the workspace's own
+         * Sets "only push to allowed repositories" and "only pull from allowed repositories"; a switch left out stays. `use_default_push` or `use_default_pull` drops the workspace's own
          *     value, so that switch follows the default again.
          */
         put: operations["set_git_switches"];
@@ -2989,7 +3009,10 @@ export interface components {
             host: string | null;
             /** @description Whether a credential was injected. */
             injected: boolean;
-            /** @description HTTP method, where the proxy saw the request in clear. */
+            /**
+             * @description HTTP method, where the proxy saw the request in clear; for `protocol: ssh` the Git
+             *     command or the refusal (`ssh-command`, `ssh-channel`).
+             */
             method: string | null;
             /** @description Whose connection it is. Records written before it existed read as `workspace`. */
             origin: components["schemas"]["ConnectionOrigin"];
@@ -3008,6 +3031,7 @@ export interface components {
              * @description The requested port.
              */
             port: number | null;
+            protocol: components["schemas"]["ConnectionProtocol"] | null;
             /**
              * @description Why: a `ReasonCode` (`rule`, `no_rule`, `push_denied`, ...), or `<prefix>:<code>` with
              *     a `ReasonPrefix`: `toggle:` and a local category, `puddle_request_failed:` and a
@@ -3686,6 +3710,11 @@ export interface components {
          * @enum {string}
          */
         ConnectionOutcome: "connected" | "upstream_refused" | "connect_failed" | "timeout";
+        /**
+         * @description What the `method` and `path` of a connection record are.
+         * @enum {string}
+         */
+        ConnectionProtocol: "http" | "ssh";
         /** @description What the user agreed to or declined. */
         Consent: {
             /** @enum {string} */
@@ -3845,6 +3874,16 @@ export interface components {
              *     name under it; left out or `null` means the exact host. A public suffix is refused.
              */
             suffix?: string | null;
+        };
+        /** @description `GET /api/workspaces/default-image`: the image a create without one boots. */
+        DefaultImage: {
+            /**
+             * @description One line that says what is in the image, read from the image's own labels; `null` while
+             *     they are not known yet (the image is still downloading, or its labels say nothing).
+             */
+            description: string | null;
+            /** @description The image reference, as the create uses it. */
+            image: string;
         };
         /**
          * @description `GET /api/workspaces/{id}/delete-check`: what deleting the workspace would lose. Text comes
@@ -4652,9 +4691,9 @@ export interface components {
         };
         /** @description Sets either switch; a switch left out stays as it is. */
         GitSwitchesRequest: {
-            /** @description "Only pull from listed repos". */
+            /** @description "Only pull from allowed repositories". */
             only_pull_listed?: boolean | null;
-            /** @description "Only push to listed repos". */
+            /** @description "Only push to allowed repositories". */
             only_push_listed?: boolean | null;
         };
         /** @description The names no workspace decrypts. */
@@ -7165,6 +7204,11 @@ export interface components {
          */
         Workspace: {
             /**
+             * @description What the workspace's state admits now, from the same rules the calls are checked by:
+             *     offer these and grey out the rest. Empty while an operation runs.
+             */
+            actions: components["schemas"]["WorkspaceAction"][];
+            /**
              * @description The hosts creating the workspace, or adding a repository to it, allowed for it because no
              *     rule decided them (each is a rule made by the create, on the Rules screen). Only those
              *     answers fill it; every other answer has an empty list.
@@ -7261,6 +7305,12 @@ export interface components {
             status: components["schemas"]["WorkspaceStatus"];
         };
         /**
+         * @description Something the user can ask of a workspace. A workspace lists the ones its state admits now in
+         *     `actions`; the call for any other is refused with 409.
+         * @enum {string}
+         */
+        WorkspaceAction: "start" | "stop" | "attach" | "delete" | "reclaim" | "reset_root_disk" | "grow_root_disk" | "add_repository";
+        /**
          * @description What a workspace sees: its own variables and the global ones, by name. A global variable that
          *     the workspace's own of the same name hides is listed after it with `overridden` set. The
          *     workspace's environment is read when it starts: a change reaches a running workspace's own
@@ -7329,7 +7379,7 @@ export interface components {
          * @description What a `workspace_op` record is about.
          * @enum {string}
          */
-        WorkspaceOpKind: "create" | "delete" | "rename" | "start" | "stop" | "identity_created" | "identity_updated" | "identity_deleted" | "identity_default_set" | "identities_changed" | "identities_reordered" | "repo_added" | "repo_switched" | "repo_removed" | "git_switches_changed" | "git_repaired" | "root_disk_grown" | "ssh_agent_signed" | "ssh_agent_refused" | "ssh_agent_answered";
+        WorkspaceOpKind: "create" | "delete" | "rename" | "start" | "stop" | "identity_created" | "identity_updated" | "identity_deleted" | "identity_default_set" | "identities_changed" | "identities_reordered" | "repo_added" | "repo_switched" | "repo_removed" | "git_switches_changed" | "git_repaired" | "root_disk_grown" | "ssh_agent_signed" | "ssh_agent_refused" | "ssh_agent_answered" | "audit_retention_changed" | "audit_pruned";
         /**
          * @description How a workspace operation ended.
          * @enum {string}
@@ -7357,6 +7407,13 @@ export interface components {
          *     table's spelling.
          */
         WorkspaceRepository: {
+            /**
+             * @description The branch checked out in it, from the last time Puddle listed the workspace's checkouts
+             *     (when the Git tab opened or the editor attached); `null` when no listing was made since
+             *     Puddle started, the checkout is not there, or HEAD is detached. Never listed just for this
+             *     answer.
+             */
+            branch: string | null;
             /** @description The checkout it is cloned into, directly under the volume root. */
             directory: components["schemas"]["CheckoutDir"];
             /**
@@ -7400,9 +7457,9 @@ export interface components {
         WorkspaceStep: "preparing_volume" | "pulling_image" | "unpacking_image" | "cloning" | "starting" | "syncing" | "checking" | "reclaiming" | "resetting_root_disk" | "growing_root_disk" | "stopping" | "removing" | "done" | "failed";
         /** @description Changes a workspace's two switches; a switch left out stays as it is. */
         WorkspaceSwitchesRequest: {
-            /** @description "Only pull from listed repos": the workspace's own value. */
+            /** @description "Only pull from allowed repositories": the workspace's own value. */
             only_pull_listed?: boolean | null;
-            /** @description "Only push to listed repos": the workspace's own value. */
+            /** @description "Only push to allowed repositories": the workspace's own value. */
             only_push_listed?: boolean | null;
             /**
              * @description Drop the workspace's own pull value, so it follows the default again. Not with
@@ -14868,6 +14925,62 @@ export interface operations {
             };
             /** @description workspaces are not available, or Puddle could not pick a new id (16 draws were all taken: a broken random source) */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    default_image: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the default image */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DefaultImage"];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description forbidden origin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

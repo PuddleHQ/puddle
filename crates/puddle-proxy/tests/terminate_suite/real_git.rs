@@ -186,7 +186,7 @@ async fn a_refused_push_is_readable_in_git_s_own_output_and_nothing_is_sent() {
     assert!(!ran.ok);
     assert!(
         ran.stderr.contains(
-            "remote: puddle: push to bound.test/acme/other is not on this workspace's push list yet, as with a repository the workspace just created or forked; click \"Allow push for other\" in the notice (it works at once, no restart), or turn off \"Only push to listed repos\" on the workspace's Git tab, then try again"
+            "remote: puddle: Blocked this push: bound.test/acme/other is not in this workspace's allowed repositories for push. Allow it in the Puddle notice (\"Allow push for other\"), or open the workspace's Git tab > Repositories and tick Push for it. Then run git push again."
         ),
         "{}",
         ran.stderr
@@ -225,7 +225,7 @@ async fn a_refused_fetch_is_readable_when_the_pull_list_is_on() {
     assert!(!ran.ok);
     assert!(
         ran.stderr.contains(
-            "remote: puddle: pull from bound.test/someone/else is not on this workspace's pull list yet, as with a repository the workspace just created or forked; click \"Allow pull for else\" in the notice (it works at once, no restart), or turn off \"Only pull from listed repos\" on the workspace's Git tab, then try again"
+            "remote: puddle: Blocked this fetch: bound.test/someone/else is not in this workspace's allowed repositories for pull. Allow it in the Puddle notice (\"Allow pull for else\"), or open the workspace's Git tab > Repositories and tick Pull for it. Then run the fetch or pull again."
         ),
         "{}",
         ran.stderr

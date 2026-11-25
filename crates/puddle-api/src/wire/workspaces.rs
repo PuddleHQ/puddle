@@ -49,6 +49,45 @@ impl From<domain::Operation> for WorkspaceOperation {
     }
 }
 
+/// Something the user can ask of a workspace. A workspace lists the ones its state admits now in
+/// `actions`; the call for any other is refused with 409.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceAction {
+    /// `POST /api/workspaces/{id}/start`.
+    Start,
+    /// `POST /api/workspaces/{id}/stop`.
+    Stop,
+    /// `POST /api/workspaces/{id}/attach`.
+    Attach,
+    /// `DELETE /api/workspaces/{id}`.
+    Delete,
+    /// `POST /api/workspaces/{id}/reclaim`.
+    Reclaim,
+    /// `POST /api/workspaces/{id}/reset-root-disk`.
+    ResetRootDisk,
+    /// `POST /api/workspaces/{id}/grow-root-disk`.
+    GrowRootDisk,
+    /// Adding a repository (`POST /api/workspaces/{id}/repositories`) or cloning one again.
+    AddRepository,
+}
+
+impl From<domain::phase::Action> for WorkspaceAction {
+    fn from(action: domain::phase::Action) -> Self {
+        use domain::phase::Action;
+        match action {
+            Action::Start => Self::Start,
+            Action::Stop => Self::Stop,
+            Action::Attach => Self::Attach,
+            Action::Delete => Self::Delete,
+            Action::Reclaim => Self::Reclaim,
+            Action::ResetRootDisk => Self::ResetRootDisk,
+            Action::GrowRootDisk => Self::GrowRootDisk,
+            Action::AddRepository => Self::AddRepository,
+        }
+    }
+}
+
 /// One repository Puddle manages for a workspace. Its identity and its Pull and Push toggles are
 /// the workspace's Git settings (`GET /api/workspaces/{id}/git`), matched in the repository
 /// table's spelling.
@@ -62,6 +101,13 @@ pub struct WorkspaceRepository {
     pub url: String,
     /// The checkout it is cloned into, directly under the volume root.
     pub directory: CheckoutDir,
+    /// The branch checked out in it, from the last time Puddle listed the workspace's checkouts
+    /// (when the Git tab opened or the editor attached); `null` when no listing was made since
+    /// Puddle started, the checkout is not there, or HEAD is detached. Never listed just for this
+    /// answer.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub branch: Option<String>,
 }
 
 impl From<domain::Repository> for WorkspaceRepository {
@@ -70,6 +116,7 @@ impl From<domain::Repository> for WorkspaceRepository {
             entry: r.entry,
             url: r.url.as_str().to_owned(),
             directory: r.directory,
+            branch: None,
         }
     }
 }
@@ -105,6 +152,9 @@ pub struct Workspace {
     /// The operation in progress; `null` when idle.
     #[schema(required = true)]
     pub busy: Option<WorkspaceOperation>,
+    /// What the workspace's state admits now, from the same rules the calls are checked by:
+    /// offer these and grey out the rest. Empty while an operation runs.
+    pub actions: Vec<WorkspaceAction>,
     /// Epoch ms it was created.
     pub created_at: u64,
     /// The disk's size in MiB: the most the workspace can hold.
@@ -154,6 +204,10 @@ impl Workspace {
     /// The workspace as the API shows it, with whether direct SSH is on for it.
     #[must_use]
     pub fn new(record: domain::WorkspaceRecord, direct_ssh: bool) -> Self {
+        let actions = domain::phase::actions(&record)
+            .into_iter()
+            .map(Into::into)
+            .collect();
         let domain::WorkspaceRecord {
             id,
             name,
@@ -182,6 +236,7 @@ impl Workspace {
             memory_mib: memory.get(),
             status,
             busy: busy.map(Into::into),
+            actions,
             created_at,
             disk_size_mib,
             disk_used_mib,
@@ -194,6 +249,16 @@ impl Workspace {
             identities: Vec::new(),
             allowed_hosts: Vec::new(),
         }
+    }
+
+    /// The same workspace, with the branch each repository's checkout had at the last listing
+    /// (`branches` maps a checkout directory to its branch).
+    #[must_use]
+    pub fn with_branches(mut self, branches: &std::collections::BTreeMap<String, String>) -> Self {
+        for repository in &mut self.repositories {
+            repository.branch = branches.get(repository.directory.as_str()).cloned();
+        }
+        self
     }
 
     /// The same workspace, with the disks that are at or over the warning threshold.

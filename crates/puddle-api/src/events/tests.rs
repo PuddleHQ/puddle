@@ -212,3 +212,37 @@ async fn stream_ends_when_its_device_is_signed_out() {
     .await;
     assert!(end.is_ok(), "stream ended when the device was revoked");
 }
+
+fn is_oom(event: &Event) -> bool {
+    matches!(event, Event::OomKill { .. })
+}
+
+#[tokio::test]
+async fn a_follower_gets_every_event_it_wants_where_a_stream_of_the_same_hub_lags() {
+    let hub = EventHub::new(1);
+    let mut stream = hub.subscribe();
+    let mut follower = hub.follow(is_oom);
+    for i in 0..100 {
+        hub.emit(oom(&format!("w{i}")));
+        hub.emit(Event::RulesChanged {});
+    }
+    assert!(matches!(
+        stream.recv().await,
+        Err(broadcast::error::RecvError::Lagged(_))
+    ));
+    // Emitting is synchronous: every event the follower gets is in its feed already.
+    assert_eq!(follower.len(), 100, "it got only the events it wants");
+    for i in 0..100 {
+        let event = follower.recv().await.unwrap();
+        assert_eq!(event.workspace(), Some(&name(&format!("w{i}"))));
+    }
+    assert_eq!(hub.subscribers(), 1, "a follower is not a stream");
+}
+
+#[test]
+fn a_follower_whose_receiver_is_gone_is_forgotten() {
+    let hub = EventHub::new(1);
+    drop(hub.follow(is_oom));
+    hub.emit(oom("a"));
+    assert!(hub.followers.lock().unwrap().is_empty());
+}

@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Linux gates on every push to develop/main, every pull request and every merge queue run
 # (docs/STANDARDS.md, "CI").
-# Four jobs run side by side so a run takes about as long as the longest: the Rust tests with coverage,
-# the Rust and repository gates, the UI gates with the Chromium end-to-end tests, and the WebKit
+# Six jobs run side by side so a run takes about as long as the longest: the Rust tests with coverage,
+# the Rust and repository gates, the script self-tests (`hooks`), the UI gates with the Chromium end-to-end tests, and the WebKit
 # end-to-end tests. A last job, `linux (all gates)`, waits for all of them and is the one result to
 # require. Every gate runs even when an earlier one fails, so one run shows every problem.
 # A pull request to develop runs only the jobs its changed files can affect (ci/scope.sh, the `scope`
@@ -507,13 +507,15 @@ jobs:
         uses: ./.github/actions/apt-debs-cache
         with:
           name: gates
-      - name: WebKitGTK dev package (clippy and the doc build compile the desktop shell)
+      - name: System packages (WebKitGTK dev for clippy and the doc build, the tray library and Xvfb for the dormant gate's lib tests)
         timeout-minutes: 10
         run: |
           # ci/apt-setup.sh and ci/apt-retry.sh: see the `rust` job's system packages step.
           ci/apt-setup.sh
           ci/apt-retry.sh sudo apt-get update
-          ci/apt-retry.sh sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev
+          # libayatana-appindicator3-1 and xvfb: `scripts/check.sh dormant` runs every lib test, including the
+          # tray test, which opens the tray library at run time on a virtual display it starts itself.
+          ci/apt-retry.sh sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-1 xvfb
       - name: fmt
         run: scripts/check.sh fmt
       # ci/ is an always-run path, so a change to the scoping rules or this test runs this job.
@@ -572,9 +574,6 @@ jobs:
         run: |
           GITLEAKS_CACHE_DIR="$HOME/gitleaks-cache" ci/fetch-gitleaks.sh "$HOME/gitleaks-bin"
           PATH="$HOME/gitleaks-bin:$PATH" scripts/check.sh secrets
-      - name: hooks (pre-push hook and runtime fetch tests)
-        if: ${{ !cancelled() }}
-        run: scripts/check.sh hooks
       - name: clippy (linux)
         if: ${{ !cancelled() }}
         run: scripts/check.sh clippy
@@ -649,6 +648,32 @@ jobs:
           PUDDLE_QUEUE: ${{ vars.PUDDLE_QUEUE }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: ci/scope.sh full-steps notices=${{ steps.notices.outcome }}
+      - name: Cancel the rest of the merge group
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        continue-on-error: true
+        uses: ./.github/actions/cancel-group
+
+  # The script self-tests (`scripts/check.sh hooks`, about 8 minutes): stubs, fixtures and shell, no build, so no Rust cache
+  # and no WebKitGTK. They used to run inside `gates` before clippy and set that job's length; in their own job they
+  # run beside it. The toolchain is for `cargo metadata` (ci/scope-test.sh) and the Node runner image is enough for
+  # the cache-drop action test.
+  hooks:
+    name: linux (hooks self-tests)
+    needs: [scope, queue-tested]
+    if: ${{ !cancelled() && github.event_name != 'schedule' && needs.scope.outputs.ci_rust != 'false' && needs.queue-tested.outputs.skip != 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install && rustc --version
+      - name: hooks (pre-push hook and runtime fetch tests)
+        run: scripts/check.sh hooks
       - name: Cancel the rest of the merge group
         if: ${{ failure() && github.event_name == 'merge_group' }}
         continue-on-error: true
@@ -1114,7 +1139,7 @@ jobs:
   # develop push the Rust, msvc and UI jobs may also skip when `queue-tested` said so (`pushskip`).
   linux:
     name: linux (all gates)
-    needs: [scope, queue-tested, rust, gates, msvc, light, ui, ui-webkit, unit, unit-ui, advisories, advisories-npm]
+    needs: [scope, queue-tested, rust, gates, hooks, msvc, light, ui, ui-webkit, unit, unit-ui, advisories, advisories-npm]
     if: ${{ always() && github.event_name != 'schedule' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -1129,4 +1154,4 @@ jobs:
           PUDDLE_QUEUE_SKIP_PUSH: ${{ vars.PUDDLE_QUEUE_SKIP_PUSH }}
           PUDDLE_TIER: ${{ vars.PUDDLE_TIER }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
-        run: ci/scope.sh verdict rust=ci_rust,pushskip gates=ci_rust,pushskip msvc=ci_rust,pushskip light='!ci_rust' ui=ui,pushskip ui-webkit=ui,queue,pushskip,defer:defer_linux_webkit unit=unit unit-ui=unit_ui
+        run: ci/scope.sh verdict rust=ci_rust,pushskip gates=ci_rust,pushskip hooks=ci_rust,pushskip msvc=ci_rust,pushskip light='!ci_rust' ui=ui,pushskip ui-webkit=ui,queue,pushskip,defer:defer_linux_webkit unit=unit unit-ui=unit_ui

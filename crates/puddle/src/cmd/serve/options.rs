@@ -629,7 +629,7 @@ fn flag_or_env(
         value: raw.to_string_lossy().into_owned(),
         why: why.to_owned(),
     };
-    let text = raw.to_str().ok_or_else(|| invalid("not valid Unicode"))?;
+    let text = raw.to_str().ok_or_else(|| invalid("UTF-8 text"))?;
     let value = spec.kind.parse_text(text).map_err(invalid)?;
     Ok(Some((absolute(value, cwd), Source::Environment(spec.env))))
 }

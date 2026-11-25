@@ -38,9 +38,7 @@ pub(crate) enum StoredIdError {
 pub(crate) fn fresh(user: UserId, kind: &str) -> Result<StoredId, StoredIdError> {
     let mut bytes = [0_u8; 16];
     getrandom::fill(&mut bytes).map_err(StoredIdError::Random)?;
-    let base = bytes
-        .iter()
-        .fold(format!("{kind}-"), |id, byte| format!("{id}{byte:02x}"));
+    let base = format!("{kind}-{}", puddle_types::hex_lower(&bytes));
     Ok(StoredId::new(name(user, &base))?)
 }
 

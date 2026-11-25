@@ -27,12 +27,13 @@ fn entry(dir: &str) -> EntryId {
     EntryId::from_random(bytes)
 }
 
-/// The list of repositories of `workspace` without the generated entry ids, for comparing what
+/// The list of repositories of `workspace` without the generated entry ids and the branch, for comparing what
 /// was added by a call.
 fn without_entries(list: &Value) -> Value {
     let mut list = list.clone();
     for r in list.as_array_mut().unwrap() {
         r.as_object_mut().unwrap().remove("entry");
+        r.as_object_mut().unwrap().remove("branch");
     }
     list
 }
@@ -135,7 +136,7 @@ async fn the_checkouts_of_a_running_workspace_show_entries_reasons_and_missing_o
     };
     assert_eq!(
         by("api")["entry"],
-        json!({"entry": entry("api"), "url": API, "directory": "api"})
+        json!({"entry": entry("api"), "url": API, "directory": "api", "branch": null})
     );
     assert_eq!(
         by("api")["manage"],
@@ -388,7 +389,7 @@ async fn adding_a_repository_the_workspace_cannot_take_is_a_404_or_a_409_with_it
     let ws = api.get("/api/workspaces/web").await.json();
     assert_eq!(
         ws["repositories"],
-        json!([{"entry": entry("api"), "url": API, "directory": "api"}])
+        json!([{"entry": entry("api"), "url": API, "directory": "api", "branch": null}])
     );
     api.running.shutdown().await;
 }
@@ -473,7 +474,7 @@ async fn adding_a_repository_that_makes_no_sense_is_a_422_that_never_echoes_a_cr
     let ws = api.get("/api/workspaces/web").await.json();
     assert_eq!(
         ws["repositories"],
-        json!([{"entry": entry("api"), "url": API, "directory": "api"}])
+        json!([{"entry": entry("api"), "url": API, "directory": "api", "branch": null}])
     );
     api.running.shutdown().await;
 }
@@ -830,4 +831,22 @@ async fn adding_and_removing_an_entry_are_in_the_activity_log() {
         ]
     );
     api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_workspaces_list_carries_the_branch_of_the_last_listing_and_never_makes_one() {
+    let api = start().await;
+    running(&api);
+    let branch = |reply: crate::common::Reply| {
+        reply.json()["workspaces"][0]["repositories"][0]["branch"].clone()
+    };
+    assert_eq!(
+        branch(api.get("/api/workspaces").await),
+        Value::Null,
+        "no listing yet"
+    );
+    assert_eq!(api.get("/api/workspaces/web/checkouts").await.status, 200);
+    assert_eq!(branch(api.get("/api/workspaces").await), json!("main"));
+    let one = api.get("/api/workspaces/web").await.json();
+    assert_eq!(one["repositories"][0]["branch"], "main");
 }

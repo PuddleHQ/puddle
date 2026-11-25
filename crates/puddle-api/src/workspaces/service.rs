@@ -109,6 +109,13 @@ pub trait WorkspaceService: Send + Sync {
     /// Every workspace, ordered by id.
     fn list(&self) -> BoxFuture<'_, Result<Vec<WorkspaceRecord>, WorkspaceError>>;
 
+    /// One line from the default image's own labels that says what it is, or `None` while they
+    /// are not known (the image is still being downloaded, or says nothing). It never waits for
+    /// a download.
+    fn default_image_description(&self) -> Option<String> {
+        None
+    }
+
     /// Every workspace's id and display name, from memory with no other work: routing a request
     /// by its `Host` asks on every request, which [`WorkspaceService::list`] is too slow for.
     fn names(&self) -> Vec<(WorkspaceId, String)>;
@@ -315,6 +322,13 @@ pub trait WorkspaceService: Send + Sync {
                 "this Puddle keeps no workspace disks".to_owned(),
             ))
         })
+    }
+
+    /// The branch each checkout of the workspace had at the last listing this run made, by
+    /// directory. Reads what is kept and lists nothing, so the workspaces list stays cheap; empty
+    /// before the first listing.
+    fn known_branches(&self, _id: &WorkspaceId) -> std::collections::BTreeMap<String, String> {
+        std::collections::BTreeMap::new()
     }
 
     /// The checkouts under the workspace's volume root, each with the list entry that has its

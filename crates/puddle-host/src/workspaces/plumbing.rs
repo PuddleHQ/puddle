@@ -7,7 +7,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use puddle_agent_proto::host_control::{HostMessage, HostReply};
-use puddle_api::{Operation, Repository, WorkspaceError, WorkspaceRecord, admit_idle};
+use puddle_api::phase::{Move, Next, Outcome, begin};
+use puddle_api::{Operation, Repository, WorkspaceError, WorkspaceRecord};
 use puddle_compute::{ImageConfig, PullPhase, PullProgress, Runtime};
 use puddle_ports::Ports;
 use puddle_settings::{WorkspaceSettings, host_cpu_count, resolve, resolve_on_host};
@@ -21,9 +22,10 @@ use tokio::sync::watch;
 use tokio::task::JoinSet;
 
 use super::{
-    EndExtensionHostsError, HostWorkspaces, Inner, Leftovers, Live, MAINTENANCE_WAIT, Parts,
-    Running, SESSION_END_GAP, SESSION_END_READS, Slot, State, StateGuard, SwitchEditorBuildError,
-    Ticket, Warmth, WriteNames, disk_used, name_or_id, not_found, wait_until_downloaded,
+    EndExtensionHostsError, HostWorkspaces, ImageNote, Inner, Leftovers, Live, MAINTENANCE_WAIT,
+    Parts, Running, SESSION_END_GAP, SESSION_END_READS, Slot, State, StateGuard,
+    SwitchEditorBuildError, Ticket, Warmth, WriteNames, disk_used, name_or_id, not_found,
+    wait_until_downloaded,
 };
 use crate::HostError;
 use crate::files::Stored;
@@ -129,6 +131,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 tasks: Mutex::new(JoinSet::new()),
                 running: watch::channel(0).0,
                 maintenance_image: watch::channel(Warmth::Cold).0,
+                default_image_note: Mutex::new(ImageNote::Cold),
                 shell_init_changed_inside: Mutex::new(BTreeSet::new()),
                 env_missed_while_booting: Mutex::new(BTreeSet::new()),
                 listings: Mutex::new(BTreeMap::new()),
@@ -447,12 +450,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         Some(ssh.endpoint().path().to_path_buf())
     }
 
+    /// Begins `op` on `id` when its phase admits it (see [`puddle_api::phase`]): the busy mark
+    /// goes on and the status becomes the one `op` shows while it runs.
     pub(super) fn accept(
         &self,
         id: &WorkspaceId,
         op: Operation,
-        check: impl FnOnce(&WorkspaceRecord) -> Result<(), WorkspaceError>,
-        enter: impl FnOnce(&mut WorkspaceRecord),
     ) -> Result<Ticket<R>, WorkspaceError> {
         let mut state = self.state();
         if state.closed {
@@ -461,10 +464,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             ));
         }
         let slot = state.slots.get_mut(id).ok_or_else(|| not_found(id))?;
-        admit_idle(&slot.record)?;
-        check(&slot.record)?;
-        slot.record.busy = Some(op);
-        enter(&mut slot.record);
+        begin(&mut slot.record, op)?;
         Ok(self.ticket(slot.record.clone(), op))
     }
 
@@ -486,7 +486,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let Some(slot) = state.slots.get_mut(id) else {
             return;
         };
-        if op == Operation::Creating {
+        if slot.record.apply(Move::Withdraw) == Ok(Next::Removed) {
             state.slots.remove(id);
             state.retired.insert(id.clone());
             if let Err(e) = self.persist(&state) {
@@ -495,7 +495,6 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }
             return;
         }
-        slot.record.busy = None;
         slot.deleting = false;
         slot.delete_note = None;
         let record = slot.record.clone();
@@ -638,7 +637,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                         .any(|s| s.name == name.as_str() && s.status.is_down())
                 })
                 .map(|slot| {
-                    slot.record.status = WorkspaceStatus::Crashed;
+                    // Running, idle: the transition is to crashed.
+                    let _ = slot.record.apply(Move::VmDied);
                     slot.record.clone()
                 })
                 .collect()
@@ -694,12 +694,18 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let Some(slot) = state.slots.get_mut(id) else {
             return;
         };
-        slot.record.busy = None;
         slot.deleting = false;
         let delete_note = slot.delete_note.take();
         let leftovers = std::mem::replace(&mut slot.leftovers, Leftovers::Unknown);
+        let volume_gone = std::mem::take(&mut slot.volume_missing);
         let name = slot.record.id.clone();
-        let mut status_changed = false;
+        let before = slot.record.status;
+        let outcome = match &result {
+            Ok(()) => Outcome::Done,
+            Err(_) if volume_gone => Outcome::VolumeGone,
+            Err(_) => Outcome::Failed,
+        };
+        let next = slot.record.apply(Move::End(outcome));
         // A failed create, and a delete either way, leave the list different from what is saved:
         // the failed create's entry goes, the failed delete's entry comes back unmarked, and the
         // finished delete's entry goes with its id retired.
@@ -709,71 +715,21 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         );
         let mut result = result;
         let old_entry = slot.creating;
-        match (&result, op) {
-            (Err(_), Operation::Creating) => {
-                // A failed create may leave rows and files keyed by its id: retired like a
-                // deleted workspace's, so no later one meets them.
-                state.slots.remove(id);
-                state.retired.insert(id.clone());
-            }
-            (Ok(()), Operation::Deleting) => {
-                state.slots.remove(id);
-                state.retired.insert(id.clone());
-                if leftovers == Leftovers::Gone {
-                    state.cleaned.insert(id.clone());
-                }
-            }
-            (Err(_), Operation::Starting) => {
-                slot.record.status = if std::mem::take(&mut slot.volume_missing) {
-                    WorkspaceStatus::VolumeMissing
-                } else {
-                    WorkspaceStatus::Crashed
-                };
-                status_changed = true;
-            }
-            (Err(_), Operation::Stopping) => {
-                slot.record.status = WorkspaceStatus::Running;
-                status_changed = true;
-                self.inner.reports.resume(&name);
-            }
-            (
-                Err(_),
-                Operation::Reclaiming | Operation::ResettingRootDisk | Operation::Deleting,
-            )
-            | (Ok(()), Operation::Reclaiming | Operation::ResettingRootDisk)
-            | (_, Operation::Cloning) => {}
-            (Ok(()), Operation::GrowingRootDisk) => {
-                // A grow that had to restart the workspace ends with it running again.
-                if slot.record.status == WorkspaceStatus::Starting {
-                    slot.record.status = WorkspaceStatus::Running;
-                    status_changed = true;
-                }
-            }
-            (Err(_), Operation::GrowingRootDisk) => match slot.record.status {
-                // The restart failed in its start, or in its stop.
-                WorkspaceStatus::Starting => {
-                    slot.record.status = if std::mem::take(&mut slot.volume_missing) {
-                        WorkspaceStatus::VolumeMissing
-                    } else {
-                        WorkspaceStatus::Crashed
-                    };
-                    status_changed = true;
-                }
-                WorkspaceStatus::Draining => {
-                    slot.record.status = WorkspaceStatus::Running;
-                    status_changed = true;
-                    self.inner.reports.resume(&name);
-                }
-                _ => {}
-            },
-            (Ok(()), Operation::Creating | Operation::Starting) => {
-                slot.record.status = WorkspaceStatus::Running;
-                slot.creating = false;
-                status_changed = true;
-            }
-            (Ok(()), Operation::Stopping) => {
-                slot.record.status = WorkspaceStatus::Stopped;
-                status_changed = true;
+        let status_changed = slot.record.status != before;
+        if op == Operation::Creating && outcome == Outcome::Done {
+            slot.creating = false;
+        }
+        // A stop in progress that failed leaves the VM up: its reports go on.
+        if before == WorkspaceStatus::Draining && slot.record.status == WorkspaceStatus::Running {
+            self.inner.reports.resume(&name);
+        }
+        if next == Ok(Next::Removed) {
+            // A failed create may leave rows and files keyed by its id: retired like a deleted
+            // workspace's, so no later one meets them.
+            state.slots.remove(id);
+            state.retired.insert(id.clone());
+            if op == Operation::Deleting && leftovers == Leftovers::Gone {
+                state.cleaned.insert(id.clone());
             }
         }
         let record = state.slots.get(id).map(|s| s.record.clone());
@@ -938,6 +894,43 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// The image config of `image`, pulling it if needed.
     pub(super) async fn image_config(&self, image: &ImageRef) -> Result<ImageConfig, OpError> {
         Ok(self.inner.runtime.pull_image(image).await?)
+    }
+
+    /// The line the default image's labels give, or `None` while they are not read. The first
+    /// call starts a task that downloads the image (the create needs it anyway) and keeps the
+    /// answer; a failed download is tried again by the next call. Never waits for the download.
+    pub(crate) fn default_image_note(&self) -> Option<String> {
+        {
+            let mut note = self
+                .inner
+                .default_image_note
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            match &*note {
+                ImageNote::Read(line) => return line.clone(),
+                ImageNote::Reading => return None,
+                ImageNote::Cold => *note = ImageNote::Reading,
+            }
+        }
+        let this = self.clone();
+        self.spawn(async move {
+            let next = match ImageRef::new(puddle_api::DEFAULT_IMAGE) {
+                Ok(image) => match this.inner.runtime.pull_image(&image).await {
+                    Ok(config) => ImageNote::Read(puddle_api::describe_image(&config.labels)),
+                    Err(e) => {
+                        tracing::warn!(image = %image, error = %e, "the default image was not downloaded to read its description");
+                        ImageNote::Cold
+                    }
+                },
+                Err(_) => ImageNote::Read(None),
+            };
+            *this
+                .inner
+                .default_image_note
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) = next;
+        });
+        None
     }
 
     /// Starts pulling the image the delete check boots on a task the service owns, unless it is

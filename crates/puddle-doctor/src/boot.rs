@@ -25,6 +25,9 @@ const PROBE_GUEST_PATH: &str = "/probe";
 /// exits instead of removing it as a one-off run; the throwaway home goes with it.
 const BOOT_SANDBOX: &str = "puddle-doctor-boot";
 
+/// How long the stop of the test VM may take before the home is deleted anyway.
+const STOP_LIMIT: Duration = Duration::from_secs(10);
+
 /// Log level of the test VM's runtime (`runtime.log`): the VMM trace a failed boot needs.
 const BOOT_LOG_LEVEL: &str = "debug";
 
@@ -162,6 +165,7 @@ pub fn test_boot(
         &mut command(&layout, &rootfs),
         limit.saturating_sub(start.elapsed()),
     );
+    stop_boot(&layout);
     let booted = matches!(
         outcome,
         ProcessOutcome::Exited {
@@ -173,6 +177,17 @@ pub fn test_boot(
         .filter(|_| !booted)
         .map(|dir| keep_boot_logs(layout.home(), dir));
     BootFacts::Ran { outcome, kept_logs }
+}
+
+/// Stops the test VM and waits until it is gone. The probe's exit ends `msb run` before the VM
+/// has shut down (and a killed `msb run` leaves it to stop on its own), and the VM still uses the
+/// throwaway home, which is deleted when the boot returns. Best effort: the answer of the stop
+/// is not the boot's result, and a VM that is not there (it never started) makes it fail at once.
+fn stop_boot(layout: &RuntimeLayout) {
+    let mut cmd = puddle_process::command(layout.msb_path());
+    RuntimeEnv::plan(layout, std::env::vars_os()).apply_to(&mut cmd);
+    cmd.args(["stop", "--force", "--quiet", BOOT_SANDBOX]);
+    drop(launch::run(&mut cmd, STOP_LIMIT));
 }
 
 /// The throwaway folder that holds the test boot's msb home and root file system. It is

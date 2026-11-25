@@ -1,0 +1,6 @@
+# Lines the diff-coverage gate accepts although a coverage run measured them as never executed, under crates/puddle-ipc/.
+# Format, matching and the sort rule: ui/scripts/diff-coverage.ts and docs/STANDARDS.md, "Coverage". Every
+# path glob here starts with crates/puddle-ipc/; the gate refuses another crate's entry, so two pull requests that
+# touch different crates edit different files. Entries stay sorted by path glob, then by the whole line.
+crates/puddle-ipc/src/tcp.rs | tokio::time::sleep(pause).await; | the accept call failing (out of file descriptors); a loopback test cannot make a listener's accept fail
+crates/puddle-ipc/src/tcp.rs | tracing::warn!(error = %err, listener = label, "accept failed"); | the accept call failing (out of file descriptors); a loopback test cannot make a listener's accept fail

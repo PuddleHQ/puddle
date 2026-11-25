@@ -16,7 +16,7 @@ use crate::IpcError;
 pub(crate) fn random_name<const N: usize>() -> Result<String, IpcError> {
     let mut bytes = [0u8; N];
     getrandom::fill(&mut bytes).map_err(IpcError::Random)?;
-    Ok(hex(&bytes))
+    Ok(puddle_types::hex_lower(&bytes))
 }
 
 /// The longest endpoint name: a workspace id.
@@ -45,17 +45,6 @@ pub(crate) fn is_install_id(id: &str) -> bool {
         && id
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-}
-
-fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    bytes
-        .iter()
-        .fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
-            // Writing to a String can't fail.
-            let _ = write!(s, "{b:02x}");
-            s
-        })
 }
 
 #[cfg(test)]

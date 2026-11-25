@@ -213,6 +213,15 @@
           {preview.secrets_needing_value.map((s) => s.name).join(", ")}.
         </p>
       {/if}
+      {#if preview.identity_tokens_needing_value.length > 0}
+        <p data-testid="restore-identity-tokens">
+          These Git identities need their token entered again on this machine (a
+          backup never holds one):
+          {preview.identity_tokens_needing_value
+            .map((t) => `${t.identity} (${t.host})`)
+            .join(", ")}.
+        </p>
+      {/if}
       {#if preview.running_workspaces > 0}
         <p data-testid="restore-running">
           {preview.running_workspaces} workspace{preview.running_workspaces ===

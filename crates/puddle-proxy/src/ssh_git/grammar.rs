@@ -84,6 +84,12 @@ pub(crate) fn built_in_names() -> Vec<Host> {
         .collect()
 }
 
+/// Whether `host` is the HTTPS host of a built-in Git host (`github.com`, `gitlab.com`, ...).
+pub(crate) fn is_built_in_https(host: &Host) -> bool {
+    let host = host.to_string();
+    BUILT_IN.iter().any(|(_, https, _)| *https == host)
+}
+
 /// The built-in Git host called `name`, if there is one.
 pub(crate) fn built_in(name: &Host) -> Option<GitHost> {
     let name = name.to_string();

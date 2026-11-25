@@ -295,6 +295,9 @@ fn run_with(
     let marker_path = pending.join(MARKER);
     let (new, old) = (pending.join(NEW), pending.join(OLD));
     if marker.phase == Phase::Requested {
+        // The host kept running between the confirm and this start: whatever changed since is not
+        // in the confirm-time copy, so the copy is made again before anything is touched.
+        refresh_safety_copy(paths, &marker.safety_copy)?;
         drop(fs::remove_dir_all(&new));
         if let Err(e) = prepare(paths, &pending.join(STAGED), &new, marker.mode) {
             drop(fs::remove_dir_all(&new));
@@ -317,6 +320,29 @@ fn run_with(
         return Err(e);
     }
     Ok(())
+}
+
+/// Makes the safety copy `name` again from the live state, in place: the copy is built beside the
+/// old one and renamed over it, so the name the user was told stays, and a failure (or a crash)
+/// leaves the confirm-time copy. It runs while the host alone holds the data folder and the store
+/// is closed, so nothing can change after it.
+fn refresh_safety_copy(paths: &HostPaths, name: &str) -> Result<(), RestoreError> {
+    if !paths.store().is_file() {
+        // Nothing to copy: the database is gone since the confirm, and the earlier copy has it.
+        return Ok(());
+    }
+    let copy = paths.safety_copies().join(name);
+    let fresh = paths.safety_copies().join(format!("{name}.refresh"));
+    let fail =
+        |what: &str, e: &dyn std::fmt::Display| RestoreError::SafetyCopy(format!("{what}: {e}"));
+    // A leftover of a crash is ours: it ends in `.refresh`, which no safety copy's name does.
+    drop(fs::remove_dir_all(&fresh));
+    make_backup(paths, &fresh).map_err(|e| fail("cannot make it", &e))?;
+    // The user may have deleted the confirm-time copy since: then the fresh one takes its name.
+    let gone = fs::remove_dir_all(&copy)
+        .or_else(|e| (e.kind() == io::ErrorKind::NotFound).then_some(()).ok_or(e));
+    gone.map_err(|e| fail("cannot replace the earlier copy", &e))?;
+    fs::rename(&fresh, &copy).map_err(|e| fail("cannot put it in place", &e))
 }
 
 /// The live location of a part.

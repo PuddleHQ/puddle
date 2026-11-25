@@ -37,7 +37,7 @@ fn spec(settings: &Settings, tag: &str) -> SandboxSpec {
 
 fn with_volume(spec: SandboxSpec, volume: &VolumeName) -> SandboxSpec {
     spec.with_volume(
-        VolumeMount::named(volume.clone(), GuestPath::new("/workspaces/ws").unwrap())
+        VolumeMount::named(volume.clone(), GuestPath::new("/workspace").unwrap())
             .ensure_size(DiskSize::mib(256)),
     )
 }

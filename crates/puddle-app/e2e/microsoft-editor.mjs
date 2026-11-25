@@ -245,7 +245,11 @@ async function waitOwnInstall(wsId) {
     },
     600_000,
     5000,
-  );
+  ).catch(async (err) => {
+    // As for the first workspace: a timeout alone says nothing about whether the download, the unpack or the start stalled.
+    const seen = await guest(wsId, `ls -la ${dir}; for f in current confirmed previous; do echo "== $f"; cat ${dir}/$f 2>&1; done; ps -eo pid,etime,args | grep -E 'curl|wget|code-server' | grep -v grep; tail -n 60 /run/puddle/agent.log`, 60_000);
+    throw new Error(`${err.message}; the guest shows:\n${seen.text}`);
+  });
   return dir;
 }
 
@@ -401,7 +405,7 @@ try {
 
   // The product's own install of the newest build comes first; wait until it is installed, running and confirmed (its cleanup
   // of the builds folder has run then) so it can neither overwrite nor delete the pinned build later.
-  const builds = `/workspaces/${id}/.puddle/vscode-server/servers`;
+  const builds = `/workspace/.puddle/vscode-server/servers`;
   const own = await until(
     "the editor's own install of Microsoft's newest build",
     async () => {
@@ -424,7 +428,7 @@ try {
 
   // Pinned build, the test extension and two checkouts, put on the volume as root; then a restart starts the pinned build.
   const files = ["package.json", "extension.js"].map((name) => [name, readFileSync(join(here, "fixtures", "canary-secret", name)).toString("base64")]);
-  const data = `/workspaces/${id}/.puddle/vscode-server`;
+  const data = `/workspace/.puddle/vscode-server`;
   const extension = `${data}/extensions/puddle-test.canary-secret-0.0.1`;
   const registry = JSON.stringify([
     {
@@ -453,7 +457,7 @@ try {
     ...files.map(([name, b64]) => `printf '%s' '${b64}' | base64 -d > ${extension}/${name}`),
     // The server lists the extensions of its default profile in extensions.json; a folder alone is not read as installed.
     `printf '%s' '${registry}' > ${data}/extensions/extensions.json`,
-    `cd /workspaces/${id}`,
+    `cd /workspace`,
     "[ -d api/.git ] || git init -q api",
     "[ -d web/.git ] || git init -q web",
     `if id agent >/dev/null 2>&1; then chown -R agent:agent ${data}/extensions api web; fi`,
@@ -579,7 +583,7 @@ try {
   if (id) {
     const logs = await guest(
       id,
-      "tail -n 60 /run/puddle/agent.log; grep -rn -i canary /workspaces/*/.puddle/vscode-server/server-data/data/logs 2>/dev/null | tail -n 20 | cut -c1-300; ls -la /workspaces/*/.puddle/vscode-server/extensions; for f in $(find /workspaces/*/.puddle/vscode-server/server-data -name '*.log' 2>/dev/null | sort | tail -n 8); do echo \"== $f\"; tail -n 30 \"$f\"; done; echo == canary; cat /tmp/canary-secret.log 2>/dev/null; true",
+      "tail -n 60 /run/puddle/agent.log; grep -rn -i canary /workspace/.puddle/vscode-server/server-data/data/logs 2>/dev/null | tail -n 20 | cut -c1-300; ls -la /workspace/.puddle/vscode-server/extensions; for f in $(find /workspace/.puddle/vscode-server/server-data -name '*.log' 2>/dev/null | sort | tail -n 8); do echo \"== $f\"; tail -n 30 \"$f\"; done; echo == canary; cat /tmp/canary-secret.log 2>/dev/null; true",
       60_000,
     ).catch(() => ({ text: "" }));
     writeFileSync(join(out, "guest-logs.txt"), logs.text);

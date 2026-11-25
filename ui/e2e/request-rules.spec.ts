@@ -83,7 +83,10 @@ test.describe("the list", () => {
     await expect(global).toContainText("/repos/**");
     await expect(global).toContainText("Every workspace");
     const own = rowFor(page, "*.example.org");
-    await expect(own).toContainText("and subdomains");
+    await expect(own.locator("span.mono").first()).toHaveAttribute(
+      "title",
+      "This host and every subdomain of it",
+    );
     await expect(own).toContainText("POST, PUT");
     await expect(own).toContainText("/upload/*");
     await expect(own).toContainText("docs-site");

@@ -476,6 +476,13 @@ impl<R: Runtime + Clone> Host<R> {
         self.restore_requested.notified().await;
     }
 
+    /// The signal [`Host::restore_requested`] waits on, for a caller that must not keep the host
+    /// (and with it the data folder's lock) alive while it waits.
+    #[must_use]
+    pub fn restore_signal(&self) -> Arc<tokio::sync::Notify> {
+        Arc::clone(&self.restore_requested)
+    }
+
     /// The API's origin, `http://127.0.0.1:<port>/`.
     #[must_use]
     pub fn url(&self) -> &Url {

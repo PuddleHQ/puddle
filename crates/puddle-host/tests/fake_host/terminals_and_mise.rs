@@ -231,7 +231,7 @@ async fn a_start_with_managed_tools_on_sets_mise_the_shims_first_and_the_sudo_ke
     global_mise(&api, true).await;
     create(&api, &mut events, "acme").await;
     let env = last_boot_guest_env(&rig);
-    let dir = "/workspaces/acme/.puddle/mise";
+    let dir = "/workspace/.puddle/mise";
     assert_eq!(
         env.get("MISE_DATA_DIR"),
         Some(format!("{dir}/data").as_str())
@@ -244,10 +244,10 @@ async fn a_start_with_managed_tools_on_sets_mise_the_shims_first_and_the_sudo_ke
         env.get("MISE_STATE_DIR"),
         Some(format!("{dir}/state").as_str())
     );
-    assert_eq!(env.get("MISE_CEILING_PATHS"), Some("/workspaces"));
+    assert_eq!(env.get("MISE_CEILING_PATHS"), Some("/"));
     assert_eq!(
         env.get("MISE_TRUSTED_CONFIG_PATHS"),
-        Some("/workspaces/acme"),
+        Some("/workspace"),
         "the repository's own code is trusted by default"
     );
     assert_eq!(env.get("MISE_DISABLE_UPDATE_WARNING"), Some("1"));
@@ -298,7 +298,7 @@ async fn without_trust_the_repository_code_path_is_not_set_and_an_existing_works
     restart(&api, &mut events, "acme").await;
     let env = last_boot_guest_env(&rig);
     assert_eq!(env.get("MISE_TRUSTED_CONFIG_PATHS"), None);
-    assert_eq!(env.get("MISE_CEILING_PATHS"), Some("/workspaces"));
+    assert_eq!(env.get("MISE_CEILING_PATHS"), Some("/"));
     let files = rig.guest.plan_files(rig.guest.boots() - 1);
     assert!(!pem_of(&files, MISE_SUDOERS).contains("TRUSTED"));
     host.shutdown().await;
@@ -367,10 +367,7 @@ async fn mise_is_fetched_in_the_background_after_the_start_and_a_good_fetch_rais
     .await;
     let fetches = mise_fetches(&rig);
     assert_eq!(fetches.len(), 1, "{fetches:?}");
-    assert_eq!(
-        fetches[0].0,
-        ["mise-fetch", "/workspaces/acme/.puddle/mise"]
-    );
+    assert_eq!(fetches[0].0, ["mise-fetch", "/workspace/.puddle/mise"]);
     assert_eq!(
         fetches[0].1.as_deref(),
         Some("agent"),

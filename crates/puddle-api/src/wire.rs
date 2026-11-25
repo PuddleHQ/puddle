@@ -113,9 +113,9 @@ pub use repository_hosts::{
 };
 pub use request_rules::{NewRequestRuleRequest, RequestRule, RequestRuleList};
 pub use restore::{
-    RestoreApplied, RestoreApplyRequest, RestoreDisk, RestoreMode, RestorePart, RestorePartName,
-    RestorePreview, RestoreResult, RestoreResultView, RestoreSecret, RestoreWorkspace, SafetyCopy,
-    SafetyCopyList,
+    RestoreApplied, RestoreApplyRequest, RestoreDisk, RestoreIdentityToken, RestoreMode,
+    RestorePart, RestorePartName, RestorePreview, RestoreResult, RestoreResultView, RestoreSecret,
+    RestoreWorkspace, SafetyCopy, SafetyCopyList,
 };
 pub use rule_sets::{
     NewRuleSetRequest, RuleSetEntry, RuleSetEntryPage, RuleSetEntrySwitchRequest, RuleSetKind,

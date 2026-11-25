@@ -49,6 +49,7 @@ const preview = {
     { id: "ws-two", name: "Gone", disk: "missing" },
   ],
   secrets_needing_value: [{ workspace_id: null, name: "TOKEN" }],
+  identity_tokens_needing_value: [{ identity: "work", host: "github.com" }],
   running_workspaces: 2,
 };
 
@@ -105,6 +106,9 @@ describe("RestoreCard", () => {
     ).not.toContain("Acme");
     expect(screen.getByTestId("restore-secrets").textContent).toContain(
       "TOKEN",
+    );
+    expect(screen.getByTestId("restore-identity-tokens").textContent).toContain(
+      "work (github.com)",
     );
     expect(screen.getByTestId("restore-running").textContent).toContain(
       "2 workspaces",
@@ -293,6 +297,7 @@ describe("RestoreCard, the rest of its states", () => {
         puddle_version: null,
         created_at_ms: null,
         secrets_needing_value: [],
+        identity_tokens_needing_value: [],
         running_workspaces: 1,
         workspaces: [],
       },
@@ -301,6 +306,7 @@ describe("RestoreCard, the rest of its states", () => {
     expect(await screen.findByTestId("restore-preview")).toBeTruthy();
     expect(screen.getByText(/version not recorded/)).toBeTruthy();
     expect(screen.queryByTestId("restore-secrets")).toBeNull();
+    expect(screen.queryByTestId("restore-identity-tokens")).toBeNull();
     expect(screen.queryByTestId("restore-missing-disks")).toBeNull();
     expect(screen.getByTestId("restore-running").textContent).toContain(
       "1 workspace running",

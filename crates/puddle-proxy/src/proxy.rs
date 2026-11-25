@@ -347,6 +347,23 @@ impl Proxy {
         Some((termination, mode, &terminations.tls))
     }
 
+    /// The termination for a Git-over-SSH leg to `request`'s host, whether or not the workspace
+    /// decrypts the host. The leg's client is Puddle's own and trusts its CA, and the injector
+    /// adds no credential where no identity covers the repository. The leg is always to port 443.
+    /// `None` only when the workspace has no termination.
+    pub(crate) fn terminating_ssh_leg(
+        &self,
+        request: &EgressRequest,
+    ) -> Option<(
+        Arc<terminate::Termination>,
+        terminate::Mode,
+        &puddle_upstream::TlsClient,
+    )> {
+        let terminations = self.terminations.as_ref()?;
+        let termination = terminations.source.termination(&request.workspace)?;
+        Some((termination, terminate::Mode::Bound, &terminations.tls))
+    }
+
     /// The workspace's termination, which also holds its rules on method and path.
     fn termination_of(&self, request: &EgressRequest) -> Option<Arc<terminate::Termination>> {
         self.terminations

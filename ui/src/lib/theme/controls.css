@@ -79,6 +79,17 @@
   font-family: var(--font-mono);
 }
 
+/* A small fact about a thing (off, built in, a source): plain muted words. A pill is for one thing
+   only, a live state (Running, Stopped, Waiting, Allowed, Denied). */
+.meta {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+.meta.warn {
+  color: var(--color-warning);
+}
+
 /* The modal shared by the confirm dialog and the form dialogs. */
 .confirm-overlay {
   position: fixed;
@@ -106,6 +117,7 @@
 .confirm-title {
   margin: 0;
   font-size: var(--text-lg);
+  font-weight: 600;
 }
 .confirm-detail {
   color: var(--color-text-muted);
@@ -286,4 +298,27 @@ input[type="checkbox"][role="switch"]::after {
 input[type="checkbox"][role="switch"]:checked::after {
   background: var(--color-accent-contrast);
   transform: translateX(1.125rem);
+}
+
+/* The menu behind a row's "..." button (bits-ui DropdownMenu, drawn in a portal). */
+.row-menu {
+  z-index: 30;
+  display: grid;
+  min-width: 10rem;
+  padding: var(--space-1);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+.row-menu-item {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.row-menu-item[data-highlighted] {
+  background: var(--color-surface);
+}
+.row-menu-item[data-disabled] {
+  color: var(--color-text-muted);
+  cursor: not-allowed;
 }

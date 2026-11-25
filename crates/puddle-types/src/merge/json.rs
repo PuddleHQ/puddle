@@ -124,6 +124,15 @@ fn parse_root(d: Dialect, text: &str) -> Result<Value, MergeRefusal> {
     }
 }
 
+/// Any top-level value of the text (a key bindings file holds an array).
+pub(super) fn parse_any(d: Dialect, text: &str) -> Result<Value, MergeRefusal> {
+    let view = d.blank(text)?.view;
+    serde_json::from_str(&view).map_err(|e| MergeRefusal::Syntax {
+        format: d.name(),
+        reason: e.to_string(),
+    })
+}
+
 fn check(d: Dialect, text: &str, expected: &Value) -> Result<(), MergeRefusal> {
     let parsed = serde_json::from_str::<Value>(&d.blank(text)?.view);
     ensure(parsed.is_ok_and(|v| &v == expected))

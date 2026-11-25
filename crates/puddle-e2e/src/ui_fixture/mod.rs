@@ -85,6 +85,10 @@ const BUILT_IN: [(&str, &str); 20] = [
         include_str!("../../../../ui/e2e/fixtures/corporate-network.json"),
     ),
     (
+        "company-proxy-env",
+        include_str!("../../../../ui/e2e/fixtures/company-proxy-env.json"),
+    ),
+    (
         "company-network",
         include_str!("../../../../ui/e2e/fixtures/company-network.json"),
     ),
@@ -1496,6 +1500,7 @@ fn restore_facts(missing_disks: &[String], secrets: &[String]) -> puddle_api::Re
                 secret_id: format!("restore-fixture-{name}"),
             })
             .collect(),
+        token_refs: Vec::new(),
     }
 }
 

@@ -17767,9 +17767,29 @@
               "step",
               "detail",
               "repository",
+              "bytes_done",
+              "bytes_total",
               "type"
             ],
             "properties": {
+              "bytes_done": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "Bytes done so far, for a step that counts them (downloading and unpacking the image);\n`null` for every other step, and while the count is not known yet.",
+                "minimum": 0
+              },
+              "bytes_total": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "Bytes in all, when `bytes_done` is set and the total is known; `null` otherwise.",
+                "minimum": 0
+              },
               "detail": {
                 "type": [
                   "string",
@@ -21754,6 +21774,24 @@
           "missing"
         ]
       },
+      "RestoreIdentityToken": {
+        "type": "object",
+        "description": "A Git identity's pasted token that arrives without its value because this machine's store lacks\nit. The identity and the host only, never a value.",
+        "required": [
+          "identity",
+          "host"
+        ],
+        "properties": {
+          "host": {
+            "type": "string",
+            "description": "The Git host the token is for."
+          },
+          "identity": {
+            "type": "string",
+            "description": "The identity's label."
+          }
+        }
+      },
       "RestoreMode": {
         "type": "string",
         "description": "How a restore treats what is already on this machine.",
@@ -21849,6 +21887,7 @@
           "parts",
           "workspaces",
           "secrets_needing_value",
+          "identity_tokens_needing_value",
           "running_workspaces"
         ],
         "properties": {
@@ -21866,6 +21905,13 @@
             "format": "int32",
             "description": "The backup format (1).",
             "minimum": 0
+          },
+          "identity_tokens_needing_value": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RestoreIdentityToken"
+            },
+            "description": "The Git identities' pasted tokens that need to be entered again here."
           },
           "parts": {
             "type": "array",
@@ -24998,6 +25044,7 @@
         "enum": [
           "preparing_volume",
           "pulling_image",
+          "unpacking_image",
           "cloning",
           "starting",
           "syncing",

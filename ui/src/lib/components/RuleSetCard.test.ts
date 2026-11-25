@@ -4,14 +4,19 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { builtIn, mine, trackerEntries } from "#lib/testing/fake-rule-sets.ts";
 import type { RuleSet } from "#lib/rules/sets.ts";
 import RuleSetCard from "./RuleSetCard.svelte";
-import { chooseWorkspace } from "#lib/testing/choose-workspace.ts";
+import { within } from "@testing-library/svelte";
+import { workspaces } from "#lib/stores/workspaces.svelte.ts";
+import { workspace as fakeWorkspace } from "#lib/testing/fake-workspaces.ts";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  workspaces.list = [];
+});
 
-function mount(set: RuleSet) {
+function mount(set: RuleSet, known = ["api", "web"]) {
   const props = {
     set,
-    workspaces: ["api", "web"],
+    workspaces: known,
     onSwitch: vi.fn(),
     onAddEntry: vi.fn(),
     onRename: vi.fn(),
@@ -42,8 +47,8 @@ describe("a built-in set", () => {
   it("says what it is, that it ships off, and has no actions of yours", () => {
     mount(builtIn("github", { name: "GitHub", changed_at: 0 }));
     expect(screen.getByRole("article", { name: "GitHub" })).toBeInTheDocument();
-    expect(screen.getByText("Built in")).toBeInTheDocument();
-    expect(screen.getByText("builtin:github")).toBeInTheDocument();
+    expect(screen.queryByText("Built in")).toBeNull();
+    expect(screen.queryByText("builtin:github")).toBeNull();
     expect(screen.getByText(/Updated by Puddle/)).toBeInTheDocument();
     expect(
       screen.getByRole("switch", { name: "On for every workspace" }),
@@ -65,39 +70,83 @@ describe("a built-in set", () => {
     expect(box).not.toBeChecked();
   });
 
-  it("switches for one workspace, checking the name first", async () => {
-    const props = mount(builtIn("github"));
-    await fireEvent.click(screen.getByRole("button", { name: "On there" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("Choose the workspace");
-    expect(props.onSwitch).not.toHaveBeenCalled();
-    await chooseWorkspace(screen.getByLabelText("Workspace"), "api");
-    await fireEvent.click(screen.getByRole("button", { name: "Off there" }));
-    expect(props.onSwitch).toHaveBeenCalledWith(props.set, "api", false);
-    // Enter in the field submits nothing by itself: the buttons say on or off.
-    await fireEvent.submit(
-      screen.getByRole("form", { name: "Switch github for one workspace" }),
-    );
-    expect(props.onSwitch).toHaveBeenCalledTimes(1);
-  });
-
-  it("lists the workspaces that switch it, each with a way back", async () => {
+  it("switches for one workspace with a three-way switch that shows where it stands", async () => {
+    workspaces.list = [
+      { ...fakeWorkspace("Shop"), id: "g07jxx5q" },
+      { ...fakeWorkspace("api"), id: "h19kyy6r" },
+    ];
     const props = mount(
       builtIn("github", {
         global: true,
-        overrides: [{ workspace: "api" as never, enabled: false }],
+        overrides: [{ workspace: "g07jxx5q" as never, enabled: false }],
       }),
+      [],
     );
+    expect(screen.getByText("Per workspace (1 differs)")).toBeInTheDocument();
+    const list = screen.getByRole("list", {
+      name: "Switch github per workspace",
+    });
     expect(
-      screen.getByRole("list", { name: "Workspaces that switch github" }),
-    ).toHaveTextContent("Off in api");
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Follow every workspace" }),
+      within(list)
+        .getAllByRole("listitem")
+        .map((li) => li.firstElementChild?.textContent),
+    ).toEqual(["api", "Shop"]);
+    const shop = within(list).getByRole("group", { name: "github in Shop" });
+    expect(within(shop).getByRole("button", { name: "Off" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
     );
-    expect(props.onSwitch).toHaveBeenCalledWith(props.set, "api", null);
+    await fireEvent.click(
+      within(shop).getByRole("button", { name: /^Follow/ }),
+    );
+    expect(props.onSwitch).toHaveBeenCalledWith(props.set, "g07jxx5q", null);
+    const api = within(list).getByRole("group", { name: "github in api" });
+    expect(
+      within(api).getByRole("button", { name: "Follow (on)" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await fireEvent.click(within(api).getByRole("button", { name: "Off" }));
+    expect(props.onSwitch).toHaveBeenCalledWith(props.set, "h19kyy6r", false);
     await fireEvent.click(
       screen.getByRole("button", { name: "Back to the default (off)" }),
     );
     expect(props.onSwitch).toHaveBeenCalledWith(props.set, null, null);
+  });
+
+  it("lists a workspace a switch still names after it is gone, and says when there are none", () => {
+    mount(
+      builtIn("github", {
+        overrides: [{ workspace: "gone1234" as never, enabled: true }],
+      }),
+    );
+    expect(screen.getByText("Per workspace (1 differs)")).toBeInTheDocument();
+    cleanup();
+    mount(
+      builtIn("github", {
+        overrides: [
+          { workspace: "gone1234" as never, enabled: true },
+          { workspace: "gone5678" as never, enabled: false },
+        ],
+      }),
+    );
+    expect(screen.getByText("Per workspace (2 differ)")).toBeInTheDocument();
+    expect(
+      screen.getByRole("group", { name: "github in gone1234" }),
+    ).toBeInTheDocument();
+    cleanup();
+    const props = {
+      set: builtIn("github"),
+      workspaces: [],
+      onSwitch: vi.fn(),
+      onAddEntry: vi.fn(),
+      onRename: vi.fn(),
+      onDelete: vi.fn(),
+      onDeleteEntry: vi.fn(),
+    };
+    render(RuleSetCard, { props } as never);
+    expect(screen.getByText("Per workspace")).toBeInTheDocument();
+    expect(
+      screen.getByText("There are no workspaces yet."),
+    ).toBeInTheDocument();
   });
 });
 
@@ -120,7 +169,7 @@ describe("a set you made", () => {
       ],
     });
     const props = mount(set);
-    expect(screen.getByText("Yours")).toBeInTheDocument();
+    expect(screen.queryByText("Yours")).toBeNull();
     expect(screen.getByText("their tenant")).toBeInTheDocument();
     expect(
       screen.getByRole("switch", { name: "On for every workspace" }),

@@ -223,9 +223,35 @@ describe("events", () => {
       step: "syncing",
       detail: "files",
       repository: null,
+      bytes: null,
       operation: "starting",
       failed: false,
     });
+  });
+
+  it("keeps the byte counts of an image download and drops them with the next step", async () => {
+    api.list = api.list.map((w) =>
+      w.id === "w-b-site" ? { ...w, busy: "creating" } : w,
+    );
+    await store.refresh();
+    store.handleEvent({
+      ...step("w-b-site", "pulling_image"),
+      bytes_done: 50,
+      bytes_total: 200,
+    });
+    expect(store.progress["w-b-site"]?.bytes).toEqual({ done: 50, total: 200 });
+    store.handleEvent({
+      ...step("w-b-site", "unpacking_image"),
+      bytes_done: 7,
+      bytes_total: null,
+    });
+    expect(store.progress["w-b-site"]).toMatchObject({
+      step: "unpacking_image",
+      operation: "creating",
+      bytes: { done: 7, total: null },
+    });
+    store.handleEvent(step("w-b-site", "cloning"));
+    expect(store.progress["w-b-site"]?.bytes).toBeNull();
   });
 
   it("keeps the checkout a cloning step names", async () => {

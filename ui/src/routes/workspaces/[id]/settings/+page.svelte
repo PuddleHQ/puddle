@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import Trash2 from "@lucide/svelte/icons/trash-2";
+  import EditorOverrideRow from "#lib/components/EditorOverrideRow.svelte";
   import InterceptionSetting from "#lib/components/InterceptionSetting.svelte";
   import RootDiskControls from "#lib/components/RootDiskControls.svelte";
   import KeptLoginsList from "#lib/components/KeptLoginsList.svelte";
@@ -13,6 +14,17 @@
     type LocalCategory,
   } from "#lib/decision/local-labels.ts";
   import { CPUS_NOTE } from "#lib/settings/cpus.ts";
+  import {
+    EMPTY_MEANS,
+    extensionsText,
+    fontSizeText,
+    parseExtensions,
+    parseFontSize,
+    parseKeybindings,
+    parseTheme,
+    type EditorField,
+    type EditorSettings,
+  } from "#lib/settings/editor.ts";
   import { KeptLogins } from "#lib/stores/kept-logins.svelte.ts";
   import { WorkspaceSettings } from "#lib/stores/workspace-settings.svelte.ts";
   import { workspaceActions as actions } from "#lib/stores/workspace-actions.svelte.ts";
@@ -172,6 +184,27 @@
       pick: (choice) => saveValue(fromOnOff(choice)),
       reset: () => saveValue(null),
     };
+  }
+
+  /**
+   * Saves one editor default as this workspace's own. The group goes whole (the API replaces the
+   * layer), and a field left empty is "none" where that is a value (extensions, key bindings) and
+   * the global value again where it is not.
+   */
+  function saveEditor<K extends EditorField>(
+    own: EditorSettings,
+    key: K,
+    value: EditorSettings[K],
+    what: string,
+  ) {
+    const next =
+      value === null ? (EMPTY_MEANS[key] as EditorSettings[K]) : value;
+    return save({ editor: { ...own, [key]: next } }, what);
+  }
+
+  /** Makes one editor default follow the global value again. */
+  function resetEditor(own: EditorSettings, key: EditorField, what: string) {
+    return save({ editor: { ...own, [key]: null } }, what);
   }
 
   const groups = $derived.by((): Group[] => {
@@ -349,6 +382,7 @@
       {#if settings.reason}<p class="error">{settings.reason}</p>{/if}
     </div>
   {:else}
+    {@const ownEditor = settings.overrides.editor}
     <UnknownFields fields={settings.unknownFields} />
 
     <div class="status" aria-live="polite">
@@ -406,7 +440,9 @@
                 </select>
               </td>
               <td class="from">
-                <span class="chip">{sourceLabel(row.source)}</span>
+                {#if row.source !== "default"}<span class="meta"
+                    >{sourceLabel(row.source)}</span
+                  >{/if}
                 {#if row.source === "workspace"}
                   <button
                     type="button"
@@ -422,6 +458,61 @@
           {/each}
         </tbody>
       {/each}
+      <tbody>
+        <tr class="group">
+          <th scope="colgroup" colspan="3" id="editor">Editor</th>
+        </tr>
+        <EditorOverrideRow
+          id="editor-theme"
+          label="Editor colour theme"
+          hint="Applies when the editor next starts. Empty follows the system colour scheme."
+          value={settings.effective.editor.colour_theme.value ?? ""}
+          source={settings.effective.editor.colour_theme.source}
+          parse={parseTheme}
+          onsave={(v) =>
+            v === null
+              ? resetEditor(ownEditor, "colour_theme", "Editor colour theme")
+              : saveEditor(ownEditor, "colour_theme", v, "Editor colour theme")}
+          onreset={() =>
+            resetEditor(ownEditor, "colour_theme", "Editor colour theme")}
+        />
+        <EditorOverrideRow
+          id="editor-font-size"
+          label="Font size (pixels)"
+          hint="From 8 to 40. Empty keeps the editor's own size."
+          value={fontSizeText(settings.effective.editor.font_size.value)}
+          source={settings.effective.editor.font_size.source}
+          parse={parseFontSize}
+          onsave={(v) =>
+            v === null
+              ? resetEditor(ownEditor, "font_size", "Font size")
+              : saveEditor(ownEditor, "font_size", v, "Font size")}
+          onreset={() => resetEditor(ownEditor, "font_size", "Font size")}
+        />
+        <EditorOverrideRow
+          id="editor-extensions"
+          label="Extensions to install"
+          hint="One publisher.name id per line. This list replaces the global one; empty means none."
+          value={extensionsText(settings.effective.editor.extensions.value)}
+          source={settings.effective.editor.extensions.source}
+          parse={parseExtensions}
+          multiline
+          onsave={(v) => saveEditor(ownEditor, "extensions", v, "Extensions")}
+          onreset={() => resetEditor(ownEditor, "extensions", "Extensions")}
+        />
+        <EditorOverrideRow
+          id="editor-keybindings"
+          label="Key bindings"
+          hint="A JSON array of key and command objects. It replaces the global bindings; empty means none."
+          value={settings.effective.editor.keybindings.value ?? ""}
+          source={settings.effective.editor.keybindings.source}
+          parse={parseKeybindings}
+          multiline
+          onsave={(v) =>
+            saveEditor(ownEditor, "keybindings", v, "Key bindings")}
+          onreset={() => resetEditor(ownEditor, "keybindings", "Key bindings")}
+        />
+      </tbody>
       <tbody>
         <tr class="group">
           <th scope="colgroup" colspan="3" id="advanced">Advanced</th>
@@ -541,7 +632,6 @@
   }
   table {
     width: 100%;
-    max-width: 64rem;
     border-collapse: collapse;
   }
   thead th {
@@ -578,12 +668,6 @@
   }
   .from {
     white-space: nowrap;
-  }
-  .chip {
-    padding: 0 var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-pill);
-    font-size: var(--text-sm);
   }
   .reset {
     margin-inline-start: var(--space-2);

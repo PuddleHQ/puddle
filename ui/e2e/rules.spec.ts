@@ -443,7 +443,10 @@ test.describe("changing the expiry", () => {
   }) => {
     await openRules(page, backend);
     const expiring = rowFor(page, "api.example.com");
-    await pickFromRowMenu(expiring, /^Change expiry: allow api.example.com/);
+    await pickFromRowMenu(
+      expiring,
+      /^Change expiry\s*:\s*allow api\.example\.com/,
+    );
     const dialog = page.getByRole("dialog", { name: "Change expiry" });
     await expect(dialog).toContainText("api.example.com");
     await dialog.getByRole("button", { name: "Save" }).click();
@@ -729,12 +732,13 @@ test.describe("accessibility", () => {
     backend,
   }) => {
     await openRules(page, backend);
+    // One "..." menu button per row since the row menu replaced Edit, Change expiry and Delete.
     const buttons = await page
       .locator("tbody tr")
       .first()
       .getByRole("button")
       .all();
-    expect(buttons).toHaveLength(3);
+    expect(buttons).toHaveLength(1);
     for (const button of [
       ...buttons,
       ...(await page.getByRole("button", { name: /^Sort by/ }).all()),

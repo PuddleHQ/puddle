@@ -1144,6 +1144,7 @@ impl Sandbox for FakeSandbox {
         state.enter(Op::Exec, Some(self.name.as_str()), Some(detail))?;
         self.check_running(&state, "exec")?;
         self.run(&mut state, &request)
+            .map(|output| output.capped(request.max_output))
     }
 
     async fn serve_ssh<S: SshStream>(&self, mut stream: S) -> Result<(), ComputeError> {

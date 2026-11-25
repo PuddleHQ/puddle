@@ -2989,7 +2989,10 @@ export interface components {
             host: string | null;
             /** @description Whether a credential was injected. */
             injected: boolean;
-            /** @description HTTP method, where the proxy saw the request in clear. */
+            /**
+             * @description HTTP method, where the proxy saw the request in clear; for `protocol: ssh` the Git
+             *     command or the refusal (`ssh-command`, `ssh-channel`).
+             */
             method: string | null;
             /** @description Whose connection it is. Records written before it existed read as `workspace`. */
             origin: components["schemas"]["ConnectionOrigin"];
@@ -3008,6 +3011,7 @@ export interface components {
              * @description The requested port.
              */
             port: number | null;
+            protocol: components["schemas"]["ConnectionProtocol"] | null;
             /**
              * @description Why: a `ReasonCode` (`rule`, `no_rule`, `push_denied`, ...), or `<prefix>:<code>` with
              *     a `ReasonPrefix`: `toggle:` and a local category, `puddle_request_failed:` and a
@@ -3686,6 +3690,11 @@ export interface components {
          * @enum {string}
          */
         ConnectionOutcome: "connected" | "upstream_refused" | "connect_failed" | "timeout";
+        /**
+         * @description What the `method` and `path` of a connection record are.
+         * @enum {string}
+         */
+        ConnectionProtocol: "http" | "ssh";
         /** @description What the user agreed to or declined. */
         Consent: {
             /** @enum {string} */

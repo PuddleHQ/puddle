@@ -547,15 +547,18 @@ struct CodeServer {
     installing: Option<Arc<Install>>,
 }
 
+/// How a copy ended; the error is shared because every waiting start reports it.
+type Outcome = Result<(), Arc<std::io::Error>>;
+
 /// The outcome of a copy running on its own thread, and the signal that it ended.
 #[derive(Default)]
 struct Install {
-    outcome: Mutex<Option<Result<(), String>>>,
+    outcome: Mutex<Option<Outcome>>,
     ended: Condvar,
 }
 
 impl Install {
-    fn finish(&self, outcome: Result<(), String>) {
+    fn finish(&self, outcome: Outcome) {
         *self
             .outcome
             .lock()
@@ -563,7 +566,7 @@ impl Install {
         self.ended.notify_all();
     }
 
-    fn wait(&self) -> Result<(), String> {
+    fn wait(&self) -> Outcome {
         let mut outcome = self
             .outcome
             .lock()
@@ -579,7 +582,7 @@ impl Install {
         }
     }
 
-    fn outcome(&self) -> Option<Result<(), String>> {
+    fn outcome(&self) -> Option<Outcome> {
         self.outcome
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -600,7 +603,7 @@ impl CodeServer {
                 .spawn({
                     let ended = ended.clone();
                     move || {
-                        let outcome = copy.run().map_err(|e| e.to_string());
+                        let outcome = copy.run().map_err(Arc::new);
                         if let Err(reason) = &outcome {
                             tracing::error!(%reason, "code-server could not be installed for the guests");
                         }
@@ -608,7 +611,7 @@ impl CodeServer {
                     }
                 });
             if let Err(e) = spawned {
-                ended.finish(Err(format!("no thread for the copy: {e}")));
+                ended.finish(Err(Arc::new(e)));
             }
             install
         });
@@ -625,7 +628,7 @@ impl CodeServer {
             let install = install.clone();
             tokio::task::spawn_blocking(move || install.wait())
                 .await
-                .unwrap_or_else(|e| Err(e.to_string()))
+                .unwrap_or_else(|e| Err(Arc::new(std::io::Error::other(e))))
         };
         outcome.map_err(|e| HostError::GuestFiles(format!("install code-server: {e}")))
     }

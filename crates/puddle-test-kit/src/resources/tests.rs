@@ -209,7 +209,7 @@ fn a_private_tempdir_is_owner_only_whatever_the_umask() {
 fn a_test_dir_is_unique_labelled_and_removed_on_drop() {
     let one = TestDir::new("kit-a-");
     let two = TestDir::new("kit-a-");
-    assert_ne!(one.as_ref() as &Path, two.as_ref() as &Path);
+    assert_ne!(AsRef::<Path>::as_ref(&one), AsRef::<Path>::as_ref(&two));
     assert!(
         one.file_name()
             .unwrap()

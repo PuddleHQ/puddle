@@ -195,7 +195,7 @@ fn the_unreadable_settings_message_says_so() {
     let host = Host::parse_normalised("nas.example").unwrap();
     let msg = block_message(
         &host,
-        &workspace(),
+        workspace().as_str(),
         &[BlockReason::PuddleEndpoint, BlockReason::SettingsUnreadable],
     );
     assert!(msg.contains("could not read its settings"), "{msg}");
@@ -208,16 +208,16 @@ fn block_messages_name_what_would_change_them() {
     let host = Host::parse_normalised("nas.example").unwrap();
     let one = block_message(
         &host,
-        &workspace(),
+        workspace().as_str(),
         &[BlockReason::LocalToggle(LocalCategory::Private)],
     );
     assert_eq!(
         one,
-        "nas.example is local/private network, and that toggle is off. To allow it, turn on 'private' (local/private network) globally or for workspace box; it then still needs an allow rule or an approval. Approving it alone does not change this"
+        "nas.example is local/private network, and that toggle is off. To allow it, turn on 'Private networks' globally or for workspace box; it then still needs an allow rule or an approval. Approving it alone does not change this"
     );
     let two = block_message(
         &host,
-        &workspace(),
+        workspace().as_str(),
         &[
             BlockReason::LocalToggle(LocalCategory::Private),
             BlockReason::PuddleEndpoint,
@@ -226,27 +226,28 @@ fn block_messages_name_what_would_change_them() {
         ],
     );
     assert!(
-        two.contains("turn on 'loopback' (host loopback) or 'private' (local/private network)"),
+        two.contains("turn on 'This computer (loopback)' or 'Private networks'"),
         "{two}"
     );
     assert!(
-        block_message(&host, &workspace(), &[BlockReason::PuddleEndpoint])
+        block_message(&host, workspace().as_str(), &[BlockReason::PuddleEndpoint])
             .contains("Puddle's own endpoints")
     );
     assert_eq!(
-        block_message(&host, &workspace(), &[BlockReason::SshUnsupported]),
+        block_message(&host, workspace().as_str(), &[BlockReason::SshUnsupported]),
         "SSH is not supported yet; no rule or setting allows it"
     );
     assert_eq!(
-        block_message(&host, &workspace(), &[BlockReason::UdpUnsupported]),
+        block_message(&host, workspace().as_str(), &[BlockReason::UdpUnsupported]),
         format!(
             "UDP to {host} is not supported yet; only TCP and DNS leave a workspace, and no rule or setting changes this"
         )
     );
     assert!(
-        block_message(&host, &workspace(), &[BlockReason::LocalAddress]).contains("local address")
+        block_message(&host, workspace().as_str(), &[BlockReason::LocalAddress])
+            .contains("local address")
     );
-    assert!(block_message(&host, &workspace(), &[]).contains("local address"));
+    assert!(block_message(&host, workspace().as_str(), &[]).contains("local address"));
 }
 
 #[test]
@@ -268,7 +269,7 @@ fn ssh_to_a_git_host_names_the_https_form_of_the_remote_and_any_other_host_does_
         let host = Host::parse_normalised(host).unwrap();
         assert_eq!(git_https_remote(&host), Some(https));
         assert_eq!(
-            block_message(&host, &workspace(), &[BlockReason::SshUnsupported]),
+            block_message(&host, workspace().as_str(), &[BlockReason::SshUnsupported]),
             format!("SSH is not supported yet, use HTTPS: the remote becomes {https}")
         );
     }
@@ -283,7 +284,7 @@ fn ssh_to_a_git_host_names_the_https_form_of_the_remote_and_any_other_host_does_
         let host = Host::parse_normalised(other).unwrap();
         assert_eq!(git_https_remote(&host), None, "{other}");
         assert_eq!(
-            block_message(&host, &workspace(), &[BlockReason::SshUnsupported]),
+            block_message(&host, workspace().as_str(), &[BlockReason::SshUnsupported]),
             "SSH is not supported yet; no rule or setting allows it",
             "{other}"
         );
@@ -477,7 +478,7 @@ fn the_company_refusal_names_the_switch_and_does_not_promise_access() {
     assert_eq!(
         block_message(
             &host,
-            &workspace(),
+            workspace().as_str(),
             &[BlockReason::CompanyNetwork(CompanySignal::DnsSuffix)]
         ),
         company_network_message(&host, None, Some(CompanySignal::DnsSuffix))

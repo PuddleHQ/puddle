@@ -777,8 +777,11 @@ async fn changes_reach_the_event_stream_and_no_secret_is_on_the_wire() {
     assert_eq!(git["workspace"], "shop");
 
     let all = api.get("/api/identities").await.body;
-    let spec =
-        api.get("/api/identities").await.body + &api.get("/api/workspaces/shop/git").await.body;
+    let spec = format!(
+        "{}{}",
+        api.get("/api/identities").await.body,
+        api.get("/api/workspaces/shop/git").await.body
+    );
     for text in [&all, &spec] {
         for word in ["token", "password", "secret"] {
             assert!(!text.to_lowercase().contains(word), "{word} in {text}");

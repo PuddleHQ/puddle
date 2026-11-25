@@ -11,7 +11,7 @@
 //! The cache folder is `PUDDLE_VM_TOOLS_CACHE` (CI restores it between runs) or
 //! `~/.cache/puddle-vm-tools`, under `capture-kits/`; with neither, every run is cold.
 
-#![allow(
+#![expect(
     clippy::print_stderr,
     reason = "VM test: what the guest said goes to the log"
 )]

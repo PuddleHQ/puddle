@@ -1,13 +1,13 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
-  import { tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { goto } from "$app/navigation";
-  import FormDialog from "./FormDialog.svelte";
   import RepoPicker from "./RepoPicker.svelte";
   import RepositoryHostsNotice from "./RepositoryHostsNotice.svelte";
   import { allowedNotice, type HostCheck } from "#lib/workspaces/hosts.ts";
   import { covering, type Identity } from "#lib/identities/model.ts";
   import { previewIdentity, type Preview } from "#lib/identities/preview.ts";
+  import { clearDraft, saveDraft, savedDraft } from "#lib/workspaces/draft.ts";
   import { parseRepoUrl } from "#lib/identities/repo.ts";
   import {
     matchingUrl,
@@ -61,16 +61,15 @@
   import "#lib/theme/controls.css";
 
   let {
-    open = $bindable(false),
     store = workspaces,
     identities = identityStore,
     prefill = null,
     onCreated,
+    onCancel,
     settings = globalSettingsStore,
     hostCheck = undefined,
     defaultImage = defaultImageStore,
   }: {
-    open?: boolean;
     store?: Pick<WorkspaceStore, "create">;
     /** The identities to offer; the screens' own store unless a test brings one. */
     identities?: Pick<IdentitiesStore, "identities" | "ensureLoaded"> &
@@ -82,6 +81,8 @@
     prefill?: { url: string; identity: number | null } | null;
     /** Called with the new workspace (still being created) once the service accepted it. */
     onCreated?: (workspace: Workspace) => void;
+    /** Called when Cancel is pressed, after the draft was dropped. */
+    onCancel?: () => void;
     /** The global settings, which say how many CPUs a workspace may have and gets by default. */
     settings?: Pick<GlobalSettings, "view" | "load">;
     /** For tests: the host check. */
@@ -93,35 +94,45 @@
 
   type FormField = Exclude<Field, "repo_url">;
 
-  let nextKey = 1;
+  // An unsent draft from the last visit comes back; a repository handed in replaces its rows.
+  const kept = untrack(() => prefill) ? null : savedDraft();
+  let nextKey = Math.max(0, ...(kept?.rows.map((r) => r.key) ?? [])) + 1;
   const fresh = (url = "") => newRow(nextKey++, url);
 
-  let rows = $state<RowDraft[]>([fresh()]);
-  let name = $state("");
-  let nameTouched = $state(false);
-  let image = $state("");
-  let memoryGib = $state("");
+  let rows = $state<RowDraft[]>(kept ? structuredClone(kept.rows) : [fresh()]);
+  let name = $state(kept?.name ?? "");
+  let nameTouched = $state(kept?.nameTouched ?? false);
+  let image = $state(kept?.image ?? "");
+  let memoryGib = $state(kept?.memoryGib ?? "");
   /** The count the slider was moved to; `null` while it is still on the default. */
-  let cpusChosen = $state<number | null>(null);
-  let startFolder = $state("");
-  let moreOpen = $state(false);
+  let cpusChosen = $state<number | null>(kept?.cpusChosen ?? null);
+  let startFolder = $state(kept?.startFolder ?? "");
   let errors = $state<Partial<Record<FormField, string>>>({});
   /** What each row was refused for, by the row's key: after a submit, or the service's words. */
   let rowErrors = $state<Record<number, RowProblems>>({});
   let working = $state(false);
   let taken: typeof prefill = null;
 
-  // Reads the identities when the form opens, so the ones that cover an address can be offered.
-  $effect(() => {
-    if (open) void identities.ensureLoaded();
+  // Reads the identities when the screen opens, so the ones that cover an address can be offered.
+  // The CPU limits are read each time the screen opens: the maximum can change in Settings.
+  onMount(() => {
+    void identities.ensureLoaded();
+    void settings.load(true);
+    void defaultImage.load();
   });
 
-  // The CPU limits are read each time the form opens: the maximum can change in Settings.
+  // The draft follows every edit, so leaving the screen keeps what was typed.
   $effect(() => {
-    if (open) void settings.load(true);
-  });
-  $effect(() => {
-    if (open) void defaultImage.load();
+    const draft = $state.snapshot({
+      rows,
+      name,
+      nameTouched,
+      image,
+      memoryGib,
+      cpusChosen,
+      startFolder,
+    });
+    if (!done) saveDraft(draft);
   });
   const limits = $derived(settings.view?.effective_limits ?? null);
   /** What the slider shows: the count it was moved to, else what a new workspace gets by default. */
@@ -131,7 +142,7 @@
 
   // A repository handed in by "Create a workspace for this" becomes the only row, once.
   $effect(() => {
-    if (open && prefill && prefill !== taken) {
+    if (prefill && prefill !== taken) {
       taken = prefill;
       const row = fresh(prefill.url);
       row.listedBy = prefill.identity;
@@ -231,21 +242,18 @@
     name = suggestName(folder === null ? (first?.url ?? "") : `/${folder}`);
   });
 
-  function reset() {
-    rows = [fresh()];
-    name = "";
-    nameTouched = false;
-    image = "";
-    memoryGib = "";
-    cpusChosen = null;
-    startFolder = "";
-    moreOpen = false;
-    errors = {};
-    rowErrors = {};
-    left = {};
-    working = false;
-    taken = null;
+  /** Drops the draft: what was sent, or what Cancel gives up. */
+  let done = false;
+  function discard() {
+    done = true;
+    clearDraft();
   }
+
+  // Focus starts on the first address, as the dialog did.
+  onMount(() => {
+    const first = rows[0];
+    if (first) document.getElementById(`new-ws-r${first.key}-url`)?.focus();
+  });
 
   const focus = (id: string) => document.getElementById(id)?.focus();
   const rowId = (row: RowDraft, part: string) => `new-ws-r${row.key}-${part}`;
@@ -328,7 +336,6 @@
   }
 
   async function showAndFocus(id: string | null) {
-    if (id && /start_folder|memory_mib|cpus|image/.test(id)) moreOpen = true;
     await tick();
     if (id) focus(id);
   }
@@ -371,8 +378,7 @@
     const result = await store.create(body);
     working = false;
     if (result.ok) {
-      open = false;
-      reset();
+      discard();
       warnAboutIdentities(result.value);
       const allowed = allowedNotice(result.value.allowed_hosts);
       if (allowed) toasts.push(allowed, { ms: 10_000 });
@@ -429,14 +435,11 @@
   }
 </script>
 
-<FormDialog
-  bind:open
-  title="New workspace"
-  description="Puddle clones your repositories into a fresh workspace with its own disk."
-  onClose={reset}
-  openFocus={() =>
-    rows[0] ? document.getElementById(rowId(rows[0], "url")) : null}
->
+<section class="screen" aria-labelledby="new-ws-title">
+  <h1 id="new-ws-title">New workspace</h1>
+  <p class="lead">
+    Puddle clones your repositories into a fresh workspace with its own disk.
+  </p>
   <form onsubmit={submit} novalidate>
     {#if rows.length === 0}
       <p class="hint" id="new-ws-none">
@@ -729,8 +732,12 @@
       {/if}
     </div>
 
-    <details class="more" bind:open={moreOpen}>
-      <summary>Start folder, image, memory and CPUs</summary>
+    <fieldset class="resources">
+      <legend>Resources</legend>
+      <p class="hint">
+        The defaults suit most work; change them here or later in the
+        workspace's settings.
+      </p>
       <div class="field">
         <label for="new-ws-start_folder">Start folder</label>
         <input
@@ -840,7 +847,7 @@
           </p>
         </div>
       {/if}
-    </details>
+    </fieldset>
 
     {#if errors.form}
       <p class="error" role="alert">{errors.form}</p>
@@ -851,8 +858,8 @@
         type="button"
         class="btn"
         onclick={() => {
-          open = false;
-          reset();
+          discard();
+          onCancel?.();
         }}>Cancel</button
       >
       <button
@@ -872,19 +879,62 @@
       onBlocked={(b) => (hostBlocked = b)}
     />
   </form>
-</FormDialog>
+</section>
 
 <style>
-  .more {
-    display: grid;
-    gap: var(--space-3);
+  .screen {
+    max-width: 44rem;
   }
-  summary {
-    cursor: pointer;
+  .lead {
+    margin: 0 0 var(--space-4);
+    color: var(--color-text-muted);
+  }
+  .screen :global(form) {
+    display: grid;
+    gap: var(--space-4);
+  }
+  .screen :global(fieldset) {
+    display: grid;
+    gap: var(--space-2);
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  .screen :global(legend) {
+    padding: 0;
+    margin-bottom: var(--space-1);
     font-weight: 600;
   }
-  .more .field {
-    margin-top: var(--space-3);
+  .screen :global(.field) {
+    display: grid;
+    gap: var(--space-1);
+  }
+  .screen :global(.field > label),
+  .screen :global(.choice) {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .screen :global(.field > label) {
+    font-weight: 600;
+  }
+  .screen :global(.hint) {
+    margin: 0;
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+  }
+  .screen :global(.error) {
+    margin: 0;
+    color: var(--color-danger);
+    font-size: var(--text-sm);
+  }
+  .screen :global(.actions) {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+  }
+  .resources {
+    gap: var(--space-3);
   }
   .slider {
     display: flex;

@@ -1,9 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    reason = "test code: a panic is how a test fails"
-)]
+#![expect(clippy::unwrap_used, reason = "test code: a panic is how a test fails")]
 //! Shared by the source tests: fake `gh` and `git` executables.
 
 use std::path::{Path, PathBuf};

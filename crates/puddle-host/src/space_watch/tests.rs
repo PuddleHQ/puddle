@@ -223,7 +223,13 @@ async fn the_task_reads_after_the_first_wait_and_then_every_period() {
     };
     let settings: Arc<dyn SettingsRepo> = Arc::new(rig.settings);
     let events = Arc::new(CollectingSink::default());
-    let task = spawn(rig.drive.clone(), timing, settings, events.clone());
+    let task = spawn(
+        rig.drive.clone(),
+        timing,
+        settings,
+        events.clone(),
+        Arc::new(|_| {}),
+    );
     tokio::time::sleep(Duration::from_secs(5)).await;
     assert_eq!(
         events.take(),

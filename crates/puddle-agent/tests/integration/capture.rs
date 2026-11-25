@@ -724,7 +724,10 @@ except OSError as e:
         ("2001:db8::9", "443"),
     ] {
         let text = ok("python3", &["-c", probe, host, port]).await;
-        let (kind, ms) = text.trim().split_once(' ').unwrap_or((text.trim(), "0"));
+        let (kind, ms) = text
+            .trim()
+            .split_once(' ')
+            .unwrap_or_else(|| (text.trim(), "0"));
         let ms: f64 = ms.parse().unwrap_or(0.0);
         assert!(kind == "refused" || kind == "oserror", "{host}: {text}");
         assert!(ms < 50.0, "{host} took {ms} ms: {text}");
@@ -820,7 +823,7 @@ async fn a_guest_that_deletes_or_edits_the_table_is_restored_and_reported() {
             let told = w.seen.tampered.lock().unwrap().clone();
             told.contains(&true)
                 .then_some(())
-                .ok_or(format!("tampered = {told:?}"))
+                .ok_or_else(|| format!("tampered = {told:?}"))
         },
     )
     .await;

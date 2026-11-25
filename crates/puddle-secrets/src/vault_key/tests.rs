@@ -1,11 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The key sources that need no `systemd-creds`: the unit's credential, the key file, the
 //! refusals. The sealing paths run against a fake tool in `tests/integration/vault_key.rs`.
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    reason = "test code: a panic is how a test fails"
-)]
 
 use super::*;
 

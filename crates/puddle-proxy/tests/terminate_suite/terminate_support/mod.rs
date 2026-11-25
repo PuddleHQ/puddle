@@ -1058,12 +1058,12 @@ impl Link {
     }
 
     fn close(&self) {
-        if let Some(driver) = self
+        let driver = self
             .driver
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .take()
-        {
+            .take();
+        if let Some(driver) = driver {
             driver.abort();
         }
     }

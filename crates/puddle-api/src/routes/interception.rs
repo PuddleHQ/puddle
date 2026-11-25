@@ -32,7 +32,7 @@ pub(super) fn pattern(raw: &str) -> Result<String, ApiError> {
     let (wild, name) = raw
         .trim()
         .strip_prefix("*.")
-        .map_or((false, raw.trim()), |rest| (true, rest));
+        .map_or_else(|| (false, raw.trim()), |rest| (true, rest));
     let host = normalise_host(name)
         .map_err(|_| ApiError::invalid(format!("{raw:?} is not a host name")))?
         .into_host();

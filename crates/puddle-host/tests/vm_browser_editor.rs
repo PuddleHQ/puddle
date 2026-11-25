@@ -87,7 +87,7 @@ const WINDOW_STATE: &str = r"(() => {
 /// or comes back empty, the window keeps the file's identity with no folder and says "No Folder
 /// Opened" without an error. The cached copy says which of the two reads gave the folders, and
 /// the failed loads name the addresses the console only counts.
-const WINDOW_STORAGE: &str = r"(async () => {
+const WINDOW_STORAGE: &str = "(async () => {
   const failed = performance.getEntriesByType('resource')
     .filter(e => e.responseStatus >= 400)
     .map(e => `${e.responseStatus} ${e.name}`);
@@ -642,7 +642,7 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
         .until(ended(name_static), Duration::from_secs(600))
         .await;
     assert_eq!(end["step"], "done", "{end}");
-    let root = "/workspace".to_string();
+    let root = "/workspace".to_owned();
     guest(
         &runtime,
         &sandbox,
@@ -860,7 +860,7 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
 /// What a window of the editor shows of its colour theme: the workbench's theme class (`vs-dark`
 /// for a dark theme, `vs` for a light one: VS Code's `ColorScheme`) and the scheme the browser
 /// reports as the system's.
-const WINDOW_THEME: &str = r"(() => {
+const WINDOW_THEME: &str = "(() => {
   const classes = [...(document.querySelector('.monaco-workbench')?.classList ?? [])];
   return {
     dark: classes.includes('vs-dark'),
@@ -913,7 +913,7 @@ async fn vm_browser_code_server_first_open_follows_the_systems_colour_scheme_and
     guest(&runtime, &sandbox, EDITOR_UP).await;
 
     // The file the agent seeded before the server's first start.
-    let settings_file = "/workspace/.puddle/code-server/user-data/User/settings.json".to_string();
+    let settings_file = "/workspace/.puddle/code-server/user-data/User/settings.json".to_owned();
     let seeded = guest(&runtime, &sandbox, &format!("cat {settings_file}")).await;
     assert!(
         seeded.contains(r#""window.autoDetectColorScheme": true"#),
@@ -1185,9 +1185,9 @@ async fn vm_browser_microsoft_s_server_opens_with_its_token_and_switches_builds_
 
     // The builds go on the volume (the agent found none to start: no internet here), and the next
     // start runs the current one without asking Microsoft.
-    let builds = "/workspace/.puddle/vscode-server/servers".to_string();
+    let builds = "/workspace/.puddle/vscode-server/servers".to_owned();
     // On the volume, so it is there after the restart below.
-    let tools = "/workspace/.puddle/stand-in".to_string();
+    let tools = "/workspace/.puddle/stand-in".to_owned();
     guest(
         &runtime,
         &sandbox,
@@ -1374,7 +1374,7 @@ impl Editor {
             .await;
         assert_eq!(end["step"], "done", "{end}");
         let editor = Self {
-            root: "/workspace".to_string(),
+            root: "/workspace".to_owned(),
             vm,
             shell,
             api,
@@ -1938,7 +1938,7 @@ async fn vm_browser_code_server_hovering_a_typescript_symbol_shows_the_type_the_
                 .await
                 .map_err(|e| e.to_string())?
                 .result;
-            let hover = state["hover"].as_str().unwrap_or_default().to_string();
+            let hover = state["hover"].as_str().unwrap_or_default().to_owned();
             if hover.contains("const total: number") {
                 Ok(hover)
             } else {

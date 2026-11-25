@@ -186,7 +186,6 @@ function reset() {
   workspaces.status = "loading";
   workspaces.progress = {};
   workspaces.oom = {};
-  workspaceActions.createOpen = false;
   workspaceActions.connectOpen = false;
   workspaceActions.trustOpen = false;
   workspaceActions.deleteOpen = false;

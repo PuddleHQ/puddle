@@ -219,6 +219,7 @@ pub struct LocalSource {
     /// The name of its folder, the default directory of its clone.
     pub folder_name: String,
     /// The HTTPS address of its `origin` remote, or why there is none Puddle can use.
+    // string-error-ok: the text is the reason shown beside a folder that cannot be imported; the UI renders it as is
     pub origin: Result<String, String>,
 }
 

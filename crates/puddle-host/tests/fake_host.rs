@@ -18,6 +18,8 @@ mod api_latency;
 mod attach_places;
 #[path = "fake_host/backup_restore.rs"]
 mod backup_restore;
+#[path = "fake_host/backup_round_trip.rs"]
+mod backup_round_trip;
 #[cfg(target_os = "linux")]
 #[path = "fake_host/churn.rs"]
 mod churn;
@@ -743,7 +745,8 @@ impl Guest {
     /// `sh -c CLONE_SH puddle-clone <url> <stage> <checkout>`: kept as the git clone it runs
     /// into the checkout, with what that leaves on the volume.
     fn answer_clone(&self, r: &ExecRequest) -> ExecOutput {
-        if let Some(list) = self.break_list_on_clone.lock().unwrap().take() {
+        let taken = self.break_list_on_clone.lock().unwrap().take();
+        if let Some(list) = taken {
             make_unwritable(&list);
         }
         let url = r.args.get(3).cloned().unwrap_or_default();
@@ -996,7 +999,8 @@ impl Launcher for RecordingLauncher {
         target: &'a DesktopTarget,
     ) -> futures_util::future::BoxFuture<'a, Result<(), LaunchError>> {
         Box::pin(async move {
-            if let Some(message) = self.fail_with.lock().unwrap().take() {
+            let taken = self.fail_with.lock().unwrap().take();
+            if let Some(message) = taken {
                 return Err(LaunchError::new(message));
             }
             self.opened.lock().unwrap().push(workspace.name.to_string());
@@ -1011,7 +1015,8 @@ impl Launcher for RecordingLauncher {
         target: &'a BrowserTarget,
     ) -> futures_util::future::BoxFuture<'a, Result<(), LaunchError>> {
         Box::pin(async move {
-            if let Some(message) = self.fail_with.lock().unwrap().take() {
+            let taken = self.fail_with.lock().unwrap().take();
+            if let Some(message) = taken {
                 return Err(LaunchError::new(message));
             }
             self.browser.lock().unwrap().push(target.clone());
@@ -1025,7 +1030,8 @@ impl Launcher for RecordingLauncher {
     ) -> futures_util::future::BoxFuture<'a, ()> {
         Box::pin(async move {
             self.closed.lock().unwrap().push(workspace.to_string());
-            if let Some(path) = self.unwritable_on_close.lock().unwrap().take() {
+            let taken = self.unwritable_on_close.lock().unwrap().take();
+            if let Some(path) = taken {
                 make_unwritable(&path);
             }
         })
@@ -1037,7 +1043,8 @@ impl Launcher for RecordingLauncher {
     ) -> futures_util::future::BoxFuture<'a, Result<(), LaunchError>> {
         Box::pin(async move {
             self.forgotten.lock().unwrap().push(workspace.to_string());
-            match self.forget_fails_with.lock().unwrap().clone() {
+            let forget_fails = self.forget_fails_with.lock().unwrap().clone();
+            match forget_fails {
                 Some(message) => Err(LaunchError::new(message)),
                 None => Ok(()),
             }
@@ -1316,15 +1323,18 @@ impl Rig {
             .rewrite_gate
             .clone_from(&self.rewrite_gate.lock().unwrap());
         options.dev_cert = Some(self.dev_cert.clone() as Arc<dyn DevCertSource>);
-        if let Some(ids) = self.ids.lock().unwrap().clone() {
+        let taken = self.ids.lock().unwrap().clone();
+        if let Some(ids) = taken {
             options.workspace_ids = Some(ids);
         }
-        if let Some(space) = self.free_space.lock().unwrap().clone() {
+        let taken = self.free_space.lock().unwrap().clone();
+        if let Some(space) = taken {
             options.free_space = Some(space);
         }
         // No guest runs here, so nothing may ask the machine's DNS about a name.
         options.resolver = Some(Arc::new(puddle_proxy::testing::StaticResolver::new()));
-        if let Some((discovery, resolver)) = self.network.lock().unwrap().clone() {
+        let taken = self.network.lock().unwrap().clone();
+        if let Some((discovery, resolver)) = taken {
             options.discovery = Some(discovery);
             options.resolver = Some(resolver);
         }

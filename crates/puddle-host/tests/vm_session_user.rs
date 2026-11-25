@@ -120,7 +120,7 @@ async fn vm_radar_session_user_agent_runs_the_real_tools_at_their_widest_and_a_s
         ws["session_user"], "agent",
         "a new workspace is agent's: {ws}"
     );
-    let volume = "/workspace".to_string();
+    let volume = "/workspace".to_owned();
 
     check_identity_and_claude_code(&vm, &sandbox).await;
     check_python_git_and_low_ports(&vm, &sandbox, &volume).await;

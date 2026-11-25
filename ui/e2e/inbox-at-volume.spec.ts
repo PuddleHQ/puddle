@@ -9,6 +9,10 @@ import { type Backend, expect, test } from "./fixture";
 import { availableParallelism, loadavg } from "node:os";
 import { loadFactor } from "../scripts/load-budget.ts";
 import { pickFromRowMenu, staysEmpty } from "./support";
+import {
+  INBOX_SHORTCUTS,
+  type InboxShortcutId,
+} from "../src/lib/decision/inbox-shortcuts.ts";
 
 const SLOWDOWN = slowdown();
 
@@ -116,7 +120,7 @@ test.describe("Allow and Deny, and the keys they name", () => {
     ).toMatchObject({ effect: "allow", scope: { type: "global" } });
   });
 
-  test("each row button's title names the key, and pressing that key does what the button does", async ({
+  test("the keys the shortcuts table names do what the buttons do, and the buttons carry no tooltip", async ({
     page,
     request,
     backend,
@@ -132,12 +136,11 @@ test.describe("Allow and Deny, and the keys they name", () => {
     // flake-ok: the three rows were counted by the web-first assertion above
     expect(hosts).toHaveLength(3);
 
-    /** The key a button's first title line names in brackets: "... permanently (A)". */
-    const keyOf = async (button: Locator): Promise<string> => {
-      const title = (await button.getAttribute("title")) ?? "";
-      const key = /\(([A-Za-z]+)\)\s*$/m.exec(title.split("\n")[0] ?? "")?.[1];
-      expect(key, `a key in the title ${JSON.stringify(title)}`).toBeDefined();
-      return key!;
+    /** The key the shortcuts table names for a line: ["A"] gives "A". */
+    const keyOf = (id: InboxShortcutId): string => {
+      const line = INBOX_SHORTCUTS.find((s) => s.id === id);
+      expect(line, `a shortcut line for ${id}`).toBeDefined();
+      return line!.keys.join("+");
     };
     const buttons = (host: string) => ({
       allow: rowFor(page, host).getByRole("button", { name: /^Allow / }),
@@ -147,24 +150,15 @@ test.describe("Allow and Deny, and the keys they name", () => {
       }),
     });
     const keys = {
-      allow: await keyOf(buttons(hosts[0]!).allow),
-      deny: await keyOf(buttons(hosts[0]!).deny),
-      more: await keyOf(buttons(hosts[0]!).more),
+      allow: keyOf("allow"),
+      deny: keyOf("deny"),
+      more: keyOf("more"),
     };
-    // The same key on every row: the title is not specific to the first.
+    // The buttons carry no native tooltip (the shortcuts popover names the keys), on every row.
     for (const host of hosts) {
-      await expect(buttons(host).allow).toHaveAttribute(
-        "title",
-        new RegExp(`\\(${keys.allow}\\)`, "m"),
-      );
-      await expect(buttons(host).deny).toHaveAttribute(
-        "title",
-        new RegExp(`\\(${keys.deny}\\)`, "m"),
-      );
-      await expect(buttons(host).more).toHaveAttribute(
-        "title",
-        new RegExp(`\\(${keys.more}\\)`, "m"),
-      );
+      for (const button of Object.values(buttons(host))) {
+        await expect(button).not.toHaveAttribute("title");
+      }
     }
     expect(new Set(Object.values(keys)).size, "three different keys").toBe(3);
 

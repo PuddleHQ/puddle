@@ -7,6 +7,9 @@
 #     Cargo.lock hash leaves a 1-3 GB entry behind that nothing restores any more);
 #   - on develop/main, an entry of those groups unused for a week (a group whose key was renamed
 #     leaves its last entry behind, and the newest-of-group rule keeps it for ever);
+#   - on develop/main, every windows-clippy entry (nothing saves one any more: 1.4 GB for a job that light CI skips);
+#     CodeQL's overlay databases (one per language and CodeQL version per run, 5 to 105 MB each) are a group too, so
+#     only the newest per language stays;
 #   - on any other ref (task branches, pull requests), entries not used for two days;
 #   - on a merge queue ref (refs/heads/gh-readonly-queue/...), every entry at once: only a rerun of
 #     that one queue entry could read it, and the steps that save on a miss on any ref (npm,
@@ -41,6 +44,7 @@ while IFS=$'\t' read -r id ref key size; do
                  elif (.key | startswith("playwright-")) then "playwright"
                  elif (.key | startswith("notices-ok-")) then "notices-ok"
                  elif (.key | startswith("vm-guest-env-tools-")) then "vm-guest-env-tools"
+                 elif (.key | test("^codeql-overlay-base-database-1-[0-9a-f]+-[a-z-]+-[0-9]+\\.[0-9]+\\.[0-9]+-")) then .key | sub("-[0-9]+\\.[0-9]+\\.[0-9]+-.*$"; "")
                  elif (.key | test("^(forgejo|gateway|vscode|gitleaks)-.*-[0-9a-f]{64}$")) then .key | sub("-[0-9a-f]{64}$"; "")
                  else null end;
       def trunk: .ref == "refs/heads/develop" or .ref == "refs/heads/main";
@@ -50,7 +54,8 @@ while IFS=$'\t' read -r id ref key size; do
       | ( [ .[] | select(trunk and (group != null) and (.last_accessed_at < $week)) ] ) as $orphans
       | ( [ .[] | select((trunk | not) and (.last_accessed_at < $cutoff)) ] ) as $stale
       | ( [ .[] | select(.ref | startswith("refs/heads/gh-readonly-queue/")) ] ) as $queue
-      | ($old + $orphans + $stale + $queue | unique_by(.id))[] | [.id, .ref, .key, .size_in_bytes] | @tsv')
+      | ( [ .[] | select(trunk and (.key | startswith("v0-rust-windows-clippy-"))) ] ) as $unsaved
+      | ($old + $orphans + $stale + $queue + $unsaved | unique_by(.id))[] | [.id, .ref, .key, .size_in_bytes] | @tsv')
 
 # Budget: GitHub stops saving ANY new entry (a fresh unique key included) once the repo holds more than 10 GB, whatever
 # the 20 GB storage-limit setting says, and reports it as "Unable to reserve cache ... another job may be creating this

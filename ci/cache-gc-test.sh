@@ -32,6 +32,10 @@ cat >"$tmp/caches.tsv" <<EOF
 13	refs/heads/develop	forgejo-Linux-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	$older	$now
 14	refs/heads/develop	forgejo-Linux-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	$now	$now
 15	refs/heads/develop	gateway-Linux-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc	$older	$now
+16	refs/heads/develop	codeql-overlay-base-database-1-c801913f1ee29663-javascript-2.27.4-aaaa-1-1	$older	$older
+17	refs/heads/develop	codeql-overlay-base-database-1-c801913f1ee29663-javascript-2.27.5-bbbb-2-1	$now	$now
+18	refs/heads/develop	codeql-overlay-base-database-1-5faf507a7f104e7c-java-2.27.5-cccc-3-1	$older	$now
+19	refs/heads/develop	v0-rust-windows-clippy-0123abcd-4567ef01	$now	$now
 EOF
 mkdir "$tmp/bin"
 cat >"$tmp/bin/gh" <<'GH'
@@ -61,7 +65,9 @@ got=$(sort -n "$tmp/deleted" | tr '\n' ' ')
 # 9: a superseded notices stamp on develop (10, the newest, stays).
 # 11, 12: the Chromium and the WebKit browser entries are two groups, so the older one stays.
 # 13: a pinned download superseded by a new pin (14) goes; 15, the only Gateway entry, stays.
-[ "$got" = "1 2 4 5 9 13 " ] || bad "deleted '$got', want '1 2 4 5 9 13 '"
+# 16: an older CodeQL overlay database of a language (17, the newest, stays; 18 is the only Java one).
+# 19: a windows-clippy entry, which nothing saves any more.
+[ "$got" = "1 2 4 5 9 13 16 19 " ] || bad "deleted '$got', want '1 2 4 5 9 13 16 19 '"
 
 : >"$tmp/deleted"
 PATH="$tmp/bin:$PATH" GITHUB_REPOSITORY=o/r FAKE_CACHES="$tmp/caches.tsv" FAKE_DELETED="$tmp/deleted" DRY_RUN=1 \
@@ -70,14 +76,14 @@ PATH="$tmp/bin:$PATH" GITHUB_REPOSITORY=o/r FAKE_CACHES="$tmp/caches.tsv" FAKE_D
 grep -q 'gh-readonly-queue/develop/pr-7-abc' "$tmp/out" || bad "DRY_RUN=1 does not list the queue entry"
 # The inventory lists every entry, deleted or kept, with ref, size and times.
 grep -q '^  cargo-xwin-0.23.1-x86_64  refs/heads/develop  1  ' "$tmp/out" || bad "the inventory lacks the develop cargo-xwin entry"
-[ "$(grep -c '^  ' "$tmp/out")" = 15 ] || bad "the inventory should list all 15 entries: $(cat "$tmp/out")"
+[ "$(grep -c '^  ' "$tmp/out")" = 19 ] || bad "the inventory should list all 19 entries: $(cat "$tmp/out")"
 
-# The budget: over BUDGET_MB the cheapest-to-rebuild trunk entries go first (clippy, windows, gates, linux); small
+# The budget: over BUDGET_MB the cheapest-to-rebuild trunk entries go first (mutants, windows, gates, linux); small
 # ones (node, playwright) never. The sixth column of the fake list is the size in bytes.
 cat >"$tmp/big.tsv" <<EOF
 21	refs/heads/develop	v0-rust-linux-0123abcd-4567ef01	$now	$now	2000000000
 22	refs/heads/develop	v0-rust-gates-0123abcd-4567ef01	$now	$now	3000000000
-23	refs/heads/develop	v0-rust-windows-clippy-0123abcd-4567ef01	$now	$now	3000000000
+23	refs/heads/develop	v0-rust-mutants-0123abcd-4567ef01	$now	$now	3000000000
 24	refs/heads/develop	v0-rust-windows-0123abcd-4567ef01	$now	$now	3000000000
 25	refs/heads/develop	node-cache-Linux-x64-npm-9	$now	$now	50000000
 EOF

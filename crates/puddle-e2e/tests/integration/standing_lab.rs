@@ -375,7 +375,6 @@ fn a_termination_signal_stops_the_lab_cleanly() {
 /// `rm -f` forgets it. The lab runs it as it would the real one.
 #[cfg(unix)]
 fn fake_docker(dir: &Path, listening: bool) -> (std::path::PathBuf, std::path::PathBuf) {
-    use std::os::unix::fs::PermissionsExt;
     let bin = dir.join("bin");
     let state = dir.join("containers");
     std::fs::create_dir_all(&bin).unwrap();
@@ -406,9 +405,7 @@ esac
 "#,
         state = state.display()
     );
-    let docker = bin.join("docker");
-    std::fs::write(&docker, script).unwrap();
-    std::fs::set_permissions(&docker, std::fs::Permissions::from_mode(0o755)).unwrap();
+    puddle_test_kit::write_executable(&bin.join("docker"), &script);
     (bin, state)
 }
 
@@ -446,6 +443,7 @@ fn a_docker_squid_the_host_cannot_reach_fails_at_once_and_names_host_networking(
         text.contains("Docker Desktop needs host networking") && text.contains("PUDDLE_SQUID_BIN"),
         "{text}"
     );
+    // flake-ok: the bar is half the 60 s wait that was the bug; a loaded machine slows a start by seconds, not by half a minute.
     assert!(
         begun.elapsed() < Duration::from_secs(30),
         "the start waited {:?}",

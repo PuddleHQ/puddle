@@ -4,8 +4,9 @@
 
 use std::sync::Arc;
 
-use puddle_api::wire::DevCertificate;
-use puddle_api::{ApiConfig, DevCertService, FakeDevCert, SettingsRepo};
+use puddle_api::{ApiConfig, SettingsRepo};
+use puddle_services::wire::DevCertificate;
+use puddle_services::{dev_cert::DevCertService, dev_cert::FakeDevCert};
 use serde_json::json;
 
 use crate::common::{START_MS, start, start_with_config_and_dev_cert, start_with_dev_cert};
@@ -255,10 +256,10 @@ impl DevCertService for SlowTrust {
         DevCertificate::NeedsTrust
     }
 
-    fn trust(&self) -> puddle_api::wire::DevCertTrustResult {
+    fn trust(&self) -> puddle_services::wire::DevCertTrustResult {
         // Simulated slow confirmation, longer than the usual request limit under test.
         std::thread::sleep(self.0);
-        puddle_api::wire::DevCertTrustResult {
+        puddle_services::wire::DevCertTrustResult {
             dev_certificate: DevCertificate::Trusted,
             detail: None,
             waiting: false,

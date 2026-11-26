@@ -21,6 +21,7 @@ puddle-host = { workspace = true }
 puddle-proxy = { workspace = true, features = ["testing"] }
 puddle-runtime = { workspace = true }
 puddle-secrets = { workspace = true }
+puddle-services = { workspace = true }
 puddle-ssh = { workspace = true }
 puddle-store = { workspace = true, features = ["testing"] }
 puddle-test-kit = { workspace = true }

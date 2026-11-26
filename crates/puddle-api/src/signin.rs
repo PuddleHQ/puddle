@@ -35,8 +35,8 @@ use tokio::sync::broadcast;
 use zeroize::Zeroizing;
 
 use crate::authz::{Principal, Via};
-use crate::error::{ApiError, ErrorCode, blocking};
-use crate::wire::{
+use puddle_services::error::{ApiError, ErrorCode, blocking};
+use puddle_services::wire::{
     AuthStatus, DeviceList, DeviceView, SessionGrant, SignInMethodView, SignInMethods, UserView,
 };
 

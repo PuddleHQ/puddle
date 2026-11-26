@@ -36,7 +36,7 @@ pub(crate) struct EventsQuery {
     params(("workspace" = Option<WorkspaceId>, Query, description = "only this workspace's events; global events always come through")),
     responses(
         (status = OK, description = "the event stream", content_type = "text/event-stream", body = String),
-        (status = BAD_REQUEST, description = "invalid workspace name", body = crate::ApiErrorBody)
+        (status = BAD_REQUEST, description = "invalid workspace name", body = puddle_services::error::ApiErrorBody)
     )
 )]
 pub(crate) async fn events(

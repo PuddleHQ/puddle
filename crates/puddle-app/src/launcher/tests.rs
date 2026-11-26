@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-use puddle_api::OpenTarget;
+use puddle_services::workspaces::OpenTarget;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
@@ -9,7 +9,7 @@ use http::{Request, Response};
 use http_body_util::{BodyExt, Full};
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
-use puddle_api::EditorLogin;
+use puddle_services::workspaces::EditorLogin;
 use puddle_types::WorkspaceId;
 use puddle_types::fixture::password;
 use tauri::Manager;
@@ -70,7 +70,7 @@ fn record(name: &str) -> WorkspaceRecord {
     WorkspaceRecord::new(
         WorkspaceId::new(name).unwrap(),
         UserId::OWNER,
-        puddle_api::DisplayName::parse(name).unwrap(),
+        puddle_services::workspaces::DisplayName::parse(name).unwrap(),
         Vec::new(),
     )
 }

@@ -8,13 +8,13 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use puddle_secrets::StoredId;
 
-use crate::ApiErrorBody;
 use crate::authz::Principal;
-use crate::credentials::Check;
-use crate::error::ApiError;
 use crate::extract::Path;
 use crate::routes::AppState;
-use crate::wire::{
+use puddle_services::credentials::Check;
+use puddle_services::error::ApiError;
+use puddle_services::error::ApiErrorBody;
+use puddle_services::wire::{
     CheckRequest, CheckResult, CredentialSource, FoundAccount, FoundAccounts, FoundProblem,
     FoundVia, SignInRequest, SignInStarted, StoreTokenRequest, StoredToken,
 };
@@ -45,7 +45,7 @@ pub(crate) async fn found_accounts(
             .iter()
             .map(|(listing, err)| FoundProblem {
                 via: FoundVia::from_listing(*listing),
-                message: crate::wire::source_problem(err),
+                message: puddle_services::wire::source_problem(err),
             })
             .collect(),
     }))

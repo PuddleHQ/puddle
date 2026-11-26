@@ -171,10 +171,10 @@ async fn without_a_ports_service_every_call_says_it_is_unavailable() {
     let clock = Arc::new(ManualClock::new(START_MS));
     let events = Arc::new(EventHub::default());
     let store = Arc::new(Store::open_in_memory(clock.clone(), Limits::default()).unwrap());
-    let workspaces = puddle_api::FakeWorkspaces::with_options(
+    let workspaces = puddle_services::fake_workspaces::FakeWorkspaces::with_options(
         events.clone(),
         clock.clone(),
-        Arc::new(puddle_api::FakeLauncher::new()),
+        Arc::new(puddle_services::fake_workspaces::FakeLauncher::new()),
         std::time::Duration::ZERO,
     );
     let services = Services::new(store, Arc::new(MemorySettings::default()), events, clock)

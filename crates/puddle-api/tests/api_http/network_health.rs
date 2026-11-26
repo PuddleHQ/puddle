@@ -5,11 +5,12 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use puddle_api::{
-    FakeNetworkHealth, HostNetworkHealth, PullProxyState, forward_network_changes,
-    forward_proxy_sign_in_failures,
-};
 use puddle_certs::{CorporateRoots, SOURCES, StoreSnapshot};
+use puddle_services::{
+    network_health::FakeNetworkHealth, network_health::HostNetworkHealth,
+    network_health::PullProxyState, network_health::forward_network_changes,
+    network_health::forward_proxy_sign_in_failures,
+};
 use puddle_store::ManualClock;
 use puddle_types::fixture::{assert_absent, canary, password};
 use puddle_upstream::{
@@ -60,7 +61,7 @@ async fn the_fake_serves_a_direct_machine_stamped_with_the_clock_until_it_is_tol
     );
 
     let mut changed = serde_json::from_value(body).unwrap();
-    let report: &mut puddle_api::wire::NetworkHealth = &mut changed;
+    let report: &mut puddle_services::wire::NetworkHealth = &mut changed;
     report.proxy.https_proxy = Some("proxy.corp:8080".into());
     fake.set(changed);
     clock.advance(5);

@@ -1027,7 +1027,7 @@ async fn a_delete_waits_for_a_settings_change_in_flight_so_it_cannot_bring_the_f
     let in_flight = host.settings().lock().await;
     // Straight to the service: the HTTP route reads settings under the same lock.
     let id = WorkspaceId::new("acme").unwrap();
-    puddle_api::WorkspaceService::delete(host.workspaces(), &id, None)
+    puddle_services::workspaces::WorkspaceService::delete(host.workspaces(), &id, None)
         .await
         .unwrap();
     // Everything but the settings file goes; that waits on the change in flight.

@@ -5,9 +5,9 @@
 use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
-use puddle_api::wire::{PortEntry, WorkspacePorts};
-use puddle_api::{PortsService, PortsServiceError};
 use puddle_ports::{Pin, Pins, PinsError, PortRow, Ports, PortsError};
+use puddle_services::wire::{PortEntry, WorkspacePorts};
+use puddle_services::{ports::PortsService, ports::PortsServiceError};
 use puddle_store::{PinnedPort, Store};
 use puddle_types::WorkspaceId;
 

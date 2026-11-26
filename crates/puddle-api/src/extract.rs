@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! axum extractors whose rejections are [`ApiErrorBody`](crate::ApiErrorBody) JSON like every
+//! axum extractors whose rejections are [`ApiErrorBody`](puddle_services::error::ApiErrorBody) JSON like every
 //! other error, instead of axum's plain-text ones.
 
 use axum::RequestExt as _;
@@ -11,7 +11,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use zeroize::Zeroizing;
 
-use crate::error::{ApiError, ErrorCode};
+use puddle_services::error::{ApiError, ErrorCode};
 
 /// A JSON object body (`Content-Type: application/json` required). Anything but an object is
 /// refused, so serde can't read a struct from an array.

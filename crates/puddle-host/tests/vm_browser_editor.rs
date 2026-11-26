@@ -30,11 +30,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
-use puddle_api::{
-    BrowserTarget, CONNECTION_TOKEN_COOKIE, DesktopTarget, EditorSignIn, LaunchError, Launcher,
-    WorkspaceRecord,
-};
 use puddle_compute_msb::MsbRuntime;
+use puddle_services::{
+    workspaces::BrowserTarget, workspaces::CONNECTION_TOKEN_COOKIE, workspaces::DesktopTarget,
+    workspaces::EditorSignIn, workspaces::LaunchError, workspaces::Launcher,
+    workspaces::WorkspaceRecord,
+};
 use puddle_store::{Actor, Effect, NewRule, Pattern, Scope};
 use puddle_types::WorkspaceId;
 use puddle_vm_tests::{BrowserClient, BrowserCookie, BrowserSession, PageId, PageRequest};

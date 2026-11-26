@@ -7,11 +7,11 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 
-use crate::ApiErrorBody;
-use crate::credential_store::CredentialStoreService;
-use crate::error::{ApiError, ErrorCode};
 use crate::routes::AppState;
-use crate::wire::CredentialStoreRetry;
+use puddle_services::credential_store::CredentialStoreService;
+use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, ErrorCode};
+use puddle_services::wire::CredentialStoreRetry;
 
 /// Connects to the credential store again and checks that it takes a write. The
 /// `credential-store` problem in `GET /api/problems` is raised or cleared to match, and

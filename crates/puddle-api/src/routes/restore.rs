@@ -13,12 +13,12 @@ use futures_util::StreamExt as _;
 use puddle_secrets::StoredId;
 use puddle_types::{WorkspaceId, WorkspaceStatus};
 
-use crate::ApiErrorBody;
-use crate::error::ApiError;
 use crate::extract::Path as UrlPath;
-use crate::restore::RestoreFacts;
 use crate::routes::AppState;
-use crate::wire::{
+use puddle_services::error::ApiError;
+use puddle_services::error::ApiErrorBody;
+use puddle_services::restore::RestoreFacts;
+use puddle_services::wire::{
     RestoreApplied, RestoreApplyRequest, RestoreDisk, RestoreIdentityToken, RestorePreview,
     RestoreResultView, RestoreSecret, RestoreWorkspace, SafetyCopyList,
 };

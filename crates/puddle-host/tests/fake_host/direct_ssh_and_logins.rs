@@ -84,7 +84,7 @@ async fn a_desktop_attach_with_unreadable_settings_says_so_instead_of_blaming_th
         .workspaces()
         .attach(
             &WorkspaceId::new("acme").unwrap(),
-            puddle_api::AttachMode::Desktop,
+            puddle_services::workspaces::AttachMode::Desktop,
         )
         .await
         .unwrap();

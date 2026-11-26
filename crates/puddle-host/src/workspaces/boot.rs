@@ -4,9 +4,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use puddle_api::{StartFolder, WorkspaceRecord};
 use puddle_boot::{Gate, GatedSandbox};
 use puddle_compute::{DiskSize, ExecRequest, ImageConfig, Runtime, Sandbox as _};
+use puddle_services::{workspaces::StartFolder, workspaces::WorkspaceRecord};
 use puddle_types::{
     CheckoutDir, GuestEnv, GuestFile, GuestPath, Problem, SessionUser, WorkspaceId, WorkspaceStep,
 };

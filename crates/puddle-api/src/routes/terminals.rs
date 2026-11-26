@@ -17,14 +17,14 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 use utoipa::ToSchema;
 
-use crate::ApiErrorBody;
 use crate::auth::ReachedPublicly;
 use crate::authz::{Principal, Via};
-use crate::error::{ApiError, ErrorCode};
 use crate::extract::{Json as BodyJson, Path};
 use crate::routes::AppState;
 use crate::routes::workspaces::named;
-use crate::terminals::{
+use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, ErrorCode};
+use puddle_services::terminals::{
     EndReason, MAX_MESSAGE_BYTES, SUBPROTOCOL, TerminalEnd, TerminalError, TerminalInput,
     TerminalLink, TerminalOutput, TerminalSize,
 };

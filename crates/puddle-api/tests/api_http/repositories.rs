@@ -2,8 +2,11 @@
 //! A workspace's checkouts and the calls that add, manage and remove its repositories, over real
 //! HTTP against `FakeWorkspaces`: every refusal of API-56 and what API-57 lists.
 
-use puddle_api::DisplayName;
-use puddle_api::{Found, FoundList, RemoteNote, RepoUrl, Repository, Unsaved, WorkspaceRecord};
+use puddle_services::workspaces::DisplayName;
+use puddle_services::{
+    checkouts::Found, checkouts::FoundList, checkouts::RemoteNote, fake_workspaces::Unsaved,
+    workspaces::RepoUrl, workspaces::Repository, workspaces::WorkspaceRecord,
+};
 use puddle_store::UserId;
 use puddle_types::{CheckoutDir, EntryId, WorkspaceId, WorkspaceStatus};
 use serde_json::{Value, json};

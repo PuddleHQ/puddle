@@ -7,9 +7,9 @@ use axum::extract::State;
 use puddle_store::Role;
 
 use crate::authz::{self, Principal};
-use crate::error::ApiError;
 use crate::routes::AppState;
-use crate::wire::ProblemList;
+use puddle_services::error::ApiError;
+use puddle_services::wire::ProblemList;
 
 /// What Puddle did on its own that failed and has not been put right: a sweep that could not
 /// write, a clean-up that left something behind, a step at start-up that did not finish. Each

@@ -31,17 +31,19 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 use puddle_agent_proto::editor::{EditorServer, NEEDS_GLIBC};
 use puddle_agent_proto::forward::OpenError;
-use puddle_api::{
-    DeleteCheck, DisplayName, EditorLogin, GitSetup, KeptLogin, LaunchError, Launcher, Listing,
-    LocalCheckoutError, Operation, RepoFindings, Repository, StartFolder, WorkspaceError,
-    WorkspaceRecord, not_found,
-};
 use puddle_boot::{Gate, GatedSandbox};
 use puddle_ca::CaCertificate;
 use puddle_compute::{ComputeError, ImageConfig, Runtime};
 use puddle_lifecycle::Lifecycle;
 use puddle_ports::{NoLink, Ports};
 use puddle_proxy::Route;
+use puddle_services::{
+    workspaces::DeleteCheck, workspaces::DisplayName, workspaces::EditorLogin,
+    workspaces::GitSetup, workspaces::KeptLogin, workspaces::LaunchError, workspaces::Launcher,
+    workspaces::Listing, workspaces::LocalCheckoutError, workspaces::Operation,
+    workspaces::RepoFindings, workspaces::Repository, workspaces::StartFolder,
+    workspaces::WorkspaceError, workspaces::WorkspaceRecord, workspaces::not_found,
+};
 use puddle_ssh::SshEndpoint;
 use puddle_store::{AllUsers, Clock, Store};
 use puddle_types::{
@@ -159,7 +161,7 @@ pub(crate) struct Parts<R: Runtime + Clone> {
     pub(crate) front_guests: Arc<dyn puddle_front::Guests>,
     pub(crate) front_halves: Arc<dyn puddle_front::ServerHalves>,
     /// Where new workspace ids come from.
-    pub(crate) ids: Arc<dyn puddle_api::IdSource>,
+    pub(crate) ids: Arc<dyn puddle_services::workspaces::IdSource>,
     /// The folder of the login markers, which a new id must not find one of its own in.
     pub(crate) login_markers: std::path::PathBuf,
     /// The free space of the drive that holds Puddle's data: the one a root disk grows into.
@@ -354,7 +356,7 @@ struct Inner<R: Runtime + Clone> {
     front_addr: std::net::SocketAddr,
     front_guests: Arc<dyn puddle_front::Guests>,
     front_halves: Arc<dyn puddle_front::ServerHalves>,
-    ids: Arc<dyn puddle_api::IdSource>,
+    ids: Arc<dyn puddle_services::workspaces::IdSource>,
     login_markers: std::path::PathBuf,
     space: Arc<dyn crate::Space>,
     state: Mutex<State>,

@@ -13,13 +13,12 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
-use puddle_api::{
-    ConnectionFileError, ConnectionInfo, EventHub, ServeError, SettingsRepo, WorkspaceService,
-};
+use puddle_api::{ConnectionFileError, ConnectionInfo, EventHub, ServeError, SettingsRepo};
 use puddle_host::{
     Host, HostConfig, HostError, HostOptions, HostShutdown, MsbFactory, Platform, Prepared,
     RuntimeFactory, prepare,
 };
+use puddle_services::workspaces::WorkspaceService;
 use puddle_store::Store;
 use puddle_types::{Problems, WorkspaceId};
 use tokio::sync::Mutex;

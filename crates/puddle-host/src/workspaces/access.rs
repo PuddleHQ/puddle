@@ -4,11 +4,13 @@
 use std::sync::Arc;
 
 use puddle_agent_proto::editor::{EDITOR_DEFAULTS_GUEST, EditorDefaults, ServerKind};
-use puddle_api::{
-    Attached, BrowserTarget, DesktopTarget, EditorLogin, EditorSignIn, OpenTarget, WorkspaceRecord,
-};
 use puddle_boot::GatedSandbox;
 use puddle_compute::{ComputeError, Runtime};
+use puddle_services::{
+    workspaces::Attached, workspaces::BrowserTarget, workspaces::DesktopTarget,
+    workspaces::EditorLogin, workspaces::EditorSignIn, workspaces::OpenTarget,
+    workspaces::WorkspaceRecord,
+};
 use puddle_settings::{Effective, ReconnectionGrace, ServerChoice, resolve};
 use puddle_ssh::SshEndpoint;
 use puddle_types::{GuestFile, Problem, SessionUser, WorkspaceId, guest_path};

@@ -8,13 +8,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use puddle_api::{
-    ApiConfig, ApiServer, ApiToken, BackupService, CredentialService, DevCertService,
-    DoctorService, EventHub, FakeCredentials, FakeLauncher, FakeLearned, FakePorts,
-    FakeProxySignIns, FakeRepos, FakeTerminals, FakeWorkspaces, MemorySettings,
-    NetworkHealthService, NoNames, RestoreService, RunningApi, Services,
+    ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, NoNames, RunningApi, Services,
 };
 use puddle_netpolicy::CompanySignals;
 use puddle_secrets::MemoryStore;
+use puddle_services::{
+    backup::BackupService, credentials::CredentialService, credentials::FakeCredentials,
+    dev_cert::DevCertService, doctor::DoctorService, fake_workspaces::FakeLauncher,
+    fake_workspaces::FakeWorkspaces, learned::FakeLearned, network_health::NetworkHealthService,
+    ports::FakePorts, proxy_sign_in::FakeProxySignIns, repos::FakeRepos, restore::RestoreService,
+    terminals::FakeTerminals,
+};
 use puddle_store::{Limits, ManualClock, Store};
 use puddle_types::{EgressRequest, Host, PendingId, SuffixAllows, WorkspaceId};
 use serde_json::Value;

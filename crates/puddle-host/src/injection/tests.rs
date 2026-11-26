@@ -476,7 +476,7 @@ async fn the_switch_and_the_never_decrypt_names_apply_to_the_running_workspace_a
 
 #[tokio::test]
 async fn a_host_a_tool_refused_is_announced_with_its_count_and_listed_with_its_history() {
-    use puddle_api::LearnedService;
+    use puddle_services::learned::LearnedService;
 
     let store = store();
     let (injection, terminations, _, events) = injection_with_events(&store);
@@ -570,7 +570,7 @@ async fn a_host_a_tool_refused_is_announced_with_its_count_and_listed_with_its_h
 
 #[tokio::test]
 async fn a_store_that_cannot_keep_the_history_still_passes_the_host_through_and_lists_it() {
-    use puddle_api::LearnedService;
+    use puddle_services::learned::LearnedService;
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("puddle.db");
@@ -629,7 +629,7 @@ async fn a_store_that_cannot_keep_the_history_still_passes_the_host_through_and_
 
 #[tokio::test]
 async fn the_history_of_a_refused_host_outlives_the_workspace_run_but_the_pass_through_does_not() {
-    use puddle_api::LearnedService;
+    use puddle_services::learned::LearnedService;
 
     let store = store();
     let (injection, terminations) = injection(&store);

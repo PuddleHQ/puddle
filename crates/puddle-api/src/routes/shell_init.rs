@@ -12,13 +12,13 @@ use axum::http::StatusCode;
 use puddle_store::{ShellInit, ShellInitText};
 use puddle_types::WorkspaceId;
 
-use crate::ApiErrorBody;
-use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
 use crate::routes::workspaces::named;
-use crate::wire::{ShellInitRequest, ShellInitSaved, ShellInitView};
-use crate::workspaces::ShellInitCheck;
+use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, blocking};
+use puddle_services::wire::{ShellInitRequest, ShellInitSaved, ShellInitView};
+use puddle_services::workspaces::ShellInitCheck;
 
 fn view(workspace: &WorkspaceId, saved: Option<ShellInit>) -> ShellInitView {
     ShellInitView {

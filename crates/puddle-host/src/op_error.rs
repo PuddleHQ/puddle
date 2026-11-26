@@ -6,7 +6,7 @@
 //! and the next step where there is one. A caller that needs to tell causes apart matches on the
 //! variant; one that only reports calls `to_string`.
 
-use puddle_api::WorkspaceError;
+use puddle_services::workspaces::WorkspaceError;
 use puddle_types::WorkspaceId;
 
 use crate::boot::BootInputError;

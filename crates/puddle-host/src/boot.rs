@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 
 use puddle_agent_proto::editor::{EditorServer, MicrosoftOptions, ServerKind};
-use puddle_api::StartFolder;
 use puddle_boot::{
     BootHook, BootPlan, GitIdentity, with_boot_mounts, with_code_server_mount, write_assets,
 };
@@ -19,6 +18,7 @@ use puddle_guest_env::{
 };
 use puddle_ipc::{IpcError, IpcRoot};
 use puddle_proxy::{Proxy, Route};
+use puddle_services::workspaces::StartFolder;
 use puddle_settings::MiseMode;
 use puddle_store::Store;
 use puddle_types::{

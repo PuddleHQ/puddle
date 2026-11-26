@@ -14,6 +14,7 @@ publish.workspace = true
 dunce = { workspace = true }
 microsandbox = { workspace = true }
 microsandbox-image = { workspace = true }
+oci-client = { workspace = true }
 puddle-compute = { workspace = true }
 puddle-fs = { workspace = true }
 puddle-runtime = { workspace = true }
@@ -40,6 +41,7 @@ puddle-netpolicy = { workspace = true }
 puddle-proxy = { workspace = true, features = ["testing"] }
 puddle-test-kit = { workspace = true }
 puddle-vm-tests = { workspace = true }
+reqwest = { workspace = true }
 rusqlite = { workspace = true }
 sha2 = { workspace = true }
 tempfile = { workspace = true }

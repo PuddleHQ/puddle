@@ -17,8 +17,9 @@ use microsandbox::LocalBackend;
 use microsandbox::config::RegistryOptions;
 use microsandbox_image::PullProgress as MsbPull;
 use microsandbox_image::{
-    GlobalCache, Platform, PullOptions, Reference, Registry, progress_channel,
+    GlobalCache, ImageError, Platform, PullOptions, Reference, Registry, progress_channel,
 };
+use oci_client::errors::OciDistributionError;
 use puddle_compute::{ComputeError, ImageConfig, PullPhase, PullProgress, PullReport};
 use puddle_types::ImageRef;
 use tokio::task::JoinHandle;
@@ -61,7 +62,7 @@ pub(crate) async fn pull(
     let result = match report {
         None => Box::pin(registry.pull(&reference, &options))
             .await
-            .map_err(|e| fail(explain_connect(chain(&e), reference.registry())))?,
+            .map_err(|e| fail(explain_connect(&e, reference.registry())))?,
         Some(report) => {
             // The pull runs on its own task so this one can read its progress; dropping this
             // future (a cancelled create) ends the task, as it ended the pull before.
@@ -76,7 +77,7 @@ pub(crate) async fn pull(
             (&mut task.0)
                 .await
                 .map_err(|e| fail(format!("the download task ended: {e}")))?
-                .map_err(|e| fail(explain_connect(chain(&e), reference.registry())))?
+                .map_err(|e| fail(explain_connect(&e, reference.registry())))?
         }
     };
     Ok(convert(result.config))
@@ -184,19 +185,19 @@ fn chain(err: &dyn std::error::Error) -> String {
     text
 }
 
-/// What the registry client says when it could not open a connection (a refused or swallowed
-/// route, a proxy that refused the tunnel): `client error (Connect)`. The pull proxy's own text
-/// for it ("could not connect to host:port") does not survive the client, which keeps only
-/// "tunnel error: unsuccessful", so the reason says in plain words what happened and to whom.
-const CONNECT_FAILED: &str = "client error (Connect)";
-
-/// `reason` with a lead that says Puddle could not connect to `registry`, when the client's own
-/// text says the connection was never made; any other reason is left as it is.
-fn explain_connect(reason: String, registry: &str) -> String {
-    if reason.contains(CONNECT_FAILED) {
-        format!("could not connect to {registry}: {reason}")
-    } else {
-        reason
+/// `err`'s text, led by a line that says Puddle could not connect to `registry` when the client
+/// reports that the connection was never made (a refused or swallowed route, a proxy that refused
+/// the tunnel); any other error keeps its own text. The pull proxy's 502 text ("could not connect
+/// to host:port") cannot reach this far: the client's tunnel reads only the status of the proxy's
+/// answer and drops its reason phrase and body (hyper-util's `TunnelUnsuccessful`), so this lead
+/// is the only place the user's text can say it.
+fn explain_connect(err: &ImageError, registry: &str) -> String {
+    let reason = chain(err);
+    match err {
+        ImageError::Registry(OciDistributionError::RequestError(e)) if e.is_connect() => {
+            format!("could not connect to {registry}: {reason}")
+        }
+        _ => reason,
     }
 }
 

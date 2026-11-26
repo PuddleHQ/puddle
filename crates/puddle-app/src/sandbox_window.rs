@@ -220,8 +220,9 @@ fn classify(policy: &OriginPolicy, target: &Url, proxy_links: bool) -> NewWindow
 #[must_use]
 pub fn permission_response(settings: &WindowSettings, kind: &PermissionKind) -> PermissionResponse {
     match (kind, settings.clipboard_read) {
-        (PermissionKind::LocalFonts, _) => PermissionResponse::Allow,
-        (PermissionKind::ClipboardRead, ClipboardRead::Allow) => PermissionResponse::Allow,
+        (PermissionKind::LocalFonts, _) | (PermissionKind::ClipboardRead, ClipboardRead::Allow) => {
+            PermissionResponse::Allow
+        }
         (PermissionKind::ClipboardRead, ClipboardRead::Deny) => PermissionResponse::Deny,
         _ => PermissionResponse::Default,
     }

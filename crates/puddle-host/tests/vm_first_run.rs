@@ -3,8 +3,8 @@
 //! API the app window talks to: the system check boots a test machine (`GET /api/doctor`), then
 //! three workspaces are created at once, each is its own running machine, and all three stop at once.
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::collections::BTreeSet;
 use std::time::Duration;

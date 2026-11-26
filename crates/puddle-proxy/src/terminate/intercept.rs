@@ -15,9 +15,10 @@
 
 use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use puddle_types::{Host, PassThroughCode};
+use tokio::time::Instant;
 
 use super::TerminationSet;
 

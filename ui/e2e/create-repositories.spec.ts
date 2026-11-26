@@ -455,7 +455,7 @@ test.describe("the host note", () => {
     page,
     backend,
   }) => {
-    // A short window and three rows keep the dialog scrolled, as it is on a small screen; the note's
+    // A short window and three rows keep the screen scrolled, as it is on a small screen; the note's
     // answer (a line fewer once a host is gone) comes 300 ms after the change, while the press
     // that removes a row is still under way.
     await page.setViewportSize({ width: 1280, height: 640 });
@@ -469,12 +469,18 @@ test.describe("the host note", () => {
     await expect(dialog.getByTestId("hosts-new")).toContainText("gitlab.com");
     const remove = (n: number) =>
       rowOf(page, n).getByRole("button", { name: `Remove repository ${n}` });
+    // The form is a screen now, so the page scrolls, not the form: scroll whatever holds it.
     const toEnd = () =>
       dialog.evaluate((el) => {
-        el.scrollTop = el.scrollHeight;
+        el.lastElementChild?.scrollIntoView({ block: "end" });
       });
     const scrolls = () =>
-      dialog.evaluate((el) => el.scrollHeight > el.clientHeight);
+      dialog.evaluate((el) => {
+        for (let n = el.parentElement; n; n = n.parentElement) {
+          if (n.scrollTop > 0) return true;
+        }
+        return false;
+      });
     await toEnd();
     await expect.poll(scrolls).toBe(true);
 

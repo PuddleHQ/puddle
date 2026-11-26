@@ -23,8 +23,8 @@
     )
 )]
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::process::ExitCode;
 

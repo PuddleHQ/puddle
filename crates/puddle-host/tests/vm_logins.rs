@@ -19,8 +19,8 @@
     reason = "VM test: a failed step fails the test"
 )]
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::sync::Arc;
 use std::time::Duration;

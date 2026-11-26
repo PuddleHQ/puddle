@@ -24,9 +24,9 @@
 )]
 
 #[cfg(windows)]
-mod support;
+use puddle_host_test_support::support;
 #[cfg(windows)]
-mod vm_support;
+use puddle_host_test_support::vm_support;
 
 use std::process::ExitCode;
 

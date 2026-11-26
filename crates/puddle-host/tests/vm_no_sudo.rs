@@ -4,8 +4,8 @@
 //! with the way out. Switching the session user to root and starting again ends the problem.
 #![cfg(target_os = "linux")]
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::time::Duration;
 

@@ -12,6 +12,8 @@ ship puddle-app
 # The binary the daily freshness workflow builds and runs.
 ship puddle-freshness
 test-only puddle-e2e
+test-only puddle-compute-msb-test-support
+test-only puddle-host-test-support
 test-only puddle-proxy-test-support
 test-only puddle-test-kit
 test-only puddle-vm-tests

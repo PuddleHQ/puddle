@@ -79,6 +79,7 @@ fn the_summary_reads_each_hour_and_the_end() {
     let sched = Schedule {
         start: 1000,
         active_secs: 480,
+        idle_secs: 120,
         hour: 60,
     };
     let text = summary(&s, sched, "0 finding(s)\n");

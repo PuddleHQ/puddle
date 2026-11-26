@@ -193,7 +193,10 @@ fn vm_full_host_disk_stops_guest_writes_without_harming_other_files_and_recovers
 #[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 async fn host_disk_fills_and_recovers(mount: PathBuf) {
     let net = github_internet(support::named_id_options()).await;
-    let vm = start_vm_host_platform("fulh", net.options.clone(), &net.platform, |c| {
+    // Hermetic options fake the free space at 512 GiB; this test is about the real drive.
+    let mut options = net.options.clone();
+    options.free_space = None;
+    let vm = start_vm_host_platform("fulh", options, &net.platform, |c| {
         quick_reads(c);
         c.workspaces.default_size = DiskSize::gib(3);
     })

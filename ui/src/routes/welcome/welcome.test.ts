@@ -186,6 +186,15 @@ describe("the flow's frame", () => {
   });
 });
 
+/** Presses "Skip setup" and confirms the question that follows. */
+async function skipSetup() {
+  await fireEvent.click(screen.getByRole("button", { name: "Skip setup" }));
+  const dialog = await screen.findByRole("alertdialog");
+  await fireEvent.click(
+    within(dialog).getByRole("button", { name: "Skip setup" }),
+  );
+}
+
 describe("welcome step", () => {
   it("greets, and goes on to the system check", () => {
     render(Welcome);
@@ -205,9 +214,20 @@ describe("welcome step", () => {
     ).toHaveAttribute("href", "/welcome/import");
   });
 
-  it("skipping the setup records it and opens the workspace list", async () => {
+  it("asks before skipping, and leaving the question changes nothing", async () => {
     render(Welcome);
     await fireEvent.click(screen.getByRole("button", { name: "Skip setup" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent("Skip the rest of the setup?");
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(h.firstRun.bodies).toEqual([]);
+    expect(nav.goto).not.toHaveBeenCalled();
+  });
+
+  it("skipping the setup records it and opens the workspace list", async () => {
+    render(Welcome);
+    await skipSetup();
     await waitFor(() => expect(nav.goto).toHaveBeenCalledWith("/workspaces"));
     expect(h.firstRun.bodies).toEqual([{ completed: true }]);
     expect(h.firstRun.state.completed).toBe(true);
@@ -216,7 +236,7 @@ describe("welcome step", () => {
 
   it("skipping the setup takes the recommended interception mode when none was chosen", async () => {
     render(Welcome);
-    await fireEvent.click(screen.getByRole("button", { name: "Skip setup" }));
+    await skipSetup();
     await waitFor(() => expect(nav.goto).toHaveBeenCalledWith("/workspaces"));
     expect(h.interception.view.mode).toBe("all_except_curated");
     expect(h.interception.view.chosen).toBe(true);
@@ -230,7 +250,7 @@ describe("welcome step", () => {
       notice_seen: true,
     };
     render(Welcome);
-    await fireEvent.click(screen.getByRole("button", { name: "Skip setup" }));
+    await skipSetup();
     await waitFor(() => expect(nav.goto).toHaveBeenCalledWith("/workspaces"));
     expect(h.interception.view.mode).toBe("all");
     expect(h.interception.bodies).toEqual([]);
@@ -239,7 +259,7 @@ describe("welcome step", () => {
   it("opens the workspace list even when it could not keep that, and says so", async () => {
     h.firstRun.refusePut = true;
     render(Welcome);
-    await fireEvent.click(screen.getByRole("button", { name: "Skip setup" }));
+    await skipSetup();
     await waitFor(() => expect(nav.goto).toHaveBeenCalledWith("/workspaces"));
     expect(toasts.items[0]?.message).toMatch(
       /newer Puddle.*may show again next time/,
@@ -455,7 +475,7 @@ describe("interception step", () => {
   it("saves the chosen mode and goes to the next step", async () => {
     render(Interception);
     await screen.findByRole("group", { name: "Interception" });
-    await fireEvent.click(radio(/^Read all HTTPS traffic/));
+    await fireEvent.click(radio(/^All HTTPS traffic/));
     await fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await waitFor(() => expect(nav.goto).toHaveBeenCalledWith("/welcome/look"));
     expect(h.interception.bodies).toEqual([{ mode: "all" }]);
@@ -470,7 +490,7 @@ describe("interception step", () => {
     render(Interception);
     await screen.findByRole("group", { name: "Interception" });
     await waitFor(() =>
-      expect(radio(/only where a rule needs it/)).toBeChecked(),
+      expect(radio(/^Only where a rule needs it/)).toBeChecked(),
     );
   });
 

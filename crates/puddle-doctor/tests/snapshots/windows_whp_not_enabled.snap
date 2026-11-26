@@ -1,7 +1,7 @@
 puddle doctor (puddle 0.1.0, windows x86_64)
 
-ok    CPU virtualization    on in firmware
-FAIL  Hypervisor            Windows Hypervisor Platform is off
+ok    CPU virtualization          on in firmware
+FAIL  Hypervisor                  Windows Hypervisor Platform is off
       impact: Puddle can't start any workspace: the Windows Hypervisor Platform feature is off.
       remedy: Turn on Windows Hypervisor Platform in the optional Windows features, then restart
               Windows.
@@ -11,21 +11,21 @@ FAIL  Hypervisor            Windows Hypervisor Platform is off
               features > Windows Hypervisor Platform.) Virtual Machine Platform, which WSL2 uses,
               is a different feature.
       from:   WinHvPlatform.dll: The specified module could not be found. (os error 126)
-ok    Code integrity        memory integrity (HVCI) on; App Control policy for programs off
-ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
-FAIL  Runtime starts        msb can't load a DLL it needs (0xC0000135)
+ok    Code integrity              memory integrity (HVCI) on; App Control policy for programs off
+ok    Bundled runtime             msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
+FAIL  Runtime starts              msb can't load a DLL it needs (0xC0000135)
       impact: Puddle can't start any workspace: a Windows file its runtime needs is missing.
       remedy: Fix the Hypervisor line if it failed, then reinstall Puddle and run Windows Update.
       fix:    msb links the Windows Hypervisor Platform's DLL: fix "Hypervisor" above first.
-skip  Test boot             not checked: no usable hypervisor
+skip  Test boot                   not checked: no usable hypervisor
       impact: Not checked, so Puddle can't tell yet whether a workspace can start here.
       remedy: Fix any problem above, then check again.
-ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
-ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
-ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)
-ok    Azure CLI (az)        version 2.64.0
-ok    Credential store      the operating system's credential store: a test write and delete worked
-ok    Global Secure Access  client not installed
+ok    Disk space                  120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
+ok    Disk encryption             data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
+ok    SSH agent                   the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)
+ok    Azure CLI (az)              version 2.64.0
+ok    Credential store            the operating system's credential store: a test write and delete worked
+ok    Known problematic software  none found
 
 2 problems to fix before Puddle can run sandboxes. (1.2 s)
 
@@ -112,10 +112,10 @@ ok    Global Secure Access  client not installed
       "impact": "Puddle keeps your tokens and passwords in a protected store, so you don't type them again."
     },
     {
-      "id": "global_secure_access",
+      "id": "problematic_software",
       "status": "ok",
-      "summary": "client not installed",
-      "impact": "Rules out a known reason for company sites to fail from a workspace: the Global Secure Access client."
+      "summary": "none found",
+      "impact": "Rules out programs known to keep workspaces from working as expected, such as company network clients."
     }
   ],
   "elapsed_ms": 1234

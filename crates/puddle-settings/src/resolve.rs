@@ -115,7 +115,7 @@ impl Effective {
         wildcards_reach_local: default(false),
         reconnection_grace: default(ReconnectionGrace::DEFAULT),
         zoom_hotkeys: default(true),
-        clipboard_read: default(ClipboardRead::Ask),
+        clipboard_read: default(ClipboardRead::Allow),
         direct_ssh: default(false),
         capture_logins: default(true),
         warn_foreign_credentials: default(true),

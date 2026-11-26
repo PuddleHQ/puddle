@@ -5,7 +5,7 @@
 use std::io;
 use std::path::Path;
 
-use crate::facts::{AgentService, CodeIntegrityFacts, GsaFacts, JobFacts};
+use crate::facts::{AgentService, CodeIntegrityFacts, JobFacts, SoftwareFacts};
 
 /// Hypervisor facts for a Unix that is neither Linux nor macOS: no API is known.
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -26,7 +26,7 @@ pub(crate) fn job() -> Option<JobFacts> {
     None
 }
 
-pub(crate) fn global_secure_access() -> Option<GsaFacts> {
+pub(crate) fn problematic_software() -> Option<Vec<SoftwareFacts>> {
     None
 }
 

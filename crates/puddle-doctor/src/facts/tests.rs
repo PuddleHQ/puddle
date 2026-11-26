@@ -4,26 +4,26 @@ use ServiceState::{Missing, Running, Stopped, Unreadable};
 
 #[test]
 fn gsa_state_from_its_services() {
-    let installed = |running| GsaFacts::Installed { running };
-    assert_eq!(GsaFacts::from_services([]), GsaFacts::NotInstalled);
+    let installed = |running| InstallState::Installed { running };
+    assert_eq!(InstallState::from_services([]), InstallState::NotInstalled);
     assert_eq!(
-        GsaFacts::from_services([Missing, Missing]),
-        GsaFacts::NotInstalled
+        InstallState::from_services([Missing, Missing]),
+        InstallState::NotInstalled
     );
     assert_eq!(
-        GsaFacts::from_services([Missing, Stopped]),
+        InstallState::from_services([Missing, Stopped]),
         installed(Some(false))
     );
     assert_eq!(
-        GsaFacts::from_services([Stopped, Running, Unreadable]),
+        InstallState::from_services([Stopped, Running, Unreadable]),
         installed(Some(true))
     );
     // An unreadable service might be the running one: "not running" would be a guess.
     assert_eq!(
-        GsaFacts::from_services([Stopped, Unreadable, Missing]),
+        InstallState::from_services([Stopped, Unreadable, Missing]),
         installed(None)
     );
-    assert_eq!(GsaFacts::from_services([Unreadable]), installed(None));
+    assert_eq!(InstallState::from_services([Unreadable]), installed(None));
 }
 
 #[test]

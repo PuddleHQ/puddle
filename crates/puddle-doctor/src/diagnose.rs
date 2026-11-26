@@ -10,9 +10,9 @@ use puddle_runtime::RuntimeError;
 use crate::facts::{
     AgentService, AzCliFacts, BlockedBy, BlockedFolder, BootFacts, CodeIntegrity,
     CodeIntegrityFacts, CredentialStoreFacts, DataEncryption, DataPathFacts, DiskEncryptionFacts,
-    DiskFacts, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Os, ProcessOutcome,
-    Protection, RuntimeFacts, RuntimeState, SealedKeyFacts, SshAgentFacts, SwapFacts, TpmFacts,
-    VaultFacts, WritableFolder,
+    DiskFacts, HypervisorApi, HypervisorFacts, InstallState, JobFacts, KeptLogs, Os,
+    ProcessOutcome, Protection, RuntimeFacts, RuntimeState, SealedKeyFacts, SoftwareFacts,
+    SshAgentFacts, SwapFacts, TpmFacts, VaultFacts, WritableFolder,
 };
 use puddle_secrets::{KeySourceTag, LoginSession, StoreHealth, Unseal};
 
@@ -41,8 +41,8 @@ pub trait Probe {
     fn boot(&self, limit: Duration) -> BootFacts;
     /// The job object this process runs in; `None` when in none (or not on Windows).
     fn job(&self) -> Option<JobFacts>;
-    /// The Global Secure Access client; `None` when not on Windows.
-    fn global_secure_access(&self) -> Option<GsaFacts>;
+    /// Whether each program of the known-problematic list is installed; `None` when not on Windows.
+    fn problematic_software(&self) -> Option<Vec<SoftwareFacts>>;
     /// The free space on the drive that holds Puddle's data.
     fn disk_space(&self) -> DiskFacts;
     /// The folders above Puddle's data folder; `None` where msb has no such rule (not Linux).
@@ -166,8 +166,8 @@ pub fn diagnose(probe: &dyn Probe, options: &Options, puddle_version: &str) -> R
     checks.push(az_cli(&probe.az_cli(AZ_CLI_LIMIT)));
     checks.push(credential_store(os, probe.credential_store()));
 
-    if let Some(gsa) = probe.global_secure_access() {
-        checks.push(global_secure_access(&gsa));
+    if let Some(software) = probe.problematic_software() {
+        checks.push(problematic_software(&software));
     }
     leave_out_moot(&mut checks);
     for check in &mut checks {
@@ -1576,45 +1576,80 @@ Git hosts need no agent."
     }
 }
 
-// ---- Global Secure Access ----
+// ---- Known problematic software ----
 
-fn global_secure_access(gsa: &GsaFacts) -> Check {
-    let id = CheckId::GlobalSecureAccess;
-    match gsa {
-        GsaFacts::NotInstalled => Check::new(id, Status::Ok, "client not installed"),
-        GsaFacts::Unknown { detail } => Check::new(
+fn problematic_software(found: &[SoftwareFacts]) -> Check {
+    let id = CheckId::ProblematicSoftware;
+    let installed: Vec<(&SoftwareFacts, Option<bool>)> = found
+        .iter()
+        .filter_map(|f| match f.state {
+            InstallState::Installed { running } => Some((f, running)),
+            _ => None,
+        })
+        .collect();
+    let unknown: Vec<(&SoftwareFacts, &str)> = found
+        .iter()
+        .filter_map(|f| match &f.state {
+            InstallState::Unknown { detail } => Some((f, detail.as_str())),
+            _ => None,
+        })
+        .collect();
+    if !installed.is_empty() {
+        let summary = installed
+            .iter()
+            .map(|(f, running)| {
+                format!(
+                    "{} installed ({})",
+                    f.software.name,
+                    match running {
+                        Some(true) => "running",
+                        Some(false) => "not running",
+                        None => "running state unknown",
+                    }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        let fix = installed
+            .iter()
+            .map(|(f, _)| {
+                format!(
+                    "{}: {} {}",
+                    f.software.name, f.software.why, f.software.remedy
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        return Check::new(id, Status::Warn, summary)
+            .finding(Finding::ProblematicSoftwareInstalled)
+            .fix(fix);
+    }
+    if !unknown.is_empty() {
+        let names = unknown
+            .iter()
+            .map(|(f, _)| f.software.name)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let detail = unknown
+            .iter()
+            .map(|(_, detail)| *detail)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Check::new(
             id,
             Status::Info,
-            "could not check whether the client is installed",
+            "could not check whether known problematic software is installed",
         )
-        .finding(Finding::GlobalSecureAccessUnknown)
-        .fix(
-            "Puddle works without it. If company resources reached through Microsoft Entra Global Secure \
-Access don't work from a sandbox, see whether its client is installed on this PC: it doesn't \
-tunnel virtual machines' traffic.",
-        )
-        .detail(detail.clone()),
-        GsaFacts::Installed { running } => Check::new(
-            id,
-            Status::Warn,
-            format!(
-                "Microsoft Entra Global Secure Access client installed ({})",
-                match running {
-                    Some(true) => "running",
-                    Some(false) => "not running",
-                    None => "running state unknown",
-                }
-            ),
-        )
-        .finding(Finding::GlobalSecureAccessInstalled)
-        .fix(
-            "Microsoft documents that this client doesn't tunnel virtual machines' traffic and isn't \
-supported on devices that host VMs. Sandboxes have no network of their own: their traffic \
-leaves through Puddle's proxy, an ordinary program on this PC, which the client handles like \
-any other app. If company resources reached through Global Secure Access don't work from a \
-sandbox, this limitation is the likely cause; Puddle can't change it.",
-        ),
+        .finding(Finding::ProblematicSoftwareUnknown)
+        .fix(format!(
+            "Puddle works without it. If workspaces misbehave, see whether this software is installed on \
+this computer: {names}."
+        ))
+        .detail(detail);
     }
+    Check::new(id, Status::Ok, "none found")
 }
 
 fn seconds(d: Duration) -> String {

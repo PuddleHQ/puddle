@@ -95,7 +95,7 @@ describe("the page order", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Settings, Git" })).toHaveAttribute(
       "href",
-      "/settings/editor-and-git",
+      "/settings/editor",
     );
   });
 

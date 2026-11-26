@@ -27,7 +27,7 @@ fn json_carries_the_schema_version_and_omits_empty_fields() {
 #[test]
 fn verdict_counts_problems_and_warnings() {
     let fail = Check::new(CheckId::Runtime, Status::Fail, "x");
-    let warn = Check::new(CheckId::GlobalSecureAccess, Status::Warn, "y");
+    let warn = Check::new(CheckId::ProblematicSoftware, Status::Warn, "y");
     assert!(
         report(vec![])
             .to_text()

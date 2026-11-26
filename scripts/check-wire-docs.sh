@@ -21,7 +21,7 @@ check() {
         case $f in crates/*.rs) ;; *) continue ;; esac
         [ -f "$f" ] || continue
         grep -q 'ToSchema' "$f" || continue
-        if git diff -U0 "$base" -- "$f" | grep -qE '^[-+][[:space:]]*//[/!]'; then bad="$bad $f"; fi
+        if grep -qE '^[-+][[:space:]]*//[/!]' <<<"$(git diff -U0 "$base" -- "$f")"; then bad="$bad $f"; fi
     done
     [ -n "$bad" ] || return 0
     local miss=""
@@ -52,7 +52,7 @@ if [ "${1:-}" = --self-test ]; then
     check "$base" || fail "a clean tree was flagged"
     sed -i 's|Old|New|' crates/a/plain.rs
     check "$base" || fail "a doc edit in a file with no wire type was flagged"
-    sed -i 's|^pub struct W|pub struct W2|' crates/a/wire.rs
+    sed -i 's|^pub struct W|pub struct Wide|' crates/a/wire.rs
     check "$base" || fail "a code edit in a wire file was flagged"
     sed -i 's|Old|New|' crates/a/wire.rs
     out=$(check "$base" 2>&1) && fail "a wire doc edit without the contract was not flagged"

@@ -78,6 +78,10 @@ puddle-compute-msb-test-support = { path = "crates/puddle-compute-msb-test-suppo
 microsandbox = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.8", default-features = false, features = ["local", "net", "ssh"] }
 # The SDK's image crate: the SDK has no public "pull without creating" call.
 microsandbox-image = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.8", default-features = false }
+# The registry client msb pulls with: the pull error is matched on its typed variants (a refused connect); the same release msb pins.
+oci-client = { version = "0.18", default-features = false }
+# Builds a real connect failure for the pull error tests; the same release oci-client pulls in.
+reqwest = { version = "0.13", default-features = false }
 # Only for building the SDK's boot error in tests.
 microsandbox-runtime = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.8", default-features = false }
 object = { version = "0.41", default-features = false }
@@ -123,7 +127,7 @@ tokio-yamux = { version = "0.3.20", default-features = false, features = ["tokio
 futures-util = { version = "0.3.31", default-features = false, features = ["std"] }
 libc = "0.2.172"
 # Interface listing for the guest agent (getifaddrs, if_nametoindex) without hand-written FFI.
-nix = { version = "0.31.3", default-features = false, features = ["net", "signal"] }
+nix = { version = "0.32.0", default-features = false, features = ["net", "signal"] }
 rustix = { version = "1.1.5", default-features = false, features = ["std", "process"] }
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "std"] }
 getrandom = "0.4"

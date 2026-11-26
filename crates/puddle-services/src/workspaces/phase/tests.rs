@@ -296,6 +296,14 @@ fn the_actions_of_a_workspace_are_the_ones_its_phase_admits() {
 }
 
 #[test]
+fn an_editor_or_terminal_for_a_busy_workspace_says_what_it_is_doing_not_that_it_is_stopped() {
+    let busy = record(S::Running, Some(Cloning));
+    says(&admit(&busy, Action::Attach), "web is busy (");
+    let shown = format!("{:?}", admit(&busy, Action::Attach));
+    assert!(!shown.contains("not running"), "{shown}");
+}
+
+#[test]
 fn a_refusal_says_why_in_the_words_of_the_operation() {
     says(
         &admit(&record(S::Running, None), Action::Start),

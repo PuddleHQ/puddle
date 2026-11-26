@@ -15,7 +15,8 @@
 //! | anything else (an HTTP request line) | one proxied guest connection: `CONNECT host:port` or an absolute-form request | handed to the caller's [`host::StreamHandler`] (the proxy) |
 //!
 //! [`ssh`] recognises an SSH client by its identification line, which the proxy refuses. [`origin`]
-//! marks a connection from a container, which the proxy does not decrypt.
+//! marks a connection from a container, which the proxy does not decrypt. [`program`] names the
+//! guest process that opened a connection, as a display hint for the Inbox.
 //!
 //! Both sides use [`yamux::client_config`] / [`yamux::server_config`], and both splice a guest
 //! connection with [`relay::splice`], which passes an abort on as a TCP reset instead of a clean
@@ -43,6 +44,7 @@ pub mod host;
 pub mod host_control;
 pub mod kind;
 pub mod origin;
+pub mod program;
 pub mod relay;
 pub mod resolve;
 pub mod ssh;

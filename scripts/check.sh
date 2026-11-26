@@ -417,6 +417,7 @@ run_gate() {
         # The committed API contract (openapi.json, schema.d.ts) matches the routes (ADR 0004).
         # The TypeScript half needs Node; without it locally the gate says so and checks the JSON
         # only. In CI (CI set) a missing Node fails.
+        scripts/check-wire-docs.sh --self-test && scripts/check-wire-docs.sh
         "$cargo" run --quiet --locked -p xtask -- openapi --check
         ;;
     ui)
@@ -478,6 +479,8 @@ run_gate() {
     rustdoc)
         # The doc build with every rustdoc warning an error (a public item whose docs link to a private one, a broken intra-doc link). It is
         # its own gate so the cheap half of `doc` runs where the doc tests do not: the pre-flight and the medium pre-check tier.
+        # A doc comment on a wire type is also part of the API contract: say `cargo xtask openapi` before the build, not after the tests.
+        scripts/check-wire-docs.sh
         # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
         RUSTDOCFLAGS="-D warnings" "$cargo" doc --workspace $skip_app --no-deps --all-features --locked
         ;;

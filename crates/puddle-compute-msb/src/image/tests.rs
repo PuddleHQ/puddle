@@ -199,17 +199,73 @@ async fn dropping_the_guard_ends_a_task_that_has_not_finished() {
     assert!(probe.is_finished());
 }
 
-#[test]
-fn a_failed_connect_says_which_registry_could_not_be_reached() {
-    let reason = "registry error: error sending request for url (https://registry.test/v2/): client error (Connect): tunnel error: unsuccessful".to_owned();
-    assert_eq!(
-        explain_connect(reason.clone(), "registry.test"),
-        format!("could not connect to registry.test: {reason}")
+/// A real connect failure from the client the registry client is built on: nothing listens on
+/// the port.
+async fn refused_connect() -> reqwest::Error {
+    let port = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().port()
+    };
+    reqwest::get(format!("http://127.0.0.1:{port}/v2/"))
+        .await
+        .unwrap_err()
+}
+
+#[tokio::test]
+async fn a_failed_connect_says_which_registry_could_not_be_reached() {
+    let err = ImageError::Registry(OciDistributionError::RequestError(refused_connect().await));
+    let text = explain_connect(&err, "registry.test");
+    assert!(
+        text.starts_with("could not connect to registry.test: "),
+        "{text}"
     );
 }
 
 #[test]
 fn a_reason_that_is_not_a_failed_connect_is_left_alone() {
-    let reason = "registry error: 401 Unauthorized".to_owned();
-    assert_eq!(explain_connect(reason.clone(), "registry.test"), reason);
+    let err = ImageError::Registry(OciDistributionError::UnauthorizedError {
+        url: "https://registry.test/v2/".to_owned(),
+    });
+    assert_eq!(explain_connect(&err, "registry.test"), chain(&err));
+}
+
+#[test]
+fn a_connect_look_alike_in_the_text_is_not_a_failed_connect() {
+    let err = ImageError::ManifestParse("client error (Connect)".to_owned());
+    assert_eq!(explain_connect(&err, "registry.test"), chain(&err));
+}
+
+#[tokio::test]
+async fn a_pull_with_no_manifest_in_time_is_given_up() {
+    let (mut events, sender) = progress_channel();
+    sender.send(MsbPull::Resolving {
+        reference: "r".into(),
+    });
+    let mut tally = Tally::default();
+    let answered =
+        drain_progress(&mut events, Duration::from_millis(50), &mut tally, &|_| {}).await;
+    assert!(!answered);
+    assert!(
+        no_answer("registry.test", Duration::from_secs(20))
+            .starts_with("could not connect to registry.test: ")
+    );
+}
+
+#[tokio::test]
+async fn a_pull_whose_manifest_came_in_time_runs_to_its_end() {
+    let (mut events, sender) = progress_channel();
+    sender.send(resolved(1, None));
+    let mut tally = Tally::default();
+    let task = tokio::spawn(async move {
+        // The pause must outlast the 50 ms deadline: it is what the test is about.
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        drop(sender);
+    });
+    let answered =
+        drain_progress(&mut events, Duration::from_millis(50), &mut tally, &|_| {}).await;
+    task.await.unwrap();
+    assert!(
+        answered,
+        "the deadline applies only until the manifest is read"
+    );
 }

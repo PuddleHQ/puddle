@@ -372,7 +372,7 @@ impl Registry {
     /// Makes a terminal and its ticket (64 hex characters).
     ///
     /// # Errors
-    /// An invalid-request [`ApiError`] (422) when a value is not valid.
+    /// An invalid-request [`crate::ApiError`] (422) when a value is not valid.
     pub fn create(
         &self,
         workspace: &WorkspaceId,

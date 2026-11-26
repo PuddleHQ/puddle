@@ -76,6 +76,31 @@ fn each_loop_starts_a_round_every_period_while_the_loops_run() {
 }
 
 #[test]
+fn a_restart_cuts_the_rounds_it_ends_and_no_others() {
+    for w in Workload::ALL {
+        assert!(Event::RestartPuddle.cuts(w) && Event::HardKill.cuts(w));
+        assert!(!Event::Backup.cuts(w) && !Event::InboxBatch.cuts(w));
+    }
+    assert!(Event::RestartJs.cuts(Workload::Js));
+    assert!(!Event::RestartJs.cuts(Workload::Build) && !Event::RestartJs.cuts(Workload::Agent));
+}
+
+#[test]
+fn a_round_is_cut_only_by_an_event_that_began_after_it_started() {
+    let cuts = Cuts::default();
+    let before = Instant::now();
+    assert_eq!(cuts.cut(before, Workload::Js), None);
+    cuts.began(Event::Backup);
+    assert_eq!(cuts.cut(before, Workload::Js), None);
+    cuts.began(Event::RestartJs);
+    assert_eq!(cuts.cut(before, Workload::Build), None);
+    assert_eq!(cuts.cut(before, Workload::Js), Some(Event::RestartJs));
+    cuts.began(Event::HardKill);
+    assert_eq!(cuts.cut(before, Workload::Build), Some(Event::HardKill));
+    assert_eq!(cuts.cut(Instant::now(), Workload::Js), None);
+}
+
+#[test]
 fn the_web_app_window_is_five_playbook_minutes_in_every_profile() {
     assert_eq!(FULL.w4_every(), Duration::from_secs(10));
     assert_eq!(FULL.w4_window_secs(), 300);

@@ -22,9 +22,9 @@ use crate::image_pull_resume::{Lab, lab_behind_a_link};
 /// The longest a user waits for the message while the route refuses (measured: 28 s).
 const BOUND: Duration = Duration::from_secs(40);
 
-/// The same while the route swallows every packet: the proxy's connect timeout, once per retry of
-/// the registry client (measured: 76 s). A bound, not a goal: a user waits this long for the text.
-const BLACKHOLE_BOUND: Duration = Duration::from_secs(120);
+/// The same while the route swallows every packet: the pull gives up when no manifest came within
+/// 20 s (it was 76 s: the proxy connect timeout once per try of the registry client).
+const BLACKHOLE_BOUND: Duration = Duration::from_secs(30);
 
 async fn failed_pull(lab: &Lab) -> (String, Duration) {
     let started = Instant::now();

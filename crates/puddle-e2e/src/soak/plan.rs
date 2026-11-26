@@ -4,7 +4,8 @@
 //! A profile only says how many real seconds a playbook hour lasts; the order of the day, the
 //! loops' rounds and the sample count per hour stay the playbook's.
 
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 /// Minutes of one playbook hour.
 const MINUTES: u64 = 60;
@@ -139,6 +140,18 @@ impl Event {
         )
     }
 
+    /// Whether the event ends a round of `workload` that is in flight: a restart of the
+    /// JavaScript workspace cuts its round only; a restart or hard kill of `puddle serve` ends
+    /// every exec session, so it cuts all of them. The cut round is expected, not a finding.
+    #[must_use]
+    pub const fn cuts(self, workload: Workload) -> bool {
+        match self {
+            Self::RestartJs => matches!(workload, Workload::Js),
+            Self::RestartPuddle | Self::HardKill => true,
+            _ => false,
+        }
+    }
+
     /// The name the run log and the UI command use.
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -155,6 +168,28 @@ impl Event {
             Self::InboxKeys => "inbox-keys",
             Self::StopLoops => "stop-loops",
         }
+    }
+}
+
+/// The planned events that began during the day, to tell a round they cut from one that failed.
+#[derive(Debug, Clone, Default)]
+pub struct Cuts(Arc<Mutex<Vec<(Instant, Event)>>>);
+
+impl Cuts {
+    /// Notes that `event` begins now.
+    pub fn began(&self, event: Event) {
+        self.0.lock().unwrap().push((Instant::now(), event));
+    }
+
+    /// The event that cut a round of `workload` started at `started`: one that began after it
+    /// and ends its exec session. `None` for a round nothing planned touched.
+    #[must_use]
+    pub fn cut(&self, started: Instant, workload: Workload) -> Option<Event> {
+        let events = self.0.lock().unwrap();
+        events
+            .iter()
+            .find(|&&(at, e)| at >= started && e.cuts(workload))
+            .map(|&(_, e)| e)
     }
 }
 

@@ -4,6 +4,7 @@
 //! One `.tar.gz` with the versions and platform, the settings with their secrets cut out and the
 //! recent log files. Every text passes through [`crate::redact`] on its way in, whatever wrote it.
 
+use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
@@ -78,14 +79,11 @@ pub fn write_bundle(bundle: &Bundle<'_>, out: impl Write) -> Result<(), BundleEr
 
     let mut info = String::new();
     for (name, version) in bundle.versions {
-        info.push_str(&format!("{name} {version}\n"));
+        let _ = writeln!(info, "{name} {version}");
     }
-    info.push_str(&format!("platform {}\n", bundle.platform));
-    info.push_str(&format!("log level {}\n", bundle.log_level));
-    info.push_str(&format!(
-        "made at {} (seconds since 1970)\n",
-        bundle.generated
-    ));
+    let _ = writeln!(info, "platform {}", bundle.platform);
+    let _ = writeln!(info, "log level {}", bundle.log_level);
+    let _ = writeln!(info, "made at {} (seconds since 1970)", bundle.generated);
     let names = [format!("{FILE_NAME}.1"), FILE_NAME.to_owned()];
     let mut found = 0;
     let mut logs = Vec::new();

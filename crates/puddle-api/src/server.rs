@@ -1031,7 +1031,27 @@ fn build_router(
         )
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(axum::middleware::from_fn_with_state(guard_state, guard))
+        .layer(axum::middleware::from_fn(log_request))
         .with_state(state)
+}
+
+/// One debug line for each request: the method, the path (never the query, a header or the body),
+/// the status and how long it took. Outside the guard, so a refused request shows too.
+async fn log_request(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let (method, path) = (request.method().clone(), request.uri().path().to_owned());
+    let began = std::time::Instant::now();
+    let response = next.run(request).await;
+    tracing::debug!(
+        %method,
+        path,
+        status = response.status().as_u16(),
+        ms = u64::try_from(began.elapsed().as_millis()).unwrap_or(u64::MAX),
+        "api request"
+    );
+    response
 }
 
 /// Where a listener's requests go: the API's routes, or the workspaces' names under remote

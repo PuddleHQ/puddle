@@ -111,7 +111,7 @@ fn redact_url(token: &str) -> String {
 /// The characters a value may end in that belong to the text around it, not to the value.
 fn trailing(value: &str) -> &str {
     let end = value
-        .trim_end_matches(|c: char| matches!(c, '"' | '\'' | ',' | ';' | ')' | '}' | ']'))
+        .trim_end_matches(['"', '\'', ',', ';', ')', '}', ']'])
         .len();
     value.get(end..).unwrap_or("")
 }

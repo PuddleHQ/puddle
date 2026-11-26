@@ -206,15 +206,21 @@ async fn connection(mut client: TcpStream, upstream: Arc<Upstream>) {
     };
     let container = in_container(&client);
     let program = named(&client, container).await;
+    tracing::debug!(
+        container,
+        program = program.is_some(),
+        "guest connection opened a stream to the host"
+    );
     if send_marked(&mut client, &mut stream, container, program.as_ref())
         .await
         .is_err()
     {
         return;
     }
-    if let Err(err) = splice(&mut client, &mut stream).await {
+    match splice(&mut client, &mut stream).await {
+        Ok((to_host, to_guest)) => tracing::trace!(to_host, to_guest, "guest connection ended"),
         // The stream is dropped without a shutdown below, which resets it on the host side.
-        tracing::debug!(error = %err, "guest connection ended with an error");
+        Err(err) => tracing::debug!(error = %err, "guest connection ended with an error"),
     }
 }
 

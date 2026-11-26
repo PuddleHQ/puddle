@@ -440,6 +440,7 @@ impl<R: Runtime + Clone> Host<R> {
 
         let services = build_services(&shared, &service, &credentials, &outbound, dev_cert);
         let served = serve_api(&config, services, &mut steps).await?;
+        tracing::debug!(?steps, url = %served.url, "host start: every step ran");
 
         Ok(Self {
             info: served.info,

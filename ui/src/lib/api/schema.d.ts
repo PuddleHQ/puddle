@@ -925,6 +925,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/logs/bundle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Makes a log bundle now and sends it as one file (`application/gzip`, named
+         *     `puddle-logs-<seconds>.tar.gz`): the versions, the platform, the settings and the recent log
+         *     files, with every secret cut out ([`puddle_log::redact`]). A `POST` so that no link, prefetch or
+         *     cache can start one.
+         */
+        post: operations["create_log_bundle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/network-health": {
         parameters: {
             query?: never;
@@ -5170,6 +5192,11 @@ export interface components {
             special: boolean | null;
         };
         /**
+         * @description How much Puddle writes to its log.
+         * @enum {string}
+         */
+        LogLevelChoice: "error" | "warn" | "info" | "debug" | "trace";
+        /**
          * @description What is wrong with a login, as [`Event::LoginProblem`] reports it.
          * @enum {string}
          */
@@ -7147,6 +7174,7 @@ export interface components {
             disk_warning_percent: number | null;
             /** @description The inbox's single-key shortcuts A, D, J and K (default on). */
             inbox_shortcuts: boolean | null;
+            log_level: components["schemas"]["LogLevelChoice"] | null;
             /** @description Minimizing hides the window to the tray instead of the taskbar (default off). */
             minimize_to_tray: boolean | null;
             /** @description A system notification for a new request (default on). */
@@ -11498,6 +11526,71 @@ export interface operations {
             };
             /** @description Puddle failed; see its log */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    create_log_bundle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the log bundle */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/gzip": number[];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description only the owner may export the logs */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the logs cannot be read */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

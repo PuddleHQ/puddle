@@ -126,6 +126,9 @@ pub(crate) enum Action {
     ManageUsers,
     /// A backup of the whole install: every user's rules, settings and audit.
     BackUp,
+    /// The log bundle: the recent logs of every user's workspaces on this computer, with secrets
+    /// cut out.
+    ExportLogs,
     /// Restoring from a backup file: it can replace every user's rules and settings.
     Restore,
     /// Serving the API beyond this computer.
@@ -168,6 +171,7 @@ impl Action {
             | Self::UseComputerAccounts
             | Self::ManageUsers
             | Self::BackUp
+            | Self::ExportLogs
             | Self::Restore
             | Self::SetRemoteServing => true,
         }
@@ -394,6 +398,7 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
         | ("GET", "/api/devices")
         | ("DELETE", "/api/devices/{id}") => (A::ManageSessions, T::Own),
         ("POST", "/api/backup") => (A::BackUp, T::Install),
+        ("POST", "/api/logs/bundle") => (A::ExportLogs, T::Install),
         ("POST", "/api/restore/preview" | "/api/restore/apply")
         | ("GET" | "DELETE", "/api/restore/result")
         | ("GET", "/api/safety-copies")

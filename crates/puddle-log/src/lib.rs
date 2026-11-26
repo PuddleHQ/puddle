@@ -200,6 +200,36 @@ pub fn attach_log_file(folder: &Path) -> std::io::Result<()> {
     }
 }
 
+/// The folder the log file is being kept in, once [`attach_log_file`] has named it.
+#[must_use]
+pub fn log_folder_in_use() -> Option<PathBuf> {
+    CONTROL
+        .get()
+        .and_then(|c| c.file.file().folder().map(Path::to_path_buf))
+}
+
+/// The level the log is at now, as `PUDDLE_LOG` spells it (the Puddle level; `unknown` before
+/// logging started or under a level made of several parts).
+#[must_use]
+pub fn current_level() -> &'static str {
+    let Some(control) = CONTROL.get() else {
+        return "unknown";
+    };
+    let filter = control
+        .filter
+        .0
+        .read()
+        .unwrap_or_else(PoisonError::into_inner);
+    match filter.level {
+        LevelFilter::OFF => "off",
+        LevelFilter::ERROR => "error",
+        LevelFilter::WARN => "warn",
+        LevelFilter::INFO => "info",
+        LevelFilter::DEBUG => "debug",
+        LevelFilter::TRACE => "trace",
+    }
+}
+
 /// Starts logging to stderr, and to the log file once [`attach_log_file`] names its folder,
 /// through `filter`. With `pinned` the level is fixed: the setting in the app does not change it.
 /// The first subscriber of the process wins, and this says whether it was this one.
@@ -227,6 +257,7 @@ pub fn init_logging(filter: ScopedFilter, ansi: bool, pinned: bool) -> bool {
 }
 
 /// [`init_logging`] with the level pinned, for a program with no settings (the guest agent).
+#[must_use]
 pub fn init_stderr(filter: ScopedFilter, ansi: bool) -> bool {
     init_logging(filter, ansi, true)
 }

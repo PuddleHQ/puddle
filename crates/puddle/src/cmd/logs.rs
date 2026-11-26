@@ -99,7 +99,7 @@ fn make(args: &LogsArgs) -> Result<PathBuf, String> {
     let level = std::env::var("PUDDLE_LOG").ok().unwrap_or_else(|| {
         settings
             .as_ref()
-            .and_then(|s| s["ui"]["log_level"].as_str().map(str::to_owned))
+            .and_then(|s| s.get("ui")?.get("log_level")?.as_str().map(str::to_owned))
             .unwrap_or_else(|| "info".to_owned())
     });
     let versions = [("puddle".to_owned(), puddle_types::VERSION.to_owned())];

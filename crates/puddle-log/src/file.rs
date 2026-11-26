@@ -49,6 +49,12 @@ impl RollingFile {
         Ok(())
     }
 
+    /// The folder the log file is in, once attached.
+    #[must_use]
+    pub fn folder(&self) -> Option<&Path> {
+        self.open.get().and_then(|open| open.path.parent())
+    }
+
     fn write_all(&self, buf: &[u8]) -> io::Result<()> {
         match self.open.get() {
             Some(open) => open.write_all(buf),

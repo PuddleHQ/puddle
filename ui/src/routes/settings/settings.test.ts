@@ -216,6 +216,7 @@ describe("the screen", () => {
       "Devices and sign-in",
       "Back up and restore",
       "Activity log",
+      "Diagnostic log",
       "Checks and errors",
       "Privacy and about",
     ]);

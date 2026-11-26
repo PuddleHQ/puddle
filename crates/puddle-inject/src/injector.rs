@@ -123,6 +123,7 @@ impl GitInjector {
             }
             Classified::Git(path) => path,
         };
+        tracing::debug!(workspace = %self.workspace, host = %path.host, owner = %path.owner, method = %request.method(), "git request: looking for the identity that covers it");
         let git = match self.settings.current().await {
             Ok(git) => git,
             Err(err) => {
@@ -281,6 +282,8 @@ impl GitInjector {
                 );
             }
         };
+        // Which identity and which source, never the value.
+        tracing::debug!(workspace = %self.workspace, identity = %identity.label, host = %path.host, owner = %path.owner, "credential read; adding it to the request");
         let value = authorization(&path.credential_host, credential.secret.expose());
         let rejected = self.rejected(identity, source, path);
         let binding_id = format!("identity:{}:{}", identity.id, binding.host);

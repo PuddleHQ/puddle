@@ -163,7 +163,7 @@ fn leaky_lines() -> String {
 fn redact_cuts_every_secret_shape_and_keeps_the_rest() {
     let out = redact(&leaky_lines());
     for secret in SECRETS {
-        assert!(!out.contains(secret), "{secret} survived in:\n{out}");
+        assert!(!out.contains(secret), "a secret survived redaction");
     }
     for kept in [
         "host=github.com",
@@ -248,7 +248,7 @@ fn a_bundle_holds_the_logs_and_settings_with_no_secret_in_any_file() {
     );
     for (name, text) in &files {
         for secret in SECRETS {
-            assert!(!text.contains(secret), "{secret} in {name}:\n{text}");
+            assert!(!text.contains(secret), "a secret is in {name}");
         }
         assert!(!text.contains("/home/ada"), "home folder in {name}");
     }

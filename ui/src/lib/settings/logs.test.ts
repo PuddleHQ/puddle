@@ -75,4 +75,17 @@ describe("exporting the log bundle", () => {
     });
     expect(saved).toEqual([]);
   });
+
+  it("gives the reason the service sent when it refuses", async () => {
+    wire.handler = async () =>
+      new Response(JSON.stringify({ message: "no logs yet" }), {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      });
+    expect(await exportLogBundle()).toEqual({
+      ok: false,
+      reason: "No logs yet.",
+    });
+    expect(saved).toEqual([]);
+  });
 });

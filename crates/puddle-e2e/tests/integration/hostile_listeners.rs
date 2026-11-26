@@ -18,9 +18,7 @@ use std::collections::BTreeSet;
 use std::net::{SocketAddr, TcpListener, UdpSocket};
 use std::sync::Arc;
 
-use puddle_api::{
-    ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, Services, SettingsRepo,
-};
+use puddle_api::{ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, Services};
 use puddle_ipc::IpcRoot;
 use puddle_netpolicy::{EndpointKind, LocalAccess, NetPolicy, PuddleEndpoints};
 use puddle_ports::{MemoryPins, Ports};

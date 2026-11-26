@@ -18,8 +18,7 @@ unset $(git rev-parse --local-env-vars)
 
 ws=$tmp/ws
 mkdir -p "$ws/scripts" "$ws/ui/scripts" "$tmp/bin" "$tmp/target"
-cp "$here/scripts/check.sh" "$here/scripts/gate-sched.sh" "$here/scripts/diff-base.sh" "$here/scripts/coverage-crates.py" "$ws/scripts/"
-echo 'ship app' >"$ws/scripts/coverage-crates.txt"
+cp "$here/scripts/check.sh" "$here/scripts/gate-sched.sh" "$here/scripts/diff-base.sh" "$ws/scripts/"
 echo '{}' >"$ws/scripts/coverage-baseline.json"
 mkdir -p "$ws/scripts/diff-coverage-exclusions"
 # The coverage tests step: logs the cargo it was given (check.sh's first argument), like the real one does.
@@ -27,12 +26,11 @@ cat >"$ws/scripts/coverage-run.sh" <<'STUB'
 #!/bin/sh
 echo "run $1" >>"$CALLS"
 STUB
-# One stub for every program: logs "<name> <first two arguments>"; `metadata` answers a one-crate workspace.
+# One stub for every program: logs "<name> <first two arguments>".
 for name in cargo wrapper node npm; do
     cat >"$tmp/bin/$name" <<'STUB'
 #!/bin/sh
 echo "$(basename "$0") $1 $2" >>"$CALLS"
-[ "$1" != metadata ] || echo '{"packages":[{"id":"app","name":"app"}],"workspace_members":["app"],"resolve":{"nodes":[{"id":"app","deps":[]}]}}'
 STUB
     chmod +x "$tmp/bin/$name"
 done

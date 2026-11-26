@@ -5,7 +5,7 @@
 //! # Security
 //!
 //! Every request, the spec included, passes three checks before any handler runs, in this
-//! order, and each refusal is a JSON [`ApiErrorBody`]:
+//! order, and each refusal is a JSON [`ApiErrorBody`](puddle_services::ApiErrorBody):
 //!
 //! 1. **`Host`** must be `127.0.0.1:<port>` or `localhost:<port>` for the bound port (421
 //!    otherwise). This defeats DNS rebinding: a page on `evil.example` that rebinds its name to

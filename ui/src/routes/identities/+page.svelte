@@ -166,7 +166,11 @@
           <th scope="col">Covers</th>
           <th scope="col">Last test</th>
           <th scope="col">Used by</th>
-          <th scope="col">Order (first match is the commit author)</th>
+          <th scope="col">
+            Order <span class="visually-hidden">
+              (first match is the commit author)
+            </span>
+          </th>
           <th scope="col"><span class="visually-hidden">Actions</span></th>
         </tr>
       </thead>
@@ -269,7 +273,7 @@
 
 <p class="muted settings-link">
   Whether new workspaces may push to or pull from any repository is set in <a
-    href="/settings/editor-and-git"
+    href="/settings/editor"
   >
     Settings, Git
   </a>.

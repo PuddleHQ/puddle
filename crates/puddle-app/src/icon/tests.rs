@@ -29,10 +29,10 @@ fn the_default_is_the_duck_and_a_built_in_reads_no_file() {
         wanted.draw().unwrap(),
         built_in(AppIconChoice::Duck, SIZE).unwrap()
     );
-    let night = Wanted::read(&repo, &prefs(Some(AppIconChoice::DuckNight)));
+    let night = Wanted::read(&repo, &prefs(Some(AppIconChoice::DuckFront)));
     assert_eq!(
         night.draw().unwrap(),
-        built_in(AppIconChoice::DuckNight, SIZE).unwrap()
+        built_in(AppIconChoice::DuckFront, SIZE).unwrap()
     );
     assert_ne!(night, wanted);
 }
@@ -137,7 +137,7 @@ fn an_image_that_cannot_be_read_shows_the_duck() {
 
 #[test]
 fn the_image_for_tauri_keeps_the_pixels() {
-    let icon = built_in(AppIconChoice::DuckSun, 32).unwrap();
+    let icon = built_in(AppIconChoice::RubberDuck, 32).unwrap();
     let shown = image(&icon);
     assert_eq!((shown.width(), shown.height()), (32, 32));
     assert_eq!(shown.rgba(), icon.rgba);

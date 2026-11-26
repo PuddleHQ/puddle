@@ -463,7 +463,7 @@ fn a_switch_changed_in_settings_reaches_the_badge_without_any_event() {
 #[test]
 fn the_window_takes_the_app_icon_and_a_missing_window_or_tray_is_no_error() {
     let rig = rig(TrayState::Missing);
-    let picture = icon::image(&drawn(puddle_settings::AppIconChoice::DuckPond));
+    let picture = icon::image(&drawn(puddle_settings::AppIconChoice::RubberDuck));
     show_icon(rig.app.handle(), None, &picture);
     let empty = with_plugins(mock_builder()).build(context()).unwrap();
     show_icon(empty.handle(), None, &picture);
@@ -475,20 +475,20 @@ fn drawn(choice: puddle_settings::AppIconChoice) -> puddle_appicon::Icon {
 
 #[test]
 fn the_app_icon_is_set_at_start_and_follows_the_choice_in_settings_without_any_event() {
-    use puddle_settings::AppIconChoice::{Duck, DuckNight, DuckSun};
+    use puddle_settings::AppIconChoice::{Duck, DuckFront, RubberDuck};
     let rig = rig(TrayState::Shown);
     assert_eq!(rig.recorded.icons(), [drawn(Duck)], "the duck at start");
 
     let hub = Arc::new(puddle_api::EventHub::default());
     start_loop(&rig, &hub, Notifier::default(), Duration::from_millis(50));
-    save(&rig, &json!({"app_icon": "duck_night"}));
-    eventually_blocking("the night duck", Duration::from_secs(5), || {
-        rig.recorded.icons().last() == Some(&drawn(DuckNight))
+    save(&rig, &json!({"app_icon": "duck_front"}));
+    eventually_blocking("the front duck", Duration::from_secs(5), || {
+        rig.recorded.icons().last() == Some(&drawn(DuckFront))
     });
     // An event reads the settings too, so the next choice shows on it, not only on the poll.
-    save(&rig, &json!({"app_icon": "duck_sun"}));
-    eventually_blocking("the sun duck", Duration::from_secs(5), || {
-        rig.recorded.icons().last() == Some(&drawn(DuckSun))
+    save(&rig, &json!({"app_icon": "rubber_duck"}));
+    eventually_blocking("the rubber duck", Duration::from_secs(5), || {
+        rig.recorded.icons().last() == Some(&drawn(RubberDuck))
     });
 }
 

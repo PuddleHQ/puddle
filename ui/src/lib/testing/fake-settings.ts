@@ -293,9 +293,9 @@ export class FakeSettings {
           : this.reply(503, undefined, "unavailable", "no report");
       case "/api/app-icons":
         return this.reply(200, {
-          built_in: (
-            ["duck", "duck_pond", "duck_night", "duck_sun"] as const
-          ).map((choice) => ({ choice, png_base64: `${choice}-png` })),
+          built_in: (["duck", "rubber_duck", "duck_front"] as const).map(
+            (choice) => ({ choice, png_base64: `${choice}-png` }),
+          ),
           custom_png_base64: this.customIcon,
         } satisfies S["AppIcons"]);
       case "/api/restore/result":

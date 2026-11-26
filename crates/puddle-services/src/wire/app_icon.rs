@@ -12,12 +12,10 @@ use utoipa::ToSchema;
 pub enum AppIconChoice {
     /// The duck on its patch of water (the default).
     Duck,
-    /// The duck on a pond-blue disc.
-    DuckPond,
-    /// The duck on a dark night-blue disc.
-    DuckNight,
-    /// A white duck on a sunny yellow disc.
-    DuckSun,
+    /// A rubber bath duck, side view.
+    RubberDuck,
+    /// The duck seen from the front.
+    DuckFront,
     /// The image the user gave; it must have been uploaded first.
     Custom,
 }
@@ -26,9 +24,8 @@ impl From<settings::AppIconChoice> for AppIconChoice {
     fn from(c: settings::AppIconChoice) -> Self {
         match c {
             settings::AppIconChoice::Duck => Self::Duck,
-            settings::AppIconChoice::DuckPond => Self::DuckPond,
-            settings::AppIconChoice::DuckNight => Self::DuckNight,
-            settings::AppIconChoice::DuckSun => Self::DuckSun,
+            settings::AppIconChoice::RubberDuck => Self::RubberDuck,
+            settings::AppIconChoice::DuckFront => Self::DuckFront,
             settings::AppIconChoice::Custom => Self::Custom,
         }
     }
@@ -38,9 +35,8 @@ impl From<AppIconChoice> for settings::AppIconChoice {
     fn from(c: AppIconChoice) -> Self {
         match c {
             AppIconChoice::Duck => Self::Duck,
-            AppIconChoice::DuckPond => Self::DuckPond,
-            AppIconChoice::DuckNight => Self::DuckNight,
-            AppIconChoice::DuckSun => Self::DuckSun,
+            AppIconChoice::RubberDuck => Self::RubberDuck,
+            AppIconChoice::DuckFront => Self::DuckFront,
             AppIconChoice::Custom => Self::Custom,
         }
     }

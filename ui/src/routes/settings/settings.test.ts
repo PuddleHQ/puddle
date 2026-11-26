@@ -402,6 +402,21 @@ describe("appearance and notifications", () => {
     expect(screen.queryByText(/hard to read/)).toBeNull();
   });
 
+  it("keeps what only fails in the other theme apart from what is hard to read now", async () => {
+    await open();
+    await choose("Theme", "system");
+    await choose("Colours", "custom");
+    const accent = screen.getByLabelText("Accent colour") as HTMLInputElement;
+    // Pond's light accent: fine on the light theme showing now, short on the dark one.
+    accent.value = "#0a6a85";
+    await fireEvent.input(accent);
+    expect(screen.queryByText(/hard to read/)).toBeNull();
+    const note = screen.getByText(/harder to read/).closest("[role=status]");
+    expect(note).toHaveTextContent(/in the dark theme; it needs/);
+    expect(note).toHaveTextContent(/and \d+ more\./);
+    expect(note).not.toHaveTextContent(/in the light theme/);
+  });
+
   it("lists a short warning in full, for a pale accent", async () => {
     await open();
     await choose("Theme", "light");

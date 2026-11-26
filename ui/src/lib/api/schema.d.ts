@@ -2827,7 +2827,7 @@ export interface components {
          * @description Which icon the window, the tray and the taskbar show.
          * @enum {string}
          */
-        AppIconChoice: "duck" | "duck_pond" | "duck_night" | "duck_sun" | "custom";
+        AppIconChoice: "duck" | "rubber_duck" | "duck_front" | "custom";
         /** @description The icons the user can choose between. */
         AppIcons: {
             /** @description The built-in icons, in the order to show them. */

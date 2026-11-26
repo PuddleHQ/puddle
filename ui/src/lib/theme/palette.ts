@@ -287,6 +287,19 @@ export function mix(a: string, b: string, share: number): string {
 const WHITE = "#ffffff";
 const BLACK = "#000000";
 
+/**
+ * The accent's tint over `bg`: 14 % of the way to the accent, or less where the accent and the text
+ * would no longer read on it (a mid-tone accent such as Meadow's passes on the page but not on a
+ * tint that is already close to it). Never below the page itself.
+ */
+function tint(bg: string, accent: string, text: string): string {
+  for (let share = 0.14; share > 0; share -= 0.02) {
+    const t = mix(bg, accent, share);
+    if (contrast(accent, t) >= 4.5 && contrast(text, t) >= 4.5) return t;
+  }
+  return bg;
+}
+
 // --- what a palette resolves to ----------------------------------------------------------------
 
 /** The tokens of a palette in one scheme; a custom set is Pond with the user's colours laid over it. */
@@ -308,7 +321,7 @@ export function resolve(
     t["accent-contrast"] =
       contrast(accent, WHITE) >= contrast(accent, BLACK) ? WHITE : BLACK;
   }
-  if (accent || background) t["accent-subtle"] = mix(t.bg, t.accent, 0.14);
+  if (accent || background) t["accent-subtle"] = tint(t.bg, t.accent, t.text);
   if (background || surface || text) {
     t["surface-raised"] = mix(t.surface, t.text, 0.05);
     t["border-subtle"] = mix(t.bg, t.text, 0.16);

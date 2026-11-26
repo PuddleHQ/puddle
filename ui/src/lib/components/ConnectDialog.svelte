@@ -53,7 +53,10 @@
         Opens a Puddle window with VS Code running inside the workspace, so it
         stays isolated from this computer. It is not your own VS Code.
         {#if server}{serverNote(server)}{/if}
-        <a href="/settings/editor#set-server" onclick={() => (open = false)}>
+        <a
+          href="/settings/editor-server#set-server"
+          onclick={() => (open = false)}
+        >
           Change the server in Settings
         </a>.
       </p>

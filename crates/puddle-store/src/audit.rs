@@ -9,8 +9,8 @@
 use std::io;
 
 use puddle_types::{
-    ConnectionDecision, ConnectionEvent, ConnectionOrigin, ConnectionOutcome, ConnectionReason,
-    LocalCategory, WorkspaceId, request_path,
+    ConnectionDecision, ConnectionEvent, ConnectionOrigin, ConnectionOutcome, ConnectionProtocol,
+    ConnectionReason, GitOperation, LocalCategory, WorkspaceId, request_path,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -120,10 +120,20 @@ pub struct ConnectionRecord {
     /// it existed.
     #[serde(default)]
     pub answer_credentials: Vec<String>,
-    /// HTTP method: plain-HTTP requests, tunnels that carry plain HTTP, terminated hosts.
+    /// What `method` and `path` are: `http` or `ssh` (Git over SSH, where `method` is the
+    /// command). `null` with no `method`; absent in records written before it existed.
+    #[serde(default)]
+    pub protocol: Option<ConnectionProtocol>,
+    /// HTTP method: plain-HTTP requests, tunnels that carry plain HTTP, terminated hosts; for
+    /// `protocol: ssh` the Git command.
     pub method: Option<String>,
     /// HTTP path without query string, where `method` is set.
     pub path: Option<String>,
+    /// `push` or `fetch` for a Git smart-HTTP request (`service=git-receive-pack` or
+    /// `git-upload-pack` in the query, which `path` drops). Absent in records written before it
+    /// existed.
+    #[serde(default)]
+    pub git_operation: Option<GitOperation>,
     /// Whether `path` was cut to fit (R-26).
     pub path_truncated: bool,
     /// Bytes from the guest.
@@ -136,9 +146,18 @@ pub struct ConnectionRecord {
 
 impl ConnectionRecord {
     pub(crate) fn from_event(ts: u64, event: &ConnectionEvent) -> Self {
-        let (method, path) = event.http.as_ref().map_or((None, None), |http| {
-            (Some(http.method().to_owned()), Some(http.path().to_owned()))
-        });
+        let (protocol, method, path, git_operation) =
+            event
+                .http
+                .as_ref()
+                .map_or((None, None, None, None), |http| {
+                    (
+                        Some(http.protocol()),
+                        Some(http.method().to_owned()),
+                        Some(http.path().to_owned()),
+                        http.git_operation(),
+                    )
+                });
         Self {
             ts,
             workspace_id: event.workspace.as_ref().map(ToString::to_string),
@@ -166,8 +185,10 @@ impl ConnectionRecord {
             scrubbed_stand_ins: event.scrubbed_stand_ins.clone(),
             foreign_credentials: event.foreign_credentials.clone(),
             answer_credentials: event.answer_credentials.clone(),
+            protocol,
             method,
             path,
+            git_operation,
             path_truncated: false,
             bytes_up: event.bytes_up,
             bytes_down: event.bytes_down,
@@ -221,8 +242,10 @@ impl ConnectionRecord {
             scrubbed_stand_ins: Vec::new(),
             foreign_credentials: Vec::new(),
             answer_credentials: Vec::new(),
+            protocol: None,
             method: None,
             path: None,
+            git_operation: None,
             path_truncated: false,
             bytes_up: 0,
             bytes_down: 0,
@@ -542,6 +565,11 @@ pub enum WorkspaceOpKind {
     SshAgentRefused,
     /// The user answered the first-use question of the filtered SSH agent; `detail` says how.
     SshAgentAnswered,
+    /// The days the activity log is kept were changed; `detail` says from how many to how many.
+    AuditRetentionChanged,
+    /// Records older than the retention were deleted on request (`puddle audit prune`); `detail`
+    /// says for how many days the log was kept and how many records went.
+    AuditPruned,
 }
 
 /// How a workspace operation ended.

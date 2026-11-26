@@ -11,7 +11,7 @@
     reason = "VM test helpers: a failed step fails the test"
 )]
 
-mod support;
+use puddle_compute_msb_test_support as support;
 
 use std::path::Path;
 use std::time::Duration;
@@ -37,7 +37,7 @@ fn spec(settings: &Settings, tag: &str) -> SandboxSpec {
 
 fn with_volume(spec: SandboxSpec, volume: &VolumeName) -> SandboxSpec {
     spec.with_volume(
-        VolumeMount::named(volume.clone(), GuestPath::new("/workspaces/ws").unwrap())
+        VolumeMount::named(volume.clone(), GuestPath::new("/workspace").unwrap())
             .ensure_size(DiskSize::mib(256)),
     )
 }

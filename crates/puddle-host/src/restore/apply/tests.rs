@@ -4,7 +4,7 @@ use std::sync::Arc;
 use puddle_store::{Limits, Store, SystemClock};
 
 use super::*;
-use crate::restore::stage_archive;
+use crate::restore::{BookRefusal, stage_archive};
 
 fn sql(paths: &HostPaths, statements: &str) {
     rusqlite::Connection::open(paths.store())
@@ -190,6 +190,82 @@ fn add_at_the_next_start_merges_and_keeps_the_marker_for_last() {
     assert!(s.here.safety_copies().join(&requested.safety_copy).is_dir());
 }
 
+/// The numbers of rules in the database of a safety copy.
+fn rules_in_copy(copy: &Path) -> Vec<String> {
+    let conn = rusqlite::Connection::open(copy.join("puddle.db")).unwrap();
+    let mut stmt = conn
+        .prepare("SELECT pattern FROM rules ORDER BY pattern")
+        .unwrap();
+    stmt.query_map([], |r| r.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect()
+}
+
+#[test]
+fn a_change_between_the_confirm_and_the_restart_is_in_the_safety_copy() {
+    let s = setup();
+    let requested = request(&s.here, &s.staging_id, ApplyMode::Replace, "").unwrap();
+    let copy = s.here.safety_copies().join(&requested.safety_copy);
+    assert_eq!(rules_in_copy(&copy), ["a.example.org", "mine.example.org"]);
+    // The host still runs after the confirm: a rule, a setting and a workspace change.
+    sql(&s.here, &rule("late.example.org"));
+    fs::write(
+        s.here.settings().join("global.json"),
+        r#"{"version":1,"late":1}"#,
+    )
+    .unwrap();
+    fs::write(s.here.workspace_book(), r#"{"version":4,"workspaces":[]}"#).unwrap();
+
+    let outcome = apply_pending(&s.here).unwrap();
+    assert!(outcome.applied, "{}", outcome.message);
+    assert_eq!(
+        outcome.safety_copy, requested.safety_copy,
+        "the name the user was told"
+    );
+    assert_eq!(
+        rules_in_copy(&copy),
+        ["a.example.org", "late.example.org", "mine.example.org"]
+    );
+    assert_eq!(read(copy.join("settings").join("global.json"))["late"], 1);
+    assert_eq!(
+        read(copy.join("workspaces.json"))["workspaces"],
+        serde_json::json!([])
+    );
+    // Nothing of the refresh is left beside the copy.
+    let names: Vec<_> = fs::read_dir(s.here.safety_copies())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, [requested.safety_copy]);
+}
+
+#[test]
+fn a_refresh_a_crash_left_behind_is_cleared_and_the_copy_is_made_again() {
+    let s = setup();
+    let requested = request(&s.here, &s.staging_id, ApplyMode::Add, "").unwrap();
+    let leftover = s
+        .here
+        .safety_copies()
+        .join(format!("{}.refresh", requested.safety_copy));
+    fs::create_dir_all(&leftover).unwrap();
+    fs::write(leftover.join("half"), b"x").unwrap();
+    let outcome = apply_pending(&s.here).unwrap();
+    assert!(outcome.applied, "{}", outcome.message);
+    assert!(!leftover.exists());
+}
+
+#[test]
+fn a_safety_copy_deleted_since_the_confirm_is_made_again_and_the_restore_applies() {
+    let s = setup();
+    let requested = request(&s.here, &s.staging_id, ApplyMode::Add, "").unwrap();
+    let copy = s.here.safety_copies().join(&requested.safety_copy);
+    fs::remove_dir_all(&copy).unwrap();
+    let outcome = apply_pending(&s.here).unwrap();
+    assert!(outcome.applied, "{}", outcome.message);
+    assert!(copy.is_dir());
+}
+
 #[test]
 fn replace_takes_the_backups_rules_settings_and_workspaces() {
     let s = setup();
@@ -334,7 +410,10 @@ fn a_failed_swap_puts_the_moved_parts_back() {
     // The database and the settings swap, then the workspace list fails: the first two go back.
     let failing = |paths: &HostPaths, new: &Path, old: &Path, part: &str| {
         if part == "workspaces.json" {
-            return Err(RestoreError::Merge("the disk went away".into()));
+            return Err(RestoreError::Merge(BookRefusal::Unreadable {
+                path: paths.workspace_book(),
+                source: io::Error::other("the disk went away"),
+            }));
         }
         swap_part(paths, new, old, part)
     };

@@ -65,6 +65,7 @@ cases! {
     get_readopts_a_running_sandbox_without_owning_it => "get re-adopts a running sandbox without owning it",
     unknown_names_are_not_found => "an unknown or removed name is not found",
     remove_needs_a_stopped_sandbox_and_frees_the_name => "remove refuses a running sandbox and frees the name of a stopped one",
+    kill_ends_a_vm_by_name_and_is_idempotent => "kill ends a running VM without a handle's help, a down one is a no-op, an unknown name is not found",
     exec_exit_codes_are_exact => "exit codes 0, 3 and 127 come through exactly",
     signal_killed_exec_is_a_failure => "a SIGKILLed command reports a failure code, not success",
     exec_timeout_is_enforced => "a command that outlives its timeout fails with ExecTimeout",
@@ -402,6 +403,26 @@ async fn remove_needs_a_stopped_sandbox_and_frees_the_name<R: Runtime>(c: &Case<
     Ok(())
 }
 
+async fn kill_ends_a_vm_by_name_and_is_idempotent<R: Runtime>(c: &Case<'_, R>) -> Outcome {
+    let rt = c.runtime();
+    let name = c.sandbox("a")?;
+    let _sb = step("create", rt.create(spec(c, &name))).await?;
+    step("kill", rt.kill(&name)).await?;
+    let after = status_in_list(rt, &name).await?;
+    check!(
+        after.is_some_and(WorkspaceStatus::is_down),
+        "after kill the sandbox reads {after:?}, want a down state"
+    );
+    step("kill again", rt.kill(&name)).await?;
+    let gone = c.sandbox("never-created")?;
+    let err = fails("kill unknown", rt.kill(&gone)).await?;
+    check!(
+        matches!(err, ComputeError::NotFound { .. }),
+        "want NotFound, got {err:?}"
+    );
+    Ok(())
+}
+
 async fn exec_exit_codes_are_exact<R: Runtime>(c: &Case<'_, R>) -> Outcome {
     let sb = step("create", c.runtime().create(spec(c, &c.sandbox("a")?))).await?;
     for (script, want) in [("exit 0", 0), ("exit 3", 3), ("nonexistent-cmd-xyz", 127)] {
@@ -642,8 +663,8 @@ async fn named_volume_survives_restart_and_remove<R: Runtime>(c: &Case<'_, R>) -
     let rt = c.runtime();
     let name = c.sandbox("a")?;
     let vol = c.volume("ws")?;
-    let mount = path("/workspaces/puddle-ct")?;
-    let marker = "/workspaces/puddle-ct/marker";
+    let mount = path("/workspace")?;
+    let marker = "/workspace/marker";
     let s = spec(c, &name).with_volume(
         VolumeMount::named(vol.clone(), mount.clone()).ensure_size(DiskSize::mib(256)),
     );
@@ -717,7 +738,7 @@ async fn second_attach_is_refused_naming_the_holder<R: Runtime>(c: &Case<'_, R>)
     let rt = c.runtime();
     let (a, b) = (c.sandbox("first")?, c.sandbox("second")?);
     let vol = c.volume("ws")?;
-    let mount = path("/workspaces/puddle-ct")?;
+    let mount = path("/workspace")?;
     let attach = |name: &SandboxName| {
         spec(c, name).with_volume(
             VolumeMount::named(vol.clone(), mount.clone()).ensure_size(DiskSize::mib(256)),
@@ -765,7 +786,7 @@ async fn failed_create_leaves_no_stale_dir<R: Runtime>(c: &Case<'_, R>) -> Outco
     let rt = c.runtime();
     let name = c.sandbox("a")?;
     let vol = c.volume("ws")?;
-    let mount = path("/workspaces/puddle-ct")?;
+    let mount = path("/workspace")?;
     step(
         "create volume",
         rt.create_volume(VolumeSpec {
@@ -807,8 +828,8 @@ async fn failed_create_leaves_no_stale_dir<R: Runtime>(c: &Case<'_, R>) -> Outco
 async fn missing_volume_fails_create<R: Runtime>(c: &Case<'_, R>) -> Outcome {
     let rt = c.runtime();
     let vol = c.volume("missing")?;
-    let s = spec(c, &c.sandbox("a")?)
-        .with_volume(VolumeMount::named(vol.clone(), path("/workspaces/x")?));
+    let s =
+        spec(c, &c.sandbox("a")?).with_volume(VolumeMount::named(vol.clone(), path("/workspace")?));
     let err = fails("create with a missing volume", rt.create(s)).await?;
     check!(
         matches!(err, ComputeError::VolumeNotFound { ref volume } if volume == vol.as_str()),

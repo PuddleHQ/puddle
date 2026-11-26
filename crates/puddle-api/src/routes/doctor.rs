@@ -5,11 +5,11 @@ use axum::Json;
 use axum::extract::State;
 use serde::Deserialize;
 
-use crate::ApiErrorBody;
-use crate::error::ApiError;
 use crate::extract::Query;
 use crate::routes::AppState;
-use crate::wire::DoctorReport;
+use puddle_services::error::ApiError;
+use puddle_services::error::ApiErrorBody;
+use puddle_services::wire::DoctorReport;
 
 /// Which checks to run.
 #[derive(Debug, Deserialize)]

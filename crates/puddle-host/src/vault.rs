@@ -3,11 +3,11 @@
 
 use std::sync::Arc;
 
-use puddle_api::CredentialStoreService;
 use puddle_secrets::{
     ChunkedStore, IndexedStore, KeyringStore, LoginSession, SecretStore, StoreHealth, StoreKind,
     StoredId, Sweep, probe_os_store, probe_store, reconnect_os_store, write_record,
 };
+use puddle_services::credential_store::CredentialStoreService;
 use puddle_store::Store;
 use puddle_types::{Problem, Problems, WorkspaceId};
 

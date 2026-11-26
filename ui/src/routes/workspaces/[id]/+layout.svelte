@@ -114,10 +114,6 @@
     font-size: var(--text-sm);
     color: var(--color-text-muted);
   }
-  h1 {
-    font-size: var(--text-xl);
-    overflow-wrap: anywhere;
-  }
   .problem {
     margin: 0 0 var(--space-3);
     padding: var(--space-2) var(--space-3);

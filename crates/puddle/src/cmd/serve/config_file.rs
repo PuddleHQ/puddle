@@ -142,7 +142,7 @@ pub fn parse(text: &str, path: &Path) -> Result<FileValues, ConfigError> {
             fix,
         }
     })?;
-    let folder = path.parent().unwrap_or(Path::new(""));
+    let folder = path.parent().unwrap_or_else(|| Path::new(""));
     let mut found: Vec<(usize, Entry)> = Vec::new();
     for (key, value) in table.get_ref() {
         let line = position(text, key.span().start).0;
@@ -155,12 +155,12 @@ pub fn parse(text: &str, path: &Path) -> Result<FileValues, ConfigError> {
             }),
             Some(spec) => value_of(value.get_ref(), spec.kind, folder)
                 .map(|value| (spec.key, value))
-                .map_err(|found| ConfigError::BadValue {
+                .map_err(|found: Rejected| ConfigError::BadValue {
                     file: path.to_path_buf(),
                     line,
                     key: spec.key,
                     expected: spec.kind.expects(),
-                    found,
+                    found: found.to_string(),
                     example: spec.example,
                 }),
         };
@@ -175,38 +175,67 @@ pub fn parse(text: &str, path: &Path) -> Result<FileValues, ConfigError> {
     Ok(FileValues { values })
 }
 
-/// The value of a TOML entry as the option's kind, or a description of what the file has.
-fn value_of(value: &DeValue<'_>, kind: Kind, folder: &Path) -> Result<Value, String> {
+/// What a TOML entry holds that its option does not accept. It displays as a description of what
+/// the file has.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+enum Rejected {
+    /// An integer that is not a port.
+    #[error("the integer {0}")]
+    Integer(String),
+    /// An empty string where a path is expected.
+    #[error("an empty string")]
+    EmptyPath,
+    /// A string the option does not accept.
+    #[error("the string {0:?}")]
+    String(String),
+    /// A list item that holds a comma.
+    #[error("the item {0:?}")]
+    Item(String),
+    /// A list with an item that is not a string.
+    #[error("an array with {0}")]
+    ArrayWith(String),
+    /// A list the option does not accept.
+    #[error("the array {0:?}")]
+    Array(Vec<String>),
+    /// A value of the wrong type, with its article.
+    #[error("{0}")]
+    WrongType(String),
+}
+
+/// The value of a TOML entry as the option's kind, or what the file has instead.
+fn value_of(value: &DeValue<'_>, kind: Kind, folder: &Path) -> Result<Value, Rejected> {
     match (kind, value) {
         (Kind::Port, DeValue::Integer(int)) => i64::from_str_radix(int.as_str(), int.radix())
             .ok()
             .and_then(|n| u16::try_from(n).ok())
             .map(Value::Port)
-            .ok_or_else(|| format!("the integer {}", int.as_str())),
+            .ok_or_else(|| Rejected::Integer(int.as_str().to_owned())),
         (Kind::Path, DeValue::String(text)) => kind
             .parse_text(text)
             .map(|value| match value {
                 Value::Path(path) if path.is_relative() => Value::Path(folder.join(path)),
                 other => other,
             })
-            .map_err(|_| "an empty string".to_owned()),
+            .map_err(|_| Rejected::EmptyPath),
         (Kind::Log | Kind::Ip | Kind::Domain | Kind::SecretStore, DeValue::String(text)) => kind
             .parse_text(text)
-            .map_err(|_| format!("the string {:?}", text.as_ref())),
+            .map_err(|_| Rejected::String(text.as_ref().to_owned())),
         (Kind::Bool | Kind::Toggle, DeValue::Boolean(on)) => Ok(Value::Bool(*on)),
         (kind, DeValue::Array(items)) if kind.is_list() => {
             let mut texts = Vec::new();
             for item in items {
                 match item.get_ref() {
                     DeValue::String(text) if !text.contains(',') => texts.push(text.as_ref()),
-                    DeValue::String(text) => return Err(format!("the item {:?}", text.as_ref())),
-                    other => return Err(format!("an array with {}", describe(other))),
+                    DeValue::String(text) => {
+                        return Err(Rejected::Item(text.as_ref().to_owned()));
+                    }
+                    other => return Err(Rejected::ArrayWith(describe(other))),
                 }
             }
             kind.parse_items(&texts)
-                .map_err(|_| format!("the array {texts:?}"))
+                .map_err(|_| Rejected::Array(texts.iter().map(|t| (*t).to_owned()).collect()))
         }
-        (_, other) => Err(describe(other)),
+        (_, other) => Err(Rejected::WrongType(describe(other))),
     }
 }
 

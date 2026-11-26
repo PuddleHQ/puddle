@@ -2,7 +2,6 @@
 //! SHA-256 checksums: hashing files and checking them against a release's `checksums.sha256`.
 
 use std::collections::BTreeMap;
-use std::fmt::Write as _;
 use std::io::Read;
 use std::path::Path;
 
@@ -29,14 +28,7 @@ pub fn sha256_file(path: &Path) -> Result<String> {
         };
         hasher.update(chunk);
     }
-    Ok(hex(&hasher.finalize()))
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().fold(String::with_capacity(64), |mut s, b| {
-        let _ = write!(s, "{b:02x}"); // writing to a String can't fail
-        s
-    })
+    Ok(puddle_types::hex_lower(&hasher.finalize()))
 }
 
 /// A parsed `checksums.sha256` (`sha256sum` format: `<64 hex>  <name>`, `*<name>` for binary

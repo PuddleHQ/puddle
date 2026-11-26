@@ -2,14 +2,9 @@
 //! The first-run flow of a fresh install on a real host and runtime (tiers K and W), through the
 //! API the app window talks to: the system check boots a test machine (`GET /api/doctor`), then
 //! three workspaces are created at once, each is its own running machine, and all three stop at once.
-#![expect(
-    clippy::unwrap_used,
-    clippy::indexing_slicing,
-    reason = "VM test: a failed step fails the test; helpers outside #[test] fns panic"
-)]
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::collections::BTreeSet;
 use std::time::Duration;
@@ -18,8 +13,8 @@ use puddle_compute::Runtime;
 use puddle_test_kit::eventually_async;
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
-use support::{Api, Events, ended};
-use vm_support::{VmHost, guest, start_vm_host};
+use support::{Api, ended};
+use vm_support::{VmHost, all_ended, guest, start_vm_host};
 
 /// How long the test boot of the system check may take: the route's own documentation says up to
 /// about 30 s.
@@ -68,22 +63,6 @@ async fn vm_doctor_through_the_api_boots_a_test_machine_and_needs_the_token() {
     assert!(down.sandboxes.all_stopped(), "{down:?}");
 }
 
-/// Reads events until every workspace of `names` has ended an operation, and returns the step each
-/// ended with. One operation per workspace: the event stream keeps what it reads, so the end of one
-/// workspace that arrives while another is awaited is not lost.
-async fn all_ended(events: &mut Events, names: &[String]) -> Vec<(String, String)> {
-    let any = |event: &Value| names.iter().any(|name| ended(name)(event));
-    let mut done: Vec<(String, String)> = Vec::new();
-    while done.len() < names.len() {
-        let event = events.until(any, BATCH).await;
-        let name = event["workspace"].as_str().unwrap().to_owned();
-        if !done.iter().any(|(n, _)| *n == name) {
-            done.push((name, event["step"].as_str().unwrap().to_owned()));
-        }
-    }
-    done
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_three_workspaces_created_at_once_are_three_machines_and_stop_at_once() {
     let VmHost {
@@ -110,7 +89,7 @@ async fn vm_three_workspaces_created_at_once_are_three_machines_and_stop_at_once
     for reply in &replies {
         assert_eq!(reply.status, 202, "{}", reply.body);
     }
-    for (name, step) in all_ended(&mut events, &names).await {
+    for (name, step) in all_ended(&mut events, &names, BATCH).await {
         assert_eq!(step, "done", "{name}: {:#?}", events.seen);
     }
 
@@ -147,7 +126,7 @@ async fn vm_three_workspaces_created_at_once_are_three_machines_and_stop_at_once
     for reply in &replies {
         assert_eq!(reply.status, 202, "{}", reply.body);
     }
-    for (name, step) in all_ended(&mut events, &names).await {
+    for (name, step) in all_ended(&mut events, &names, BATCH).await {
         assert_eq!(step, "done", "stop of {name}: {:#?}", events.seen);
     }
     for name in &names {

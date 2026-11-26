@@ -13,7 +13,7 @@
 //! 3. check the hand-written fixtures of the other tests against the description's types, so a
 //!    fixture cannot drift into a shape GitHub never sends.
 
-#![allow(
+#![expect(
     clippy::panic,
     clippy::indexing_slicing,
     reason = "test code: a panic is how a test fails"
@@ -152,7 +152,7 @@ fn sample(root: &Value, schema: &Value, full: bool) -> Value {
     }
     if let Some(first) = schema["oneOf"]
         .as_array()
-        .or(schema["anyOf"].as_array())
+        .or_else(|| schema["anyOf"].as_array())
         .and_then(|b| b.first())
     {
         return sample(root, first, full);
@@ -187,7 +187,7 @@ fn sample(root: &Value, schema: &Value, full: bool) -> Value {
             || match schema["format"].as_str() {
                 Some("date-time") => json!("2025-01-02T15:04:05Z"),
                 Some("uri") => json!("https://example.org/x"),
-                _ => schema.get("default").cloned().unwrap_or(json!("x")),
+                _ => schema.get("default").cloned().unwrap_or_else(|| json!("x")),
             },
             |first| json!(first),
         ),

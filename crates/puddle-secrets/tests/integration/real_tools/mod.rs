@@ -16,11 +16,9 @@
 //! `PUDDLE_REAL_GCM_VERSION` (from `ci/fetch-real-tools.sh`) name the versions the tools must report;
 //! `PUDDLE_REAL_TOOLS_INSECURE_STORAGE` keeps `gh` tokens in its config file on a computer without a
 //! keyring.
-#![allow(
+#![expect(
     clippy::unwrap_used,
-    clippy::expect_used,
     clippy::panic,
-    clippy::indexing_slicing,
     reason = "test code: a panic is how a test fails"
 )]
 

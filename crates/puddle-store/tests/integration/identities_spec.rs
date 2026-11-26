@@ -8,13 +8,13 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use puddle_secrets::{AccountName, HostName, SourceSpec};
 use puddle_store::testing::own;
 use puddle_store::{
     Author, CollisionWhat, Coverage, CredentialBinding, CredentialChoice, GitDefaults,
     IdentityDraft, IdentityId, Limits, ManualClock, Owner, RepoGitRequest, RepoRef, RepoToggles,
     StartBasis, Store, StoreError, SwitchChange, SwitchSource, WorkspaceGit,
 };
+use puddle_types::{AccountName, HostName, SourceSpec};
 use puddle_types::{CollectingSink, Event, WorkspaceId};
 
 fn fixture() -> (Arc<CollectingSink>, Store) {
@@ -348,8 +348,8 @@ fn the_database_holds_references_never_a_value() {
     let (_, store) = fixture();
     let host = HostName::new("github.com").unwrap();
     let source = SourceSpec::Stored {
-        id: puddle_secrets::StoredId::new("tok1").unwrap(),
-        scope: puddle_secrets::TokenScope {
+        id: puddle_types::StoredId::new("tok1").unwrap(),
+        scope: puddle_types::TokenScope {
             host: host.clone(),
             org: None,
         },
@@ -792,8 +792,8 @@ fn a_list_of_repositories_is_set_up_whole_or_not_at_all() {
 
 #[test]
 fn the_secret_ids_in_use_are_the_stored_tokens_of_identities_and_the_secrets_of_variables() {
-    use puddle_secrets::{StoredId, TokenScope};
     use puddle_store::{EnvDraft, EnvName, EnvScope, SecretHost};
+    use puddle_types::{StoredId, TokenScope};
 
     let (_sink, store) = fixture();
     let id = |text: &str| StoredId::new(text).unwrap();

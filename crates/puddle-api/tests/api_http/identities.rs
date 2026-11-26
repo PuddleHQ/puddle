@@ -261,7 +261,7 @@ async fn an_az_cli_check_names_the_exact_step_and_offers_no_sign_in() {
 async fn the_real_sources_with_an_empty_path_say_to_install_the_azure_cli_and_offer_no_sign_in() {
     let store = std::sync::Arc::new(puddle_secrets::MemoryStore::new());
     let tools = puddle_secrets::ToolPaths::from_search_path(std::ffi::OsStr::new(""));
-    let real = puddle_api::HostCredentials::new(tools, store);
+    let real = puddle_services::credentials::HostCredentials::new(tools, store);
     let api = crate::common::start_with_credentials(std::sync::Arc::new(real)).await;
     let source = json!({"kind": "az_cli", "tenant": "fabrikam.com", "org": "fabrikam"});
     let checked = api
@@ -777,8 +777,11 @@ async fn changes_reach_the_event_stream_and_no_secret_is_on_the_wire() {
     assert_eq!(git["workspace"], "shop");
 
     let all = api.get("/api/identities").await.body;
-    let spec =
-        api.get("/api/identities").await.body + &api.get("/api/workspaces/shop/git").await.body;
+    let spec = format!(
+        "{}{}",
+        api.get("/api/identities").await.body,
+        api.get("/api/workspaces/shop/git").await.body
+    );
     for text in [&all, &spec] {
         for word in ["token", "password", "secret"] {
             assert!(!text.to_lowercase().contains(word), "{word} in {text}");
@@ -1104,8 +1107,10 @@ async fn deleting_an_identity_removes_its_pasted_token_unless_another_identity_r
 #[tokio::test]
 async fn an_identity_is_deleted_even_when_the_credential_store_will_not_give_up_its_token() {
     let vault = std::sync::Arc::new(puddle_secrets::MemoryStore::new());
-    let real =
-        puddle_api::HostCredentials::new(puddle_secrets::ToolPaths::new(None, None), vault.clone());
+    let real = puddle_services::credentials::HostCredentials::new(
+        puddle_secrets::ToolPaths::new(None, None),
+        vault.clone(),
+    );
     let api = crate::common::start_with_credentials(std::sync::Arc::new(real)).await;
     let token = paste(&api).await;
     let made = api
@@ -1248,8 +1253,10 @@ async fn changing_an_identity_removes_a_pasted_token_it_stops_reading_unless_ano
 #[tokio::test]
 async fn changing_an_identity_succeeds_when_the_credential_store_will_not_give_up_the_token() {
     let vault = std::sync::Arc::new(puddle_secrets::MemoryStore::new());
-    let real =
-        puddle_api::HostCredentials::new(puddle_secrets::ToolPaths::new(None, None), vault.clone());
+    let real = puddle_services::credentials::HostCredentials::new(
+        puddle_secrets::ToolPaths::new(None, None),
+        vault.clone(),
+    );
     let api = crate::common::start_with_credentials(std::sync::Arc::new(real)).await;
     let token = paste(&api).await;
     let id = api

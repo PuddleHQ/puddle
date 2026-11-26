@@ -11,13 +11,13 @@ use puddle_secrets::{SourceSpec, StoredId, TokenScope};
 use puddle_store::{CredentialBinding, IdentityId, SwitchChange, WorkspaceOpKind};
 use puddle_types::WorkspaceId;
 
-use crate::ApiErrorBody;
 use crate::authz::Principal;
-use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::workspaces::named;
 use crate::routes::{AppState, record_op};
-use crate::wire::{
+use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, blocking};
+use puddle_services::wire::{
     AttachIdentityRequest, GitDefaultsView, GitRepoRequest, GitRepoToggles, GitRepoView,
     GitSwitchesRequest, IdentityDeleted, IdentityList, IdentityOrderRequest, IdentityRequest,
     IdentityView, TokenLeft, WorkspaceGitView, WorkspaceIdentitiesRequest,
@@ -535,7 +535,7 @@ pub(crate) async fn detach_identity(
     Ok(Json(set))
 }
 
-/// Sets "only push to listed repos" and "only pull from listed repos"; a switch left out stays. `use_default_push` or `use_default_pull` drops the workspace's own
+/// Sets "only push to allowed repositories" and "only pull from allowed repositories"; a switch left out stays. `use_default_push` or `use_default_pull` drops the workspace's own
 /// value, so that switch follows the default again.
 #[utoipa::path(
     put,

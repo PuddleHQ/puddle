@@ -21,8 +21,8 @@
     reason = "a plain test program for a VM: a failed step fails the run; measurements go to stderr"
 )]
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::process::ExitCode;
 
@@ -314,10 +314,10 @@ mod attach {
             settings,
             root,
             ..
-        } = start_vm_host_config(tag, options, move |config| {
+        } = Box::pin(start_vm_host_config(tag, options, move |config| {
             config.ssh.bridge_program = Some(exe);
             config.ssh.user_config = Some(uc);
-        })
+        }))
         .await;
         let name = format!("{}-{tag}", settings.prefix.as_str());
         let workspace = WorkspaceId::new(&name).unwrap();
@@ -435,7 +435,7 @@ mod attach {
         assert!(
             // The folder, on an image with git and on one without: the volume holds no checkout.
             args.starts_with("--folder-uri\nvscode-remote://ssh-remote+")
-                && args.contains(&format!("+{}/workspaces/", s.alias)),
+                && args.contains(&format!("+{}/workspace", s.alias)),
             "{args}"
         );
     }
@@ -446,10 +446,7 @@ mod attach {
         let made = guest(
             &s.runtime,
             &s.sandbox,
-            &format!(
-                "! command -v git >/dev/null && mkdir -p /workspaces/{0}/api/.git /workspaces/{0}/web/.git && echo made",
-                s.name
-            ),
+            "! command -v git >/dev/null && mkdir -p /workspace/api/.git /workspace/web/.git && echo made",
         )
         .await;
         assert_eq!(made.trim(), "made", "{made}");
@@ -477,7 +474,7 @@ mod attach {
         let found = guest(
             &s.runtime,
             &s.sandbox,
-            "grep -rIl 'BEGIN OPENSSH PRIVATE' /root /etc /home /tmp /run /workspaces /opt /var 2>/dev/null; echo done",
+            "grep -rIl 'BEGIN OPENSSH PRIVATE' /root /etc /home /tmp /run /workspace /opt /var 2>/dev/null; echo done",
         )
         .await;
         assert_eq!(

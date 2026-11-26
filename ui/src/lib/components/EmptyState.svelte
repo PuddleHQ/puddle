@@ -13,11 +13,7 @@
 </section>
 
 <style>
-  .empty {
-    max-width: 40rem;
-  }
   h1 {
-    font-size: var(--text-xl);
     margin-bottom: var(--space-2);
   }
   p {

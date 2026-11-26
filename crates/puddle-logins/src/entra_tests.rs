@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use puddle_proxy::{AnswerHead, ExchangeRewriter, Rewrite, SecretValue, StandIns, Want};
-use puddle_secrets::{MemoryStore, SecretStore};
+use puddle_secrets::MemoryStore;
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 
@@ -54,8 +54,8 @@ fn rig() -> Rig {
         true,
         builtin(),
         Arc::clone(&registry),
-        Arc::clone(&store) as Arc<dyn SecretStore>,
-        Arc::clone(&notices) as Arc<dyn LoginNotices>,
+        store.clone(),
+        notices.clone(),
         Marker::none(),
     );
     Rig {
@@ -140,13 +140,10 @@ fn registered(rig: &Rig, stand_in: &str, real: &str) -> bool {
 }
 
 fn kept(rig: &Rig, slot: Slot) -> (String, String) {
-    let saved = Vault::new(
-        Arc::clone(&rig.store) as Arc<dyn SecretStore>,
-        &WorkspaceId::new("alpha").unwrap(),
-    )
-    .read(&ENTRA, slot)
-    .unwrap()
-    .unwrap();
+    let saved = Vault::new(rig.store.clone(), &WorkspaceId::new("alpha").unwrap())
+        .read(&ENTRA, slot)
+        .unwrap()
+        .unwrap();
     (saved.stand_in.clone(), saved.real.as_str().to_owned())
 }
 
@@ -385,12 +382,9 @@ async fn forgetting_the_login_removes_every_resources_stand_ins_and_entries() {
     assert_eq!(rig.registry.len(), 0);
     for (slot, _) in ENTRA.slots() {
         assert!(
-            !Vault::new(
-                Arc::clone(&rig.store) as Arc<dyn SecretStore>,
-                &WorkspaceId::new("alpha").unwrap()
-            )
-            .holds(&ENTRA, slot)
-            .unwrap(),
+            !Vault::new(rig.store.clone(), &WorkspaceId::new("alpha").unwrap())
+                .holds(&ENTRA, slot)
+                .unwrap(),
             "{slot:?}"
         );
     }
@@ -529,8 +523,8 @@ async fn a_token_that_no_field_of_the_profile_takes_fails_closed_and_is_not_kept
         true,
         &NAMED_ONLY,
         Arc::clone(&registry),
-        Arc::new(MemoryStore::new()) as Arc<dyn SecretStore>,
-        Arc::clone(&notices) as Arc<dyn LoginNotices>,
+        Arc::new(MemoryStore::new()),
+        notices.clone(),
         Marker::none(),
     );
     let real = jwt("https://graph.microsoft.com", 1_893_456_000, 1500, 'G');

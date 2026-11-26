@@ -43,11 +43,14 @@ async fn a_failed_sync_after_the_clones_leaves_nothing_behind() {
     host.shutdown().await;
 }
 
-/// A list of repositories without its generated entry ids.
+/// A list of repositories without its generated entry ids and the branch the last listing found
+/// (the tests that read the branch read it from the list itself).
 fn without_entries(list: &serde_json::Value) -> serde_json::Value {
     let mut list = list.clone();
     for r in list.as_array_mut().unwrap() {
-        r.as_object_mut().unwrap().remove("entry");
+        let r = r.as_object_mut().unwrap();
+        r.remove("entry");
+        r.remove("branch");
     }
     list
 }
@@ -72,7 +75,7 @@ async fn the_one_problem_names_the_clone(api: &Api, workspace: &str, dir: &str, 
         "{detail}"
     );
     assert!(
-        detail.ends_with(&format!("git clone {url} /workspaces/{workspace}/{dir}")),
+        detail.ends_with(&format!("git clone {url} /workspace/{dir}")),
         "{detail}"
     );
 }
@@ -172,9 +175,9 @@ async fn a_clone_that_fails_fails_only_its_repository_and_every_clone_carries_it
     assert_eq!(
         rig.guest.clone_commands(),
         [
-            format!("clone -- {REPO} /workspaces/trio/api"),
-            format!("clone -- {DOWN} /workspaces/trio/docs"),
-            "clone -- https://example.org/acme/web /workspaces/trio/web".to_owned(),
+            format!("clone -- {REPO} /workspace/api"),
+            format!("clone -- {DOWN} /workspace/docs"),
+            "clone -- https://example.org/acme/web /workspace/web".to_owned(),
         ]
     );
     assert_eq!(rig.guest.syncs(), 1, "one sync after the last clone");
@@ -275,7 +278,7 @@ async fn an_added_clone_has_its_identity_and_table_row_before_it_runs_and_is_lis
     );
     assert_eq!(
         rig.guest.clone_commands().last().unwrap(),
-        &format!("clone -- {WEB} /workspaces/adds/web")
+        &format!("clone -- {WEB} /workspace/web")
     );
     assert_eq!(
         rig.guest.syncs(),
@@ -1088,7 +1091,7 @@ async fn a_guest_that_stops_answering_between_clones_fails_the_create_and_leaves
         .filter(|c| c.op == Op::Exec && c.target.as_deref() == Some("probe"))
         .take_while(|c| {
             !c.detail.as_deref().is_some_and(|d| {
-                d.ends_with("puddle-clone https://example.org/acme/web /workspaces/probe/.puddle/cloning/web /workspaces/probe/web")
+                d.ends_with("puddle-clone https://example.org/acme/web /workspace/.puddle/cloning/web /workspace/web")
             })
         })
         .count();
@@ -1109,7 +1112,7 @@ async fn a_guest_that_stops_answering_between_clones_fails_the_create_and_leaves
     );
     assert_eq!(
         rig.guest.clone_commands()[clones_before..],
-        [format!("clone -- {REPO} /workspaces/gone/api")],
+        [format!("clone -- {REPO} /workspace/api")],
         "the second clone never reached the guest"
     );
     assert_eq!(api.get("/api/workspaces/gone").await.status, 404);
@@ -1173,5 +1176,30 @@ async fn a_host_on_a_version_1_list_shows_one_repository_in_its_checkout_and_a_r
         "{saved}"
     );
     assert!(saved["workspaces"][0].get("repo_url").is_none(), "{saved}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_workspaces_list_shows_each_checkouts_branch_from_the_listing_made_at_the_attach() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "adds").await;
+    eventually("the background listing", Duration::from_secs(10), || {
+        !rig.guest.listings.lock().unwrap().is_empty()
+    })
+    .await;
+    // Before anything asks for the checkouts: only the listing the attach made can have kept it.
+    let list = api.get("/api/workspaces/adds").await.json();
+    assert!(
+        list["repositories"][0]["branch"].is_string(),
+        "the attach's listing is kept for the list: {list}"
+    );
+    let listed = checkouts_of(&api, "adds").await;
+    assert_eq!(
+        list["repositories"][0]["branch"], listed["checkouts"][0]["branch"],
+        "{list}"
+    );
     host.shutdown().await;
 }

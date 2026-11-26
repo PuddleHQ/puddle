@@ -5,12 +5,12 @@ use axum::Json;
 use axum::extract::State;
 use puddle_types::{Event, EventSink as _};
 
-use crate::ApiErrorBody;
-use crate::error::ApiError;
 use crate::extract::Path;
 use crate::routes::AppState;
 use crate::routes::workspaces::workspace_id;
-use crate::wire::{StartFolderRequest, StartFolderSet};
+use puddle_services::error::ApiError;
+use puddle_services::error::ApiErrorBody;
+use puddle_services::wire::{StartFolderRequest, StartFolderSet};
 
 /// Sets the start folder: a path under the volume, or `null` for the volume root. The folder may
 /// not exist yet. A running workspace's new terminals follow at once, and the answer says whether

@@ -36,7 +36,7 @@ pub(crate) struct EventsQuery {
     params(("workspace" = Option<WorkspaceId>, Query, description = "only this workspace's events; global events always come through")),
     responses(
         (status = OK, description = "the event stream", content_type = "text/event-stream", body = String),
-        (status = BAD_REQUEST, description = "invalid workspace name", body = crate::ApiErrorBody)
+        (status = BAD_REQUEST, description = "invalid workspace name", body = puddle_services::error::ApiErrorBody)
     )
 )]
 pub(crate) async fn events(
@@ -44,6 +44,8 @@ pub(crate) async fn events(
     principal: Principal,
     Query(query): Query<EventsQuery>,
 ) -> Response {
+    #[cfg(feature = "soak-planted-leak")]
+    planted_leak();
     // A signed-in browser's stream ends when its device is signed out.
     let ended: std::pin::Pin<Box<dyn Future<Output = ()> + Send>> =
         match (principal.via, &state.sign_in) {
@@ -60,4 +62,15 @@ pub(crate) async fn events(
     Sse::new(stream)
         .keep_alive(KeepAlive::new().interval(KEEP_ALIVE))
         .into_response()
+}
+
+/// The soak canary's leak: a buffer per connect, never freed. Filled with ones so every page is
+/// written and counts in the resident size.
+#[cfg(feature = "soak-planted-leak")]
+fn planted_leak() {
+    static KEPT: std::sync::Mutex<Vec<Vec<u8>>> = std::sync::Mutex::new(Vec::new());
+    const BYTES: usize = 4 * 1024 * 1024;
+    if let Ok(mut kept) = KEPT.lock() {
+        kept.push(vec![1_u8; BYTES]);
+    }
 }

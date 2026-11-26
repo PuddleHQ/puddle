@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[package]
+name = "puddle-services"
+description = "The service traits, wire types and in-memory fakes the local API serves and the host implements"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+# `FakeWorkspaces`, `FakeLauncher` and `contract`, the workspace-service suite every implementation runs.
+# For tests and the UI fixture; never in a shipped program.
+testing = []
+
+[dependencies]
+axum = { workspace = true }
+base64 = { workspace = true }
+futures-util = { workspace = true }
+getrandom = { workspace = true }
+puddle-certs = { workspace = true }
+puddle-doctor = { workspace = true }
+puddle-netpolicy = { workspace = true }
+puddle-repos = { workspace = true }
+puddle-secrets = { workspace = true }
+puddle-settings = { workspace = true }
+puddle-store = { workspace = true }
+puddle-types = { workspace = true, features = ["openapi"] }
+puddle-upstream = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+subtle = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt", "sync", "time"] }
+tracing = { workspace = true }
+utoipa = { workspace = true }
+
+[dev-dependencies]
+puddle-services = { path = ".", features = ["testing"] }
+puddle-store = { workspace = true, features = ["testing"] }
+puddle-test-kit = { workspace = true }
+puddle-types = { workspace = true, features = ["testing"] }
+proptest = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time", "test-util"] }
+
+[lints]
+workspace = true

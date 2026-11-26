@@ -4,6 +4,7 @@ use puddle_types::SandboxName;
 use std::sync::Mutex;
 
 use super::*;
+use crate::backend::EndExtensionHostsFailed;
 use tracing::Level;
 
 #[test]
@@ -115,7 +116,9 @@ fn recording_ends() -> (EndExtensionHosts, Arc<Mutex<Vec<String>>>) {
         sink.lock().unwrap().push(workspace.to_string());
         Box::pin(async move {
             if workspace.as_str() == "stopped" {
-                Err("the workspace is not running".to_owned())
+                Err(EndExtensionHostsFailed::Guest(
+                    puddle_host::EndExtensionHostsError::NotRunning,
+                ))
             } else {
                 Ok(())
             }
@@ -195,7 +198,7 @@ fn closing_a_popup_asks_nothing_and_the_last_window_asks_once() {
     // A second window of the same workspace (the editor's "New Window"), counted as the
     // window system does.
     windows.opened(&demo);
-    let ended = windows.on_event(demo.clone());
+    let ended = windows.on_event(demo);
     ended(&tauri::WindowEvent::Destroyed);
     // An absence window: a call for the first window's end would have arrived by now.
     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -484,6 +487,38 @@ fn a_start_up_failure_is_recorded_in_the_data_folder_and_named_in_the_message() 
     assert!(
         text.contains("cannot start: job object: assign failed"),
         "{text}"
+    );
+}
+
+#[test]
+fn a_failure_the_setup_hook_stored_is_what_run_returns_and_tauri_s_own_otherwise() {
+    let stored = Mutex::new(Some(ShellError::Containment(LifecycleError::Job {
+        op: "assign",
+        source: std::io::Error::other("denied"),
+    })));
+    let tauri_error = || tauri::Error::InvalidWebviewUrl("x");
+    assert!(matches!(
+        build_failure(&stored, tauri_error()),
+        ShellError::Containment(_)
+    ));
+    // Taken once: a second failure is Tauri's.
+    assert!(matches!(
+        build_failure(&stored, tauri_error()),
+        ShellError::Tauri(_)
+    ));
+}
+
+#[test]
+fn the_installer_refuses_to_replace_a_newer_version_with_an_older_one() {
+    // `bundle.windows.allowDowngrades` is what makes the WiX template write the
+    // DowngradeErrorMessage; Tauri's default (true) lets an older package install over a newer
+    // one. The compiled-in context leaves the bundle section out, so the file itself is read.
+    // ci/msi-install-test.ps1 runs the refusal on a real package.
+    let config: serde_json::Value =
+        serde_json::from_str(include_str!("../../tauri.conf.json")).unwrap();
+    assert_eq!(
+        config["bundle"]["windows"]["allowDowngrades"],
+        serde_json::Value::Bool(false)
     );
 }
 

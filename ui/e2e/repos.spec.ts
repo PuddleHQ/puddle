@@ -46,7 +46,7 @@ const create = (page: Page, name: string) =>
     exact: true,
   });
 const dialog = (page: Page) =>
-  page.getByRole("dialog", { name: "New workspace" });
+  page.getByRole("region", { name: "New workspace" });
 
 test("lists what the identity reaches on every host, with role and traits, and says what the list leaves out", async ({
   page,
@@ -269,9 +269,11 @@ test("keyboard only: from the repository row to the finished form", async ({
   await expect(form.getByLabel("Git repository (HTTPS)")).toHaveValue(
     "https://github.com/tijs-demo/dotfiles",
   );
-  await page.keyboard.press("Escape");
+  // Esc doesn't close the screen (it isn't a dialog); Cancel does, and returns to the list.
+  await form.getByRole("button", { name: "Cancel" }).focus();
+  await page.keyboard.press("Enter");
   await expect(form).toBeHidden();
-  await expectFocused(page, create(page, "tijs-demo/dotfiles"));
+  await expect(page).toHaveURL(/\/workspaces$/);
 
   // Open the picker with the keyboard from the workspaces list.
   await page.goto("/workspaces");

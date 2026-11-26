@@ -8,9 +8,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use puddle_api::LearnedService;
-use puddle_api::wire::LearnedHost;
 use puddle_proxy::{PassThrough, TerminationSource, Terminations};
+use puddle_services::learned::LearnedService;
+use puddle_services::wire::LearnedHost;
 use puddle_store::Store;
 use puddle_types::{Host, WorkspaceId};
 

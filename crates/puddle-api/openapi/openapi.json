@@ -3328,7 +3328,7 @@
         "tags": [
           "first-run"
         ],
-        "summary": "Records that the first-run flow was finished or skipped (`true`), or makes it run again at the\nnext start (`false`). Doing it twice keeps the first time.",
+        "summary": "Records that the first-run flow was finished or skipped (`true`), or makes it run again at the\nnext start (`false`). Doing it twice keeps the first time. A `step` records where the person\nis, so reopening the flow resumes there.",
         "operationId": "put_first_run",
         "requestBody": {
           "content": {
@@ -8768,6 +8768,67 @@
         }
       }
     },
+    "/api/workspaces/default-image": {
+      "get": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "The image a create boots when the form names none, with a line from the image's own labels\nthat says what is in it. The line is `null` until the host has read the labels.",
+        "operationId": "default_image",
+        "responses": {
+          "200": {
+            "description": "the default image",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DefaultImage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "421": {
+            "description": "Host is not the API's own address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Puddle failed; see its log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/workspaces/lookup": {
       "get": {
         "tags": [
@@ -10117,7 +10178,7 @@
         "tags": [
           "identities"
         ],
-        "summary": "Sets \"only push to listed repos\" and \"only pull from listed repos\"; a switch left out stays. `use_default_push` or `use_default_pull` drops the workspace's own\nvalue, so that switch follows the default again.",
+        "summary": "Sets \"only push to allowed repositories\" and \"only pull from allowed repositories\"; a switch left out stays. `use_default_push` or `use_default_pull` drops the workspace's own\nvalue, so that switch follows the default again.",
         "operationId": "set_git_switches",
         "parameters": [
           {
@@ -14835,8 +14896,10 @@
               "scrubbed_stand_ins",
               "foreign_credentials",
               "answer_credentials",
+              "protocol",
               "method",
               "path",
+              "git_operation",
               "path_truncated",
               "bytes_up",
               "bytes_down",
@@ -14908,6 +14971,17 @@
                 },
                 "description": "The kinds of credential the requests carried that Puddle did not add or swap, each\nonce: `stale_stand_in`, `github_token`, `npm_token`, `gitlab_token`,\n`azure_devops_token` or `git_authorization`. Never a value. Records written before it\nexisted, and connections of a workspace that turned the warning off, read as empty."
               },
+              "git_operation": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/GitOperation",
+                    "description": "`push` or `fetch` for a Git smart-HTTP request, whose `path` cannot tell them apart\n(both start with `/info/refs`; the query is dropped). `null` for any other request and\nin records written before it existed."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "host": {
                 "type": [
                   "string",
@@ -14924,7 +14998,7 @@
                   "string",
                   "null"
                 ],
-                "description": "HTTP method, where the proxy saw the request in clear."
+                "description": "HTTP method, where the proxy saw the request in clear; for `protocol: ssh` the Git\ncommand or the refusal (`ssh-command`, `ssh-channel`)."
               },
               "origin": {
                 "$ref": "#/components/schemas/ConnectionOrigin",
@@ -14968,6 +15042,17 @@
                 "format": "int32",
                 "description": "The requested port.",
                 "minimum": 0
+              },
+              "protocol": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/ConnectionProtocol",
+                    "description": "What `method` and `path` are: `http`, or `ssh` for Git over SSH. `null` when there is\nno `method`. Records written before it existed read as `http` when they have a\n`method`."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "reason": {
                 "type": "string",
@@ -16502,6 +16587,14 @@
           "timeout"
         ]
       },
+      "ConnectionProtocol": {
+        "type": "string",
+        "description": "What the `method` and `path` of a connection record are.",
+        "enum": [
+          "http",
+          "ssh"
+        ]
+      },
       "Consent": {
         "oneOf": [
           {
@@ -16907,6 +17000,27 @@
           }
         },
         "additionalProperties": false
+      },
+      "DefaultImage": {
+        "type": "object",
+        "description": "`GET /api/workspaces/default-image`: the image a create without one boots.",
+        "required": [
+          "image",
+          "description"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "One line that says what is in the image, read from the image's own labels; `null` while\nthey are not known yet (the image is still downloading, or its labels say nothing)."
+          },
+          "image": {
+            "type": "string",
+            "description": "The image reference, as the create uses it."
+          }
+        }
       },
       "DeleteCheck": {
         "type": "object",
@@ -17767,9 +17881,29 @@
               "step",
               "detail",
               "repository",
+              "bytes_done",
+              "bytes_total",
               "type"
             ],
             "properties": {
+              "bytes_done": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "Bytes done so far, for a step that counts them (downloading and unpacking the image);\n`null` for every other step, and while the count is not known yet.",
+                "minimum": 0
+              },
+              "bytes_total": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int64",
+                "description": "Bytes in all, when `bytes_done` is set and the total is known; `null` otherwise.",
+                "minimum": 0
+              },
               "detail": {
                 "type": [
                   "string",
@@ -18693,6 +18827,7 @@
         "required": [
           "completed",
           "completed_at",
+          "step",
           "dev_certificate"
         ],
         "properties": {
@@ -18712,23 +18847,58 @@
           "dev_certificate": {
             "$ref": "#/components/schemas/DevCertificate",
             "description": "What the certificates step says about a development certificate."
+          },
+          "step": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FirstRunStep",
+                "description": "The step the person was on when they left the flow, so reopening it resumes there; `null`\nbefore they moved on from the first screen, and once the flow is completed."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false
       },
       "FirstRunRequest": {
         "type": "object",
-        "description": "Marks the first-run flow finished, or open again.",
-        "required": [
-          "completed"
-        ],
+        "description": "Marks the first-run flow finished or open again, and/or records the step the person is on.",
         "properties": {
           "completed": {
-            "type": "boolean",
-            "description": "`true` records that the flow was finished or skipped (the time of the first such call is\nkept); `false` makes it run again at the next start."
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "`true` records that the flow was finished or skipped (the time of the first such call is\nkept); `false` makes it run again at the next start, from the first step. Left out, the\nflow's completion is not touched."
+          },
+          "step": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FirstRunStep",
+                "description": "The step the person is on, kept so reopening the flow resumes there. Ignored once the flow\nis completed."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false
+      },
+      "FirstRunStep": {
+        "type": "string",
+        "description": "A step of the first-run flow, in the order the person walks them (the ids of the UI's step list).",
+        "enum": [
+          "welcome",
+          "check",
+          "certificates",
+          "connect",
+          "interception",
+          "look",
+          "done"
+        ]
       },
       "ForeignCredentialKind": {
         "type": "string",
@@ -18855,6 +19025,14 @@
           }
         }
       },
+      "GitOperation": {
+        "type": "string",
+        "description": "What a Git smart-HTTP request of a connection record does.",
+        "enum": [
+          "push",
+          "fetch"
+        ]
+      },
       "GitRepoRequest": {
         "type": "object",
         "description": "Adds a repository to the table.",
@@ -18963,14 +19141,14 @@
               "boolean",
               "null"
             ],
-            "description": "\"Only pull from listed repos\"."
+            "description": "\"Only pull from allowed repositories\"."
           },
           "only_push_listed": {
             "type": [
               "boolean",
               "null"
             ],
-            "description": "\"Only push to listed repos\"."
+            "description": "\"Only push to allowed repositories\"."
           }
         },
         "additionalProperties": false
@@ -21003,7 +21181,8 @@
           "head_too_large",
           "request_timeout",
           "protocol_unsupported",
-          "stream_limit"
+          "stream_limit",
+          "workspace_not_running"
         ]
       },
       "ReasonPrefix": {
@@ -21754,6 +21933,24 @@
           "missing"
         ]
       },
+      "RestoreIdentityToken": {
+        "type": "object",
+        "description": "A Git identity's pasted token that arrives without its value because this machine's store lacks\nit. The identity and the host only, never a value.",
+        "required": [
+          "identity",
+          "host"
+        ],
+        "properties": {
+          "host": {
+            "type": "string",
+            "description": "The Git host the token is for."
+          },
+          "identity": {
+            "type": "string",
+            "description": "The identity's label."
+          }
+        }
+      },
       "RestoreMode": {
         "type": "string",
         "description": "How a restore treats what is already on this machine.",
@@ -21849,6 +22046,7 @@
           "parts",
           "workspaces",
           "secrets_needing_value",
+          "identity_tokens_needing_value",
           "running_workspaces"
         ],
         "properties": {
@@ -21866,6 +22064,13 @@
             "format": "int32",
             "description": "The backup format (1).",
             "minimum": 0
+          },
+          "identity_tokens_needing_value": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RestoreIdentityToken"
+            },
+            "description": "The Git identities' pasted tokens that need to be entered again here."
           },
           "parts": {
             "type": "array",
@@ -24524,6 +24729,7 @@
           "memory_mib",
           "status",
           "busy",
+          "actions",
           "created_at",
           "disk_size_mib",
           "disk_used_mib",
@@ -24537,6 +24743,13 @@
           "allowed_hosts"
         ],
         "properties": {
+          "actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceAction"
+            },
+            "description": "What the workspace's state admits now, from the same rules the calls are checked by:\noffer these and grey out the rest. Empty while an operation runs."
+          },
           "allowed_hosts": {
             "type": "array",
             "items": {
@@ -24667,6 +24880,20 @@
             "description": "The workspace's state."
           }
         }
+      },
+      "WorkspaceAction": {
+        "type": "string",
+        "description": "Something the user can ask of a workspace. A workspace lists the ones its state admits now in\n`actions`; the call for any other is refused with 409.",
+        "enum": [
+          "start",
+          "stop",
+          "attach",
+          "delete",
+          "reclaim",
+          "reset_root_disk",
+          "grow_root_disk",
+          "add_repository"
+        ]
       },
       "WorkspaceEnv": {
         "type": "object",
@@ -24857,7 +25084,9 @@
           "root_disk_grown",
           "ssh_agent_signed",
           "ssh_agent_refused",
-          "ssh_agent_answered"
+          "ssh_agent_answered",
+          "audit_retention_changed",
+          "audit_pruned"
         ]
       },
       "WorkspaceOpOutcome": {
@@ -24910,9 +25139,17 @@
         "required": [
           "entry",
           "url",
-          "directory"
+          "directory",
+          "branch"
         ],
         "properties": {
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The branch checked out in it, from the last time Puddle listed the workspace's checkouts\n(when the Git tab opened or the editor attached); `null` when no listing was made since\nPuddle started, the checkout is not there, or HEAD is detached. Never listed just for this\nanswer."
+          },
           "directory": {
             "$ref": "#/components/schemas/CheckoutDir",
             "description": "The checkout it is cloned into, directly under the volume root."
@@ -24998,6 +25235,7 @@
         "enum": [
           "preparing_volume",
           "pulling_image",
+          "unpacking_image",
           "cloning",
           "starting",
           "syncing",
@@ -25020,14 +25258,14 @@
               "boolean",
               "null"
             ],
-            "description": "\"Only pull from listed repos\": the workspace's own value."
+            "description": "\"Only pull from allowed repositories\": the workspace's own value."
           },
           "only_push_listed": {
             "type": [
               "boolean",
               "null"
             ],
-            "description": "\"Only push to listed repos\": the workspace's own value."
+            "description": "\"Only push to allowed repositories\": the workspace's own value."
           },
           "use_default_pull": {
             "type": "boolean",

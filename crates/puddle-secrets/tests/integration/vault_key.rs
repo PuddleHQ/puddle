@@ -1,9 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    reason = "test code: a panic is how a test fails"
-)]
+#![expect(clippy::unwrap_used, reason = "test code: a panic is how a test fails")]
 //! The vault key sources that call `systemd-creds`, against a fake one that answers with the exits
 //! and texts measured on real machines (systemd 255, 257, 258, 259), and against the real one where
 //! this computer has systemd 256 or later.

@@ -6,7 +6,7 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use puddle_fs::private;
 use puddle_store::RestoredDatabase;
@@ -60,12 +60,41 @@ pub(super) fn settings(
     new: &Path,
 ) -> Result<(), RestoreError> {
     match mode {
-        ApplyMode::Replace => copy_tree(there, new),
+        ApplyMode::Replace => copy_tree(there, new)?,
         ApplyMode::Add => {
             copy_tree(here, new)?;
-            add_missing(there, Path::new(""), new)
+            add_missing(there, Path::new(""), new)?;
         }
     }
+    keep_first_run(here, new)
+}
+
+/// Whether the first-run flow has been through is a fact about this machine, so a backup never
+/// takes it over (BK-31): the new global document gets this machine's `first_run` value, or none.
+fn keep_first_run(here: &Path, new: &Path) -> Result<(), RestoreError> {
+    let target = new.join("global.json");
+    let Ok(body) = fs::read(&target) else {
+        return Ok(());
+    };
+    let Ok(Value::Object(mut doc)) = serde_json::from_slice::<Value>(&body) else {
+        return Ok(());
+    };
+    let present = fs::read(here.join("global.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+        .and_then(|v| v.get("first_run").cloned());
+    if doc.get("first_run") == present.as_ref() {
+        return Ok(());
+    }
+    match present {
+        Some(value) => doc.insert("first_run".into(), value),
+        None => doc.remove("first_run"),
+    };
+    let body = serde_json::to_vec_pretty(&Value::Object(doc)).map_err(|e| RestoreError::Io {
+        what: format!("cannot write {}", target.display()),
+        source: io::Error::other(e),
+    })?;
+    private::write_atomic(&target, &body).map_err(io_error("cannot write", &target))
 }
 
 fn add_missing(there: &Path, rel: &Path, new: &Path) -> Result<(), RestoreError> {
@@ -125,15 +154,60 @@ fn merge_documents(ours: &[u8], theirs: &[u8]) -> Option<Vec<u8>> {
         .flatten()
 }
 
-fn read_book(path: &Path) -> Result<Option<Map<String, Value>>, String> {
+/// Why a backup's workspace list and this machine's cannot be merged. It displays as the refusal
+/// shown to the user before a restore starts.
+#[derive(Debug, thiserror::Error)]
+pub enum BookRefusal {
+    /// A list exists but could not be read.
+    #[error("cannot read {}: {source}", path.display())]
+    Unreadable {
+        /// The list.
+        path: PathBuf,
+        /// What went wrong.
+        source: io::Error,
+    },
+    /// The file is not a JSON object.
+    #[error("{} is not a workspace list", path.display())]
+    NotAList {
+        /// The file.
+        path: PathBuf,
+    },
+    /// One list is in a format whose entries have another shape.
+    #[error(
+        "the workspace list in the backup is in format {theirs} and this machine's in format \
+         {ours}. Puddle can merge formats {OLDEST_MERGEABLE} and {BOOK_VERSION}, but {whose} \
+         format {old} describes workspaces differently, so adding would risk losing their \
+         settings. Start the Puddle that made the backup once and back up again, choose Replace, \
+         or restore on a machine with no workspaces"
+    )]
+    FormatsDiffer {
+        /// The backup's format.
+        theirs: u64,
+        /// This machine's format.
+        ours: u64,
+        /// Whose format is too old to merge: `the backup's` or `this machine's`.
+        whose: &'static str,
+        /// That format.
+        old: u64,
+    },
+}
+
+fn read_book(path: &Path) -> Result<Option<Map<String, Value>>, BookRefusal> {
     let body = match fs::read(path) {
         Ok(body) => body,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+        Err(source) => {
+            return Err(BookRefusal::Unreadable {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
     };
     match serde_json::from_slice::<Value>(&body) {
         Ok(Value::Object(map)) => Ok(Some(map)),
-        _ => Err(format!("{} is not a workspace list", path.display())),
+        _ => Err(BookRefusal::NotAList {
+            path: path.to_path_buf(),
+        }),
     }
 }
 
@@ -148,25 +222,54 @@ fn entries_of(book: &Map<String, Value>) -> Vec<Value> {
         .unwrap_or_default()
 }
 
-/// Whether the present and the backup's workspace lists can be merged: both have the current
-/// format, or one of them has no workspaces.
-pub(super) fn check_book_versions(here: &Path, there: &Path) -> Result<(), String> {
+/// The oldest workspace list format whose entries are the current ones without an owner: formats
+/// 3 and 4 differ only by that field, so two lists in them merge. Formats 1 and 2 name and shape
+/// their entries differently, and guessing the translation could lose a workspace's settings.
+const OLDEST_MERGEABLE: u64 = 3;
+
+/// Whether the present and the backup's workspace lists can be merged: one of them has no
+/// workspaces, or both are in a format whose entries have the current shape (3 or 4).
+pub(super) fn check_book_versions(here: &Path, there: &Path) -> Result<(), BookRefusal> {
     let (Some(here), Some(there)) = (read_book(here)?, read_book(there)?) else {
         return Ok(());
     };
+    let (ours, theirs) = (version_of(&here), version_of(&there));
     if entries_of(&here).is_empty()
         || entries_of(&there).is_empty()
-        || version_of(&here) == version_of(&there)
+        || ours == theirs
+        || (ours >= OLDEST_MERGEABLE && theirs >= OLDEST_MERGEABLE)
     {
         return Ok(());
     }
-    Err(format!(
-        "the workspace list in the backup is in format {} and this machine's in format {}; \
-         start the Puddle that made the backup once and back up again, or restore on a machine \
-         with no workspaces",
-        version_of(&there),
-        version_of(&here)
-    ))
+    let old = if theirs < OLDEST_MERGEABLE {
+        theirs
+    } else {
+        ours
+    };
+    let whose = if theirs < OLDEST_MERGEABLE {
+        "the backup's"
+    } else {
+        "this machine's"
+    };
+    Err(BookRefusal::FormatsDiffer {
+        theirs,
+        ours,
+        whose,
+        old,
+    })
+}
+
+/// The entries of a list with the owner `owner` given to each that names none.
+fn with_owners(entries: Vec<Value>, owner: i64) -> Vec<Value> {
+    entries
+        .into_iter()
+        .map(|mut entry| {
+            if let Some(object) = entry.as_object_mut() {
+                object.entry("owner").or_insert_with(|| Value::from(owner));
+            }
+            entry
+        })
+        .collect()
 }
 
 fn owner_of(entry: &Value, restored: &RestoredDatabase) -> i64 {
@@ -230,6 +333,9 @@ pub(super) fn book(
     if let Some(ours) = &ours {
         if mode == ApplyMode::Add && !entries_of(ours).is_empty() && !workspaces.is_empty() {
             check_book_versions(here, there).map_err(RestoreError::Merge)?;
+            // A list in format 3 beside one in format 4: the merged list is format 4, and the
+            // entries that name no owner get this machine's, as the loader gives them.
+            let mixed = version_of(ours) != version_of(&theirs);
             let mut all = entries_of(ours);
             let present: BTreeSet<String> = all
                 .iter()
@@ -242,6 +348,10 @@ pub(super) fn book(
             );
             workspaces = all;
             out.clone_from(ours);
+            if mixed {
+                workspaces = with_owners(workspaces, restored.owner_id);
+                out.insert("version".into(), Value::from(BOOK_VERSION));
+            }
         }
         // An id retired on either side is never given out again.
         let mut retired = ids_of(ours, "retired_ids");

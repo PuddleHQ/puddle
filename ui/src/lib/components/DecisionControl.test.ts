@@ -70,7 +70,7 @@ describe("the one-click buttons", () => {
     expect(more).not.toHaveClass("allow");
     expect(more).not.toHaveClass("deny");
     const allow = screen.getByRole("button", { name: /^Allow/ });
-    expect(allow.parentElement).toBe(more.parentElement);
+    expect(allow.closest(".control")).toBe(more.parentElement);
   });
 
   it("offers only Deny when the request can't be approved yet", () => {
@@ -85,7 +85,6 @@ describe("the one-click buttons", () => {
     expect(document.body.textContent).not.toMatch(/sandbox/i);
     for (const button of screen.getAllByRole("button")) {
       expect(button.getAttribute("aria-label") ?? "").not.toMatch(/sandbox/i);
-      expect(button.getAttribute("title") ?? "").not.toMatch(/sandbox/i);
     }
   });
 });
@@ -113,16 +112,12 @@ describe("Ctrl+click", () => {
     expect(onMore).not.toHaveBeenCalled();
   });
 
-  it("is in the tooltips, on a line of its own that names what it does", () => {
+  it("puts no native title on any button, so no unstyled tooltip appears; the shortcuts popover explains Ctrl+click", () => {
     mount();
-    for (const [name, line] of [
-      [/^Allow/, "Ctrl+click: allow for all workspaces"],
-      [/^Deny/, "Ctrl+click: deny for all workspaces"],
-    ] as const) {
-      const lines = (
-        screen.getByRole("button", { name }).getAttribute("title") ?? ""
-      ).split("\n");
-      expect(lines).toContain(line);
+    const buttons = screen.getAllByRole("button");
+    expect(buttons).toHaveLength(3);
+    for (const button of buttons) {
+      expect(button).not.toHaveAttribute("title");
     }
   });
 });

@@ -9,11 +9,15 @@ ok    Test boot             a test VM booted and ran a program in 1.1 s
 ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 info  SSH agent             no agent answers on \\.\pipe\openssh-ssh-agent: SSH to servers other than Git hosts gets no key from Puddle; start your agent or name its pipe in the settings
-      note: SSH to servers other than Git hosts gets no key from Puddle. The OpenSSH
-            Authentication Agent service is disabled: set its startup type to Manual or
-            Automatic in Services (services.msc), then start it. Git hosts need no agent: Puddle
-            ends their SSH sessions itself, so Git over SSH is not affected.
-      from: The system cannot find the file specified. (os error 2)
+      impact: Programs in a workspace can't use your SSH keys for servers other than Git hosts.
+              Git over SSH still works.
+      remedy: Start the OpenSSH Authentication Agent service, or the SSH agent of 1Password or
+              Bitwarden.
+      note:   SSH to servers other than Git hosts gets no key from Puddle. The OpenSSH
+              Authentication Agent service is disabled: set its startup type to Manual or
+              Automatic in Services (services.msc), then start it. Git hosts need no agent: Puddle
+              ends their SSH sessions itself, so Git over SSH is not affected.
+      from:   The system cannot find the file specified. (os error 2)
 ok    Azure CLI (az)        version 2.64.0
 ok    Credential store      the operating system's credential store: a test write and delete worked
 ok    Global Secure Access  client not installed

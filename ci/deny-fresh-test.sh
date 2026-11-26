@@ -11,10 +11,8 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/deny-fresh-test.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
-fail() {
-    echo "deny-fresh-test: $*" >&2
-    exit 1
-}
+# shellcheck disable=SC1091 # the helper sits in scripts/
+. "$(dirname "$0")/../scripts/test-fail.sh"
 
 printf 'async-executor 1.14.0\n' >"$tmp/upstream"
 cat >"$tmp/deny" <<'STUB'

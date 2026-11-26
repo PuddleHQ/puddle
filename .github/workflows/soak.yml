@@ -1,0 +1,154 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The Linux soak: a working day and a night of `puddle serve` with four busy workspaces and no
+# person (crates/puddle-e2e/src/soak/run.rs, `puddle-soak run`). The run lays out the built program
+# as an install, lets the sampler run alone first, brings up the four workspaces (a Rust build loop,
+# a pnpm install and build loop, a simulated agent's commits and tests, a web app forwarded to
+# this computer's port 3000 and asked every 10 s), plays the day's events (Inbox batches, a stop
+# and start, a quit and start of Puddle, a backup under load, a hard kill), idles through the night,
+# compares the morning with hour 0, and judges metrics.tsv. It fails on any MAJOR finding.
+#
+#   canary  proves the judge sees a leak: a build with puddle-api's `soak-planted-leak` (4 MiB kept
+#           for good on every connect to the event stream) must fail a short run, and the same run
+#           of a normal build must pass. Every trigger runs it.
+#   day     the soak itself. The playbook's day lasts 12 hours, longer than a hosted runner's
+#           6 hour job limit, so a hosted run squeezes it into 4.5 hours (`--profile hosted`, 22.5
+#           minutes a playbook hour; the judge reads its windows in those hours). With the
+#           repository variable PUDDLE_SOAK_RUNNER=self-hosted it runs on a self-hosted runner with
+#           the labels `self-hosted`, `linux`, `kvm` and `puddle-soak` at full length. A pull
+#           request runs a 10 minute day (`--profile smoke`) to prove the path, not the leak lines.
+#
+# Weekly on develop and by hand (`gh workflow run soak.yml`); on a pull request that touches the
+# soak. Not a required check. A red scheduled run opens "Nightly red: soak" through
+# nightly-signal.yml and a green one closes it. Never retried. A scheduled or dispatched day only
+# runs on a commit whose `ci` run is green: the soak looks for slow failures, not first-hour ones.
+name: soak
+
+on:
+  schedule:
+    - cron: "17 1 * * 6"
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "full (12 h, self-hosted only), hosted (4.5 h) or smoke (10 min)"
+        required: false
+        default: ""
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - .github/workflows/soak.yml
+      - ci/soak/**
+      - crates/puddle-e2e/src/soak/**
+      - crates/puddle-e2e/src/bin/puddle-soak.rs
+
+permissions:
+  contents: read
+
+concurrency:
+  group: soak-${{ github.event_name == 'schedule' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+jobs:
+  canary:
+    name: soak canary (a planted leak fails the run, a normal build passes)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install && rustc --version
+      - name: msb runtime (fork tag; download, verify)
+        run: ci/fetch-msb.sh "$RUNNER_TEMP/msb"
+      - name: guest agent (static musl build)
+        run: echo "AGENT=$PWD/$(ci/build-agent.sh --locked)" >> "$GITHUB_ENV"
+      - name: the program twice (with and without the planted leak) and puddle-soak
+        run: |
+          cargo build --locked -p puddle --features serve,puddle-api/soak-planted-leak
+          cp target/debug/puddle "$RUNNER_TEMP/puddle-leak"
+          cargo build --locked -p puddle --features serve
+          cp target/debug/puddle "$RUNNER_TEMP/puddle-clean"
+          cargo build --locked -p puddle-e2e --bin puddle-soak
+      - name: the planted leak fails the run
+        run: |
+          set +e
+          target/debug/puddle-soak run --profile smoke --puddle "$RUNNER_TEMP/puddle-leak" \
+            --runtime "$RUNNER_TEMP/msb" --agent "$AGENT" --out "$RUNNER_TEMP/canary-leak" \
+            --min-ram-gib 2 --min-disk-gib 5 | tee "$RUNNER_TEMP/canary-leak.txt"
+          code=${PIPESTATUS[0]}
+          set -e
+          [ "$code" = 1 ] || { echo "::error::the run of the leaking build exited $code, not 1"; exit 1; }
+          grep -q '^MAJOR Leak proc\.puddle\.[0-9]*\.rss_kb' "$RUNNER_TEMP/canary-leak.txt" \
+            || { echo "::error::the run failed, but not on the planted leak"; exit 1; }
+      - name: the normal build passes the same run
+        run: |
+          target/debug/puddle-soak run --profile smoke --puddle "$RUNNER_TEMP/puddle-clean" \
+            --runtime "$RUNNER_TEMP/msb" --agent "$AGENT" --out "$RUNNER_TEMP/canary-clean" \
+            --min-ram-gib 2 --min-disk-gib 5
+      - name: upload the canary runs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: soak-canary
+          path: |
+            ${{ runner.temp }}/canary-*/*.tsv
+            ${{ runner.temp }}/canary-*/*.txt
+            ${{ runner.temp }}/canary-*/*.md
+            ${{ runner.temp }}/canary-*/*.log
+          retention-days: 14
+          if-no-files-found: ignore
+
+  day:
+    name: soak day (four busy workspaces, the events, the night, the morning)
+    runs-on: ${{ vars.PUDDLE_SOAK_RUNNER == 'self-hosted' && fromJSON('["self-hosted","linux","kvm","puddle-soak"]') || 'ubuntu-24.04' }}
+    timeout-minutes: ${{ vars.PUDDLE_SOAK_RUNNER == 'self-hosted' && 900 || 355 }}
+    env:
+      PROFILE: ${{ inputs.profile || (github.event_name == 'pull_request' && 'smoke') || (vars.PUDDLE_SOAK_RUNNER == 'self-hosted' && 'full') || 'hosted' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: only on a commit whose ci run is green
+        if: ${{ github.event_name != 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+        run: |
+          green=$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$SHA" \
+            --json conclusion --jq '[.[] | select(.conclusion == "success")] | length')
+          [ "$green" -gt 0 ] || { echo "::error::BLOCKED: no green ci run on $SHA; the soak waits for one"; exit 1; }
+      - uses: ./.github/actions/kvm
+      - name: Toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install && rustc --version
+      - name: msb runtime (fork tag; download, verify)
+        run: ci/fetch-msb.sh "$RUNNER_TEMP/msb"
+      - name: guest agent (static musl build)
+        run: echo "AGENT=$PWD/$(ci/build-agent.sh --locked)" >> "$GITHUB_ENV"
+      - name: the program (optimised soak profile, with serve) and puddle-soak
+        run: |
+          cargo build --locked --profile soak -p puddle --features serve
+          cargo build --locked -p puddle-e2e --bin puddle-soak
+      - name: the day (profile ${{ env.PROFILE }})
+        run: |
+          target/debug/puddle-soak run --profile "$PROFILE" --puddle target/soak/puddle \
+            --runtime "$RUNNER_TEMP/msb" --agent "$AGENT" --scripts ci/soak \
+            --out "$RUNNER_TEMP/soak" --min-ram-gib 10 --min-disk-gib 20
+      - name: summary
+        if: ${{ !cancelled() }}
+        run: cat "$RUNNER_TEMP/soak/summary.md" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+      - name: upload the run folder
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: soak-day
+          path: |
+            ${{ runner.temp }}/soak/*.tsv
+            ${{ runner.temp }}/soak/*.txt
+            ${{ runner.temp }}/soak/*.md
+            ${{ runner.temp }}/soak/*.log
+            ${{ runner.temp }}/soak/*.json
+            ${{ runner.temp }}/soak/*.jsonl
+          retention-days: 30
+          if-no-files-found: ignore

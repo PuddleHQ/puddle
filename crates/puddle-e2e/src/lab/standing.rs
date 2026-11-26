@@ -125,7 +125,7 @@ const USAGE: &str = "usage: puddle-lab [--squid | --squid-basic] [--interceptor 
 pub fn parse(mut args: impl Iterator<Item = String>) -> Result<Command, String> {
     let mut cmd = Command::default();
     while let Some(flag) = args.next() {
-        let mut value = || args.next().ok_or(format!("{flag} needs a value"));
+        let mut value = || args.next().ok_or_else(|| format!("{flag} needs a value"));
         match flag.as_str() {
             "--squid" => set_squid(&mut cmd.plan, SquidAuth::Open)?,
             "--squid-basic" => set_squid(&mut cmd.plan, SquidAuth::Basic)?,
@@ -136,7 +136,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<Command, String> 
             "--all" => {
                 let rest = std::mem::take(&mut cmd.plan);
                 cmd.plan = Plan {
-                    interceptor: rest.interceptor.or(Plan::everything().interceptor),
+                    interceptor: rest.interceptor.or_else(|| Plan::everything().interceptor),
                     names: rest.names,
                     allowed_ports: rest.allowed_ports,
                     squid_through: rest.squid_through,
@@ -176,7 +176,10 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<Command, String> 
             );
         }
         cmd.plan = Plan {
-            interceptor: cmd.plan.interceptor.or(Plan::everything().interceptor),
+            interceptor: cmd
+                .plan
+                .interceptor
+                .or_else(|| Plan::everything().interceptor),
             names: cmd.plan.names,
             allowed_ports: cmd.plan.allowed_ports,
             squid_through: cmd.plan.squid_through,
@@ -609,6 +612,7 @@ fn origin_server() -> Result<u16, String> {
 /// # Errors
 /// The failed checks, or the start that did not work.
 pub fn self_test(plan: &Plan) -> Result<Vec<String>, String> {
+    let _cleanup = CleanupOnSignal::start()?;
     let origin = origin_server()?;
     let mut plan = plan.clone();
     plan.allowed_ports.push(origin);
@@ -635,16 +639,22 @@ fn run(cmd: &Command) -> Result<(), String> {
         .ca
         .clone()
         .unwrap_or_else(|| info_path.with_extension("ca.pem"));
-    let lab = Lab::start(&cmd.plan, &ca)?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| e.to_string())?;
-    // Listening before the info file exists: a script that signals the lab as soon as it is ready
-    // must get a clean stop, not the default action of a signal nobody handles yet.
-    let signals = {
-        let _entered = runtime.enter();
-        Signals::listen()?
+    // The guard covers the start only: when the scope ends the run's own handlers are in place,
+    // and its pieces stop on drop from there on.
+    let (lab, runtime, signals) = {
+        let _cleanup = CleanupOnSignal::start()?;
+        let lab = Lab::start(&cmd.plan, &ca)?;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| e.to_string())?;
+        // Listening before the info file exists: a script that signals the lab as soon as it is
+        // ready must get a clean stop, not the default action of a signal nobody handles yet.
+        let signals = {
+            let _entered = runtime.enter();
+            Signals::listen()?
+        };
+        (lab, runtime, signals)
     };
     // Written last and in one go: a script waits for the file.
     let part = info_path.with_extension("part");
@@ -699,6 +709,82 @@ impl Signals {
         }
         #[cfg(windows)]
         self.ctrl_c.recv().await;
+    }
+}
+
+/// While alive, a stop signal removes the containers this process started and ends it. A signal
+/// otherwise kills the process before any `Drop` runs, and a timeout that ends a start or a
+/// self-test would leave the containers running. Not needed once [`Signals`] is listening: the
+/// run then stops its pieces by returning.
+struct CleanupOnSignal {
+    #[cfg(unix)]
+    done: Option<tokio::sync::oneshot::Sender<()>>,
+    #[cfg(unix)]
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl CleanupOnSignal {
+    /// Installs the handlers, on a thread of their own, before returning.
+    ///
+    /// # Errors
+    /// When a handler cannot be installed.
+    #[cfg(unix)]
+    fn start() -> Result<Self, String> {
+        let (done, finished) = tokio::sync::oneshot::channel::<()>();
+        let (ready, installed) = std::sync::mpsc::channel::<Result<(), String>>();
+        let thread = std::thread::spawn(move || {
+            let runtime = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => runtime,
+                Err(e) => return drop(ready.send(Err(e.to_string()))),
+            };
+            let signals = {
+                let _entered = runtime.enter();
+                Signals::listen()
+            };
+            let mut signals = match signals {
+                Ok(signals) => signals,
+                Err(e) => return drop(ready.send(Err(e))),
+            };
+            let _ = ready.send(Ok(()));
+            let signalled = runtime.block_on(async {
+                tokio::select! {
+                    () = signals.recv() => true,
+                    _ = finished => false,
+                }
+            });
+            if signalled {
+                eprintln!("puddle-lab: stop signal, removing containers");
+                super::squid::remove_started_containers();
+                std::process::exit(1);
+            }
+        });
+        installed
+            .recv()
+            .map_err(|e| e.to_string())
+            .and_then(|r| r)?;
+        Ok(Self {
+            done: Some(done),
+            thread: Some(thread),
+        })
+    }
+
+    #[cfg(not(unix))]
+    #[expect(clippy::unnecessary_wraps, reason = "same signature as the unix one")]
+    fn start() -> Result<Self, String> {
+        Ok(Self {})
+    }
+}
+
+#[cfg(unix)]
+impl Drop for CleanupOnSignal {
+    fn drop(&mut self) {
+        drop(self.done.take());
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 }
 

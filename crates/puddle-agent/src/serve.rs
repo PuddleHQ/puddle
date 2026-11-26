@@ -13,7 +13,6 @@ use puddle_agent_proto::origin::{CONTAINER, ORIGIN_HEADER};
 use puddle_agent_proto::relay::splice;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
-use tokio::task::JoinSet;
 
 use crate::upstream::Upstream;
 
@@ -52,21 +51,16 @@ pub fn listen(addr: SocketAddr) -> io::Result<TcpListener> {
 
 /// Accepts guest connections forever. Connection tasks are owned here and end with it.
 pub async fn serve(listener: TcpListener, upstream: Arc<Upstream>) {
-    let mut conns = JoinSet::new();
-    loop {
-        tokio::select! {
-            accepted = listener.accept() => match accepted {
-                Ok((client, _)) => {
-                    conns.spawn(connection(client, Arc::clone(&upstream)));
-                }
-                Err(err) => {
-                    tracing::warn!(error = %err, "accept failed");
-                    tokio::time::sleep(ACCEPT_PAUSE).await;
-                }
-            },
-            Some(_) = conns.join_next(), if !conns.is_empty() => {}
-        }
-    }
+    puddle_ipc::accept_tcp(
+        listener,
+        ACCEPT_PAUSE,
+        "guest connections",
+        std::future::pending(),
+        |conns, client, _| {
+            conns.spawn(connection(client, Arc::clone(&upstream)));
+        },
+    )
+    .await;
 }
 
 /// What a container's client sent first: up to and including its request line, plus whatever came
@@ -131,6 +125,10 @@ where
 }
 
 async fn connection(mut client: TcpStream, upstream: Arc<Upstream>) {
+    // Responses reach the client in many small writes; Nagle would hold each tail back for an ACK.
+    if let Err(err) = client.set_nodelay(true) {
+        tracing::debug!(error = %err, "nodelay");
+    }
     let mut stream = match upstream.open().await {
         Ok(stream) => stream,
         Err(err) => {

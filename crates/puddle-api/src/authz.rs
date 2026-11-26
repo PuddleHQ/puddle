@@ -25,9 +25,9 @@ use axum::response::{IntoResponse, Response};
 use puddle_store::{DeviceId, Role, Store, StoreError, UserId, WorkspaceOwners};
 use puddle_types::{PendingId, RuleId, WorkspaceId};
 
-use crate::error::{ApiError, ErrorCode, blocking};
 use crate::routes::AppState;
-use crate::workspaces::WorkspaceError;
+use puddle_services::error::{ApiError, ErrorCode, blocking};
+use puddle_services::workspaces::WorkspaceError;
 
 /// How a principal reached the API.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -438,7 +438,8 @@ pub(crate) fn declaration(method: &Method, path: &str) -> Option<Declared> {
             | "/api/orphan-volumes/{id}/restore",
         ) => (A::ChangeInstall, T::Install),
         ("GET", "/api/workspaces" | "/api/workspaces/lookup") => (A::ListWorkspaces, T::Own),
-        ("POST", "/api/workspaces" | "/api/repository-hosts") => (A::CreateWorkspace, T::Own),
+        ("GET", "/api/workspaces/default-image")
+        | ("POST", "/api/workspaces" | "/api/repository-hosts") => (A::CreateWorkspace, T::Own),
         (
             "GET",
             "/api/workspaces/{id}"

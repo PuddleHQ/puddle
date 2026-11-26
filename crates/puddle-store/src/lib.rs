@@ -49,8 +49,8 @@ pub use clock::{Clock, ManualClock, SystemClock};
 pub use environment::{
     EnvChange, EnvDraft, EnvEntry, EnvName, EnvRow, EnvScope, EnvSecret, EnvValue,
     MAX_ENTRIES_PER_SCOPE, MAX_NAME_LEN, MAX_PLAIN_VALUE_BYTES, MAX_SCOPE_BYTES, MAX_SECRET_HOSTS,
-    MAX_SECRET_VALUE_CHARS, PUDDLE_OWNED_NAMES, SecretHost, SecretPlace, StartValue, StartVar,
-    check_secret_value,
+    MAX_SECRET_VALUE_CHARS, MintError, PUDDLE_OWNED_NAMES, SecretHost, SecretPlace, StartValue,
+    StartVar, check_secret_value,
 };
 pub use error::StoreError;
 pub use identity::{
@@ -64,8 +64,9 @@ pub use pending::{
 };
 pub use recorder::{ConnectionRecorder, RECORD_PROBLEM};
 pub use restore::{
-    DatabasePreview, DatabaseRefusal, PartCounts, RestoreMode, RestoredDatabase, SecretEnv,
-    StagedDatabase, check_staged_database, migrate_database, preview_merge, restore_database,
+    DatabasePreview, DatabaseRefusal, IdentityToken, PartCounts, RestoreMode, RestoredDatabase,
+    SecretEnv, StagedDatabase, check_staged_database, migrate_database, preview_merge,
+    restore_database,
 };
 pub use rule::{Actor, Effect, NewRule, Precedence, Rule, RuleEdit, Scope};
 pub use schema::SCHEMA_VERSION;

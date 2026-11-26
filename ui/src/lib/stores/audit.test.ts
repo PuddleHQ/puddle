@@ -189,6 +189,29 @@ describe("reading the log", () => {
   });
 });
 
+describe("counting a filter", () => {
+  it("counts what a filter would show without changing the shown rows", async () => {
+    fill(3);
+    const store = make();
+    expect(await store.count(ALL)).toEqual({ count: 3, more: false });
+    expect(store.entries).toEqual([]);
+  });
+  it("says there are more when one page does not hold them", async () => {
+    fill(250);
+    const store = make();
+    const result = await store.count(ALL);
+    expect(result?.more).toBe(true);
+    expect(result?.count).toBe(200);
+  });
+  it("answers null when the log cannot be read", async () => {
+    const store = make();
+    api.failNext = 500;
+    expect(await store.count(ALL)).toBeNull();
+    api.down = true;
+    expect(await store.count(ALL)).toBeNull();
+  });
+});
+
 describe("the live tail", () => {
   it("adds new records on top when an event says so, and not before", async () => {
     fill(3);

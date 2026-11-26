@@ -3,7 +3,7 @@
 //! the root file with the hash check, the registry, the version list and the install retry, and
 //! the status of every refusal.
 
-use puddle_api::wire::{RegistryTool, ToolEntry, ToolsFile};
+use puddle_services::wire::{RegistryTool, ToolEntry, ToolsFile};
 use puddle_types::{ToolName, ToolVersion, WorkspaceId};
 use serde_json::{Value, json};
 

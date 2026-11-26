@@ -27,8 +27,8 @@
     reason = "VM test: a failed step fails the test, a missing JSON key included; what the guest said goes to the log"
 )]
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::fmt::Write as _;
 use std::time::{Duration, Instant};
@@ -298,7 +298,7 @@ async fn vm_rules_probe_a_guest_tool_sees_every_rule_decide_its_answer() {
     // from the saved package files on a warm cache, from Debian's mirrors on the first run.
     let kit = PackageKit::open(
         Flavour::Apt,
-        puddle_api::DEFAULT_IMAGE,
+        puddle_services::workspaces::DEFAULT_IMAGE,
         "netcat-openbsd",
         "deb.debian.org and security.debian.org",
     );
@@ -508,7 +508,7 @@ async fn vm_rules_probe_a_guest_tool_sees_every_rule_decide_its_answer() {
         &off,
     );
     t.check(
-        off.body.contains("turn on 'loopback'"),
+        off.body.contains("turn on 'This computer (loopback)'"),
         "S13 off",
         "the text names the toggle",
         &off,

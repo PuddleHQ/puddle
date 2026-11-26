@@ -6,10 +6,8 @@ set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/lab-override-check-test.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
-fail() {
-    echo "lab-override-check-test: $*" >&2
-    exit 1
-}
+# shellcheck disable=SC1091 # the helper sits in scripts/
+. "$(dirname "$0")/../scripts/test-fail.sh"
 
 printf '# why\ntornado==6.6\n' >"$tmp/overrides.txt"
 fixture() { # <name> <requires_dist json array>

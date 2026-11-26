@@ -19,7 +19,7 @@ use crate::SettingsError;
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Migration {
     pub(crate) from: u32,
-    pub(crate) apply: fn(&mut Map<String, Value>) -> Result<(), String>,
+    pub(crate) apply: fn(&mut Map<String, Value>),
 }
 
 /// Steps for [`crate::GlobalSettings`], oldest first.
@@ -32,17 +32,12 @@ pub(crate) const WORKSPACE: &[Migration] = &[];
 
 /// Version 1 called the defaults every workspace gets `sandbox_defaults`. A document that somehow
 /// has both keeps the new one, and the old stays as an unknown field.
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "has the signature of Migration::apply"
-)]
-fn workspace_defaults(m: &mut Map<String, Value>) -> Result<(), String> {
+fn workspace_defaults(m: &mut Map<String, Value>) {
     if !m.contains_key("workspace_defaults")
         && let Some(v) = m.remove("sandbox_defaults")
     {
         m.insert("workspace_defaults".to_owned(), v);
     }
-    Ok(())
 }
 
 /// The key every document carries its version under.
@@ -88,11 +83,7 @@ pub(crate) fn upgrade(
                     from: version,
                     reason: "no migration for this version".to_owned(),
                 })?;
-        (step.apply)(&mut map).map_err(|reason| SettingsError::Migration {
-            kind,
-            from: version,
-            reason,
-        })?;
+        (step.apply)(&mut map);
         version += 1;
     }
     Ok((map, found))

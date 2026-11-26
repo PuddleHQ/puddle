@@ -227,6 +227,13 @@ repair_index() {
     else
         held=yes
         err=$(git ls-files --stage 2>&1 >/dev/null) && return 0
+        rc=$?
+        # Git maps the index and reads a cut entry's fields past the end of the file: depending on
+        # those bytes it says "unknown index entry format" or dies of a bus error with nothing on stderr.
+        if [ "$rc" -gt 128 ]; then
+            problem "$shown" "git dies reading the index, which is likely cut off inside an entry; it was left as it is; git will not work until it is repaired by hand"
+            return 0
+        fi
         case $err in
             # An extension a newer git wrote is "corrupt" to this one, and a valid index.
             *'index uses '[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]' extension, which we do not understand'*)

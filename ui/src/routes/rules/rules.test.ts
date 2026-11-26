@@ -141,6 +141,41 @@ async function loaded() {
   await waitFor(() => expect(rulesStore.status).toBe("ready"));
 }
 
+/** Opens the row menu of the rule an item name points at ("Delete rule: <rule>") and picks that item. */
+async function choose(item: string | RegExp) {
+  const source = typeof item === "string" ? item : item.source;
+  const found = /^\^?(?:Edit rule|Change expiry|Delete rule)(?:: (.*))?$/.exec(
+    source,
+  );
+  const rest = found?.[1] ?? "";
+  const trigger = screen.getByRole("button", {
+    name: new RegExp(
+      `^More about ${typeof item === "string" ? rest.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : rest}`,
+    ),
+  });
+  await fireEvent.keyDown(trigger, { key: "Enter" });
+  await fireEvent.click(await screen.findByRole("menuitem", { name: item }));
+}
+
+// The first render of this page, its first open dialog and its first role queries build what every
+// later test reuses. That cost fell on the first test, where a loaded host (load 91, 12 s loop lag)
+// turned a 0.4 s test into 7.4 s against the 5 s limit. A top-level await has no test clock, so the
+// file pays it here once, as vitest.setup.ts does for what every page shares.
+{
+  seed();
+  await loaded();
+  await fireEvent.click(screen.getByRole("button", { name: /Add rule/ }));
+  await screen.findByRole("dialog");
+  screen.getAllByRole("option", { hidden: true });
+  rows();
+  cleanup();
+  api.rules = [];
+  rulesStore.rules = [];
+  rulesStore.status = "loading";
+  ruleSets.status = "loading";
+  requestRulesStore.status = "loading";
+}
+
 describe("workspace ids", () => {
   it("stay behind the names in the table, the filter and the add form", async () => {
     workspaces.list = [{ ...fakeWorkspace("Shop"), id: "g07jxx5q" }];
@@ -158,9 +193,12 @@ describe("workspace ids", () => {
     await loaded();
     await fireEvent.click(screen.getByRole("button", { name: /Add rule/ }));
     await screen.findByRole("dialog");
-    // The filter, the form and the rule set switch all read "Shop" and carry the id as the value.
+    // The filter and the form read "Shop" and carry the id as the value; the rule set switch reads it too.
     const shop = screen.getAllByRole("option", { name: "Shop", hidden: true });
-    expect(shop.length).toBeGreaterThanOrEqual(3);
+    expect(shop.length).toBeGreaterThanOrEqual(2);
+    expect(
+      screen.getByRole("group", { name: "github in Shop" }),
+    ).toBeInTheDocument();
     for (const option of shop) expect(option).toHaveValue("g07jxx5q");
     expect(within(rows()[0]!).getByText("Shop")).toBeInTheDocument();
     expectNoIdsShown(document.body, ["g07jxx5q"]);
@@ -211,12 +249,13 @@ describe("the list", () => {
     await loaded();
     expect(hosts()).toEqual([
       "old.example.com",
-      "*.github.com and subdomains",
+      "*.github.com",
       "registry.npmjs.org",
     ]);
     const old = rows()[0]!;
     expect(within(old).getByText("Expired")).toBeInTheDocument();
-    expect(within(old).getByText("no longer applies")).toBeInTheDocument();
+    expect(within(old).queryByText("no longer applies")).toBeNull();
+    expect(within(old).queryByRole("switch")).toBeNull();
     expect(within(rows()[1]!).getByText("Deny")).toBeInTheDocument();
     expect(within(rows()[1]!).getByText("shop")).toBeInTheDocument();
     expect(within(rows()[2]!).getByText("Every workspace")).toBeInTheDocument();
@@ -230,7 +269,7 @@ describe("the list", () => {
     seed();
     await loaded();
     await fireEvent.click(screen.getByRole("button", { name: "Sort by host" }));
-    expect(hosts()[0]).toBe("*.github.com and subdomains");
+    expect(hosts()[0]).toBe("*.github.com");
     expect(screen.getByRole("columnheader", { name: /Host/ })).toHaveAttribute(
       "aria-sort",
       "ascending",
@@ -367,7 +406,7 @@ describe("adding", () => {
     expect(toasts.items[0]?.message).toBe(
       "Added: deny *.example.org for workspace shop.",
     );
-    expect(hosts()).toContain("*.example.org and subdomains");
+    expect(hosts()).toContain("*.example.org");
   });
   it("checks the form before asking the server", async () => {
     const dialog = await open();
@@ -495,7 +534,7 @@ describe("adding", () => {
 describe("editing a rule in place", () => {
   async function open(name: RegExp) {
     if (!screen.queryByRole("table")) await loaded();
-    await fireEvent.click(screen.getByRole("button", { name }));
+    await choose(name);
     return screen.findByRole("dialog", { name: "Edit rule" });
   }
   const save = (dialog: HTMLElement) =>
@@ -509,7 +548,9 @@ describe("editing a rule in place", () => {
     expect(within(dialog).getByLabelText("Host")).toHaveValue("*.github.com");
     expect(within(dialog).getByLabelText("Deny")).toBeChecked();
     expect(within(dialog).getByLabelText("One workspace")).toBeChecked();
-    expect(within(dialog).getByLabelText("Workspace")).toHaveValue("shop");
+    expect(
+      within(dialog).getByRole("combobox", { name: "Workspace" }),
+    ).toHaveValue("shop");
     expect(within(dialog).getByLabelText("Expires")).toHaveDisplayValue(
       /^Unchanged/,
     );
@@ -535,7 +576,7 @@ describe("editing a rule in place", () => {
       "Saved: allow api.github.com for workspace shop.",
     );
     expect(hosts()).toContain("api.github.com");
-    expect(hosts()).not.toContain("*.github.com and subdomains");
+    expect(hosts()).not.toContain("*.github.com");
     expect(rows()).toHaveLength(3);
   });
 
@@ -626,7 +667,7 @@ describe("editing a rule in place", () => {
 describe("changing the expiry", () => {
   async function open(name: RegExp) {
     await loaded();
-    await fireEvent.click(screen.getByRole("button", { name }));
+    await choose(name);
     return screen.findByRole("dialog", { name: "Change expiry" });
   }
   it("makes a rule permanent, or ends it later", async () => {
@@ -721,11 +762,7 @@ describe("deleting", () => {
   it("asks first, names the rule, and Cancel keeps it", async () => {
     seed();
     await loaded();
-    await fireEvent.click(
-      screen.getByRole("button", {
-        name: "Delete rule: allow registry.npmjs.org for every workspace",
-      }),
-    );
+    await choose("Delete rule: allow registry.npmjs.org for every workspace");
     const dialog = await screen.findByRole("alertdialog", {
       name: "Delete this rule?",
     });
@@ -744,11 +781,7 @@ describe("deleting", () => {
   it("deletes on confirm, and puts focus on the next row", async () => {
     seed();
     await loaded();
-    await fireEvent.click(
-      screen.getByRole("button", {
-        name: /Delete rule: allow old.example.com/,
-      }),
-    );
+    await choose(/Delete rule: allow old.example.com/);
     const dialog = await screen.findByRole("alertdialog");
     await fireEvent.click(
       within(dialog).getByRole("button", { name: "Delete rule" }),
@@ -765,11 +798,7 @@ describe("deleting", () => {
     seed();
     await loaded();
     api.refuse = { status: 500, message: "x" };
-    await fireEvent.click(
-      screen.getByRole("button", {
-        name: /Delete rule: allow old.example.com/,
-      }),
-    );
+    await choose(/Delete rule: allow old.example.com/);
     await fireEvent.click(
       within(await screen.findByRole("alertdialog")).getByRole("button", {
         name: "Delete rule",
@@ -781,7 +810,7 @@ describe("deleting", () => {
   it("focuses the heading when the last rule goes", async () => {
     api.rules = [rule(1)];
     await loaded();
-    await fireEvent.click(screen.getByRole("button", { name: /Delete rule/ }));
+    await choose(/Delete rule/);
     await fireEvent.click(
       within(await screen.findByRole("alertdialog")).getByRole("button", {
         name: "Delete rule",
@@ -813,9 +842,10 @@ describe("live", () => {
       await vi.waitFor(() =>
         expect(screen.getByRole("table")).toBeInTheDocument(),
       );
-      expect(screen.queryByText("no longer applies")).not.toBeInTheDocument();
+      const table = within(screen.getByRole("table"));
+      expect(table.queryByText("Expired")).not.toBeInTheDocument();
       await vi.advanceTimersByTimeAsync(30_000);
-      expect(screen.getByText("no longer applies")).toBeInTheDocument();
+      expect(table.getByText("Expired")).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }
@@ -971,11 +1001,7 @@ describe("rule sets and System managed (rules spec §7)", () => {
   it("moves a rule into a set by editing it, and the set shows it afterwards", async () => {
     await withSets();
     const readsBefore = setsApi.calls.length;
-    await fireEvent.click(
-      screen.getByRole("button", {
-        name: "Edit rule: allow mine.example for every workspace",
-      }),
-    );
+    await choose("Edit rule: allow mine.example for every workspace");
     const dialog = await screen.findByRole("dialog", { name: "Edit rule" });
     await fireEvent.click(
       within(dialog).getByRole("radio", { name: /In rule set Client X/ }),
@@ -1028,6 +1054,33 @@ describe("method and path rules", () => {
       expect(rows[1]).toHaveAttribute("aria-current", "true"),
     );
     expect(rows[0]).not.toHaveAttribute("aria-current");
+    window.history.replaceState({}, "", "/rules");
+  });
+
+  it("opens the new-rule form with the host and workspace the address names, as Activity links to it", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/rules?new-rule=ads.example.net&workspace=shop",
+    );
+    render(RulesPage);
+    const dialog = await screen.findByRole("dialog", { name: "Add a rule" });
+    expect(within(dialog).getByLabelText(/^Host/)).toHaveValue(
+      "ads.example.net",
+    );
+    expect(
+      within(dialog).getByRole("combobox", { name: "Workspace" }),
+    ).toHaveValue("shop");
+    window.history.replaceState({}, "", "/rules");
+  });
+
+  it("opens the new-rule form with only the host when the address names no workspace", async () => {
+    window.history.replaceState({}, "", "/rules?new-rule=ads.example.net");
+    render(RulesPage);
+    const dialog = await screen.findByRole("dialog", { name: "Add a rule" });
+    expect(within(dialog).getByLabelText(/^Host/)).toHaveValue(
+      "ads.example.net",
+    );
     window.history.replaceState({}, "", "/rules");
   });
 
@@ -1099,8 +1152,8 @@ describe("method and path rules", () => {
     await waitFor(() => expect(requestRulesStore.status).toBe("ready"));
     requestApi.rules = [requestRule(2, { host: "late.example.com" })];
     source.emit({ type: "request_rules_changed" });
-    expect(
-      await within(section()).findByText("late.example.com"),
-    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(section()).toHaveTextContent("late.example.com"),
+    );
   });
 });

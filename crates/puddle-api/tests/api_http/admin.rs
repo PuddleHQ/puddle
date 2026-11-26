@@ -6,10 +6,13 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use puddle_api::{FakeWorkspaces, WorkspaceService};
+use puddle_services::{fake_workspaces::FakeWorkspaces, workspaces::WorkspaceService};
 use serde_json::{Value, json};
 
-use super::sign_in::{Req, Site, access_token, pw, site_built};
+use super::sign_in::{Req, Site, access_token, pw, site_reaping};
+
+/// The reaper's timer in these tests, so a look that no notice caused comes soon.
+const REAP_EVERY: Duration = Duration::from_millis(10);
 
 const REPO: &str = "https://github.com/acme/api.git";
 
@@ -26,15 +29,15 @@ async fn admin_site(multi_user: bool) -> Admin {
 /// operation is still under way when the next look comes.
 async fn admin_site_slow(multi_user: bool, step_delay: Duration) -> Admin {
     let made: std::sync::Mutex<Option<Arc<FakeWorkspaces>>> = std::sync::Mutex::new(None);
-    let site = site_built(multi_user, |events, clock| {
+    let site = site_reaping(multi_user, REAP_EVERY, |events, clock| {
         let fake = Arc::new(FakeWorkspaces::with_options(
             events.clone(),
             clock.clone(),
-            Arc::new(puddle_api::FakeLauncher::new()),
+            Arc::new(puddle_services::fake_workspaces::FakeLauncher::new()),
             step_delay,
         ));
         *made.lock().unwrap() = Some(fake.clone());
-        Some(fake as Arc<dyn WorkspaceService>)
+        Some(fake)
     })
     .await;
     let workspaces = made.lock().unwrap().take().unwrap();
@@ -86,7 +89,7 @@ impl Admin {
 
     /// Waits until the background deletion has removed the user.
     async fn gone(&self, name: &str) {
-        // The reaper also looks on a 10 s timer, so a missed notice costs up to that.
+        // The reaper also looks on a timer (REAP_EVERY here), so a missed notice costs up to that.
         puddle_test_kit::eventually_async(
             &format!("{name} is removed"),
             Duration::from_secs(30),
@@ -517,22 +520,28 @@ async fn a_deletion_whose_workspace_step_fails_is_finished_at_a_later_look() {
     assert_eq!(started.status, 202, "{started:?}");
     admin.workspaces.idle().await;
     let mut others = Vec::new();
-    for name in ["Bob", "Cy", "Dee"] {
+    for name in ["Bob", "Cy", "Dee", "Eve"] {
         others.push((name, admin.user(name, pw("other password three")).await.1));
     }
 
     // The stop fails and later the delete fails: Ann stays as long as her box is left.
-    admin
-        .workspaces
-        .fail_next(puddle_api::Operation::Stopping, "the sandbox hangs");
+    admin.workspaces.fail_next(
+        puddle_services::workspaces::Operation::Stopping,
+        "the sandbox hangs",
+    );
     start_delete(&admin, ann_id, "Ann").await;
     admin.workspaces.idle().await;
-    admin
-        .workspaces
-        .fail_next(puddle_api::Operation::Deleting, "the volume is locked");
-    // Each further deletion makes the reaper look again (it also looks every few seconds).
+    admin.workspaces.fail_next(
+        puddle_services::workspaces::Operation::Deleting,
+        "the volume is locked",
+    );
+    // Ann needs four looks: the stop fails, the stop works, the delete fails, the delete works.
+    // A deletion started while a look runs only queues one more look, so two deletions in a row
+    // can share a look. Waiting until each other user is gone gives one look per deletion, and
+    // the one that follows Ann's own deletion is the first of the four.
     for (name, id) in others {
         start_delete(&admin, id, name).await;
+        admin.gone(name).await;
         admin.workspaces.idle().await;
     }
     admin.gone("Ann").await;
@@ -542,7 +551,7 @@ async fn a_deletion_whose_workspace_step_fails_is_finished_at_a_later_look() {
 
 #[tokio::test]
 async fn a_workspace_still_busy_is_left_alone_until_it_is_idle() {
-    let admin = admin_site_slow(true, Duration::from_millis(300)).await;
+    let admin = admin_site_slow(true, Duration::from_millis(30)).await;
     admin.site.setup().await;
     let (ann, ann_id) = admin.user("Ann", pw("ann password three")).await;
     let (_bob, bob_id) = admin.user("Bob", pw("bob password three")).await;
@@ -573,9 +582,10 @@ async fn a_workspace_that_refuses_its_stop_is_tried_again_at_a_later_look() {
     // A paused box counts as up but cannot be stopped: the stop is refused at once.
     let mut record = admin.workspaces.list().await.unwrap().remove(0);
     record.status = puddle_types::WorkspaceStatus::Paused;
-    admin
-        .workspaces
-        .seed(record.clone(), puddle_api::Unsaved::default());
+    admin.workspaces.seed(
+        record.clone(),
+        puddle_services::fake_workspaces::Unsaved::default(),
+    );
 
     start_delete(&admin, ann_id, "Ann").await;
     // An absence window: nothing signals that the reaper looked and left Ann, so give it time.
@@ -585,7 +595,7 @@ async fn a_workspace_that_refuses_its_stop_is_tried_again_at_a_later_look() {
     record.status = puddle_types::WorkspaceStatus::Stopped;
     admin
         .workspaces
-        .seed(record, puddle_api::Unsaved::default());
+        .seed(record, puddle_services::fake_workspaces::Unsaved::default());
     start_delete(&admin, bob_id, "Bob").await;
     admin.gone("Ann").await;
     admin.gone("Bob").await;

@@ -30,8 +30,8 @@
     reason = "VM test: a failed step fails the test; measurements go to stderr"
 )]
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::time::Duration;
 
@@ -124,6 +124,21 @@ echo "tool=npm-basic rc=${{PIPESTATUS[0]}} installed=$(test -f node_modules/{NPM
     )
 }
 
+/// Maven Central rate-limits shared runner addresses (HTTP 429), and a fresh local repository
+/// fetches the dependency plugin and its dependencies from it on every run. This fills one warm
+/// repository, with retries and a growing wait, and a run copies it: no tool run depends on
+/// Central answering at that moment. The warm-up fetches an unrelated artifact, never the feed's.
+const MVN_WARM: &str = r"mvn_warm() {
+  for i in 1 2 3 4 5 6; do
+    mvn -B -q -Dmaven.repo.local=/tmp/m2w org.apache.maven.plugins:maven-dependency-plugin:3.8.1:get \
+      -Dartifact=junit:junit:4.13.2 >/tmp/mvn-warm.log 2>&1 && return 0
+    sleep $((i * 20))
+  done
+  cat /tmp/mvn-warm.log
+}
+mvn_warm
+";
+
 /// The same installs with no credential at all: each must fail, or a pass above proves nothing.
 fn control_script() -> String {
     let id = NUGET_PACKAGE.to_lowercase();
@@ -146,7 +161,7 @@ echo "control=nuget rc=${{PIPESTATUS[0]}}"
 "#
     );
     let maven_control = format!(
-        r#"rm -rf /tmp/mvc /tmp/m2c && mkdir -p /tmp/mvc && cd /tmp/mvc
+        r#"{MVN_WARM}rm -rf /tmp/mvc /tmp/m2c && mkdir -p /tmp/mvc && cp -r /tmp/m2w /tmp/m2c && cd /tmp/mvc
 mvn -B -q -Dmaven.repo.local=/tmp/m2c org.apache.maven.plugins:maven-dependency-plugin:3.8.1:get \
   -Dartifact={MAVEN_COORDINATES} -DremoteRepositories=feed::default::https://{MAVEN}/m2 2>&1 | tail -3
 echo "control=maven rc=${{PIPESTATUS[0]}}"
@@ -251,7 +266,7 @@ true
 
 fn maven_script() -> String {
     format!(
-        r#"rm -rf /tmp/mv /tmp/m2 && mkdir -p /tmp/mv && cd /tmp/mv
+        r#"{MVN_WARM}rm -rf /tmp/mv /tmp/m2 && mkdir -p /tmp/mv && cp -r /tmp/m2w /tmp/m2 && cd /tmp/mv
 cat > settings.xml <<'EOF'
 <settings><servers><server><id>feed</id><username>feeduser</username><password>${{env.MAVEN_FEED_TOKEN}}</password></server></servers></settings>
 EOF
@@ -452,7 +467,7 @@ async fn run_controls(
     workspace: &WorkspaceId,
 ) -> Vec<(&'static str, Reach)> {
     let from = net.web.seen().len();
-    let control = run(vm, workspace, &control_script(), 5).await;
+    let control = run(vm, workspace, &control_script(), 15).await;
     let mut controls = Vec::new();
     for (tool, host) in [
         ("npm", NPM),

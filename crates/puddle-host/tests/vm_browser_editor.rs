@@ -21,8 +21,8 @@
     reason = "VM test: a failed step fails the test"
 )]
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
@@ -30,11 +30,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
-use puddle_api::{
-    BrowserTarget, CONNECTION_TOKEN_COOKIE, DesktopTarget, EditorSignIn, LaunchError, Launcher,
-    WorkspaceRecord,
-};
 use puddle_compute_msb::MsbRuntime;
+use puddle_services::{
+    workspaces::BrowserTarget, workspaces::CONNECTION_TOKEN_COOKIE, workspaces::DesktopTarget,
+    workspaces::EditorSignIn, workspaces::LaunchError, workspaces::Launcher,
+    workspaces::WorkspaceRecord,
+};
 use puddle_store::{Actor, Effect, NewRule, Pattern, Scope};
 use puddle_types::WorkspaceId;
 use puddle_vm_tests::{BrowserClient, BrowserCookie, BrowserSession, PageId, PageRequest};
@@ -87,7 +88,7 @@ const WINDOW_STATE: &str = r"(() => {
 /// or comes back empty, the window keeps the file's identity with no folder and says "No Folder
 /// Opened" without an error. The cached copy says which of the two reads gave the folders, and
 /// the failed loads name the addresses the console only counts.
-const WINDOW_STORAGE: &str = r"(async () => {
+const WINDOW_STORAGE: &str = "(async () => {
   const failed = performance.getEntriesByType('resource')
     .filter(e => e.responseStatus >= 400)
     .map(e => `${e.responseStatus} ${e.name}`);
@@ -126,11 +127,11 @@ const WINDOW_STORAGE: &str = r"(async () => {
 const SERVER_STATE: &str = r#"
 ps -eo pid,etimes,args | grep -e '[c]ode-server' | cut -c1-2000
 data=$(ps -eo args= | grep -o -e '--user-data-dir [^ ]*' | head -n 1 | cut -d' ' -f2)
-for f in /workspaces/*/.puddle/editor/*.code-workspace; do [ -f "$f" ] && { echo "== $f"; cat "$f"; echo; stat -c 'inode %i, %s bytes, modified %y, changed %z' "$f"; }; done
-echo "== /workspaces/*/.puddle/editor"; ls -la --time-style=full-iso /workspaces/*/.puddle/editor/
+for f in /workspace/.puddle/editor/*.code-workspace; do [ -f "$f" ] && { echo "== $f"; cat "$f"; echo; stat -c 'inode %i, %s bytes, modified %y, changed %z' "$f"; }; done
+echo "== /workspace/.puddle/editor"; ls -la --time-style=full-iso /workspace/.puddle/editor/
 echo "== boot report"; tail -n 20 /run/puddle/boot.log
 for f in $(find "$data" -path '*CachedConfigurations*' -type f 2>/dev/null); do echo "== $f"; head -c 2000 "$f"; echo; done
-echo "== volume"; ls -a /workspaces/*/
+echo "== volume"; ls -a /workspace/
 for f in $(find "$data/logs" -type f 2>/dev/null | sort | tail -n 12); do echo "== $f"; tail -n 30 "$f"; done
 echo "== agent"; tail -n 30 /run/puddle/agent.log
 true
@@ -179,6 +180,18 @@ async fn explorer(
             // Logged before the guest is asked: a guest that does not answer fails the test in
             // `guest_within`, and the window's state must not be lost with it.
             tracing::error!(workspace = %sandbox, step, error = %e, %window, %storage, "the explorer did not get ready");
+            // One reload of the same window, after the dump: folders on the second load say the
+            // window's first read of the multi-root file lost a race, none say the server's answer
+            // was wrong; either way the next failure names which.
+            let reload = PageRequest::new("", "true")
+                .result("(setTimeout(() => location.reload(), 0), true)")
+                .budget(PAGE_BUDGET);
+            let _ = shell.browser.lock().await.wait(page, &reload).await;
+            let again = PageRequest::new("", EXPLORER_READY)
+                .result("true")
+                .budget(PAGE_BUDGET);
+            let reloaded = shell.browser.lock().await.wait(page, &again).await;
+            tracing::error!(workspace = %sandbox, step, shows_folders_after_reload = reloaded.is_ok(), "the same window reloaded");
             let server = guest_within(runtime, sandbox, SERVER_STATE, PAGE_BUDGET).await;
             panic!("{sandbox}'s explorer did not get ready ({step}); the guest:\n{server}");
         }
@@ -194,6 +207,16 @@ const WHERE: &str = "({ path: location.pathname, search: decodeURIComponent(loca
 
 /// A page's first load, running on its own task: it fails with the browser's message.
 type PageLoad = tokio::task::JoinHandle<Result<(), String>>;
+
+/// A browser session, in the system colour scheme `scheme` when one is named.
+async fn browser_in(scheme: Option<&str>) -> BrowserSession {
+    let client = BrowserClient::from_env().expect("browser client environment");
+    match scheme {
+        Some(scheme) => client.session_in_color_scheme(scheme).await,
+        None => client.session().await,
+    }
+    .expect("the browser started")
+}
 
 /// The desktop shell's part, with a real browser for its webview (module docs).
 struct ShellStandIn {
@@ -217,11 +240,12 @@ struct ShellStandIn {
 
 impl ShellStandIn {
     async fn new() -> Arc<Self> {
-        let browser = BrowserClient::from_env()
-            .expect("browser client environment")
-            .session()
-            .await
-            .expect("the browser started");
+        Self::new_in(None).await
+    }
+
+    /// [`ShellStandIn::new`] with a browser whose system colour scheme is `scheme`.
+    async fn new_in(scheme: Option<&str>) -> Arc<Self> {
+        let browser = browser_in(scheme).await;
         Arc::new(Self {
             browser: Arc::new(tokio::sync::Mutex::new(browser)),
             pages: Arc::default(),
@@ -249,6 +273,15 @@ impl ShellStandIn {
                 .expect("the page load task ran")
                 .unwrap_or_else(|e| panic!("{workspace}'s page did not open: {e}"));
         }
+    }
+
+    /// Closes `workspace`'s pages and the browser, and starts a new one (an empty data folder)
+    /// whose system colour scheme is `scheme`; the next window signs in again by cookie.
+    async fn restart_browser_in(&self, workspace: &str, scheme: &str) {
+        self.close_pages(workspace).await;
+        let fresh = browser_in(Some(scheme)).await;
+        let old = std::mem::replace(&mut *self.browser.lock().await, fresh);
+        old.quit().await.expect("the browser closed");
     }
 
     /// Closes the browser. A page load still running keeps it open: then the process ends it.
@@ -622,7 +655,7 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
         .until(ended(name_static), Duration::from_secs(600))
         .await;
     assert_eq!(end["step"], "done", "{end}");
-    let root = format!("/workspaces/{name}");
+    let root = "/workspace".to_owned();
     guest(
         &runtime,
         &sandbox,
@@ -837,6 +870,137 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
     }
 }
 
+/// What a window of the editor shows of its colour theme: the workbench's theme class (`vs-dark`
+/// for a dark theme, `vs` for a light one: VS Code's `ColorScheme`) and the scheme the browser
+/// reports as the system's.
+const WINDOW_THEME: &str = "(() => {
+  const classes = [...(document.querySelector('.monaco-workbench')?.classList ?? [])];
+  return {
+    dark: classes.includes('vs-dark'),
+    light: classes.includes('vs'),
+    system: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+  };
+})()";
+
+/// The first open of a window follows the system's colour scheme, in code-server itself: the
+/// settings Puddle seeded make the real workbench pick its dark theme in a browser on a dark
+/// system and its light theme in a browser on a light one (the control: the same server and the
+/// same settings file, the other scheme). A user's own settings file stays what it was after the
+/// server starts again.
+///
+/// What this cannot say is how the window looks on a real dark system: that stays a person's check.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_browser_code_server_first_open_follows_the_systems_colour_scheme_and_keeps_the_users_settings()
+ {
+    let release = std::path::PathBuf::from(std::env::var_os("PUDDLE_CODE_SERVER_DIR").expect(
+        "PUDDLE_CODE_SERVER_DIR: the unpacked code-server release (ci/fetch-code-server.sh)",
+    ));
+    let shell = ShellStandIn::new_in(Some("dark")).await;
+    let mut options = named_id_options();
+    options.launcher = shell.clone();
+    let VmHost {
+        host,
+        runtime,
+        settings,
+        ..
+    } = start_vm_host_config("scheme", options, |config| {
+        config.guest.code_server = Some(release);
+    })
+    .await;
+    let name = format!("{}-scheme", settings.prefix.as_str());
+    let sandbox = WorkspaceId::new(&name).unwrap();
+    let api = Api::new(host.url(), host.token());
+    let mut events = api.events().await;
+    let name_static: &'static str = Box::leak(name.clone().into_boxed_str());
+    let reply = api
+        .post(
+            "/api/workspaces",
+            &json!({"name": name, "repositories": [], "memory_mib": 2048}).to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let end = events
+        .until(ended(name_static), Duration::from_secs(600))
+        .await;
+    assert_eq!(end["step"], "done", "{end}");
+    guest(&runtime, &sandbox, EDITOR_UP).await;
+
+    // The file the agent seeded before the server's first start.
+    let settings_file = "/workspace/.puddle/code-server/user-data/User/settings.json".to_owned();
+    let seeded = guest(&runtime, &sandbox, &format!("cat {settings_file}")).await;
+    assert!(
+        seeded.contains(r#""window.autoDetectColorScheme": true"#),
+        "{seeded}"
+    );
+
+    let attach = || async {
+        let reply = api
+            .post(
+                &format!("/api/workspaces/{name}/attach"),
+                &json!({"mode": "browser"}).to_string(),
+            )
+            .await;
+        assert_eq!(reply.status, 200, "{}", reply.body);
+    };
+    let theme = |ws: &str| {
+        let ws = ws.to_owned();
+        let shell = Arc::clone(&shell);
+        async move {
+            shell
+                .wait(
+                    &ws,
+                    "!!document.querySelector('.monaco-workbench')",
+                    WINDOW_THEME,
+                    WORKBENCH_BUDGET,
+                )
+                .await
+        }
+    };
+
+    // A browser on a dark system: the window's workbench is in a dark theme.
+    attach().await;
+    let dark = theme(&name).await;
+    assert_eq!(dark["system"], "dark", "{dark}");
+    assert_eq!(dark["dark"], true, "the window did not open dark: {dark}");
+    assert_eq!(dark["light"], false, "{dark}");
+
+    // A browser on a light system, same server, same file: the window is in a light theme.
+    shell.restart_browser_in(&name, "light").await;
+    attach().await;
+    let light = theme(&name).await;
+    assert_eq!(light["system"], "light", "{light}");
+    assert_eq!(
+        light["light"], true,
+        "the window did not open light: {light}"
+    );
+    assert_eq!(light["dark"], false, "{light}");
+
+    // A user's own file is not touched by a start of the server.
+    let own = r#"{"workbench.colorTheme": "Solarized Dark"}"#;
+    guest(
+        &runtime,
+        &sandbox,
+        &format!("printf '%s' '{own}' >{settings_file}"),
+    )
+    .await;
+    guest(
+        &runtime,
+        &sandbox,
+        "for p in /proc/[0-9]*; do tr '\\0' ' ' <$p/cmdline 2>/dev/null | \
+         grep -q '[c]ode-server/lib/node' && kill -9 ${p#/proc/}; done; sleep 3; true",
+    )
+    .await;
+    guest(&runtime, &sandbox, EDITOR_UP).await;
+    let kept = guest(&runtime, &sandbox, &format!("cat {settings_file}")).await;
+    assert_eq!(kept, own, "a start of the server changed the user's file");
+
+    host.shutdown().await;
+    drop(host);
+    if let Some(shell) = Arc::into_inner(shell) {
+        shell.quit().await;
+    }
+}
+
 /// A stand-in for a build of Microsoft's VS Code server: what the host, the front and the agent
 /// see of one, without a download from Microsoft (the VM tier has no internet). Started by the
 /// agent as `bin/code-server` with the real server's arguments. Like the real server it refuses
@@ -1034,9 +1198,9 @@ async fn vm_browser_microsoft_s_server_opens_with_its_token_and_switches_builds_
 
     // The builds go on the volume (the agent found none to start: no internet here), and the next
     // start runs the current one without asking Microsoft.
-    let builds = format!("/workspaces/{name}/.puddle/vscode-server/servers");
+    let builds = "/workspace/.puddle/vscode-server/servers".to_owned();
     // On the volume, so it is there after the restart below.
-    let tools = format!("/workspaces/{name}/.puddle/stand-in");
+    let tools = "/workspace/.puddle/stand-in".to_owned();
     guest(
         &runtime,
         &sandbox,
@@ -1223,7 +1387,7 @@ impl Editor {
             .await;
         assert_eq!(end["step"], "done", "{end}");
         let editor = Self {
-            root: format!("/workspaces/{name}"),
+            root: "/workspace".to_owned(),
             vm,
             shell,
             api,
@@ -1659,7 +1823,19 @@ async fn vm_browser_code_server_a_killed_browser_is_picked_up_within_the_grace_a
     );
 
     // Killed again and nobody comes: the hosts of that window stay for the grace and go after it.
-    let hosts = editor.extension_hosts().await;
+    // The window opened again runs a host of its own: the first window's host is not its host, and its grace
+    // began at the first kill, so it ends about GRACE after that, whatever the second kill does.
+    let first_window = hosts;
+    let hosts: Vec<u32> = editor
+        .extension_hosts()
+        .await
+        .into_iter()
+        .filter(|host| !first_window.contains(host))
+        .collect();
+    assert!(
+        !hosts.is_empty(),
+        "the window opened again has an extension host"
+    );
     shell.crash_newest(name).await;
     let killed = std::time::Instant::now();
     // flake-ok: an absence window: the host must still run a third of the grace after the kill, and
@@ -1704,5 +1880,170 @@ async fn vm_browser_code_server_a_killed_browser_is_picked_up_within_the_grace_a
         "the terminal's job ended with the grace"
     );
 
+    editor.finish().await;
+}
+
+/// A TypeScript file whose second line has a symbol only the language server can describe: the
+/// type of `total` is inferred from the call, so no text of the file says it.
+const HOVER_FILES: &str = r#"
+set -e
+cd "$1"
+git init -q api && git init -q web && echo loose >notes.txt
+printf 'function add(a: number, b: number): number { return a + b; }\nconst total = add(1, 2);\n' >api/hover.ts
+chown -R agent:agent .
+"#;
+
+/// The visible hover widgets' text (spaces normalised) and where the cursor is.
+const HOVER_STATE: &str = "({ hover: [...document.querySelectorAll('.monaco-hover')].filter(e => !e.classList.contains('hidden') && e.offsetParent).map(e => e.textContent.replace(/\\u00a0/g, ' ')).join(' | '), cursor: /Ln \\d+, Col \\d+/.exec(document.querySelector('.part.statusbar')?.textContent ?? '')?.[0] })";
+
+/// K tier, code-server. A TypeScript file opened in the window and a symbol hovered: the editor's
+/// language server answers with the inferred type (the playbooks' "hover a symbol" step). The
+/// answer is the server's own, so it is also what tells that the language server runs in the guest.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_browser_code_server_hovering_a_typescript_symbol_shows_the_type_the_language_server_infers()
+ {
+    let editor = Box::pin(Editor::start("whv", None)).await;
+    let (shell, name, root) = (&editor.shell, &editor.name, &editor.root);
+    editor
+        .guest(&format!(
+            "sh -c '{}' sh {root}",
+            HOVER_FILES.replace('\'', "'\\''")
+        ))
+        .await;
+    editor.attach().await;
+    editor.explorer("window").await;
+    let page = shell.page(name).await;
+
+    shell.press(name, "Control+p").await;
+    shell.type_text(name, "hover.ts").await;
+    shell
+        .rows_with(page, ".quick-input-list .monaco-list-row", "hover.ts")
+        .await;
+    shell.press(name, "Enter").await;
+    shell
+        .wait(
+            name,
+            "document.querySelector('.tabs-container .tab.active')?.getAttribute('aria-label')?.startsWith('hover.ts') && document.querySelector('.monaco-editor .view-lines')?.textContent.replace(/\\u00a0/g, ' ').includes('const total')",
+            "true",
+            PAGE_BUDGET,
+        )
+        .await;
+
+    // The cursor goes into `total` on line 2 ("const " is six characters).
+    shell.press(name, "Control+g").await;
+    shell.type_text(name, "2\n").await;
+    let at = |column: u32| {
+        format!(
+            "/Ln 2, Col {column}\\b/.test(document.querySelector('.part.statusbar')?.textContent ?? '')"
+        )
+    };
+    shell.wait(name, &at(1), "true", PAGE_BUDGET).await;
+    for _ in 0..7 {
+        shell.press(name, "ArrowRight").await;
+    }
+    shell.wait(name, &at(8), "true", PAGE_BUDGET).await;
+
+    // The language server starts with the window, so the first asks may find it still loading.
+    // "Show or Focus Hover" asks again until the widget carries the type.
+    let shown = puddle_test_kit::eventually_async(
+        "the hover shows the inferred type of `total`",
+        Duration::from_secs(90),
+        || async {
+            shell.press(name, "Control+k").await;
+            shell.press(name, "Control+i").await;
+            tokio::time::sleep(Duration::from_millis(1500)).await;
+            let request = PageRequest::new("", "true")
+                .result(HOVER_STATE)
+                .budget(Duration::from_secs(5));
+            let state = shell
+                .browser
+                .lock()
+                .await
+                .wait(page, &request)
+                .await
+                .map_err(|e| e.to_string())?
+                .result;
+            let hover = state["hover"].as_str().unwrap_or_default().to_owned();
+            if hover.contains("const total: number") {
+                Ok(hover)
+            } else {
+                Err(state.to_string())
+            }
+        },
+    )
+    .await;
+    eprintln!("hover: {shown}");
+
+    let errors = shell.page_errors.lock().unwrap().clone();
+    assert!(errors.is_empty(), "the pages reported errors: {errors:?}");
+    editor.finish().await;
+}
+
+/// Rounds before the memory baseline is read.
+const WARM_UP_ROUNDS: u32 = 2;
+
+/// What the guest's processes hold in memory, summed (bytes).
+const GUEST_RSS: &str = "ps -eo rss= | awk '{ s += $1 } END { print s * 1024 }'";
+
+/// K tier, code-server, soak bar. The window opened and closed ten times in a row: after each
+/// close the guest has no extension host, and after the tenth the guest's memory is within 10 % of
+/// what it was after the warm-up (the first rounds fill code-server's caches: the guest grew
+/// 48 MB from round 1 to 2, then stayed within 4 % of round 3). `PUDDLE_VM_SOAK_BREAK=keep-extension-host`
+/// stops the hosts at each close and skips the cleanup, which must turn the no-extension-host bar red.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_soak_browser_code_server_ten_opens_and_closes_leave_no_extension_host_and_the_memory_back()
+ {
+    let editor = Box::pin(Editor::start("wch", None)).await;
+    let sandbox = &editor.sandbox;
+    let windows = editor.vm.host.editor_windows();
+    editor
+        .guest(&format!(
+            "cd {} && git init -q api && git init -q web && echo loose >notes.txt && chown -R agent:agent .",
+            editor.root
+        ))
+        .await;
+    let broken = std::env::var("PUDDLE_VM_SOAK_BREAK").is_ok_and(|v| v == "keep-extension-host");
+    let mut first = 0;
+    let mut last = 0;
+    for round in 1..=10 {
+        editor.attach().await;
+        editor.explorer(&format!("window {round}")).await;
+        windows_become(windows, sandbox, true).await;
+        let open = counts_until(
+            &editor.vm.runtime,
+            sandbox,
+            "the window's extension host",
+            |l| count(l, "hosts") >= 1,
+        )
+        .await;
+        if broken {
+            editor.guest(STOP_HOSTS).await;
+        }
+        editor.shell.close_pages(&editor.name).await;
+        windows_become(windows, sandbox, false).await;
+        if !broken {
+            editor
+                .vm
+                .host
+                .workspaces()
+                .end_extension_hosts(sandbox)
+                .await
+                .expect("the agent answered");
+        }
+        let closed = counts_until(
+            &editor.vm.runtime,
+            sandbox,
+            "no extension host after the close",
+            |l| count(l, "hosts") == 0,
+        )
+        .await;
+        let rss: u64 = editor.guest(GUEST_RSS).await.trim().parse().unwrap();
+        eprintln!("round {round}: guest memory {rss} bytes; open {open}; closed {closed}");
+        if round == WARM_UP_ROUNDS + 1 {
+            first = rss;
+        }
+        last = rss;
+    }
+    puddle_vm_tests::soak::judge_rss_back(first, last).unwrap();
     editor.finish().await;
 }

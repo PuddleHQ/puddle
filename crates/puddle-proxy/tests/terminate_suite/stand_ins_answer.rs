@@ -206,6 +206,39 @@ async fn an_answer_in_an_encoding_puddle_cannot_read_is_refused_with_its_reason(
 }
 
 #[tokio::test]
+async fn an_answer_that_ends_short_of_its_length_is_a_502_that_says_it_did_not_finish() {
+    let pki = Pki::new();
+    let server = h1_upstream(
+        &pki,
+        Arc::new(|_| {
+            Reply::raw(
+                "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 100\r\n\r\nabc",
+            )
+            .closing()
+        }),
+    )
+    .await;
+    let (stand_ins, _) = registry();
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .injector(pass_through())
+        .stand_ins(&stand_ins)
+        .build();
+    let mut guest = rig.guest();
+    let mut client = guest.tls("bound.test:443", None).await.unwrap();
+    client
+        .send(b"GET / HTTP/1.1\r\nHost: bound.test\r\n\r\n")
+        .await;
+    let response = client.response("GET").await;
+    assert_eq!(response.status, 502);
+    assert!(
+        response.text().contains("did not finish its answer"),
+        "{}",
+        response.text()
+    );
+}
+
+#[tokio::test]
 async fn hostile_a_real_value_inside_longer_base64_cuts_the_answer_off_before_it() {
     let pki = Pki::new();
     let blob = STANDARD.encode(format!("user:{REAL}"));

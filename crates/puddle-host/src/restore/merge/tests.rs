@@ -9,7 +9,7 @@ fn restored() -> RestoredDatabase {
     }
 }
 
-fn write(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
+fn write(dir: &Path, name: &str, body: &str) -> PathBuf {
     let path = dir.join(name);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, body).unwrap();
@@ -129,7 +129,39 @@ fn retired_ids_of_both_sides_stay_retired() {
 }
 
 #[test]
-fn lists_in_different_formats_are_not_merged() {
+fn lists_in_formats_three_and_four_merge_into_format_four_with_an_owner_each() {
+    let dir = tempfile::tempdir().unwrap();
+    let v4 = r#"{"version":4,"workspaces":[{"id":"ws-one","name":"One","owner":7}]}"#;
+    let v3 = r#"{"version":3,"workspaces":[{"id":"ws-two","name":"Two"}]}"#;
+    // A backup in format 3 into a machine in format 4, and the other way round.
+    for (name, here, there) in [("a", v4, v3), ("b", v3, v4)] {
+        let here = write(dir.path(), &format!("here-{name}.json"), here);
+        let there = write(dir.path(), &format!("there-{name}.json"), there);
+        check_book_versions(&here, &there).unwrap();
+        let new = dir.path().join(format!("new-{name}.json"));
+        book(ApplyMode::Add, &here, &there, &new, &restored()).unwrap();
+        let merged = read(&new);
+        assert_eq!(merged["version"], 4, "{merged}");
+        let mut owners: Vec<(String, i64)> = entries_of(merged.as_object().unwrap())
+            .iter()
+            .map(|e| {
+                (
+                    e["id"].as_str().unwrap().to_owned(),
+                    e["owner"].as_i64().unwrap(),
+                )
+            })
+            .collect();
+        owners.sort();
+        assert_eq!(
+            owners,
+            [("ws-one".into(), 7), ("ws-two".into(), 7)],
+            "{merged}"
+        );
+    }
+}
+
+#[test]
+fn lists_in_a_format_older_than_three_are_refused_and_the_message_says_why() {
     let dir = tempfile::tempdir().unwrap();
     let here = write(
         dir.path(),
@@ -139,13 +171,21 @@ fn lists_in_different_formats_are_not_merged() {
     let there = write(
         dir.path(),
         "there.json",
-        r#"{"version":3,"workspaces":[{"id":"ws-two","name":"Two"}]}"#,
+        r#"{"version":2,"workspaces":[{"id":"ws-two","name":"Two"}]}"#,
     );
-    let err = check_book_versions(&here, &there).unwrap_err();
+    let err = check_book_versions(&here, &there).unwrap_err().to_string();
     assert!(
-        err.contains("format 3") && err.contains("format 4"),
+        err.contains("format 2") && err.contains("format 4"),
         "{err}"
     );
+    assert!(
+        err.contains("the backup's format 2 describes workspaces differently"),
+        "{err}"
+    );
+    assert!(err.contains("choose Replace"), "{err}");
+    // The same the other way round names this machine's list.
+    let err = check_book_versions(&there, &here).unwrap_err().to_string();
+    assert!(err.contains("this machine's format 2"), "{err}");
     let err = book(
         ApplyMode::Add,
         &here,
@@ -238,7 +278,7 @@ fn a_document_that_cannot_be_read_back_is_an_io_error() {
 fn a_workspace_list_that_cannot_be_read_is_named() {
     let dir = tempfile::tempdir().unwrap();
     // A folder where the list should be.
-    let err = read_book(dir.path()).unwrap_err();
+    let err = read_book(dir.path()).unwrap_err().to_string();
     assert!(err.contains("cannot read"), "{err}");
 }
 
@@ -286,4 +326,45 @@ fn a_present_temp_file_is_not_copied() {
     settings(ApplyMode::Add, &here, &dir.path().join("nothing"), &new).unwrap();
     assert!(new.join("global.json").is_file());
     assert!(!new.join(".global.json.1.tmp").exists());
+}
+
+#[test]
+fn a_restore_never_takes_over_the_first_run_flag() {
+    for mode in [ApplyMode::Add, ApplyMode::Replace] {
+        let dir = tempfile::tempdir().unwrap();
+        let here = dir.path().join("here");
+        let there = dir.path().join("there");
+        write(&here, "global.json", r#"{"version":1}"#);
+        write(
+            &there,
+            "global.json",
+            r#"{"version":1,"first_run":{"completed_at":5},"a":1}"#,
+        );
+        let new = dir.path().join("new");
+        settings(mode, &here, &there, &new).unwrap();
+        let global = read(&new.join("global.json"));
+        assert_eq!(
+            global["first_run"],
+            Value::Null,
+            "the flag stays unset here"
+        );
+        assert_eq!(
+            global["a"].as_i64(),
+            Some(1),
+            "{mode:?}: the other settings still come over"
+        );
+
+        // A machine that has been through the flow keeps its own value.
+        write(
+            &here,
+            "global.json",
+            r#"{"version":1,"first_run":{"completed_at":9}}"#,
+        );
+        let again = dir.path().join("again");
+        settings(mode, &here, &there, &again).unwrap();
+        assert_eq!(
+            read(&again.join("global.json"))["first_run"]["completed_at"],
+            9
+        );
+    }
 }

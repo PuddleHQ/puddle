@@ -106,6 +106,7 @@ beforeEach(() => {
   h.firstRun.state = {
     completed: false,
     completed_at: null,
+    step: null,
     dev_certificate: "not_checked",
   };
   h.prefs.reset();
@@ -145,9 +146,9 @@ describe("the flow's frame", () => {
     expect(
       items.map((li) => li.textContent?.replace(/\s+/g, " ").trim()),
     ).toEqual([
-      "1 Welcome, done",
-      "2 System check, done",
-      "3 Certificates, done",
+      "Done: Welcome",
+      "Done: System check",
+      "Done: Certificates",
       "4 Connect",
       "5 Interception",
       "6 Look",
@@ -157,6 +158,24 @@ describe("the flow's frame", () => {
       items.filter((li) => li.getAttribute("aria-current") === "step"),
     ).toEqual([items[3]]);
     expect(screen.getByText("Puddle")).toBeInTheDocument();
+    // A finished step is a tick and normal text; the steps still to do keep their number.
+    expect(items[0]!.querySelector("svg.tick")).not.toBeNull();
+    expect(items[3]!.querySelector("svg")).toBeNull();
+  });
+
+  it("tells Puddle which step the person is on, so the flow resumes there", async () => {
+    nav.path = "/welcome/interception";
+    render(Layout, { children: (() => {}) as never });
+    await waitFor(() => expect(h.firstRun.state.step).toBe("interception"));
+    expect(h.firstRun.bodies).toEqual([{ step: "interception" }]);
+  });
+
+  it("records no step for the system check opened from Settings", async () => {
+    nav.path = "/welcome/check";
+    nav.search = "?from=settings";
+    render(Layout, { children: (() => {}) as never });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(h.firstRun.bodies).toEqual([]);
   });
 
   it("leaves the step bar out when the system check runs on its own from Settings", () => {
@@ -177,6 +196,13 @@ describe("welcome step", () => {
       "href",
       "/welcome/check",
     );
+  });
+
+  it("offers a small way to import a backup, apart from the steps", () => {
+    render(Welcome);
+    expect(
+      screen.getByRole("link", { name: "Import a backup" }),
+    ).toHaveAttribute("href", "/welcome/import");
   });
 
   it("skipping the setup records it and opens the workspace list", async () => {
@@ -401,7 +427,7 @@ describe("interception step", () => {
         name: "Which hosts should Puddle decrypt?",
       }),
     ).toHaveFocus();
-    expect(radio(/except a known list/)).toBeChecked();
+    expect(radio(/except sites known to break/)).toBeChecked();
     expect(screen.getByText("recommended")).toBeInTheDocument();
     expect(h.interception.bodies).toEqual([]);
     expect(screen.getByRole("link", { name: "Back" })).toHaveAttribute(
@@ -410,10 +436,26 @@ describe("interception step", () => {
     );
   });
 
+  it("names the mechanism and keeps the long text behind More details", async () => {
+    render(Interception);
+    await screen.findByRole("group", { name: "Interception" });
+    expect(
+      screen.getByText(/reads \(MITMs\) HTTPS traffic to monitor it/),
+    ).toBeVisible();
+    expect(screen.getByText(/change this later in Settings/)).toBeVisible();
+    const more = screen.getByText("More details");
+    expect(more.closest("details")).not.toHaveAttribute("open");
+    await fireEvent.click(more);
+    expect(more.closest("details")).toHaveAttribute("open");
+    expect(screen.getByText(/own certificate, which/)).toBeVisible();
+    expect(screen.getByText(/credential injection/)).toBeVisible();
+    expect(screen.getByText(/no credential is injected/)).toBeVisible();
+  });
+
   it("saves the chosen mode and goes to the next step", async () => {
     render(Interception);
     await screen.findByRole("group", { name: "Interception" });
-    await fireEvent.click(radio(/^Decrypt every host\b(?! except)/));
+    await fireEvent.click(radio(/^Read all HTTPS traffic/));
     await fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await waitFor(() => expect(nav.goto).toHaveBeenCalledWith("/welcome/look"));
     expect(h.interception.bodies).toEqual([{ mode: "all" }]);
@@ -427,7 +469,9 @@ describe("interception step", () => {
     };
     render(Interception);
     await screen.findByRole("group", { name: "Interception" });
-    await waitFor(() => expect(radio(/only hosts Puddle has/)).toBeChecked());
+    await waitFor(() =>
+      expect(radio(/only where a rule needs it/)).toBeChecked(),
+    );
   });
 
   it("says why the setting could not be read and offers no choice", async () => {

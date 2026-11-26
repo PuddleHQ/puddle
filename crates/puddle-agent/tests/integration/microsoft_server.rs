@@ -1061,6 +1061,52 @@ async fn looking_for_updates_downloads_only_a_build_that_is_neither_current_nor_
     );
 }
 
+/// A service whose download of the build `NEWER` runs `during` once the body is there, as if the
+/// rest of the agent had acted while the bytes were still coming in.
+struct SlowDownload {
+    service: &'static Service,
+    during: Box<dyn Fn() + Send + Sync>,
+}
+
+impl Fetch for SlowDownload {
+    async fn text(&self, url: &str) -> io::Result<String> {
+        (&self.service).text(url).await
+    }
+
+    async fn file(&self, url: &str, dest: &Path, max_bytes: u64) -> io::Result<()> {
+        (&self.service).file(url, dest, max_bytes).await?;
+        (self.during)();
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn a_build_rolled_back_while_it_downloads_is_not_staged() {
+    let dir = tempfile::tempdir().unwrap();
+    let (builds, service) = installed(&dir).await;
+    service.publish(NEWER, NEWER_RELEASE, good_tarball());
+    let during = {
+        let builds = builds.clone();
+        move || {
+            // The build became current and failed to start while the download ran.
+            std::fs::write(builds.join("previous"), COMMIT).unwrap();
+            std::fs::write(builds.join("current"), NEWER).unwrap();
+            assert!(roll_back(&builds, NEWER, false).unwrap());
+        }
+    };
+    let fetch = SlowDownload {
+        service,
+        during: Box::new(during),
+    };
+    assert_eq!(
+        stage_update(&fetch, PLATFORM, &builds).await.unwrap(),
+        Update::UpToDate
+    );
+    assert_eq!(pointer(&builds, "staged"), None);
+    assert_eq!(switch_to_staged(&builds).unwrap(), None);
+    assert_eq!(current_build(&builds), Some(builds.join(COMMIT)));
+}
+
 #[tokio::test]
 async fn a_download_that_is_not_the_published_file_stages_nothing_and_touches_no_build() {
     let dir = tempfile::tempdir().unwrap();

@@ -362,6 +362,10 @@ test.describe("the raw record", () => {
     await expect(toggle).toHaveAttribute("aria-expanded", "false");
     await toggle.click();
     await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(page.locator("tbody tr.detail .said")).toContainText(
+      "ads.example.net",
+    );
+    await page.getByRole("button", { name: "Show raw record" }).click();
     const raw = page.locator("tbody tr.detail pre");
     const record = JSON.parse((await raw.textContent()) ?? "{}") as Record<
       string,
@@ -384,6 +388,7 @@ test.describe("the raw record", () => {
   }) => {
     await openActivity(page, backend, "?type=connection&q=github");
     await rows(page).first().click();
+    await page.getByRole("button", { name: "Show raw record" }).click();
     const shown = JSON.parse(
       (await page.locator("tbody tr.detail pre").textContent()) ?? "{}",
     ) as unknown;
@@ -528,7 +533,7 @@ test.describe("live", () => {
 test.describe("export", () => {
   async function download(page: Page): Promise<string[]> {
     const downloading = page.waitForEvent("download");
-    await page.getByRole("button", { name: "Export JSON lines" }).click();
+    await page.getByRole("button", { name: "Export" }).click();
     const file = await downloading;
     expect(file.suggestedFilename()).toMatch(
       /^puddle-activity-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.jsonl$/,
@@ -596,7 +601,7 @@ test.describe("export", () => {
     await expect(
       page.getByRole("heading", { name: "No records match" }),
     ).toBeVisible();
-    await page.getByRole("button", { name: "Export JSON lines" }).click();
+    await page.getByRole("button", { name: "Export" }).click();
     await expect(toast(page)).toContainText("Nothing to export");
   });
 });
@@ -701,6 +706,13 @@ test.describe("keyboard only", () => {
     await toggle.focus();
     await page.keyboard.press("Enter");
     await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    // The button's name flips to "Hide raw record" once it is open: match both.
+    const showRaw = page.getByRole("button", {
+      name: /(Show|Hide) raw record/,
+    });
+    await showRaw.focus();
+    await page.keyboard.press("Enter");
+    await expect(showRaw).toHaveAttribute("aria-expanded", "true");
     await page.keyboard.press("Tab");
     await expect(page.locator("tbody tr.detail pre")).toBeFocused();
     await toggle.focus();
@@ -787,7 +799,7 @@ test.describe("accessibility", () => {
         await page.clock.pauseAt(
           new Date((await page.evaluate(() => Date.now())) + 1000),
         );
-        await page.getByRole("button", { name: "Export JSON lines" }).click();
+        await page.getByRole("button", { name: "Export" }).click();
         await expect(toast(page)).toContainText("Saved");
         await toast(page).getByText("Saved").hover();
         await page.clock.resume();
@@ -810,7 +822,7 @@ test.describe("accessibility", () => {
     await openActivity(page, backend);
     for (const control of [
       rows(page).first().getByRole("button"),
-      page.getByRole("button", { name: "Export JSON lines" }),
+      page.getByRole("button", { name: "Export" }),
       page.getByLabel("Search"),
       page.getByLabel("Workspace"),
       page.getByLabel("Type"),

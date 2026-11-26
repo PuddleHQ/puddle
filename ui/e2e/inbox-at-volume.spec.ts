@@ -8,7 +8,11 @@ import { slowdown } from "./cpu-throttle.ts";
 import { type Backend, expect, test } from "./fixture";
 import { availableParallelism, loadavg } from "node:os";
 import { loadFactor } from "../scripts/load-budget.ts";
-import { staysEmpty } from "./support";
+import { hostName, pickFromRowMenu, staysEmpty } from "./support";
+import {
+  INBOX_SHORTCUTS,
+  type InboxShortcutId,
+} from "../src/lib/decision/inbox-shortcuts.ts";
 
 const SLOWDOWN = slowdown();
 
@@ -42,7 +46,7 @@ async function ask(
 
 const rowFor = (page: Page, host: string): Locator =>
   page.locator("li.req", {
-    has: page.locator(`.host:text-is(${JSON.stringify(host)})`),
+    has: hostName(page, host),
   });
 
 async function openInbox(page: Page, backend: Backend): Promise<void> {
@@ -116,7 +120,7 @@ test.describe("Allow and Deny, and the keys they name", () => {
     ).toMatchObject({ effect: "allow", scope: { type: "global" } });
   });
 
-  test("each row button's title names the key, and pressing that key does what the button does", async ({
+  test("the keys the shortcuts table names do what the buttons do, and the buttons carry no tooltip", async ({
     page,
     request,
     backend,
@@ -126,18 +130,18 @@ test.describe("Allow and Deny, and the keys they name", () => {
     }
     await openInbox(page, backend);
     await expect(page.locator("li.req")).toHaveCount(3);
-    const hosts = (await page.locator("li.req .host").allTextContents()).filter(
-      (h) => /^t\d\.example\.com$/.test(h),
-    );
+    // The port is drawn after the name (`t0.example.com:443`); the name is what the shortcuts use.
+    const hosts = (await page.locator("li.req .host").allTextContents())
+      .map((h) => h.replace(/:\d+$/, ""))
+      .filter((h) => /^t\d\.example\.com$/.test(h));
     // flake-ok: the three rows were counted by the web-first assertion above
     expect(hosts).toHaveLength(3);
 
-    /** The key a button's first title line names in brackets: "... permanently (A)". */
-    const keyOf = async (button: Locator): Promise<string> => {
-      const title = (await button.getAttribute("title")) ?? "";
-      const key = /\(([A-Za-z]+)\)\s*$/m.exec(title.split("\n")[0] ?? "")?.[1];
-      expect(key, `a key in the title ${JSON.stringify(title)}`).toBeDefined();
-      return key!;
+    /** The key the shortcuts table names for a line: ["A"] gives "A". */
+    const keyOf = (id: InboxShortcutId): string => {
+      const line = INBOX_SHORTCUTS.find((s) => s.id === id);
+      expect(line, `a shortcut line for ${id}`).toBeDefined();
+      return line!.keys.join("+");
     };
     const buttons = (host: string) => ({
       allow: rowFor(page, host).getByRole("button", { name: /^Allow / }),
@@ -147,24 +151,15 @@ test.describe("Allow and Deny, and the keys they name", () => {
       }),
     });
     const keys = {
-      allow: await keyOf(buttons(hosts[0]!).allow),
-      deny: await keyOf(buttons(hosts[0]!).deny),
-      more: await keyOf(buttons(hosts[0]!).more),
+      allow: keyOf("allow"),
+      deny: keyOf("deny"),
+      more: keyOf("more"),
     };
-    // The same key on every row: the title is not specific to the first.
+    // The buttons carry no native tooltip (the shortcuts popover names the keys), on every row.
     for (const host of hosts) {
-      await expect(buttons(host).allow).toHaveAttribute(
-        "title",
-        new RegExp(`\\(${keys.allow}\\)`, "m"),
-      );
-      await expect(buttons(host).deny).toHaveAttribute(
-        "title",
-        new RegExp(`\\(${keys.deny}\\)`, "m"),
-      );
-      await expect(buttons(host).more).toHaveAttribute(
-        "title",
-        new RegExp(`\\(${keys.more}\\)`, "m"),
-      );
+      for (const button of Object.values(buttons(host))) {
+        await expect(button).not.toHaveAttribute("title");
+      }
     }
     expect(new Set(Object.values(keys)).size, "three different keys").toBe(3);
 
@@ -380,7 +375,7 @@ test.describe("five workspaces whose id differs from the name, 50 waiting reques
     for (const { id } of spaces) await ask(backend, id, `same.${DOMAIN}`);
     await openInbox(page, backend);
     const same = page.locator("li.req", {
-      has: page.locator(`.host:text-is("same.${DOMAIN}")`),
+      has: hostName(page, `same.${DOMAIN}`),
     });
     await expect(same).toHaveCount(5, { timeout: CLEAR_BAR_MS });
     await same
@@ -508,11 +503,9 @@ test.describe("1000 rules", () => {
     expect((await rules(request, backend)).length).toBe(seeded + 20);
     for (let i = 0; i < 20; i += 1) {
       const row = page.locator("tbody tr", {
-        has: page.locator(
-          `td.host span.mono:text-is("added${i}.volume.example.org")`,
-        ),
+        has: hostName(page.locator("td.host"), `added${i}.volume.example.org`),
       });
-      await row.getByRole("button", { name: /^Delete rule/ }).click();
+      await pickFromRowMenu(row, /^Delete rule/);
       await page
         .getByRole("alertdialog", { name: "Delete this rule?" })
         .getByRole("button", { name: "Delete rule" })

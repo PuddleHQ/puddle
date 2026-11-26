@@ -4,10 +4,10 @@
 use axum::Json;
 use axum::extract::State;
 
-use crate::ApiErrorBody;
-use crate::error::ApiError;
 use crate::routes::AppState;
-use crate::wire::NetworkHealth;
+use puddle_services::error::ApiError;
+use puddle_services::error::ApiErrorBody;
+use puddle_services::wire::NetworkHealth;
 
 /// The proxy setup Puddle sees (PAC, WPAD, fixed proxy or environment), how it signs in to the
 /// company proxy, the company roots copied into workspaces, the route chosen per destination

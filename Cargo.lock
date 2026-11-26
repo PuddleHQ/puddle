@@ -898,9 +898,9 @@ dependencies = [
 
 [[package]]
 name = "brotli"
-version = "9.1.1"
+version = "9.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "627b7cfb0578f0eafce087a90fcd40add1231900b69e4d4de2d456260a4f5d81"
+checksum = "9071f285ed78f04f37d675abaaef5de7689e2f30a216c8dc6795465d81910a13"
 dependencies = [
  "alloc-no-stdlib",
  "alloc-stdlib",
@@ -909,9 +909,9 @@ dependencies = [
 
 [[package]]
 name = "brotli-decompressor"
-version = "6.3.1"
+version = "6.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75c74c9c51b9140663e196b5fb88bc94c334d7a497c8311cb759d8557874747f"
+checksum = "cc031cd87c6529082b0b65c604e86af0ed7744841b17ccfe60b1e31fa606179e"
 dependencies = [
  "alloc-no-stdlib",
  "alloc-stdlib",
@@ -952,9 +952,9 @@ checksum = "8f1fe948ff07f4bd06c30984e69f5b4899c516a3ef74f34df92a2df2ab535495"
 
 [[package]]
 name = "bytes"
-version = "1.12.1"
+version = "1.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
+checksum = "776dfebd015e2d8732c684a2c71003674ccb49457b539b9e82151ba38e96dd7c"
 dependencies = [
  "serde",
 ]
@@ -1026,7 +1026,7 @@ dependencies = [
  "maybe-owned",
  "rustix",
  "rustix-linux-procfs",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
  "winx",
 ]
 
@@ -1328,9 +1328,9 @@ dependencies = [
 
 [[package]]
 name = "cookie"
-version = "0.18.2"
+version = "0.18.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a373e3602691c3cdea496d2f0ee5935151e6168fe87739483c463db1b2f2f87"
+checksum = "d55f2d6c30eeec7d5c6f98bd4395d4abb1895629eab97ee6522d340623615f8a"
 dependencies = [
  "time",
  "version_check",
@@ -1600,7 +1600,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d045de693cb712d0b22c6a64be5b953f67b3ce00ab5ad3dd5d8b441886ab8e1a"
 dependencies = [
  "quote",
- "syn 3.0.6",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -1936,7 +1936,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1994,7 +1994,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "socket2",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -2243,7 +2243,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2408,9 +2408,9 @@ checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
 
 [[package]]
 name = "form_urlencoded"
-version = "1.2.2"
+version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
+checksum = "afa489199eaffb1211795df1c6236ce1ad0d41a6fa45250add73e3b02420f06e"
 dependencies = [
  "percent-encoding",
 ]
@@ -3786,9 +3786,9 @@ dependencies = [
 
 [[package]]
 name = "keyring-core"
-version = "1.0.1"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29fbf4b551298c67925f38cf341a1ada797a75f1837bdf8ae1fc8e2ebc6efb59"
+checksum = "281c851dbae0de36d405299dd463126df4826dc32665c1314e931696b8cdee77"
 dependencies = [
  "log",
 ]
@@ -4150,8 +4150,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox"
-version = "0.7.12-puddle.7"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.7#8fd788affec8753bb05f33a024abeded3e2adc49"
+version = "0.7.12-puddle.8"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.8#6d651336971c7ed085ffb43a475d4e788f321528"
 dependencies = [
  "anyhow",
  "async-compression",
@@ -4209,8 +4209,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-agent-client"
-version = "0.7.12-puddle.7"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.7#8fd788affec8753bb05f33a024abeded3e2adc49"
+version = "0.7.12-puddle.8"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.8#6d651336971c7ed085ffb43a475d4e788f321528"
 dependencies = [
  "bytes",
  "ciborium",
@@ -4229,8 +4229,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-control-client"
-version = "0.7.12-puddle.7"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.7#8fd788affec8753bb05f33a024abeded3e2adc49"
+version = "0.7.12-puddle.8"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.8#6d651336971c7ed085ffb43a475d4e788f321528"
 dependencies = [
  "microsandbox-protocol",
  "microsandbox-protocol-client",
@@ -4245,8 +4245,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-db"
-version = "0.7.12-puddle.7"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.7#8fd788affec8753bb05f33a024abeded3e2adc49"
+version = "0.7.12-puddle.8"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.8#6d651336971c7ed085ffb43a475d4e788f321528"
 dependencies = [
  "async-trait",
  "libc",
@@ -4262,8 +4262,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-filesystem"
-version = "0.7.12-puddle.7"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.7#8fd788affec8753bb05f33a024abeded3e2adc49"
+version = "0.7.12-puddle.8"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.8#6d651336971c7ed085ffb43a475d4e788f321528"
 dependencies = [
  "bincode",
  "crossbeam-channel",
@@ -4283,8 +4283,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-image"
-version = "0.7.12-puddle.7"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.7#8fd788affec8753bb05f33a024abeded3e2adc49"
+version = "0.7.12-puddle.8"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.8#6d651336971c7ed085ffb43a475d4e788f321528"
 dependencies = [
  "async-compression",
  "blake3",
@@ -4316,8 +4316,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-metrics"
-version = "0.7.12-puddle.7"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.7#8fd788affec8753bb05f33a024abeded3e2adc49"
+version = "0.7.12-puddle.8"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.8#6d651336971c7ed085ffb43a475d4e788f321528"
 dependencies = [
  "chrono",
  "libc",
@@ -4327,8 +4327,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-migration"
-version = "0.7.12-puddle.7"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.7#8fd788affec8753bb05f33a024abeded3e2adc49"
+version = "0.7.12-puddle.8"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.8#6d651336971c7ed085ffb43a475d4e788f321528"
 dependencies = [
  "microsandbox-db",
  "sea-orm-migration",
@@ -4337,8 +4337,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-network"
-version = "0.7.12-puddle.7"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.7#8fd788affec8753bb05f33a024abeded3e2adc49"
+version = "0.7.12-puddle.8"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.8#6d651336971c7ed085ffb43a475d4e788f321528"
 dependencies = [
  "hickory-proto",
  "ipnetwork",
@@ -4353,8 +4353,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-protocol"
-version = "0.7.12-puddle.7"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.7#8fd788affec8753bb05f33a024abeded3e2adc49"
+version = "0.7.12-puddle.8"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.8#6d651336971c7ed085ffb43a475d4e788f321528"
 dependencies = [
  "bytes",
  "chrono",
@@ -4370,8 +4370,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-protocol-client"
-version = "0.7.12-puddle.7"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.7#8fd788affec8753bb05f33a024abeded3e2adc49"
+version = "0.7.12-puddle.8"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.8#6d651336971c7ed085ffb43a475d4e788f321528"
 dependencies = [
  "microsandbox-protocol",
  "serde",
@@ -4382,8 +4382,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-runtime"
-version = "0.7.12-puddle.7"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.7#8fd788affec8753bb05f33a024abeded3e2adc49"
+version = "0.7.12-puddle.8"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.8#6d651336971c7ed085ffb43a475d4e788f321528"
 dependencies = [
  "base64 0.23.1",
  "cap-primitives",
@@ -4415,8 +4415,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-types"
-version = "0.7.12-puddle.7"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.7#8fd788affec8753bb05f33a024abeded3e2adc49"
+version = "0.7.12-puddle.8"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.8#6d651336971c7ed085ffb43a475d4e788f321528"
 dependencies = [
  "chrono",
  "hex",
@@ -4432,8 +4432,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-types-macros"
-version = "0.7.12-puddle.7"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.7#8fd788affec8753bb05f33a024abeded3e2adc49"
+version = "0.7.12-puddle.8"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.8#6d651336971c7ed085ffb43a475d4e788f321528"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4442,8 +4442,8 @@ dependencies = [
 
 [[package]]
 name = "microsandbox-utils"
-version = "0.7.12-puddle.7"
-source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.7#8fd788affec8753bb05f33a024abeded3e2adc49"
+version = "0.7.12-puddle.8"
+source = "git+https://github.com/PuddleHQ/microsandbox?tag=v0.7.12-puddle.8#6d651336971c7ed085ffb43a475d4e788f321528"
 dependencies = [
  "dirs",
  "libc",
@@ -4765,7 +4765,7 @@ dependencies = [
  "png 0.18.1",
  "serde",
  "thiserror 2.0.21",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4994,7 +4994,7 @@ version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "680998035259dcfcafe653688bf2aa6d3e2dc05e98be6ab46afb089dc84f1df8"
 dependencies = [
- "proc-macro-crate 1.3.1",
+ "proc-macro-crate 3.5.0",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -5411,7 +5411,7 @@ dependencies = [
 [[package]]
 name = "pageant"
 version = "0.2.5"
-source = "git+https://github.com/PuddleHQ/russh?rev=1fa97aaaadd68215406af1667e64c7764b6a8ecc#1fa97aaaadd68215406af1667e64c7764b6a8ecc"
+source = "git+https://github.com/PuddleHQ/russh?tag=v0.65.2-puddle.1#1fa97aaaadd68215406af1667e64c7764b6a8ecc"
 dependencies = [
  "base16ct",
  "byteorder",
@@ -5970,9 +5970,9 @@ dependencies = [
 
 [[package]]
 name = "psl"
-version = "2.1.253"
+version = "2.1.261"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82576eafaa94759a92a0cf047f34d227665811d5cdf70f4b11e25cd813f3de54"
+checksum = "3058f918351d1ee290ff4e70243e419b33269dcb83bc8cd46c5afa8a97a90012"
 dependencies = [
  "psl-types",
 ]
@@ -6097,9 +6097,11 @@ dependencies = [
  "puddle-doctor",
  "puddle-front",
  "puddle-fs",
+ "puddle-ipc",
  "puddle-netpolicy",
  "puddle-repos",
  "puddle-secrets",
+ "puddle-services",
  "puddle-settings",
  "puddle-store",
  "puddle-test-kit",
@@ -6147,6 +6149,7 @@ dependencies = [
  "puddle-no-dump",
  "puddle-runtime",
  "puddle-secrets",
+ "puddle-services",
  "puddle-settings",
  "puddle-store",
  "puddle-test-kit",
@@ -6171,7 +6174,7 @@ dependencies = [
  "windows",
  "windows-sys 0.61.2",
  "winreg",
- "zbus 6.3.0",
+ "zbus 6.4.0",
  "zeroize",
 ]
 
@@ -6260,9 +6263,11 @@ dependencies = [
  "microsandbox",
  "microsandbox-image",
  "microsandbox-runtime",
+ "oci-client",
  "puddle-api",
  "puddle-boot",
  "puddle-compute",
+ "puddle-compute-msb-test-support",
  "puddle-fs",
  "puddle-ipc",
  "puddle-netpolicy",
@@ -6272,6 +6277,7 @@ dependencies = [
  "puddle-test-kit",
  "puddle-types",
  "puddle-vm-tests",
+ "reqwest",
  "rusqlite",
  "rustix",
  "serde",
@@ -6281,8 +6287,21 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "puddle-compute-msb-test-support"
+version = "0.0.0"
+dependencies = [
+ "puddle-compute",
+ "puddle-compute-msb",
+ "puddle-ipc",
+ "puddle-types",
+ "puddle-vm-tests",
+ "sha2 0.11.1",
+ "tokio",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -6300,6 +6319,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.21",
  "windows-sys 0.61.2",
 ]
 
@@ -6334,6 +6354,7 @@ dependencies = [
  "puddle-proxy",
  "puddle-repos",
  "puddle-secrets",
+ "puddle-services",
  "puddle-settings",
  "puddle-store",
  "puddle-test-kit",
@@ -6392,6 +6413,7 @@ dependencies = [
  "puddle-agent-proto",
  "puddle-fd-limit",
  "puddle-fs",
+ "puddle-ipc",
  "puddle-netpolicy",
  "puddle-ports",
  "puddle-test-kit",
@@ -6451,6 +6473,7 @@ dependencies = [
  "puddle-front",
  "puddle-fs",
  "puddle-guest-env",
+ "puddle-host-test-support",
  "puddle-inject",
  "puddle-ipc",
  "puddle-lifecycle",
@@ -6462,6 +6485,7 @@ dependencies = [
  "puddle-repos",
  "puddle-runtime",
  "puddle-secrets",
+ "puddle-services",
  "puddle-settings",
  "puddle-ssh",
  "puddle-ssh-agent",
@@ -6489,6 +6513,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "puddle-host-test-support"
+version = "0.0.0"
+dependencies = [
+ "base64 0.23.1",
+ "puddle-api",
+ "puddle-certs",
+ "puddle-compute",
+ "puddle-compute-msb",
+ "puddle-e2e",
+ "puddle-host",
+ "puddle-proxy",
+ "puddle-runtime",
+ "puddle-secrets",
+ "puddle-services",
+ "puddle-ssh",
+ "puddle-store",
+ "puddle-test-kit",
+ "puddle-types",
+ "puddle-upstream",
+ "puddle-vm-tests",
+ "rustls",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
 name = "puddle-inject"
 version = "0.0.0"
 dependencies = [
@@ -6513,6 +6567,7 @@ version = "0.0.0"
 dependencies = [
  "getrandom 0.4.3",
  "puddle-fs",
+ "puddle-types",
  "rustix",
  "tempfile",
  "thiserror 2.0.21",
@@ -6728,6 +6783,7 @@ dependencies = [
  "puddle-fs",
  "puddle-process",
  "puddle-test-kit",
+ "puddle-types",
  "serde_json",
  "sha2 0.11.1",
  "tempfile",
@@ -6745,6 +6801,7 @@ dependencies = [
  "puddle-fs",
  "puddle-process",
  "puddle-test-kit",
+ "puddle-types",
  "rcgen",
  "rustls",
  "serde",
@@ -6758,6 +6815,37 @@ dependencies = [
  "windows-native-keyring-store",
  "zbus-secret-service-keyring-store",
  "zeroize",
+]
+
+[[package]]
+name = "puddle-services"
+version = "0.0.0"
+dependencies = [
+ "axum",
+ "base64 0.23.1",
+ "futures-util",
+ "getrandom 0.4.3",
+ "proptest",
+ "puddle-certs",
+ "puddle-doctor",
+ "puddle-netpolicy",
+ "puddle-repos",
+ "puddle-secrets",
+ "puddle-services",
+ "puddle-settings",
+ "puddle-store",
+ "puddle-test-kit",
+ "puddle-types",
+ "puddle-upstream",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "subtle",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "utoipa",
 ]
 
 [[package]]
@@ -6806,7 +6894,6 @@ version = "0.0.0"
 dependencies = [
  "proptest",
  "psl",
- "puddle-secrets",
  "puddle-store",
  "puddle-test-kit",
  "puddle-types",
@@ -6824,6 +6911,7 @@ name = "puddle-test-kit"
 version = "0.0.0"
 dependencies = [
  "cpu-time",
+ "serde_json",
  "tempfile",
  "tokio",
  "tracing",
@@ -6985,7 +7073,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7373,7 +7461,7 @@ dependencies = [
 [[package]]
 name = "russh"
 version = "0.65.2"
-source = "git+https://github.com/PuddleHQ/russh?rev=1fa97aaaadd68215406af1667e64c7764b6a8ecc#1fa97aaaadd68215406af1667e64c7764b6a8ecc"
+source = "git+https://github.com/PuddleHQ/russh?tag=v0.65.2-puddle.1#1fa97aaaadd68215406af1667e64c7764b6a8ecc"
 dependencies = [
  "aes",
  "aws-lc-rs",
@@ -7443,7 +7531,7 @@ dependencies = [
 [[package]]
 name = "russh-cryptovec"
 version = "0.62.0"
-source = "git+https://github.com/PuddleHQ/russh?rev=1fa97aaaadd68215406af1667e64c7764b6a8ecc#1fa97aaaadd68215406af1667e64c7764b6a8ecc"
+source = "git+https://github.com/PuddleHQ/russh?tag=v0.65.2-puddle.1#1fa97aaaadd68215406af1667e64c7764b6a8ecc"
 dependencies = [
  "log",
  "nix 0.31.3",
@@ -7474,7 +7562,7 @@ dependencies = [
 [[package]]
 name = "russh-util"
 version = "0.52.0"
-source = "git+https://github.com/PuddleHQ/russh?rev=1fa97aaaadd68215406af1667e64c7764b6a8ecc#1fa97aaaadd68215406af1667e64c7764b6a8ecc"
+source = "git+https://github.com/PuddleHQ/russh?tag=v0.65.2-puddle.1#1fa97aaaadd68215406af1667e64c7764b6a8ecc"
 dependencies = [
  "chrono",
  "tokio",
@@ -7569,7 +7657,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7637,7 +7725,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -8432,7 +8520,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -9411,10 +9499,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -9924,7 +10012,7 @@ dependencies = [
  "png 0.18.1",
  "serde",
  "thiserror 2.0.21",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -9991,7 +10079,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset",
  "tempfile",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -10069,9 +10157,9 @@ checksum = "6d49784317cd0d1ee7ec5c716dd598ec5b4483ea832a2dced265471cc0f690ae"
 
 [[package]]
 name = "url"
-version = "2.5.8"
+version = "2.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff67a8a4397373c3ef660812acab3268222035010ab8680ec4215f38ba3d0eed"
+checksum = "f00cd2407bb42c0ef17be88d4cf020f5cceffd121665bac9b8b9493a369b3b1a"
 dependencies = [
  "form_urlencoded",
  "idna",
@@ -10478,7 +10566,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -10499,7 +10587,7 @@ dependencies = [
  "objc2-foundation",
  "objc2-quartz-core",
  "raw-window-handle",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
  "windows-version",
 ]
 
@@ -10893,7 +10981,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d6f32a0ff4a9f6f01231eb2059cc85479330739333e0e58cadf03b6af2cca10"
 dependencies = [
  "cfg-if",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -11032,6 +11120,7 @@ dependencies = [
  "puddle-api",
  "puddle-runtime",
  "puddle-test-kit",
+ "puddle-types",
  "serde",
  "serde_json",
  "sha2 0.11.1",
@@ -11116,9 +11205,9 @@ dependencies = [
 
 [[package]]
 name = "zbus"
-version = "6.3.0"
+version = "6.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b4aae740b23927ceabed962431abab2cdefb9f7f885e5bbab062da09bf580e4"
+checksum = "970c652becf38216d39997ec1335d57bcf7fc7de8ac6447c576de5951d894ec1"
 dependencies = [
  "async-trait",
  "bitflags 2.13.2",
@@ -11137,7 +11226,7 @@ dependencies = [
  "uuid",
  "windows-sys 0.61.2",
  "winnow 1.0.4",
- "zbus_macros 6.3.0",
+ "zbus_macros 6.5.0",
  "zbus_utils",
  "zcheapstr",
  "zruntime",
@@ -11171,9 +11260,9 @@ dependencies = [
 
 [[package]]
 name = "zbus_macros"
-version = "6.3.0"
+version = "6.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37c9dd4beaf145c16fcb2902862f50da86e54aed13dd368ddf64a1d17e6b8529"
+checksum = "2f5aa7f2c4ea81b7ccfb26bafefdb4d1a44dd9d4f82c8426173a3727311743e4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -11207,9 +11296,9 @@ dependencies = [
 
 [[package]]
 name = "zcheapstr"
-version = "1.1.0"
+version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1afec51604565183aeb5c54c20aeab286120d4e4460f7f76e3e8bb8c0d99473"
+checksum = "2da34e7164b75d803c3197b86e6cf61b874106fbd472c5082575a8bc5fbd0907"
 dependencies = [
  "serde",
 ]
@@ -11257,9 +11346,9 @@ dependencies = [
 
 [[package]]
 name = "zeroize"
-version = "1.9.1"
+version = "1.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e13084392c5e4bc371903e2935a5eaeed24905a7511356b883835e18a78f6879"
+checksum = "85ccff8a4805aba1eaa4cd4afcd49f7557dd2cf5fd79ffc37f8959466effc5aa"
 dependencies = [
  "serde",
  "zeroize_derive",

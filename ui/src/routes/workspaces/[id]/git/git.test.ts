@@ -55,6 +55,7 @@ beforeEach(() => {
           entry: "e-Docs",
           url: "https://dev.azure.com/contoso/Platform/_git/Docs",
           directory: "Docs",
+          branch: null,
         },
       ],
     }),
@@ -234,16 +235,19 @@ describe("identities on a workspace", () => {
             entry: "e-api",
             url: "https://github.com/acme/api.git",
             directory: "api",
+            branch: null,
           },
           {
             entry: "e-Docs",
             url: "https://dev.azure.com/contoso/Platform/_git/Docs",
             directory: "Docs",
+            branch: null,
           },
           {
             entry: "e-tools",
             url: "https://gitlab.example.org/team/tools.git",
             directory: "tools",
+            branch: null,
           },
         ],
       }),
@@ -266,7 +270,12 @@ describe("identities on a workspace", () => {
     workspaces.list = [
       workspace("odd", {
         repositories: [
-          { entry: "e-c", url: "https://github.com/a/b/c", directory: "c" },
+          {
+            entry: "e-c",
+            url: "https://github.com/a/b/c",
+            directory: "c",
+            branch: null,
+          },
         ],
       }),
     ];
@@ -335,10 +344,12 @@ describe("the repository table", () => {
       }),
     ).not.toBeChecked();
     expect(
-      screen.getByRole("switch", { name: "Only push to listed repos" }),
+      screen.getByRole("switch", { name: "Only push to allowed repositories" }),
     ).toBeChecked();
     expect(
-      screen.getByRole("switch", { name: "Only pull from listed repos" }),
+      screen.getByRole("switch", {
+        name: "Only pull from allowed repositories",
+      }),
     ).not.toBeChecked();
     expect(
       screen.getByText(
@@ -370,7 +381,9 @@ describe("the repository table", () => {
   it("flips each switch, and keeps it where it was when refused", async () => {
     await mount();
     await fireEvent.click(
-      screen.getByRole("switch", { name: "Only pull from listed repos" }),
+      screen.getByRole("switch", {
+        name: "Only pull from allowed repositories",
+      }),
     );
     await waitFor(() => expect(api.git["w-web-shop"]!.pull).toBe(true));
     expect(
@@ -379,7 +392,7 @@ describe("the repository table", () => {
       ),
     ).toBeInTheDocument();
     await fireEvent.click(
-      screen.getByRole("switch", { name: "Only push to listed repos" }),
+      screen.getByRole("switch", { name: "Only push to allowed repositories" }),
     );
     await waitFor(() => expect(api.git["w-web-shop"]!.push).toBe(false));
     expect(
@@ -387,7 +400,7 @@ describe("the repository table", () => {
     ).toBeInTheDocument();
     api.refuse = { status: 500, message: "no" };
     const pull = screen.getByRole("switch", {
-      name: "Only pull from listed repos",
+      name: "Only pull from allowed repositories",
     });
     await fireEvent.click(pull);
     expect(await screen.findByRole("alert")).toHaveTextContent("No.");
@@ -404,10 +417,12 @@ describe("the repository table", () => {
     ).toBeNull();
 
     await fireEvent.click(
-      screen.getByRole("switch", { name: "Only pull from listed repos" }),
+      screen.getByRole("switch", {
+        name: "Only pull from allowed repositories",
+      }),
     );
     const again = await screen.findByRole("button", {
-      name: "Use the default again for Only pull from listed repos",
+      name: "Use the default again for Only pull from allowed repositories",
     });
     expect(
       screen.getAllByText(/It follows the default for new workspaces/),
@@ -423,18 +438,20 @@ describe("the repository table", () => {
     await waitFor(() => expect(api.git["w-web-shop"]!.pull).toBeNull());
     expect(api.bodies.at(-1)).toEqual({ use_default_pull: true });
     expect(
-      screen.getByRole("switch", { name: "Only pull from listed repos" }),
+      screen.getByRole("switch", {
+        name: "Only pull from allowed repositories",
+      }),
     ).not.toBeChecked();
     expect(
       screen.getAllByText(/It follows the default for new workspaces/),
     ).toHaveLength(2);
 
     await fireEvent.click(
-      screen.getByRole("switch", { name: "Only push to listed repos" }),
+      screen.getByRole("switch", { name: "Only push to allowed repositories" }),
     );
     await fireEvent.click(
       await screen.findByRole("button", {
-        name: "Use the default again for Only push to listed repos",
+        name: "Use the default again for Only push to allowed repositories",
       }),
     );
     await waitFor(() => expect(api.git["w-web-shop"]!.push).toBeNull());
@@ -475,7 +492,7 @@ describe("the repository table", () => {
     render(Page);
     expect(
       await screen.findByText(
-        /No repository is listed\. With Only push to listed repos on, nothing can be pushed\./,
+        /No repository is listed\. With Only push to allowed repositories on, nothing can be pushed\./,
       ),
     ).toBeInTheDocument();
     cleanup();

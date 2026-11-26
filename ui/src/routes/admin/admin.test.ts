@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const store = vi.hoisted(() => ({
   status: "ready" as string,
   reason: null as string | null,
+  missing: false,
   users: [] as unknown[],
   stats: null as unknown,
   audit: [] as unknown[],
@@ -41,6 +42,7 @@ const stats = {
 beforeEach(() => {
   store.status = "ready";
   store.reason = null;
+  store.missing = false;
   store.users = [owner, user({ workspaces_running: 1, devices: 2 })];
   store.stats = stats;
   store.audit = [
@@ -109,13 +111,55 @@ describe("the admin page", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows an empty state when nobody else has an account, and what was done", () => {
+  it("says one person uses this Puddle when only the owner has an account, with server details behind a toggle", async () => {
     store.users = [owner];
     render(Page);
     expect(
-      screen.getByText(/Nobody else has an account yet/),
+      screen.getByText(/Only one person uses this Puddle/),
     ).toBeInTheDocument();
+    expect(screen.queryByText(/Nobody else has an account yet/)).toBeNull();
+    expect(
+      screen.getByRole("heading", { level: 3, name: "Owen" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "This server" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Activity log" })).toBeNull();
+    // What was done stays visible: it is history, not a control.
     expect(screen.getByText(/Owen made the account Sam/)).toBeInTheDocument();
+    const toggle = screen.getByRole("button", { name: "Show server details" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await fireEvent.click(toggle);
+    expect(
+      screen.getByRole("heading", { name: "This server" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Activity log" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Hide server details" }),
+    ).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("shows no toggle once there are several accounts", () => {
+    render(Page);
+    expect(screen.queryByText(/Only one person uses this Puddle/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /server details/ })).toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "This server" }),
+    ).toBeInTheDocument();
+  });
+
+  it("explains a Puddle with one user plainly, with no error, no retry and no Add user", () => {
+    store.status = "failed";
+    store.missing = true;
+    store.reason =
+      "There is no admin screen here: it is for the owner of a Puddle with several users.";
+    render(Page);
+    expect(
+      screen.getByText(/Only one person uses this Puddle/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't read the admin data.")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add user" })).toBeNull();
   });
 
   it("says nothing was done yet when the audit is empty", () => {
@@ -138,6 +182,7 @@ describe("the admin page", () => {
       screen.getByText("Couldn't read the admin data."),
     ).toBeInTheDocument();
     expect(screen.getByText(/isn't answering/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add user" })).toBeNull();
     store.load.mockClear();
     await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(store.load).toHaveBeenCalledTimes(1);

@@ -9,14 +9,25 @@
     reason = "a failed step fails the test; emptiness reads best as a plain assert"
 )]
 
-mod support;
+use puddle_host_test_support::support;
 
+#[cfg(target_os = "linux")]
+#[path = "fake_host/api_latency.rs"]
+mod api_latency;
 #[path = "fake_host/attach_places.rs"]
 mod attach_places;
 #[path = "fake_host/backup_restore.rs"]
 mod backup_restore;
+#[path = "fake_host/backup_round_trip.rs"]
+mod backup_round_trip;
+#[cfg(target_os = "linux")]
+#[path = "fake_host/churn.rs"]
+mod churn;
 #[path = "fake_host/cleanup_and_problems.rs"]
 mod cleanup_and_problems;
+#[cfg(unix)]
+#[path = "fake_host/company_proxy.rs"]
+mod company_proxy;
 #[path = "fake_host/contract.rs"]
 mod contract;
 #[path = "fake_host/credential_store_and_shell_init.rs"]
@@ -51,6 +62,8 @@ mod live_settings_changes;
 mod missing_volume_and_ids;
 #[path = "fake_host/proxy_sign_ins_and_audit.rs"]
 mod proxy_sign_ins_and_audit;
+#[path = "fake_host/pull_progress.rs"]
+mod pull_progress;
 #[path = "fake_host/repositories.rs"]
 mod repositories;
 #[path = "fake_host/restart_and_crash.rs"]
@@ -74,10 +87,13 @@ mod start_failures_and_trust;
 mod start_folder_and_dev_cert;
 #[path = "fake_host/startup_and_api.rs"]
 mod startup_and_api;
+#[cfg(feature = "mise")] // needs the managed mise layer, dormant in the shipped build
 #[path = "fake_host/terminals_and_mise.rs"]
 mod terminals_and_mise;
+#[cfg(feature = "mise")] // needs the managed mise layer, dormant in the shipped build
 #[path = "fake_host/tools_edit.rs"]
 mod tools_edit;
+#[cfg(feature = "mise")] // needs the managed mise layer, dormant in the shipped build
 #[path = "fake_host/tools_install.rs"]
 mod tools_install;
 #[path = "fake_host/workspace_list_at_start.rs"]
@@ -90,21 +106,23 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use puddle_api::WorkspaceService as _;
-use puddle_api::{
-    BrowserTarget, DesktopTarget, LaunchError, Launcher, UiAssets, UiFile, WorkspaceRecord,
-};
+use puddle_api::{UiAssets, UiFile};
 use puddle_certs::{CorporateRoots, SOURCES, StoreSnapshot};
 use puddle_compute::fake::{ExecContext, FakeRuntime, Fault, Op};
 use puddle_compute::{ExecOutput, ExecRequest, ImageConfig, Runtime};
 use puddle_host::{
-    DevCertSource, FreeSpaceTiming, GuestSettings, Host, HostConfig, HostError, HostPaths,
-    PREPARE_STEPS, Platform, RewriteGate, RuntimeFactory, RuntimeInputs, SHUTDOWN_STEPS,
-    START_STEPS, Step, prepare,
+    FreeSpaceTiming, GuestSettings, Host, HostConfig, HostError, HostPaths, PREPARE_STEPS,
+    Platform, RewriteGate, RuntimeFactory, RuntimeInputs, SHUTDOWN_STEPS, START_STEPS, Step,
+    prepare,
 };
 use puddle_netpolicy::EndpointKind;
 use puddle_runtime::{RuntimeLayout, RuntimeVersion};
 use puddle_secrets::{MemoryStore, SecretStore as _};
+use puddle_services::workspaces::WorkspaceService as _;
+use puddle_services::{
+    workspaces::BrowserTarget, workspaces::DesktopTarget, workspaces::LaunchError,
+    workspaces::Launcher, workspaces::WorkspaceRecord,
+};
 use puddle_test_kit::{eventually, next_event_matching, no_event_matching};
 use puddle_types::fixture;
 use puddle_types::{
@@ -431,7 +449,7 @@ impl Guest {
             "layout" if self.fail_layout.load(Ordering::SeqCst) => ExecOutput::new(
                 1,
                 "",
-                "cannot create /workspaces/x/.puddle: read-only file system",
+                "cannot create /workspace/.puddle: read-only file system",
             ),
             "layout" => ExecOutput::new(0, "D\n", ""),
             "locks" => match *self.locks_answer.lock().unwrap() {
@@ -445,9 +463,7 @@ impl Guest {
                 ExecOutput::new(0, "R\tapi\nU\t?? notes.txt\nD\n", "")
             }
             "check" => ExecOutput::new(0, "R\tapi\nD\n", ""),
-            "trim" | "shutdown-trim" => {
-                ExecOutput::new(0, "/workspaces/x: 4096 bytes trimmed\n", "")
-            }
+            "trim" | "shutdown-trim" => ExecOutput::new(0, "/workspace: 4096 bytes trimmed\n", ""),
             "clone" => self.answer_clone(r),
             "sync" if self.fail_sync.load(Ordering::SeqCst) => {
                 ExecOutput::new(1, "", "sync: I/O error")
@@ -585,6 +601,7 @@ impl Guest {
     }
 
     /// The installs (not the reports) `mise-install` ran.
+    #[cfg(feature = "mise")]
     fn tool_installs(&self) -> usize {
         self.tools_runs
             .lock()
@@ -678,7 +695,7 @@ impl Guest {
             return ExecOutput::new(4, "E\t.\tgit is not installed in the image\n", "");
         }
         if self.fail_listing.load(Ordering::SeqCst) {
-            return ExecOutput::new(3, "E\t.\tcannot enter /workspaces/adds\n", "");
+            return ExecOutput::new(3, "E\t.\tcannot enter /workspace\n", "");
         }
         let mut lines: Vec<(String, String)> = Vec::new();
         for (dir, why) in self.unreadable.lock().unwrap().iter() {
@@ -730,7 +747,8 @@ impl Guest {
     /// `sh -c CLONE_SH puddle-clone <url> <stage> <checkout>`: kept as the git clone it runs
     /// into the checkout, with what that leaves on the volume.
     fn answer_clone(&self, r: &ExecRequest) -> ExecOutput {
-        if let Some(list) = self.break_list_on_clone.lock().unwrap().take() {
+        let taken = self.break_list_on_clone.lock().unwrap().take();
+        if let Some(list) = taken {
             make_unwritable(&list);
         }
         let url = r.args.get(3).cloned().unwrap_or_default();
@@ -983,7 +1001,8 @@ impl Launcher for RecordingLauncher {
         target: &'a DesktopTarget,
     ) -> futures_util::future::BoxFuture<'a, Result<(), LaunchError>> {
         Box::pin(async move {
-            if let Some(message) = self.fail_with.lock().unwrap().take() {
+            let taken = self.fail_with.lock().unwrap().take();
+            if let Some(message) = taken {
                 return Err(LaunchError::new(message));
             }
             self.opened.lock().unwrap().push(workspace.name.to_string());
@@ -998,7 +1017,8 @@ impl Launcher for RecordingLauncher {
         target: &'a BrowserTarget,
     ) -> futures_util::future::BoxFuture<'a, Result<(), LaunchError>> {
         Box::pin(async move {
-            if let Some(message) = self.fail_with.lock().unwrap().take() {
+            let taken = self.fail_with.lock().unwrap().take();
+            if let Some(message) = taken {
                 return Err(LaunchError::new(message));
             }
             self.browser.lock().unwrap().push(target.clone());
@@ -1012,7 +1032,8 @@ impl Launcher for RecordingLauncher {
     ) -> futures_util::future::BoxFuture<'a, ()> {
         Box::pin(async move {
             self.closed.lock().unwrap().push(workspace.to_string());
-            if let Some(path) = self.unwritable_on_close.lock().unwrap().take() {
+            let taken = self.unwritable_on_close.lock().unwrap().take();
+            if let Some(path) = taken {
                 make_unwritable(&path);
             }
         })
@@ -1024,7 +1045,8 @@ impl Launcher for RecordingLauncher {
     ) -> futures_util::future::BoxFuture<'a, Result<(), LaunchError>> {
         Box::pin(async move {
             self.forgotten.lock().unwrap().push(workspace.to_string());
-            match self.forget_fails_with.lock().unwrap().clone() {
+            let forget_fails = self.forget_fails_with.lock().unwrap().clone();
+            match forget_fails {
                 Some(message) => Err(LaunchError::new(message)),
                 None => Ok(()),
             }
@@ -1155,7 +1177,7 @@ struct Rig {
     /// Starts the host with SSH host keys for Git over SSH.
     git_ssh: AtomicBool,
     /// Where new ids come from, for a test about them; else random ids, as on a real host.
-    ids: Mutex<Option<Arc<dyn puddle_api::IdSource>>>,
+    ids: Mutex<Option<Arc<dyn puddle_services::workspaces::IdSource>>>,
     /// Whether the managed tools layer is on. Off by default: its background download runs a
     /// command at a moment no test chose, which would move the count of commands that a test
     /// injects a fault after.
@@ -1174,6 +1196,9 @@ struct Rig {
     deletes: Arc<HeldDeletes>,
     /// The drive the host reads its free space from, when a test sets one; else a fixed figure.
     free_space: Mutex<Option<Arc<dyn puddle_host::Space>>>,
+    /// The route discovery and the names the host resolves itself, when a test sets them; else
+    /// the config's direct mode and no names.
+    network: Mutex<Option<(Arc<Discovery>, Arc<puddle_proxy::testing::StaticResolver>)>>,
 }
 
 impl Rig {
@@ -1181,7 +1206,7 @@ impl Rig {
     /// writes those ids into paths and URLs itself.
     fn named_ids() -> Self {
         let rig = Self::new();
-        *rig.ids.lock().unwrap() = Some(Arc::new(puddle_api::NameIds));
+        *rig.ids.lock().unwrap() = Some(Arc::new(puddle_services::workspaces::NameIds));
         rig
     }
 
@@ -1207,6 +1232,7 @@ impl Rig {
             indexed: AtomicBool::new(false),
             deletes: Arc::default(),
             free_space: Mutex::new(None),
+            network: Mutex::new(None),
         };
         // A host that restarts reuses the port its front stored. A port the first run took from
         // port 0 is free again the moment it quits, and a parallel test's port 0 or source port can
@@ -1298,15 +1324,22 @@ impl Rig {
         options
             .rewrite_gate
             .clone_from(&self.rewrite_gate.lock().unwrap());
-        options.dev_cert = Some(self.dev_cert.clone() as Arc<dyn DevCertSource>);
-        if let Some(ids) = self.ids.lock().unwrap().clone() {
+        options.dev_cert = Some(self.dev_cert.clone());
+        let taken = self.ids.lock().unwrap().clone();
+        if let Some(ids) = taken {
             options.workspace_ids = Some(ids);
         }
-        if let Some(space) = self.free_space.lock().unwrap().clone() {
+        let taken = self.free_space.lock().unwrap().clone();
+        if let Some(space) = taken {
             options.free_space = Some(space);
         }
         // No guest runs here, so nothing may ask the machine's DNS about a name.
         options.resolver = Some(Arc::new(puddle_proxy::testing::StaticResolver::new()));
+        let taken = self.network.lock().unwrap().clone();
+        if let Some((discovery, resolver)) = taken {
+            options.discovery = Some(discovery);
+            options.resolver = Some(resolver);
+        }
         Host::start(
             prepared,
             &FakeFactory::new(&self.runtime, &self.log),
@@ -2047,6 +2080,7 @@ async fn wait_for_problem(host: &Host<FakeRuntime>, key: &str) -> puddle_types::
 
 // ---- the managed tools' environment -----------------------------------------------------------
 
+#[cfg(feature = "mise")]
 async fn restart(api: &Api, events: &mut support::Events, id: &'static str) {
     api.post(&format!("/api/workspaces/{id}/stop"), "").await;
     events.until(ended(id), Duration::from_secs(20)).await;
@@ -2056,6 +2090,7 @@ async fn restart(api: &Api, events: &mut support::Events, id: &'static str) {
 
 // ---- mise after a start -----------------------------------------------------------------------
 
+#[cfg(feature = "mise")]
 fn mise_fetches(rig: &Rig) -> Vec<(Vec<String>, Option<String>)> {
     rig.guest.mise_fetches.lock().unwrap().clone()
 }

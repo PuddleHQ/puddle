@@ -31,12 +31,14 @@ mod fill;
 #[cfg(any(test, feature = "testing"))]
 pub mod fixture;
 mod guest;
+mod hex;
 mod host;
 mod interception;
 mod local;
 mod memory;
 mod merge;
 mod name;
+mod origin_refusal;
 pub mod panic_hook;
 mod percent;
 mod policy;
@@ -45,11 +47,14 @@ mod query_name;
 mod reason_code;
 mod request_match;
 mod session_user;
+mod source_name;
+mod source_spec;
 mod tool;
 
 pub use connection::{
     ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOrigin, ConnectionOutcome,
-    ConnectionReason, HttpRequestLine, NullConnectionLog, RefusedReason, request_path,
+    ConnectionProtocol, ConnectionReason, GitOperation, HttpRequestLine, NullConnectionLog,
+    RefusedReason, request_path,
 };
 pub use cpus::CpuCount;
 pub use error::ValidationError;
@@ -66,13 +71,21 @@ pub use interception::{CURATED_PASS_THROUGH, InterceptionMode};
 pub use local::{CompanySignal, LocalCategory};
 pub use memory::MemoryMib;
 pub use merge::{
-    MAX_MERGE_FILE, MergeEntry, MergeFormat, MergeRefusal, MergeSpec, Merged, Unmerged, unmerge,
+    MAX_MERGE_FILE, MergeEntry, MergeFormat, MergeRefusal, MergeSpec, Merged, Unmerged,
+    parse as parse_merge_file, unmerge,
 };
 pub use name::{
     CheckoutDir, EntryId, ImageRef, ImageRefLit, RESERVED_WORKSPACE_NAMES, SandboxName, VolumeName,
     WORKSPACE_VOLUME_PREFIX, WorkspaceId,
 };
 
+pub use source_name::{
+    AccountName, HostName, HostNameLit, NameError, OrgName, StoredId, TenantId, UrlPath,
+};
+pub use source_spec::{AZURE_DEVOPS_HOST, SourceSpec, TokenScope};
+
+pub use hex::hex_lower;
+pub use origin_refusal::OriginRefusal;
 pub use percent::{escape_at, hex_digit, percent_decoded, percent_decoded_bytes};
 pub use policy::{
     BlockReason, Decision, EgressRequest, PatternKind, PendingId, PendingOutcome, Policy,
@@ -88,8 +101,13 @@ pub use request_match::{
 pub use session_user::SessionUser;
 pub use tool::{ToolName, ToolVersion, ToolsFileHash};
 
-/// Puddle's version, from the workspace manifest.
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Puddle's version: `PUDDLE_BUILD_VERSION` when the build sets it (ci/build-msi.sh stamps a CI build
+/// of the unversioned develop line `0.0.<run number>`, so an upgrade test can require a newer build),
+/// else the workspace manifest's.
+pub const VERSION: &str = match option_env!("PUDDLE_BUILD_VERSION") {
+    Some(stamped) => stamped,
+    None => env!("CARGO_PKG_VERSION"),
+};
 
 /// The line a Puddle binary prints for `--version`: the program name and Puddle's version.
 ///

@@ -225,12 +225,12 @@ async fn a_drawn_id_that_anything_is_kept_under_is_drawn_again_and_what_is_kept_
 /// A source that always gives the same id.
 struct Always(&'static str);
 
-impl puddle_api::IdSource for Always {
+impl puddle_services::workspaces::IdSource for Always {
     fn draw(
         &self,
-        _name: &puddle_api::DisplayName,
+        _name: &puddle_services::workspaces::DisplayName,
         _attempt: u32,
-    ) -> Result<WorkspaceId, puddle_api::IdDrawError> {
+    ) -> Result<WorkspaceId, puddle_services::workspaces::IdDrawError> {
         Ok(WorkspaceId::new(self.0).unwrap())
     }
 }
@@ -258,7 +258,7 @@ async fn a_source_that_keeps_giving_a_taken_id_gets_a_refusal_after_sixteen_draw
 async fn a_workspace_made_again_under_a_deleted_ones_name_gets_a_new_random_id_and_nothing_of_the_old()
  {
     let rig = Rig::new();
-    *rig.ids.lock().unwrap() = Some(Arc::new(puddle_api::RandomIds));
+    *rig.ids.lock().unwrap() = Some(Arc::new(puddle_services::workspaces::RandomIds));
     let covering = puddle_settings::MICROSOFT_TERMS_VERSION;
     write_global_settings(&rig, &microsoft_chosen(covering, false));
     let host = rig.start().await;

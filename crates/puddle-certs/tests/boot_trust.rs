@@ -994,7 +994,7 @@ fn jdks_of_version_managers_are_found_and_one_in_an_unlisted_folder_is_the_docum
         "/home/dev/.jdks/corretto-21",
         "/root/.asdf/installs/java/temurin-21",
         "/home/dev/.local/share/mise/installs/java/21",
-        "/workspaces/w1/.puddle/mise/data/installs/java/temurin-21",
+        "/workspace/.puddle/mise/data/installs/java/temurin-21",
         "/usr/java/jdk-17",
         "/usr/lib64/jvm/java-21",
         "/usr/local/java-17",
@@ -1240,7 +1240,10 @@ fn many_refused_certificates_stop_at_the_import_cap_and_the_good_ones_still_arri
     let g = Guest::new(&shells()[0], "", false);
     g.jdk("/usr/lib/jvm/java-17", JDK17_STORE);
     let out = g.boot_with_extra_edited(&t, |pem| {
-        (0..100).fold(pem.to_owned(), |acc, n| acc + &garbage_pem(n))
+        (0..100).fold(pem.to_owned(), |mut acc, n| {
+            acc.push_str(&garbage_pem(n));
+            acc
+        })
     });
     assert!(out.status.success(), "{}", show(&out));
     assert_eq!(g.keytool_calls("-importkeystore"), 40, "the cap");

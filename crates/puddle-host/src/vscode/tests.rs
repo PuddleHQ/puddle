@@ -13,20 +13,20 @@ fn target(path: &str, file: bool) -> DesktopTarget {
 #[test]
 fn a_folder_and_a_multi_root_file_open_through_the_ssh_host() {
     assert_eq!(
-        arguments(&target("/workspaces/abc/app", false)),
+        arguments(&target("/workspace/app", false)),
         [
             "--folder-uri",
-            "vscode-remote://ssh-remote+puddle-web/workspaces/abc/app"
+            "vscode-remote://ssh-remote+puddle-web/workspace/app"
         ]
     );
     assert_eq!(
         arguments(&target(
-            "/workspaces/abc/.puddle/editor/abc.code-workspace",
+            "/workspace/.puddle/editor/abc.code-workspace",
             true
         )),
         [
             "--file-uri",
-            "vscode-remote://ssh-remote+puddle-web/workspaces/abc/.puddle/editor/abc.code-workspace"
+            "vscode-remote://ssh-remote+puddle-web/workspace/.puddle/editor/abc.code-workspace"
         ]
     );
 }
@@ -78,7 +78,7 @@ mod commands {
         WorkspaceRecord::new(
             puddle_types::WorkspaceId::new("0123456789abcdef0123456789abcdef").unwrap(),
             UserId::OWNER,
-            puddle_api::DisplayName::parse("web").unwrap(),
+            puddle_services::workspaces::DisplayName::parse("web").unwrap(),
             Vec::new(),
         )
     }
@@ -92,12 +92,12 @@ mod commands {
             &format!("printf '%s\\n' \"$@\" > '{}'", out.display()),
         );
         launcher
-            .open_desktop(&record(), &target("/workspaces/x", false))
+            .open_desktop(&record(), &target("/workspace", false))
             .await
             .unwrap();
         assert_eq!(
             std::fs::read_to_string(out).unwrap(),
-            "--folder-uri\nvscode-remote://ssh-remote+puddle-web/workspaces/x\n"
+            "--folder-uri\nvscode-remote://ssh-remote+puddle-web/workspace\n"
         );
     }
 
@@ -179,7 +179,7 @@ mod batch_file {
         WorkspaceRecord::new(
             puddle_types::WorkspaceId::new("0123456789abcdef0123456789abcdef").unwrap(),
             UserId::OWNER,
-            puddle_api::DisplayName::parse("web").unwrap(),
+            puddle_services::workspaces::DisplayName::parse("web").unwrap(),
             Vec::new(),
         )
     }
@@ -191,7 +191,7 @@ mod batch_file {
         let spaced = dir.path().join("Program Files");
         std::fs::create_dir(&spaced).unwrap();
         let (launcher, seen) = stub(&spaced);
-        let path = "/workspaces/a b%PATH%&calc^x|y<z>(1)!q";
+        let path = "/workspace b%PATH%&calc^x|y<z>(1)!q";
         launcher
             .open_desktop(&record(), &target(path, false))
             .await

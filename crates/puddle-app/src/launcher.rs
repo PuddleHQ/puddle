@@ -13,10 +13,11 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
-use puddle_api::{
-    BrowserTarget, DesktopTarget, EditorSignIn, LaunchError, Launcher, WorkspaceRecord,
-};
 use puddle_host::VsCodeLauncher;
+use puddle_services::{
+    workspaces::BrowserTarget, workspaces::DesktopTarget, workspaces::EditorSignIn,
+    workspaces::LaunchError, workspaces::Launcher, workspaces::WorkspaceRecord,
+};
 use puddle_types::WorkspaceId;
 use tauri::{AppHandle, Runtime};
 use url::Url;

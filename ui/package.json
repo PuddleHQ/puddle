@@ -48,7 +48,7 @@
     "@playwright/test": "1.65.1",
     "@sveltejs/adapter-static": "4.0.1",
     "@sveltejs/vite-plugin-svelte": "7.3.1",
-    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/jest-dom": "8.0.0",
     "@testing-library/svelte": "5.4.2",
     "@types/node": "24.19.2",
     "@typescript-eslint/parser": "8.73.0",

@@ -15,15 +15,21 @@ use std::collections::BTreeMap;
 
 use microsandbox::LocalBackend;
 use microsandbox::config::RegistryOptions;
-use microsandbox_image::{GlobalCache, Platform, PullOptions, Reference, Registry};
-use puddle_compute::{ComputeError, ImageConfig};
+use microsandbox_image::PullProgress as MsbPull;
+use microsandbox_image::{
+    GlobalCache, ImageError, Platform, PullOptions, Reference, Registry, progress_channel,
+};
+use oci_client::errors::OciDistributionError;
+use puddle_compute::{ComputeError, ImageConfig, PullPhase, PullProgress, PullReport};
 use puddle_types::ImageRef;
+use tokio::task::JoinHandle;
 
 /// Makes sure `image` is in `local`'s cache and returns its config.
 pub(crate) async fn pull(
     local: &LocalBackend,
     roots: &[String],
     image: &ImageRef,
+    report: Option<PullReport<'_>>,
 ) -> Result<ImageConfig, ComputeError> {
     let fail = |reason: String| ComputeError::ImagePull {
         image: image.to_string(),
@@ -53,10 +59,113 @@ pub(crate) async fn pull(
         builder = builder.proxy(proxy);
     }
     let registry = builder.build().map_err(|e| fail(chain(&e)))?;
-    let result = Box::pin(registry.pull(&reference, &options))
-        .await
-        .map_err(|e| fail(chain(&e)))?;
+    let result = match report {
+        None => Box::pin(registry.pull(&reference, &options))
+            .await
+            .map_err(|e| fail(explain_connect(&e, reference.registry())))?,
+        Some(report) => {
+            // The pull runs on its own task so this one can read its progress; dropping this
+            // future (a cancelled create) ends the task, as it ended the pull before.
+            let (mut events, sender) = progress_channel();
+            let mut task = EndsOnDrop(registry.pull_with_sender(&reference, &options, sender));
+            let mut tally = Tally::default();
+            while let Some(event) = events.recv().await {
+                if let Some(progress) = tally.apply(&event) {
+                    report(progress);
+                }
+            }
+            (&mut task.0)
+                .await
+                .map_err(|e| fail(format!("the download task ended: {e}")))?
+                .map_err(|e| fail(explain_connect(&e, reference.registry())))?
+        }
+    };
     Ok(convert(result.config))
+}
+
+/// A task that is aborted when its handle is dropped before it finished.
+struct EndsOnDrop<T>(JoinHandle<T>);
+
+impl<T> Drop for EndsOnDrop<T> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Adds the per-layer events of msb's pull up to the whole image's counts.
+#[derive(Default)]
+struct Tally {
+    layers: usize,
+    download_total: Option<u64>,
+    downloaded: BTreeMap<usize, u64>,
+    download_sizes: BTreeMap<usize, u64>,
+    unpacked: BTreeMap<usize, u64>,
+    unpack_sizes: BTreeMap<usize, u64>,
+}
+
+impl Tally {
+    /// The progress `event` makes, or `None` when it changes no count.
+    fn apply(&mut self, event: &MsbPull) -> Option<PullProgress> {
+        match event {
+            MsbPull::Resolved {
+                layer_count,
+                total_download_bytes,
+                ..
+            } => {
+                self.layers = *layer_count;
+                self.download_total = *total_download_bytes;
+                Some(self.downloading())
+            }
+            MsbPull::LayerDownloadProgress {
+                layer_index,
+                downloaded_bytes,
+                total_bytes,
+                ..
+            } => {
+                self.downloaded.insert(*layer_index, *downloaded_bytes);
+                if let Some(total) = total_bytes {
+                    self.download_sizes.insert(*layer_index, *total);
+                }
+                Some(self.downloading())
+            }
+            MsbPull::LayerDownloadComplete {
+                layer_index,
+                downloaded_bytes,
+                ..
+            } => {
+                self.downloaded.insert(*layer_index, *downloaded_bytes);
+                self.download_sizes.insert(*layer_index, *downloaded_bytes);
+                Some(self.downloading())
+            }
+            MsbPull::LayerMaterializeProgress {
+                layer_index,
+                bytes_read,
+                total_bytes,
+            } => {
+                self.unpacked.insert(*layer_index, *bytes_read);
+                self.unpack_sizes.insert(*layer_index, *total_bytes);
+                // Layers unpack one after another, so a total that grows with each layer would
+                // make the share fall back: it is given only once every layer has said its size.
+                let known = self.layers > 0 && self.unpack_sizes.len() >= self.layers;
+                Some(PullProgress {
+                    phase: PullPhase::Unpacking,
+                    done: self.unpacked.values().sum(),
+                    total: known.then(|| self.unpack_sizes.values().sum()),
+                })
+            }
+            _ => None,
+        }
+    }
+
+    fn downloading(&self) -> PullProgress {
+        let from_layers = (self.layers > 0 && self.download_sizes.len() >= self.layers)
+            .then(|| self.download_sizes.values().sum());
+        PullProgress {
+            phase: PullPhase::Downloading,
+            done: self.downloaded.values().sum(),
+            total: self.download_total.or(from_layers),
+        }
+    }
 }
 
 /// `err` and its causes, `: `-separated. The registry client's top-level error is only "error
@@ -74,6 +183,22 @@ fn chain(err: &dyn std::error::Error) -> String {
         source = cause.source();
     }
     text
+}
+
+/// `err`'s text, led by a line that says Puddle could not connect to `registry` when the client
+/// reports that the connection was never made (a refused or swallowed route, a proxy that refused
+/// the tunnel); any other error keeps its own text. The pull proxy's 502 text ("could not connect
+/// to host:port") cannot reach this far: the client's tunnel reads only the status of the proxy's
+/// answer and drops its reason phrase and body (hyper-util's `TunnelUnsuccessful`), so this lead
+/// is the only place the user's text can say it.
+fn explain_connect(err: &ImageError, registry: &str) -> String {
+    let reason = chain(err);
+    match err {
+        ImageError::Registry(OciDistributionError::RequestError(e)) if e.is_connect() => {
+            format!("could not connect to {registry}: {reason}")
+        }
+        _ => reason,
+    }
 }
 
 /// msb's configured CA certificates (PEM each) followed by Puddle's registry roots.

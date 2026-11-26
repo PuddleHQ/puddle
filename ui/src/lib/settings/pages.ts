@@ -8,6 +8,7 @@ export type PageId =
   | "notifications"
   | "workspaces"
   | "network"
+  | "editor"
   | "editor-and-git"
   | "this-computer";
 
@@ -29,6 +30,7 @@ export const PAGES: readonly SettingsPage[] = [
   page("notifications", "Notifications"),
   page("workspaces", "Workspaces"),
   page("network", "Network"),
+  page("editor", "Editor"),
   page("editor-and-git", "Editor and Git"),
   page("this-computer", "This computer"),
 ];
@@ -259,6 +261,31 @@ export const SETTINGS: readonly SettingEntry[] = [
   ),
 
   entry(
+    "editor",
+    "set-editor-theme",
+    "Editor colour theme",
+    "editor vs code theme dark light colour color",
+  ),
+  entry(
+    "editor",
+    "set-editor-font-size",
+    "Font size (pixels)",
+    "editor vs code text size zoom",
+  ),
+  entry(
+    "editor",
+    "set-editor-extensions",
+    "Extensions to install",
+    "editor vs code plugins preinstall",
+  ),
+  entry(
+    "editor",
+    "set-editor-keybindings",
+    "Key bindings",
+    "editor vs code keyboard shortcuts keymap",
+  ),
+
+  entry(
     "editor-and-git",
     "set-server",
     "Server",
@@ -305,6 +332,18 @@ export const SETTINGS: readonly SettingEntry[] = [
     "set-identities",
     "Git and credentials",
     "identities name email commit",
+  ),
+  entry(
+    "editor-and-git",
+    "set-push-listed",
+    "Only push to allowed repositories",
+    "git push default new workspaces repositories",
+  ),
+  entry(
+    "editor-and-git",
+    "set-pull-listed",
+    "Only pull from allowed repositories",
+    "git fetch pull default new workspaces repositories",
   ),
 
   entry(

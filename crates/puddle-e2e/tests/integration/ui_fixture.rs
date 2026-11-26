@@ -172,6 +172,7 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
         ("multi-user", 0, 0),
         ("request-rules", 0, 1),
         ("ids-differ", 0, 0),
+        ("two-running", 0, 0),
     ];
     for (name, pending, rules_min) in counts {
         let run = start(name).await;
@@ -194,6 +195,7 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
             "empty",
             "lived-in",
             "corporate-network",
+            "company-proxy-env",
             "company-network",
             "network-trouble",
             "volume-missing",
@@ -208,7 +210,8 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
             "environment",
             "multi-user",
             "request-rules",
-            "ids-differ"
+            "ids-differ",
+            "two-running"
         ]
     );
 }

@@ -8,6 +8,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use super::ProbeError;
 use super::windows_parse::{drive_letter, parse};
 use crate::facts::{DataEncryption, DiskEncryptionFacts, ProcessOutcome, Protection, SwapFacts};
 use crate::launch;
@@ -70,7 +71,7 @@ pub(crate) fn disk_encryption(dir: Option<&Path>) -> DiskEncryptionFacts {
             },
             None => unknown(format!("PowerShell answered: {}", line.trim())),
         },
-        Err(why) => unknown(why),
+        Err(why) => unknown(why.to_string()),
     }
 }
 
@@ -80,7 +81,7 @@ fn powershell() -> PathBuf {
     root.join(r"System32\WindowsPowerShell\v1.0\powershell.exe")
 }
 
-fn run(letter: char) -> Result<String, String> {
+fn run(letter: char) -> Result<String, ProbeError> {
     let mut command = puddle_process::command(powershell());
     command
         .args(["-NoProfile", "-NonInteractive", "-Command"])
@@ -93,15 +94,24 @@ fn run(letter: char) -> Result<String, String> {
         } => Ok(stdout_first_line),
         ProcessOutcome::Exited {
             code, stderr_tail, ..
-        } => Err(format!(
-            "PowerShell exited with {code:?}: {}",
-            stderr_tail.lines().next().unwrap_or("no error text")
-        )),
-        ProcessOutcome::SpawnFailed { detail, .. } => {
-            Err(format!("PowerShell did not start: {detail}"))
-        }
-        ProcessOutcome::TimedOut { after } => {
-            Err(format!("PowerShell did not answer within {after:?}"))
-        }
+        } => Err(ProbeError::Exited {
+            program: "PowerShell".to_owned(),
+            code,
+            stderr: Some(
+                stderr_tail
+                    .lines()
+                    .next()
+                    .unwrap_or("no error text")
+                    .to_owned(),
+            ),
+        }),
+        ProcessOutcome::SpawnFailed { detail, .. } => Err(ProbeError::NotStarted {
+            program: "PowerShell".to_owned(),
+            detail,
+        }),
+        ProcessOutcome::TimedOut { after } => Err(ProbeError::TimedOut {
+            program: "PowerShell".to_owned(),
+            after,
+        }),
     }
 }

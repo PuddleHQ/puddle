@@ -184,7 +184,7 @@ fn a_window_on_a_forwarded_port_is_the_guests_own_app_with_nothing_of_the_editor
     assert_eq!(forwarded.debug_port, None);
     let probed = Target {
         debug_port: Some(9334),
-        ..editor.clone()
+        ..editor
     };
     assert_eq!(
         forward_target(&probed, &address).debug_port,
@@ -418,20 +418,20 @@ fn target(name: &str, data: &Path, cookie: Option<SessionCookie>) -> Target {
 fn the_start_address_is_the_editor_s_root_with_the_place_as_its_only_query() {
     let origin = Url::parse("http://demo.localhost:4800/").unwrap();
     let file = OpenTarget {
-        path: "/workspaces/w/.puddle/editor/w.code-workspace".into(),
+        path: "/workspace/.puddle/editor/w.code-workspace".into(),
         is_workspace_file: true,
     };
     let folder = OpenTarget {
-        path: "/workspaces/w/api".into(),
+        path: "/workspace/api".into(),
         is_workspace_file: false,
     };
     assert_eq!(
         start_url(&origin, &file).as_str(),
-        "http://demo.localhost:4800/?workspace=%2Fworkspaces%2Fw%2F.puddle%2Feditor%2Fw.code-workspace"
+        "http://demo.localhost:4800/?workspace=%2Fworkspace%2F.puddle%2Feditor%2Fw.code-workspace"
     );
     assert_eq!(
         start_url(&origin, &folder).as_str(),
-        "http://demo.localhost:4800/?folder=%2Fworkspaces%2Fw%2Fapi"
+        "http://demo.localhost:4800/?folder=%2Fworkspace%2Fapi"
     );
     // A path made to smuggle in a second key, a path or a fragment stays one encoded value.
     let hostile = OpenTarget {

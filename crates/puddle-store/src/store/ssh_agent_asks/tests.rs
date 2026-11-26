@@ -37,7 +37,7 @@ fn store() -> (Arc<ManualClock>, Store, Arc<Seen>) {
     let seen = Arc::new(Seen::default());
     let store = Store::open_in_memory(clock.clone(), Limits::default())
         .unwrap()
-        .with_events(Arc::clone(&seen) as Arc<dyn EventSink>);
+        .with_events(seen.clone());
     (clock, store, seen)
 }
 

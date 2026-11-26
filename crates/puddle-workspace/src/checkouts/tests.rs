@@ -101,7 +101,7 @@ fn malformed_or_unfinished_output_is_refused_whole() {
         // A forged record kind that only differs in case.
         ("c\ta\t\t\t\t0\nD\n", "unexpected output line"),
     ] {
-        let err = parse(out).unwrap_err();
+        let err = parse(out).unwrap_err().to_string();
         assert!(err.contains(want), "{out:?}: {err}");
     }
 }
@@ -133,6 +133,7 @@ fn hostile_output_stays_bounded_and_printable() {
     assert!(
         parse(&format!("{many}D\n"))
             .unwrap_err()
+            .to_string()
             .contains("checkouts")
     );
 
@@ -228,12 +229,12 @@ fn long_valid_records_are_cut_and_made_printable() {
 
 #[test]
 fn the_request_runs_the_script_as_root_on_the_mount_point() {
-    let l = Layout::new(&WorkspaceId::new("a").unwrap()).unwrap();
+    let l = Layout::new().unwrap();
     let r = request(&l, Scope::All);
     assert_eq!(r.program, "sh");
     assert_eq!(
         r.args,
-        ["-c", CHECKOUTS_SH, "puddle-checkouts", "/workspaces/a"]
+        ["-c", CHECKOUTS_SH, "puddle-checkouts", "/workspace"]
     );
     assert_eq!(r.user.as_deref(), Some("root"));
     let one = request(&l, Scope::One(&CheckoutDir::new("src").unwrap()));

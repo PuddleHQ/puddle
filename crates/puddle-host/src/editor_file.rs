@@ -7,7 +7,7 @@
 //! the editor, comments), and leaves a file it cannot parse as it is. The file sits inside
 //! `.puddle`, which the delete check skips, so it can always be written again.
 
-use puddle_api::StartFolder;
+use puddle_services::{workspaces::StartFolder, workspaces::WorkspaceRecord};
 use puddle_types::{
     CheckoutDir, FileMode, GuestFile, GuestPath, MergeEntry, MergeFormat, MergeSpec, WorkspaceId,
 };
@@ -46,6 +46,16 @@ impl Found {
             }
         }
         found
+    }
+}
+
+/// The folder new terminals land in, below the volume root: the start folder, or with none set
+/// the one repository of a workspace that lists exactly one. `None` is the volume root.
+pub(crate) fn terminal_folder(record: &WorkspaceRecord) -> Option<StartFolder> {
+    match (&record.start_folder, record.repositories.as_slice()) {
+        (Some(folder), _) => Some(folder.clone()),
+        (None, [only]) => StartFolder::parse(only.directory.as_str()).ok(),
+        (None, _) => None,
     }
 }
 

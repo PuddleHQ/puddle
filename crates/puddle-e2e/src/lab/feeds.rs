@@ -6,7 +6,6 @@
 //! basic authentication (the others). Test code only.
 
 use sha1::Digest as _;
-use std::fmt::Write as _;
 use std::io::Write as _;
 use std::sync::Arc;
 
@@ -98,7 +97,7 @@ pub(super) fn npm_answer(host: &str, prefix: &str, path: &str) -> WebAnswer {
                 "version": "1.0.0",
                 "dist": {
                     "tarball": format!("https://{host}{prefix}{tarball}"),
-                    "shasum": hex(&sha1::Sha1::digest(&archive)),
+                    "shasum": puddle_types::hex_lower(&sha1::Sha1::digest(&archive)),
                 },
             }},
         });
@@ -122,14 +121,6 @@ fn npm_tarball() -> Vec<u8> {
             b"module.exports = 'from the private feed';\n",
         ),
     ])
-}
-
-/// Lowercase hexadecimal of `bytes`.
-pub(super) fn hex(bytes: &[u8]) -> String {
-    bytes.iter().fold(String::new(), |mut out, byte| {
-        let _ = write!(out, "{byte:02x}");
-        out
-    })
 }
 
 fn nuget_answer(host: &str, path: &str) -> WebAnswer {

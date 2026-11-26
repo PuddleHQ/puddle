@@ -69,3 +69,41 @@ fn a_sign_in_that_failed_and_one_that_is_missing_are_refused_apart_without_namin
         );
     }
 }
+
+#[test]
+fn a_company_proxy_that_does_not_answer_is_named_as_such_and_a_route_with_none_keeps_the_old_words()
+{
+    let target = Target {
+        host: puddle_netpolicy::normalise_host("example.com")
+            .unwrap()
+            .into_host(),
+        port: 443,
+    };
+    let proxy = puddle_upstream::ProxyAddr::new("corp-proxy.internal", 3128);
+    let tried = |hop: Hop| ChainError::Unreachable {
+        tried: vec![(hop, "connection refused".to_owned())],
+        timed_out: false,
+    };
+
+    let through_proxy = refusal(&tried(Hop::Proxy(proxy)), &target);
+    assert_eq!(through_proxy.status, "502 Bad Gateway");
+    assert!(
+        through_proxy
+            .message
+            .contains("company proxy did not answer"),
+        "{}",
+        through_proxy.message
+    );
+    assert!(
+        !through_proxy.message.contains("corp-proxy"),
+        "the address stays in the log: {}",
+        through_proxy.message
+    );
+
+    let direct = refusal(&tried(Hop::Direct), &target);
+    assert!(
+        direct.message.contains("no route to it works"),
+        "{}",
+        direct.message
+    );
+}

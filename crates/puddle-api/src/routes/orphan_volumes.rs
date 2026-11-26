@@ -10,13 +10,13 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use puddle_types::WorkspaceId;
 
-use crate::ApiErrorBody;
-use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
 use crate::routes::workspaces::{StoreGitSetup, view};
-use crate::wire::{OrphanVolumeList, OrphanVolumeView, RestoreOrphanRequest, Workspace};
-use crate::workspaces::{GitSetup as _, RepoUrl};
+use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, blocking};
+use puddle_services::wire::{OrphanVolumeList, OrphanVolumeView, RestoreOrphanRequest, Workspace};
+use puddle_services::workspaces::{GitSetup as _, RepoUrl};
 
 /// The workspace disks Puddle keeps that no workspace in its list claims, read fresh from the
 /// runtime on every call. Puddle cannot tell from outside whether such a disk holds any files.

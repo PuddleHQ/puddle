@@ -72,7 +72,7 @@ async fn the_agent_the_settings_name_is_asked_and_a_changed_setting_applies_to_t
         .save_global(serde_json::json!({"ui": {"ssh_agent_pipe": first}}))
         .unwrap();
     let host_agent = SettingsAgent {
-        settings: Some(settings.clone() as Arc<dyn SettingsRepo>),
+        settings: Some(settings.clone()),
         auth_sock: None,
     };
     let host_agent = Arc::new(host_agent);
@@ -362,7 +362,8 @@ mod gate {
     fn a_new_gate_clears_what_an_earlier_run_left() {
         let store = store();
         let key = TestKey::ed25519(2).blob();
-        let first = gate(&store, Duration::from_millis(30), Duration::ZERO);
+        // The first gate waits for a real answer; 30 ms ran out under host load before the fake user polled.
+        let first = gate(&store, Duration::from_secs(5), Duration::ZERO);
         let user = answer_when_asked(&store, SshAgentAnswer::Run);
         assert_eq!(first.approve(&ws("a"), "h.example.com", &key), Ok(()));
         user.join().unwrap();
@@ -454,12 +455,31 @@ mod gate {
         for n in 0..(REFUSALS_REMEMBERED * 2) {
             gate.record(
                 &ws("a"),
-                Some("h"),
-                &Outcome::Refused(Refusal::UnknownFlags(u32::try_from(n).unwrap())),
+                Some(&format!("h{n}")),
+                &Outcome::Refused(Refusal::SshSig),
             );
         }
         let len = gate.refused.lock().unwrap().len();
         assert!(len <= REFUSALS_REMEMBERED, "{len}");
+    }
+
+    #[test]
+    fn refusals_of_one_kind_differing_only_in_guest_chosen_values_are_written_once() {
+        let store = store();
+        let gate = gate(&store, Duration::from_millis(30), Duration::from_secs(60));
+        for n in 0..300_u32 {
+            gate.record(
+                &ws("a"),
+                Some("h"),
+                &Outcome::Refused(Refusal::UnknownFlags(n)),
+            );
+        }
+        assert_eq!(
+            audit(&store).len(),
+            1,
+            "one row per workspace, host and kind"
+        );
+        assert_eq!(gate.refused.lock().unwrap().len(), 1);
     }
 
     #[test]
@@ -469,8 +489,8 @@ mod gate {
         for n in 0..(REFUSALS_REMEMBERED + 44) {
             gate.record(
                 &ws("a"),
-                Some("h"),
-                &Outcome::Refused(Refusal::UnknownFlags(u32::try_from(n).unwrap())),
+                Some(&format!("h{n}")),
+                &Outcome::Refused(Refusal::SshSig),
             );
         }
         let len = gate.refused.lock().unwrap().len();

@@ -3,8 +3,10 @@
 
 use std::sync::Arc;
 
-use puddle_api::wire::{RestorePart, RestorePartName};
-use puddle_api::{FAKE_RESTORE_MAGIC, FakeRestore, RestoreFacts, SecretRef};
+use puddle_services::wire::{RestorePart, RestorePartName};
+use puddle_services::{
+    restore::FAKE_RESTORE_MAGIC, restore::FakeRestore, restore::RestoreFacts, restore::SecretRef,
+};
 
 use crate::common::{raw, start, start_with_restore};
 
@@ -29,6 +31,7 @@ fn facts() -> RestoreFacts {
             name: "TOKEN".into(),
             secret_id: "env-no-such-value".into(),
         }],
+        token_refs: Vec::new(),
     }
 }
 
@@ -106,7 +109,10 @@ async fn a_confirm_names_the_staged_copy_and_the_mode_and_asks_for_a_restart() {
     assert_eq!(reply.json()["safety_copy"], "20231114T221320Z");
     assert_eq!(
         fake.applied(),
-        [(staging_id.clone(), puddle_api::wire::RestoreMode::Replace)]
+        [(
+            staging_id.clone(),
+            puddle_services::wire::RestoreMode::Replace
+        )]
     );
     // A staged copy that is gone is a 404, a mode nobody offers is a 422, and an unknown field too.
     let gone = serde_json::json!({"staging_id": "1".repeat(32), "mode": "add"});
@@ -148,7 +154,7 @@ async fn a_confirm_that_cannot_make_its_safety_copy_is_a_503_that_says_so() {
 
 #[tokio::test]
 async fn the_last_result_is_read_and_forgotten_and_safety_copies_are_listed_and_deleted() {
-    use puddle_api::wire::{RestoreMode, RestoreResult, SafetyCopy};
+    use puddle_services::wire::{RestoreMode, RestoreResult, SafetyCopy};
     let fake = Arc::new(FakeRestore::new());
     fake.set_result(Some(RestoreResult {
         applied: true,
@@ -247,6 +253,21 @@ async fn the_preview_says_which_disks_are_here_which_secrets_lack_a_value_and_wh
         secret("LACKS", "restore-no-value"),
         secret("BADID", "not a valid id!"),
     ];
+    let token = |identity: &str, id: &str| puddle_services::restore::IdentityTokenRef {
+        identity: identity.into(),
+        host: "github.com".into(),
+        secret_id: id.into(),
+    };
+    api.secrets
+        .set(
+            &StoredId::new("restore-token-here").unwrap(),
+            &Secret::new("x".into()),
+        )
+        .unwrap();
+    facts.token_refs = vec![
+        token("has", "restore-token-here"),
+        token("lacks", "restore-token-lost"),
+    ];
     fake.set_facts(facts);
 
     let reply = api
@@ -254,6 +275,10 @@ async fn the_preview_says_which_disks_are_here_which_secrets_lack_a_value_and_wh
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
     let json = reply.json();
+    assert_eq!(
+        json["identity_tokens_needing_value"],
+        serde_json::json!([{"identity": "lacks", "host": "github.com"}])
+    );
     let disks: Vec<(&str, &str)> = json["workspaces"]
         .as_array()
         .unwrap()

@@ -52,7 +52,7 @@ use super::token_body::TokenBody;
 
 mod answer;
 mod scan;
-mod target;
+mod url_target;
 
 pub(crate) use answer::{
     ANSWER_WITHHELD, NotScrubbed, ScrubBody, ScrubNotes, answer_encoding_refusal,
@@ -283,16 +283,13 @@ pub fn secret_stand_in(name: &str) -> Result<String, StandInError> {
 }
 
 fn stand_in_with(name: &str, random: &[u8; RANDOM_BYTES]) -> Result<String, StandInError> {
-    use std::fmt::Write as _;
     if !is_name(name) {
         return Err(StandInError::Name(name.to_owned()));
     }
-    let mut text = format!("puddle-secret-{name}-");
-    for byte in random {
-        // writing into a `String` cannot fail
-        let _ = write!(text, "{byte:02x}");
-    }
-    Ok(text)
+    Ok(format!(
+        "puddle-secret-{name}-{}",
+        puddle_types::hex_lower(random)
+    ))
 }
 
 /// What a swap did to one request.

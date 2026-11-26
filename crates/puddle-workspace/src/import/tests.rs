@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-use puddle_types::WorkspaceId;
-
 use super::*;
 
 #[test]
@@ -25,7 +23,7 @@ fn the_origin_is_the_first_url_of_its_section_in_any_spelling() {
         origin_url("[remote.origin]\nurl=git@github.com:acme/api.git\n").as_deref(),
         Ok("git@github.com:acme/api.git")
     );
-    let none = |text: &str| origin_url(text).unwrap_err();
+    let none = |text: &str| origin_url(text).unwrap_err().to_string();
     // A line without an `=` and a header that never closes are skipped, not read.
     assert_eq!(
         origin_url("[remote \"origin\"]\n\tnot a setting\n\turl = https://x/y\n").as_deref(),
@@ -66,7 +64,7 @@ fn text_git_could_read_differently_is_refused_not_guessed_at() {
         "[remote \"origin\"]\n\turl = https://x/\\ty\n",
         "[remote \"origin\"]\n\turl = \"unclosed\n",
     ] {
-        assert_eq!(origin_url(text), Err(UNREADABLE.to_owned()), "{text}");
+        assert_eq!(origin_url(text), Err(OriginRefusal::Unreadable), "{text}");
     }
     assert_eq!(config_value(r#""a\"b\\c""#).as_deref(), Some(r#"a"b\c"#));
     assert_eq!(
@@ -132,7 +130,7 @@ fn ssh_remotes_of_known_hosts_get_their_https_form_and_credentials_go() {
         ("https://github.com", "names no repository"),
         ("git@github.com:acme/api?x", "SSH address Puddle can't read"),
     ] {
-        let err = https_form(remote).unwrap_err();
+        let err = https_form(remote).unwrap_err().to_string();
         assert!(err.contains(why), "{remote}: {err}");
     }
 }
@@ -146,10 +144,12 @@ fn the_host_is_where_git_and_curl_would_go_never_one_hidden_after_a_query() {
         "https://evil.example#@github.com/x",
         "https://evil.example\\@github.com/x",
     ] {
-        let err = https_form(remote).unwrap_err();
+        let err = https_form(remote).unwrap_err().to_string();
         assert!(err.contains("names no repository"), "{remote}: {err}");
     }
-    let err = https_form("ssh://git@github.com?@evil.example/x").unwrap_err();
+    let err = https_form("ssh://git@github.com?@evil.example/x")
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("SSH address Puddle can't read"), "{err}");
 }
 
@@ -160,7 +160,7 @@ fn a_refused_origin_never_shows_its_password() {
         "ssh://me:s3cr3t@git.example.com/acme/x.git",
         "https://me:s3cr3t@github.com",
     ] {
-        let err = https_form(remote).unwrap_err();
+        let err = https_form(remote).unwrap_err().to_string();
         assert!(!err.contains("s3cr3t"), "{err}");
         assert!(err.contains("***@"), "{err}");
     }
@@ -195,13 +195,14 @@ fn a_checkout_is_found_from_its_folder_or_its_git_directory() {
     }
     std::fs::remove_file(work.join(".git").join("config")).unwrap();
     let c = LocalCheckout::open(&work).unwrap();
-    assert!(c.origin.unwrap_err().contains("no config file"));
+    assert!(c.origin.unwrap_err().to_string().contains("no config file"));
     std::fs::write(work.join(".git").join("config"), "[core]\n").unwrap();
     assert!(
         LocalCheckout::open(&work)
             .unwrap()
             .origin
             .unwrap_err()
+            .to_string()
             .contains("no origin")
     );
 }
@@ -211,7 +212,7 @@ fn what_is_not_a_checkout_is_refused_with_the_reason() {
     let tmp = tempfile::tempdir().unwrap();
     let base = dunce::canonicalize(tmp.path()).unwrap();
     let refused = |p: &Path, want: &str| {
-        let err = LocalCheckout::open(p).unwrap_err();
+        let err = LocalCheckout::open(p).unwrap_err().to_string();
         assert!(err.contains(want), "{}: {err}", p.display());
     };
     refused(Path::new("relative/api"), "not an absolute path");
@@ -255,6 +256,7 @@ fn a_config_that_is_too_large_or_not_a_file_gives_no_origin() {
     assert!(
         read_config(&git.join("config"))
             .unwrap_err()
+            .to_string()
             .contains("no config file")
     );
     std::fs::remove_dir(git.join("config")).unwrap();
@@ -266,6 +268,7 @@ fn a_config_that_is_too_large_or_not_a_file_gives_no_origin() {
     assert!(
         read_config(&git.join("config"))
             .unwrap_err()
+            .to_string()
             .contains("too large")
     );
     #[cfg(unix)]
@@ -275,6 +278,7 @@ fn a_config_that_is_too_large_or_not_a_file_gives_no_origin() {
         assert!(
             read_config(&git.join("config"))
                 .unwrap_err()
+                .to_string()
                 .contains("no config file")
         );
     }
@@ -282,7 +286,7 @@ fn a_config_that_is_too_large_or_not_a_file_gives_no_origin() {
 
 #[test]
 fn the_import_commands_are_argument_vectors_and_every_git_process_gets_the_guard() {
-    let layout = Layout::new(&WorkspaceId::new("acme").unwrap()).unwrap();
+    let layout = Layout::new().unwrap();
     let dir = CheckoutDir::new("api").unwrap();
     assert_eq!(import_mount(2).unwrap().as_str(), "/puddle/import/2/.git");
     let clone = layout.import_request(2, &dir).unwrap();
@@ -298,7 +302,7 @@ fn the_import_commands_are_argument_vectors_and_every_git_process_gets_the_guard
             "puddle-checkout",
             "--",
             "/puddle/import/2",
-            "/workspaces/acme/api",
+            "/workspace/api",
         ]
     );
     let env = import_env(2).unwrap();
@@ -339,7 +343,7 @@ fn the_import_commands_are_argument_vectors_and_every_git_process_gets_the_guard
     assert_eq!(finish.args[1], FINISH_IMPORT_SH);
     assert_eq!(
         finish.args[3..],
-        ["/workspaces/acme/api", "/puddle/import/2", url]
+        ["/workspace/api", "/puddle/import/2", url]
     );
     assert_eq!(finish.env, env);
 }

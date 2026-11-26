@@ -110,6 +110,15 @@ import DetailLayout from "./+layout.svelte";
 import Overview from "./+page.svelte";
 import Network from "./network/+page.svelte";
 import Settings from "./settings/+page.svelte";
+import { hasUnsavedEdits } from "#lib/stores/unsaved-edits.ts";
+
+// A host is drawn in pieces (HostName), so it is found by its whole text, without the port.
+const hostMatcher = (host: string) => (_: string, el: Element | null) =>
+  el?.classList.contains("host") === true &&
+  el.textContent?.replace(/:\d+$/, "") === host;
+const findHost = (host: string) => screen.findByText(hostMatcher(host));
+const getHost = (host: string) => screen.getByText(hostMatcher(host));
+const queryHost = (host: string) => screen.queryByText(hostMatcher(host));
 
 const {
   inbox,
@@ -150,6 +159,12 @@ function reset() {
   api.overrides = {};
   api.tools = {};
   api.globalMise = null;
+  api.globalEditor = {
+    colour_theme: null,
+    font_size: null,
+    extensions: null,
+    keybindings: null,
+  };
   api.miseAvailable = true;
   api.unknown = {};
   api.kept = {};
@@ -171,7 +186,6 @@ function reset() {
   workspaces.status = "loading";
   workspaces.progress = {};
   workspaces.oom = {};
-  workspaceActions.createOpen = false;
   workspaceActions.connectOpen = false;
   workspaceActions.trustOpen = false;
   workspaceActions.deleteOpen = false;
@@ -354,11 +368,13 @@ describe("the detail layout", () => {
             entry: "e-web",
             url: "https://github.com/acme/web.git",
             directory: "web",
+            branch: null,
           },
           {
             entry: "e-api",
             url: "https://github.com/acme/api.git",
             directory: "api",
+            branch: null,
           },
         ],
       }),
@@ -441,6 +457,7 @@ describe("the overview", () => {
       entry: "e-demo",
       url: "https://github.com/acme/demo.git",
       directory: "demo",
+      branch: null,
     };
     api.checkouts["w-demo"] = listing([checkout("demo", { entry })]);
     await load();
@@ -479,14 +496,12 @@ describe("the overview", () => {
     );
     await load();
     render(Overview);
-    await screen.findByText("a.example.com");
-    expect(screen.queryByText("c.example.org")).toBeNull();
-    const row = screen.getByText("a.example.com").closest("li") as HTMLElement;
+    await findHost("a.example.com");
+    expect(queryHost("c.example.org")).toBeNull();
+    const row = getHost("a.example.com").closest("li") as HTMLElement;
     await fireEvent.click(within(row).getByRole("button", { name: /^Allow/ }));
-    await vi.waitFor(() =>
-      expect(screen.queryByText("a.example.com")).toBeNull(),
-    );
-    expect(screen.getByText("b.example.com")).toBeInTheDocument();
+    await vi.waitFor(() => expect(queryHost("a.example.com")).toBeNull());
+    expect(getHost("b.example.com")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Allow all" })).toBeNull();
   });
 
@@ -513,10 +528,8 @@ describe("the overview", () => {
     await fireEvent.click(
       within(dialog).getByRole("button", { name: "Allow all" }),
     );
-    await vi.waitFor(() =>
-      expect(screen.queryByText("a.example.com")).toBeNull(),
-    );
-    expect(screen.queryByText("b.example.com")).toBeNull();
+    await vi.waitFor(() => expect(queryHost("a.example.com")).toBeNull());
+    expect(queryHost("b.example.com")).toBeNull();
     expect(inbox.calls.filter((c) => c.includes("approve"))).toHaveLength(2);
     expect(inbox.calls.filter((c) => c.includes("deny"))).toHaveLength(0);
     expect(toasts.items.at(-1)?.message).toBe("Allowed 2 requests for demo.");
@@ -598,7 +611,7 @@ describe("the overview", () => {
         "Allowed 0 requests for demo; 2 requests could not be decided.",
       ),
     );
-    expect(screen.getByText("a.example.com")).toBeInTheDocument();
+    expect(getHost("a.example.com")).toBeInTheDocument();
   });
 
   it("keeps the times on waiting requests current as the minutes pass", async () => {
@@ -616,7 +629,7 @@ describe("the overview", () => {
       await load();
       render(Overview);
       render(Network);
-      await screen.findByText("a.example.com");
+      await findHost("a.example.com");
       const before = document.querySelector("li.req time")?.textContent;
       await vi.advanceTimersByTimeAsync(31 * 60_000);
       expect(document.querySelector("li.req time")?.textContent).not.toBe(
@@ -1108,12 +1121,12 @@ describe("the network tab", () => {
     );
     await load();
     render(Overview);
-    await screen.findByText("new.example.com");
-    const hosts = [...document.querySelectorAll("li.req .host")].map(
-      (e) => e.textContent,
+    await findHost("new.example.com");
+    const hosts = [...document.querySelectorAll("li.req .host")].map((e) =>
+      e.textContent?.replace(/:\d+$/, ""),
     );
     expect(hosts).toEqual(["new.example.com", "old.example.com"]);
-    expect(screen.queryByText("theirs.example.org")).toBeNull();
+    expect(queryHost("theirs.example.org")).toBeNull();
     expect(
       screen.getByRole("heading", { name: /Waiting for you/ }),
     ).toHaveTextContent("2");
@@ -1133,7 +1146,7 @@ describe("the network tab", () => {
     expect(
       within(note).getByRole("link", { name: "Decide on the Overview" }),
     ).toHaveAttribute("href", "/workspaces/w-demo");
-    expect(screen.queryByText("a.example.com")).toBeNull();
+    expect(queryHost("a.example.com")).toBeNull();
   });
 
   it("says when nothing waits, and when requests are still loading", async () => {
@@ -1189,7 +1202,7 @@ describe("the network tab", () => {
     await load();
     render(Overview);
     render(Network);
-    await screen.findByText("a.example.com");
+    await findHost("a.example.com");
     inbox.down = true;
     rules.down = true;
     await pending.refresh();
@@ -1320,7 +1333,8 @@ describe("the settings tab", () => {
       screen.getByText(/A change applies at the next restart/),
     ).toBeInTheDocument();
     expect(screen.getAllByText("Global setting").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Puddle's default").length).toBeGreaterThan(0);
+    // The default is the visible resting value of the control: it carries no pill of its own.
+    expect(screen.queryByText("Puddle's default")).toBeNull();
     // Following the global setting needs no reset link.
     expect(screen.queryByRole("button", { name: /again for/ })).toBeNull();
     for (const label of [
@@ -1450,6 +1464,223 @@ describe("the settings tab", () => {
     );
     await vi.waitFor(() =>
       expect(api.overrides["w-demo"]?.direct_ssh).toBeNull(),
+    );
+  });
+
+  it("shows each editor default with where it comes from, and saves a workspace's own value over the global one", async () => {
+    api.globalEditor = {
+      colour_theme: "Default Dark Modern",
+      font_size: 14,
+      extensions: ["a.b"],
+      keybindings: null,
+    };
+    await open();
+    const theme = screen.getByLabelText(
+      "Editor colour theme",
+    ) as HTMLInputElement;
+    const row = (name: string) =>
+      document.querySelector(`[data-setting="${name}"]`) as HTMLElement;
+    expect(theme.value).toBe("Default Dark Modern");
+    expect(
+      within(row("editor-theme")).getByText("Global setting"),
+    ).toBeVisible();
+    expect(
+      within(row("editor-keybindings")).queryByText("Puddle's default"),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /again for Editor colour theme/ }),
+    ).toBeNull();
+
+    await fireEvent.input(theme, { target: { value: "Solarized Dark" } });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Save Editor colour theme" }),
+    );
+    await vi.waitFor(() =>
+      expect(api.overrides["w-demo"]?.editor.colour_theme).toBe(
+        "Solarized Dark",
+      ),
+    );
+    // The other fields of the group stay as they were.
+    expect(api.overrides["w-demo"]?.editor.font_size).toBeNull();
+    await vi.waitFor(() =>
+      expect(
+        within(row("editor-theme")).getByText("This workspace"),
+      ).toBeVisible(),
+    );
+
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Use the global setting again for Editor colour theme",
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(api.overrides["w-demo"]?.editor.colour_theme).toBeNull(),
+    );
+    await vi.waitFor(() => expect(theme.value).toBe("Default Dark Modern"));
+  });
+
+  it("saves, clears and resets the font size, extensions and key bindings of a workspace on their own", async () => {
+    await open();
+    const row = (name: string) =>
+      document.querySelector(`[data-setting="${name}"]`) as HTMLElement;
+    const own = (name: string) =>
+      vi.waitFor(() =>
+        expect(within(row(name)).getByText("This workspace")).toBeVisible(),
+      );
+    const keys = '[{"key":"ctrl+k","command":"a.b"}]';
+
+    await fireEvent.input(screen.getByLabelText("Font size (pixels)"), {
+      target: { value: "20" },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Save Font size (pixels)" }),
+    );
+    await vi.waitFor(() =>
+      expect(api.overrides["w-demo"]?.editor.font_size).toBe(20),
+    );
+    await own("editor-font-size");
+    await fireEvent.input(screen.getByLabelText("Font size (pixels)"), {
+      target: { value: "" },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Save Font size (pixels)" }),
+    );
+    await vi.waitFor(() =>
+      expect(api.overrides["w-demo"]?.editor.font_size).toBeNull(),
+    );
+
+    await fireEvent.input(screen.getByLabelText("Extensions to install"), {
+      target: { value: "a.b" },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Save Extensions to install" }),
+    );
+    await own("editor-extensions");
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Use the global setting again for Extensions to install",
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(api.overrides["w-demo"]?.editor.extensions).toBeNull(),
+    );
+
+    await fireEvent.input(screen.getByLabelText("Key bindings"), {
+      target: { value: keys },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Save Key bindings" }),
+    );
+    await own("editor-keybindings");
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Use the global setting again for Key bindings",
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(api.overrides["w-demo"]?.editor.keybindings).toBeNull(),
+    );
+
+    await fireEvent.input(screen.getByLabelText("Editor colour theme"), {
+      target: { value: "Solarized Dark" },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Save Editor colour theme" }),
+    );
+    await own("editor-theme");
+    await fireEvent.input(screen.getByLabelText("Editor colour theme"), {
+      target: { value: "" },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Save Editor colour theme" }),
+    );
+    await vi.waitFor(() =>
+      expect(api.overrides["w-demo"]?.editor.colour_theme).toBeNull(),
+    );
+    await fireEvent.input(screen.getByLabelText("Font size (pixels)"), {
+      target: { value: "21" },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Save Font size (pixels)" }),
+    );
+    await own("editor-font-size");
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Use the global setting again for Font size (pixels)",
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(api.overrides["w-demo"]?.editor.font_size).toBeNull(),
+    );
+    await fireEvent.input(screen.getByLabelText("Editor colour theme"), {
+      target: { value: "Nord" },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Save Editor colour theme" }),
+    );
+    await own("editor-theme");
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Use the global setting again for Editor colour theme",
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(api.overrides["w-demo"]?.editor.colour_theme).toBeNull(),
+    );
+  }, 30_000);
+
+  it("holds an automatic reload while an editor default is typed and not saved", async () => {
+    await open();
+    expect(hasUnsavedEdits()).toBe(false);
+    await fireEvent.input(screen.getByLabelText("Font size (pixels)"), {
+      target: { value: "20" },
+    });
+    expect(hasUnsavedEdits()).toBe(true);
+  });
+
+  it("sends nothing when Enter is pressed on an unchanged or refused value", async () => {
+    await open();
+    const size = screen.getByLabelText(
+      "Font size (pixels)",
+    ) as HTMLInputElement;
+    const puts = () => api.calls.filter((c) => c.startsWith("PUT")).length;
+    await fireEvent.submit(size.form!);
+    await fireEvent.input(size, { target: { value: "99" } });
+    await fireEvent.submit(size.form!);
+    expect(puts()).toBe(0);
+  });
+
+  it("holds back a value the API would refuse and says why, and keeps an empty list as none", async () => {
+    api.globalEditor = {
+      colour_theme: null,
+      font_size: null,
+      extensions: ["a.b"],
+      keybindings: null,
+    };
+    await open();
+    const size = screen.getByLabelText("Font size (pixels)");
+    await fireEvent.input(size, { target: { value: "99" } });
+    expect(await screen.findByRole("alert")).toHaveTextContent("8 to 40");
+    expect(
+      screen.getByRole("button", { name: "Save Font size (pixels)" }),
+    ).toBeDisabled();
+
+    const list = screen.getByLabelText("Extensions to install");
+    await fireEvent.input(list, { target: { value: "" } });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Save Extensions to install" }),
+    );
+    await vi.waitFor(() =>
+      expect(api.overrides["w-demo"]?.editor.extensions).toEqual([]),
+    );
+    await vi.waitFor(() =>
+      expect(
+        within(
+          document.querySelector(
+            '[data-setting="editor-extensions"]',
+          ) as HTMLElement,
+        ).getByText("This workspace"),
+      ).toBeVisible(),
     );
   });
 

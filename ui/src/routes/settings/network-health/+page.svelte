@@ -14,6 +14,9 @@
     fixedProxies,
     hopsText,
     methodLabel,
+    quietLine,
+    shownSections,
+    stateSentence,
     waitText,
   } from "#lib/network/model.ts";
   import { relativeTime, absoluteTime } from "#lib/format/relative-time.ts";
@@ -26,6 +29,7 @@
   const report = $derived(store.report);
   const list = $derived(report ? findings(report) : []);
   const problems = $derived(list.filter((f) => f.level === "problem"));
+  const shown = $derived(report ? new Set(shownSections(report)) : new Set());
 
   onMount(() => {
     const clock = setInterval(() => {
@@ -72,6 +76,7 @@
 {:else if report}
   <section class="card" aria-labelledby="h-summary">
     <h2 id="h-summary">Summary</h2>
+    <p>{stateSentence(report)}</p>
     {#if problems.length === 0}
       <p class="ok">No problems found.</p>
     {:else}
@@ -102,281 +107,301 @@
     </p>
   </section>
 
-  <section class="card" aria-labelledby="h-proxy">
-    <h2 id="h-proxy">Proxy setup</h2>
-    <dl>
-      <dt>Found</dt>
-      <dd>{DETECTED_LABEL[report.proxy.detected]}</dd>
-      <dt>Setting comes from</dt>
-      <dd>{MODE_LABEL[report.proxy.mode]}</dd>
-      {#if report.proxy.pac_url}
-        <dt>Proxy script address</dt>
-        <dd class="mono wrap">{report.proxy.pac_url}</dd>
-      {/if}
-      <dt>Proxy script</dt>
-      <dd>{PAC_STATE_LABEL[report.proxy.pac_state]}</dd>
-      <dt>Automatic detection</dt>
-      <dd>{report.proxy.auto_detect ? "On" : "Off"}</dd>
-      <dt>Fixed proxy</dt>
-      <dd>
-        {#each fixedProxies(report.proxy) as p, i (p)}{i > 0 ? ", " : ""}<span
-            class="mono">{p}</span
-          >{:else}None{/each}
-      </dd>
-      <dt>Bypass list</dt>
-      <dd>
-        {report.proxy.bypass_entries === 1
-          ? "1 entry"
-          : `${report.proxy.bypass_entries} entries`}
-      </dd>
-      <dt>Last network change</dt>
-      <dd>
-        {#if report.proxy.last_change_at !== null}
-          <span title={absoluteTime(report.proxy.last_change_at)}
-            >{when(report.proxy.last_change_at)}</span
-          >
-          (change number {report.proxy.epoch})
-        {:else}
-          None since Puddle started
+  {#if shown.has("proxy")}
+    <section class="card" aria-labelledby="h-proxy">
+      <h2 id="h-proxy">Proxy setup</h2>
+      <dl>
+        <dt>Found</dt>
+        <dd>{DETECTED_LABEL[report.proxy.detected]}</dd>
+        <dt>Setting comes from</dt>
+        <dd>{MODE_LABEL[report.proxy.mode]}</dd>
+        {#if report.proxy.pac_url}
+          <dt>Proxy script address</dt>
+          <dd class="mono wrap">{report.proxy.pac_url}</dd>
         {/if}
-      </dd>
-    </dl>
-    {#if report.proxy.settings_error}
-      <p class="error">
-        Settings couldn't be read: {report.proxy.settings_error}
-      </p>
-    {/if}
-    <h3>Proxies marked as not answering</h3>
-    {#if report.proxy.dead_proxies.length === 0}
-      <p class="muted">None.</p>
-    {:else}
-      <table>
-        <thead>
-          <tr><th scope="col">Proxy</th><th scope="col">Tried again in</th></tr>
-        </thead>
-        <tbody>
-          {#each report.proxy.dead_proxies as dead (dead.proxy)}
-            <tr>
-              <td class="mono">{dead.proxy}</td>
-              <td>{waitText(dead.retry_in_secs)}</td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    {/if}
-  </section>
-
-  <section class="card" aria-labelledby="h-sign">
-    <h2 id="h-sign">Signing in to the proxy</h2>
-    <p>
-      Puddle can answer with:
-      {#if report.sign_in.methods.length === 0}
-        <b>nothing</b>. It cannot sign in to a proxy on this system.
-      {:else}
-        <b>{report.sign_in.methods.map(methodLabel).join(", ")}</b>.
+        <dt>Proxy script</dt>
+        <dd>{PAC_STATE_LABEL[report.proxy.pac_state]}</dd>
+        <dt>Automatic detection</dt>
+        <dd>{report.proxy.auto_detect ? "On" : "Off"}</dd>
+        <dt>Fixed proxy</dt>
+        <dd>
+          {#each fixedProxies(report.proxy) as p, i (p)}{i > 0 ? ", " : ""}<span
+              class="mono">{p}</span
+            >{:else}None{/each}
+        </dd>
+        <dt>Bypass list</dt>
+        <dd>
+          {report.proxy.bypass_entries === 1
+            ? "1 entry"
+            : `${report.proxy.bypass_entries} entries`}
+        </dd>
+        <dt>Last network change</dt>
+        <dd>
+          {#if report.proxy.last_change_at !== null}
+            <span title={absoluteTime(report.proxy.last_change_at)}
+              >{when(report.proxy.last_change_at)}</span
+            >
+            (change number {report.proxy.epoch})
+          {:else}
+            None since Puddle started
+          {/if}
+        </dd>
+      </dl>
+      {#if report.proxy.settings_error}
+        <p class="error">
+          Settings couldn't be read: {report.proxy.settings_error}
+        </p>
       {/if}
-    </p>
-    {#if report.sign_in.stored.length > 0}
+      <h3>Proxies marked as not answering</h3>
+      {#if report.proxy.dead_proxies.length === 0}
+        <p class="muted">None.</p>
+      {:else}
+        <table>
+          <thead>
+            <tr
+              ><th scope="col">Proxy</th><th scope="col">Tried again in</th></tr
+            >
+          </thead>
+          <tbody>
+            {#each report.proxy.dead_proxies as dead (dead.proxy)}
+              <tr>
+                <td class="mono">{dead.proxy}</td>
+                <td>{waitText(dead.retry_in_secs)}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      {/if}
+    </section>
+  {/if}
+
+  {#if shown.has("sign-in")}
+    <section class="card" aria-labelledby="h-sign">
+      <h2 id="h-sign">Signing in to the proxy</h2>
       <p>
-        Stored user name and password (Basic), used when a proxy still asks
-        after the Windows sign-in:
+        Puddle can answer with:
+        {#if report.sign_in.methods.length === 0}
+          <b>nothing</b>. It cannot sign in to a proxy on this system.
+        {:else}
+          <b>{report.sign_in.methods.map(methodLabel).join(", ")}</b>.
+        {/if}
       </p>
-      <ul class="plain" aria-label="Stored proxy sign-ins">
-        {#each report.sign_in.stored as s (s.proxy)}
-          <li><span class="mono">{s.proxy}</span> as <b>{s.user}</b></li>
-        {/each}
-      </ul>
-    {:else}
-      <p class="muted">
-        No user name and password is stored for a proxy. <a
-          href="/settings/network">Enter one in Settings, Network.</a
-        >
+      {#if report.sign_in.stored.length > 0}
+        <p>
+          Stored user name and password (Basic), used when a proxy still asks
+          after the Windows sign-in:
+        </p>
+        <ul class="plain" aria-label="Stored proxy sign-ins">
+          {#each report.sign_in.stored as s (s.proxy)}
+            <li><span class="mono">{s.proxy}</span> as <b>{s.user}</b></li>
+          {/each}
+        </ul>
+      {:else}
+        <p class="muted">
+          No user name and password is stored for a proxy. <a
+            href="/settings/network">Enter one in Settings, Network.</a
+          >
+        </p>
+      {/if}
+      {#if report.sign_in.attempts.length === 0}
+        <p class="muted">No proxy has been signed in to yet.</p>
+      {:else}
+        <table>
+          <caption class="visually-hidden">Last sign-in per proxy</caption>
+          <thead>
+            <tr>
+              <th scope="col">Proxy</th>
+              <th scope="col">Sent</th>
+              <th scope="col">Result</th>
+              <th scope="col">When</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each report.sign_in.attempts as a (attemptKey(a))}
+              <tr>
+                <td class="mono">{a.proxy}</td>
+                <td>{a.scheme ?? "nothing"}</td>
+                <td>
+                  {SIGN_IN_LABEL[a.result]}{#if a.detail}
+                    <span class="muted wrap"> &middot; {a.detail}</span>{/if}
+                </td>
+                <td><span title={absoluteTime(a.at)}>{when(a.at)}</span></td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      {/if}
+    </section>
+  {/if}
+
+  {#if shown.has("roots")}
+    <section class="card" aria-labelledby="h-roots">
+      <h2 id="h-roots">Company certificates</h2>
+      {#if report.roots.synced}
+        <p>
+          Workspaces get <b>{report.roots.roots}</b>
+          {report.roots.roots === 1 ? "root" : "roots"} and
+          <b>{report.roots.intermediates}</b>
+          {report.roots.intermediates === 1 ? "intermediate" : "intermediates"},
+          read
+          {#if report.roots.synced_at !== null}
+            <span title={absoluteTime(report.roots.synced_at)}
+              >{when(report.roots.synced_at)}</span
+            >{/if}.
+        </p>
+      {:else}
+        <p class="muted">Not read yet.</p>
+      {/if}
+      {#if report.roots.certificates.length > 0}
+        <table>
+          <caption class="visually-hidden">Certificates workspaces get</caption>
+          <thead>
+            <tr>
+              <th scope="col">Name</th>
+              <th scope="col">Kind</th>
+              <th scope="col">Expires</th>
+              <th scope="col">Found in</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each report.roots.certificates as c (c.fingerprint)}
+              <tr>
+                <td class="wrap">
+                  {c.subject ?? "(no name)"}
+                  <span class="muted mono small block"
+                    >{c.fingerprint.slice(0, 16)}</span
+                  >
+                </td>
+                <td>{ROOT_KIND_LABEL[c.kind]}</td>
+                <td>{expiryText(c.not_after, now)}</td>
+                <td class="mono small wrap">{c.sources.join(", ")}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      {/if}
+      <h3>Left out</h3>
+      {#if report.roots.skipped.length === 0}
+        <p class="muted">Nothing.</p>
+      {:else}
+        <ul class="plain">
+          {#each report.roots.skipped as s (s.fingerprint)}
+            <li class="wrap">
+              {s.subject ?? "(no name)"}
+              <span class="muted mono small">{s.fingerprint.slice(0, 16)}</span
+              >:
+              {s.reason}
+            </li>
+          {/each}
+        </ul>
+      {/if}
+      <h3>Left out of Puddle's own TLS checks</h3>
+      {#if report.roots.left_out_of_tls.length === 0}
+        <p class="muted">No certificate was left out.</p>
+      {:else}
+        <ul class="plain">
+          {#each report.roots.left_out_of_tls as s (s.fingerprint)}
+            <li class="error wrap">
+              {s.subject ?? "(no name)"}
+              <span class="muted mono small">{s.fingerprint.slice(0, 16)}</span
+              >:
+              {s.reason}
+            </li>
+          {/each}
+        </ul>
+      {/if}
+      <h3>Stores that couldn't be read</h3>
+      {#if report.roots.unreadable_stores.length === 0}
+        <p class="muted">None.</p>
+      {:else}
+        <ul class="plain">
+          {#each report.roots.unreadable_stores as s (s)}
+            <li class="error wrap">{s}</li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
+  {/if}
+
+  {#if shown.has("company")}
+    <section class="card" aria-labelledby="h-company">
+      <h2 id="h-company">Company network</h2>
+      <p class="muted small">
+        Destinations that your company's VPN, private-access client or DNS
+        suffixes mark as internal. They are off by default; you can turn them on
+        under <a href="/settings/network#local-destinations"
+          >Settings, Network, Local destinations</a
+        >. Puddle reads those signals on Windows only; on other systems "None
+        found" below means "not looked at" and the switch changes nothing.
       </p>
-    {/if}
-    {#if report.sign_in.attempts.length === 0}
-      <p class="muted">No proxy has been signed in to yet.</p>
-    {:else}
-      <table>
-        <caption class="visually-hidden">Last sign-in per proxy</caption>
-        <thead>
-          <tr>
-            <th scope="col">Proxy</th>
-            <th scope="col">Sent</th>
-            <th scope="col">Result</th>
-            <th scope="col">When</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each report.sign_in.attempts as a (attemptKey(a))}
-            <tr>
-              <td class="mono">{a.proxy}</td>
-              <td>{a.scheme ?? "nothing"}</td>
-              <td>
-                {SIGN_IN_LABEL[a.result]}{#if a.detail}
-                  <span class="muted wrap"> &middot; {a.detail}</span>{/if}
-              </td>
-              <td><span title={absoluteTime(a.at)}>{when(a.at)}</span></td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    {/if}
-  </section>
+      <dl>
+        <dt>Private-access client</dt>
+        <dd>
+          {report.company_network.private_access_client
+            ? "One is installed and active"
+            : "None found"}
+        </dd>
+        <dt>DNS suffixes</dt>
+        <dd>
+          {#each report.company_network.dns_suffixes as suffix, i (suffix)}{i >
+            0
+              ? ", "
+              : ""}<span class="mono">{suffix}</span>{:else}None found{/each}
+        </dd>
+      </dl>
+    </section>
+  {/if}
 
-  <section class="card" aria-labelledby="h-roots">
-    <h2 id="h-roots">Company certificates</h2>
-    {#if report.roots.synced}
-      <p>
-        Workspaces get <b>{report.roots.roots}</b>
-        {report.roots.roots === 1 ? "root" : "roots"} and
-        <b>{report.roots.intermediates}</b>
-        {report.roots.intermediates === 1 ? "intermediate" : "intermediates"},
-        read
-        {#if report.roots.synced_at !== null}
-          <span title={absoluteTime(report.roots.synced_at)}
-            >{when(report.roots.synced_at)}</span
-          >{/if}.
+  {#if shown.has("pull")}
+    <section class="card" aria-labelledby="h-pull">
+      <h2 id="h-pull">Image downloads</h2>
+      <dl>
+        <dt>Through Puddle's pull proxy</dt>
+        <dd>
+          {report.pull_proxy.active ? "Yes" : "No"}
+        </dd>
+        <dt>Through the company proxy</dt>
+        <dd>
+          {report.pull_proxy.via_upstream ? "Yes" : "No"}
+        </dd>
+      </dl>
+    </section>
+  {/if}
+
+  {#if shown.has("routes")}
+    <section class="card" aria-labelledby="h-routes">
+      <h2 id="h-routes">Routes chosen</h2>
+      <p class="desc">
+        How Puddle reached each destination since the last network change, in
+        order of preference. At most 100.
       </p>
-    {:else}
-      <p class="muted">Not read yet.</p>
-    {/if}
-    {#if report.roots.certificates.length > 0}
-      <table>
-        <caption class="visually-hidden">Certificates workspaces get</caption>
-        <thead>
-          <tr>
-            <th scope="col">Name</th>
-            <th scope="col">Kind</th>
-            <th scope="col">Expires</th>
-            <th scope="col">Found in</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each report.roots.certificates as c (c.fingerprint)}
+      {#if report.routes.length === 0}
+        <p class="muted">None yet.</p>
+      {:else}
+        <table>
+          <thead>
             <tr>
-              <td class="wrap">
-                {c.subject ?? "(no name)"}
-                <span class="muted mono small block"
-                  >{c.fingerprint.slice(0, 16)}</span
-                >
-              </td>
-              <td>{ROOT_KIND_LABEL[c.kind]}</td>
-              <td>{expiryText(c.not_after, now)}</td>
-              <td class="mono small wrap">{c.sources.join(", ")}</td>
+              <th scope="col">Destination</th>
+              <th scope="col">Route</th>
+              <th scope="col">Decided by</th>
             </tr>
-          {/each}
-        </tbody>
-      </table>
-    {/if}
-    <h3>Left out</h3>
-    {#if report.roots.skipped.length === 0}
-      <p class="muted">Nothing.</p>
-    {:else}
-      <ul class="plain">
-        {#each report.roots.skipped as s (s.fingerprint)}
-          <li class="wrap">
-            {s.subject ?? "(no name)"}
-            <span class="muted mono small">{s.fingerprint.slice(0, 16)}</span>:
-            {s.reason}
-          </li>
-        {/each}
-      </ul>
-    {/if}
-    <h3>Left out of Puddle's own TLS checks</h3>
-    {#if report.roots.left_out_of_tls.length === 0}
-      <p class="muted">No certificate was left out.</p>
-    {:else}
-      <ul class="plain">
-        {#each report.roots.left_out_of_tls as s (s.fingerprint)}
-          <li class="error wrap">
-            {s.subject ?? "(no name)"}
-            <span class="muted mono small">{s.fingerprint.slice(0, 16)}</span>:
-            {s.reason}
-          </li>
-        {/each}
-      </ul>
-    {/if}
-    <h3>Stores that couldn't be read</h3>
-    {#if report.roots.unreadable_stores.length === 0}
-      <p class="muted">None.</p>
-    {:else}
-      <ul class="plain">
-        {#each report.roots.unreadable_stores as s (s)}
-          <li class="error wrap">{s}</li>
-        {/each}
-      </ul>
-    {/if}
-  </section>
-
-  <section class="card" aria-labelledby="h-company">
-    <h2 id="h-company">Company network</h2>
-    <p class="muted small">
-      Destinations that your company's VPN, private-access client or DNS
-      suffixes mark as internal. They are off by default; you can turn them on
-      under <a href="/settings/network#local-destinations"
-        >Settings, Network, Local destinations</a
-      >. Puddle reads those signals on Windows only; on other systems "None
-      found" below means "not looked at" and the switch changes nothing.
-    </p>
-    <dl>
-      <dt>Private-access client</dt>
-      <dd>
-        {report.company_network.private_access_client
-          ? "One is installed and active"
-          : "None found"}
-      </dd>
-      <dt>DNS suffixes</dt>
-      <dd>
-        {#each report.company_network.dns_suffixes as suffix, i (suffix)}{i > 0
-            ? ", "
-            : ""}<span class="mono">{suffix}</span>{:else}None found{/each}
-      </dd>
-    </dl>
-  </section>
-
-  <section class="card" aria-labelledby="h-pull">
-    <h2 id="h-pull">Image downloads</h2>
-    <dl>
-      <dt>Through Puddle's pull proxy</dt>
-      <dd>
-        {report.pull_proxy.active ? "Yes" : "No"}
-      </dd>
-      <dt>Through the company proxy</dt>
-      <dd>
-        {report.pull_proxy.via_upstream ? "Yes" : "No"}
-      </dd>
-    </dl>
-  </section>
-
-  <section class="card" aria-labelledby="h-routes">
-    <h2 id="h-routes">Routes chosen</h2>
-    <p class="desc">
-      How Puddle reached each destination since the last network change, in
-      order of preference. At most 100.
-    </p>
-    {#if report.routes.length === 0}
-      <p class="muted">None yet.</p>
-    {:else}
-      <table>
-        <thead>
-          <tr>
-            <th scope="col">Destination</th>
-            <th scope="col">Route</th>
-            <th scope="col">Decided by</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each report.routes as r (`${r.scheme}://${r.host}:${r.port}`)}
-            <tr>
-              <td class="mono wrap">{r.scheme}://{r.host}:{r.port}</td>
-              <td class="wrap">{hopsText(r.hops)}</td>
-              <td>{ROUTE_SOURCE_LABEL[r.source]}</td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    {/if}
-  </section>
+          </thead>
+          <tbody>
+            {#each report.routes as r (`${r.scheme}://${r.host}:${r.port}`)}
+              <tr>
+                <td class="mono wrap">{r.scheme}://{r.host}:{r.port}</td>
+                <td class="wrap">{hopsText(r.hops)}</td>
+                <td>{ROUTE_SOURCE_LABEL[r.source]}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      {/if}
+    </section>
+  {/if}
+  {#if quietLine(report)}
+    <p class="muted quiet">{quietLine(report)}</p>
+  {/if}
 {/if}
 
 <style>
@@ -385,12 +410,6 @@
     justify-content: space-between;
     align-items: start;
     gap: var(--space-4);
-  }
-  h1 {
-    margin: 0;
-  }
-  h1:focus {
-    outline: none;
   }
   h2 {
     margin: 0;
@@ -410,7 +429,7 @@
   }
   .sub {
     margin: var(--space-2) 0 var(--space-4);
-    max-width: 44rem;
+    max-width: var(--page-reading-width);
   }
   .desc,
   .small {
@@ -428,7 +447,6 @@
   .card {
     display: grid;
     gap: var(--space-3);
-    max-width: 56rem;
     margin-bottom: var(--space-4);
     padding: var(--space-4);
     background: var(--color-surface);

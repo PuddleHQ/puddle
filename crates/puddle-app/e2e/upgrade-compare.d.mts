@@ -11,3 +11,4 @@ export function buildIsNotOlder(
   before: { version: string; api_version: string },
   after: { version: string; api_version: string },
 ): string[];
+export function buildIsNewer(before: { version: string }, after: { version: string }): string[];

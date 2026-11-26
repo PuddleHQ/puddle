@@ -11,6 +11,7 @@ use std::io::{Read as _, Write as _};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use super::{
@@ -20,6 +21,33 @@ use super::{
 
 /// How long [`Squid::access_log_with`] waits for its line (a loaded machine needs seconds).
 const LOG_LINE_WAIT: Duration = Duration::from_secs(20);
+
+/// The containers this process started and has not removed yet, so a signal handler can remove
+/// them (a killed process runs no `Drop`).
+static STARTED_CONTAINERS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+fn started_containers() -> std::sync::MutexGuard<'static, Vec<String>> {
+    STARTED_CONTAINERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn remove_container(name: &str) {
+    let _ = Command::new("docker")
+        .args(["rm", "-f", name])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+/// Stops and removes every container this process started and has not removed. For a signal
+/// handler: the process exits right after, without running any `Drop`.
+pub(super) fn remove_started_containers() {
+    let names = std::mem::take(&mut *started_containers());
+    for name in names {
+        remove_container(&name);
+    }
+}
 
 /// What a lab Squid is set up to do.
 #[derive(Clone, Debug)]
@@ -35,6 +63,10 @@ pub struct SquidOptions {
     /// direct (a corporate proxy's own parent): it is how a lab Squid reaches a name that only
     /// that proxy knows, on a port the hosts file cannot change.
     pub parent_port: Option<u16>,
+    /// Whether Squid resolves names with the machine's own resolver, so it reaches the live
+    /// internet (the radar tests that run real package tools through it). Off by default: a lab
+    /// Squid resolves only [`Self::names`] and a lookup of anything else fails at once.
+    pub live_dns: bool,
 }
 
 impl SquidOptions {
@@ -46,7 +78,15 @@ impl SquidOptions {
             names: vec!["echo.corp.test".into(), "web.corp.test".into()],
             basic_auth: true,
             parent_port: None,
+            live_dns: false,
         }
+    }
+
+    /// Lets Squid resolve every name with the machine's resolver (see [`Self::live_dns`]).
+    #[must_use]
+    pub fn live(mut self) -> Self {
+        self.live_dns = true;
+        self
     }
 
     /// Sends every tunnel through the proxy on loopback port `port` (see [`Self::parent_port`]).
@@ -73,6 +113,8 @@ pub struct Squid {
     dir: tempfile::TempDir,
     stop: Stop,
     started: StartCost,
+    /// The program a process-mode Squid was started from, so [`Squid::resume`] starts the same.
+    bin: Option<std::ffi::OsString>,
 }
 
 enum Stop {
@@ -89,11 +131,8 @@ impl Drop for Squid {
                 remove_shared_memory(&instance_name(self.port));
             }
             Stop::Container(name) => {
-                let _ = Command::new("docker")
-                    .args(["rm", "-f", name])
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status();
+                started_containers().retain(|started| started != name);
+                remove_container(name);
             }
         }
     }
@@ -167,6 +206,11 @@ fn write_config(dir: &Path, seen: &Path, options: &SquidOptions, port: u16) {
             "http_access deny probe_host\nhttp_access allow all",
         )
     };
+    let dns = if options.live_dns {
+        ""
+    } else {
+        "dns_nameservers 127.0.0.2\n"
+    };
     let parent = options.parent_port.map_or_else(String::new, |parent| {
         format!("cache_peer {LOCAL} parent {parent} 0 no-query no-digest\nnever_direct allow all\n")
     });
@@ -185,7 +229,7 @@ fn write_config(dir: &Path, seen: &Path, options: &SquidOptions, port: u16) {
              {access}\n\
              http_access deny all\n\
              hosts_file {hosts}\n\
-             dns_nameservers 127.0.0.2\n\
+             {dns}\
              {parent}\
              cache deny all\n\
              buffered_logs off\n\
@@ -203,6 +247,21 @@ fn write_config(dir: &Path, seen: &Path, options: &SquidOptions, port: u16) {
         ),
     )
     .unwrap();
+}
+
+/// Starts a Squid process on `port` from the configuration already in `dir`.
+fn spawn_process(bin: &std::ffi::OsStr, dir: &Path, port: u16) -> Child {
+    let log = fs::File::create(dir.join("squid.stderr")).unwrap();
+    let name = instance_name(port);
+    remove_shared_memory(&name);
+    Command::new(bin)
+        .arg("-f")
+        .arg(dir.join("squid.conf"))
+        .args(["-N", "-Y", "-C", "-n", &name])
+        .stdout(Stdio::null())
+        .stderr(log)
+        .spawn()
+        .unwrap()
 }
 
 /// The path of the request that [`squid_answers`] sends; Squid does not log it.
@@ -231,6 +290,31 @@ fn squid_answers(port: u16) -> bool {
         head.starts_with("http/")
             && (head.contains("\r\nserver: squid") || head.contains("\r\nx-squid-error:"))
     })
+}
+
+/// The line Squid's `cache.log` has once it listens.
+const LISTENING_LINE: &str = "Accepting HTTP Socket connections";
+
+/// What the start says when Squid listens inside its container and the host cannot connect:
+/// Docker Desktop with host networking off (`--network host` then joins the VM's network, not the
+/// host's).
+const HOST_NETWORKING_OFF: &str = "the Squid container listens, but the host cannot connect to it: \
+Docker Desktop needs host networking enabled (Settings, Resources, Network), or PUDDLE_SQUID_BIN must \
+point at a native squid";
+
+/// Whether the container's Squid says it listens on `port` while a connect from here is refused
+/// (twice, a moment apart, so a start that is only slightly late does not count).
+fn host_cannot_reach_listener(cache_log: &str, port: u16) -> bool {
+    let refused = || {
+        let addr = std::net::SocketAddr::from((LOCAL, port));
+        std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(1))
+            .is_err_and(|e| e.kind() == std::io::ErrorKind::ConnectionRefused)
+    };
+    cache_log.contains(LISTENING_LINE) && refused() && {
+        // flake-ok: an absence window; the second refusal must come a moment after the first, there is no signal for it.
+        std::thread::sleep(Duration::from_millis(200));
+        refused()
+    }
 }
 
 impl Squid {
@@ -288,22 +372,12 @@ impl Squid {
                 .status()
                 .unwrap();
             assert!(status.success(), "docker run failed");
+            started_containers().push(name.clone());
             Stop::Container(name)
         } else {
             let bin = bin.unwrap();
             require_file(bin, "PUDDLE_SQUID_BIN");
-            let log = fs::File::create(dir.path().join("squid.stderr")).unwrap();
-            let name = instance_name(port);
-            remove_shared_memory(&name);
-            let child = Command::new(bin)
-                .arg("-f")
-                .arg(dir.path().join("squid.conf"))
-                .args(["-N", "-Y", "-C", "-n", &name])
-                .stdout(Stdio::null())
-                .stderr(log)
-                .spawn()
-                .unwrap();
-            Stop::Process(child)
+            Stop::Process(spawn_process(bin, dir.path(), port))
         };
         // A failed attempt drops `squid`, which stops it and removes its directory.
         let mut squid = Self {
@@ -312,6 +386,7 @@ impl Squid {
             dir,
             stop,
             started: StartCost::default(),
+            bin: bin.map(std::ffi::OsString::from),
         };
         squid.wait()?;
         let process = match &squid.stop {
@@ -352,6 +427,8 @@ impl Squid {
         };
         let port = self.port;
         let logs = [dir.join("squid.stderr"), dir.join("cache.log")];
+        let unreachable = std::cell::Cell::new(false);
+        let in_container = container.is_some();
         try_answers(
             child,
             READY,
@@ -360,9 +437,23 @@ impl Squid {
             // A child that dies right after something else answered is a collision too.
             Duration::from_millis(100),
             // Squid exits on a failed bind, but a container's exit is only seen below: its log
-            // names the cause at once.
-            || logs.iter().any(|log| is_address_in_use(&read(log))),
-        )?;
+            // names the cause at once. A container that listens where the host cannot connect
+            // never gets better, so that ends the wait too.
+            || {
+                if in_container && host_cannot_reach_listener(&read(&dir.join("cache.log")), port) {
+                    unreachable.set(true);
+                    return true;
+                }
+                logs.iter().any(|log| is_address_in_use(&read(log)))
+            },
+        )
+        .map_err(|why| {
+            if unreachable.get() {
+                format!("{HOST_NETWORKING_OFF}\n{why}")
+            } else {
+                why
+            }
+        })?;
         if let Some(name) = &container {
             // Something else may answer on a taken port while the container's Squid has exited.
             let running = Command::new("docker")
@@ -374,6 +465,39 @@ impl Squid {
             }
         }
         Ok(())
+    }
+
+    /// Stops Squid but keeps its port, configuration and logs, as a company proxy that goes
+    /// down: connecting to [`Squid::port`] is refused until [`Squid::resume`]. A stopped Squid
+    /// is stopped again, harmlessly.
+    ///
+    /// # Panics
+    /// With the Docker mode, which cannot start again on the same port.
+    pub fn pause(&mut self) {
+        assert!(
+            self.bin.is_some(),
+            "pause works with PUDDLE_SQUID_BIN, not with PUDDLE_SQUID_DOCKER"
+        );
+        if let Stop::Process(child) = &mut self.stop {
+            stop(child);
+            remove_shared_memory(&instance_name(self.port));
+        }
+    }
+
+    /// Starts a [`Squid::pause`]d Squid again on the same port with the same configuration (the
+    /// access log keeps what it had).
+    ///
+    /// # Panics
+    /// With the Docker mode, or when it does not come up again.
+    pub fn resume(&mut self) {
+        assert!(
+            self.bin.is_some(),
+            "resume works with PUDDLE_SQUID_BIN, not with PUDDLE_SQUID_DOCKER"
+        );
+        let bin = self.bin.clone().unwrap();
+        self.stop = Stop::Process(spawn_process(&bin, self.dir.path(), self.port));
+        self.wait()
+            .unwrap_or_else(|why| panic!("Squid did not come back on port {}: {why}", self.port));
     }
 
     /// The port Squid listens on (`127.0.0.1`).

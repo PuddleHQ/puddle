@@ -146,7 +146,7 @@ test.describe("the list and the start screen", () => {
     await expect(page.getByText("requests waiting")).toHaveCount(0);
     await page.getByRole("button", { name: "More options" }).click();
     await expect(
-      page.getByRole("dialog", { name: "New workspace" }),
+      page.getByRole("region", { name: "New workspace" }),
     ).toBeVisible();
   });
 
@@ -203,7 +203,7 @@ test.describe("the list and the start screen", () => {
 test.describe("creating", () => {
   async function openCreate(page: Page): Promise<Locator> {
     await page.getByRole("button", { name: "New workspace" }).first().click();
-    const dialog = page.getByRole("dialog", { name: "New workspace" });
+    const dialog = page.getByRole("region", { name: "New workspace" });
     await expect(dialog).toBeVisible();
     return dialog;
   }
@@ -253,7 +253,20 @@ test.describe("creating", () => {
     await expect(
       created.getByRole("button", { name: "Start Ledger_Service" }),
     ).toBeDisabled();
-    // The service reports where it is.
+    // The service reports where it is, with the bytes while an image comes down.
+    await backend.control.emit({
+      type: "workspace_progress",
+      workspace: "ledger-service",
+      step: "pulling_image",
+      detail: null,
+      bytes_done: 120 * 1024 * 1024,
+      bytes_total: 480 * 1024 * 1024,
+    });
+    await expect(created).toContainText("Downloading the image");
+    await expect(created).toContainText("120 MB of 480 MB, 25 %");
+    await expect(
+      created.getByRole("progressbar", { name: "Downloading the image" }),
+    ).toHaveAttribute("value", "25");
     await backend.control.emit({
       type: "workspace_progress",
       workspace: "ledger-service",
@@ -286,7 +299,6 @@ test.describe("creating", () => {
       .getByLabel("Git repository (HTTPS)")
       .fill("https://example.org/other.git");
     await expect(dialog.getByLabel("Name")).toHaveValue("my-name");
-    await dialog.getByText("Start folder, image, memory and CPUs").click();
     await dialog.getByLabel("Memory (GiB)").fill("3");
     await dialog.getByLabel("Image").fill("ghcr.io/acme/dev:1");
     await dialog.getByRole("button", { name: "Create workspace" }).click();
@@ -309,7 +321,6 @@ test.describe("creating", () => {
     await dialog
       .getByLabel("Git repository (HTTPS)")
       .fill("https://example.org/slider.git");
-    await dialog.getByText("Start folder, image, memory and CPUs").click();
     const slider = dialog.getByLabel("CPUs", { exact: true });
     await expect(slider).toHaveAttribute("max", String(limits.max_cpus));
     await expect(slider).toHaveValue(String(limits.default_cpus));
@@ -433,22 +444,21 @@ test.describe("creating", () => {
     ).toBe(false);
   });
 
-  test("Cancel and Escape close it and forget what was typed", async ({
+  test("leaving keeps what was typed, and Cancel forgets it", async ({
     page,
     backend,
   }) => {
     await openList(page, backend);
-    const dialog = await openCreate(page);
-    await dialog.getByLabel("Name").fill("half-done");
-    await page.keyboard.press("Escape");
-    await expect(dialog).toHaveCount(0);
-    await expect(
-      page.getByRole("button", { name: "New workspace" }).first(),
-    ).toBeFocused();
+    const screen = await openCreate(page);
+    await screen.getByLabel("Name").fill("half-done");
+    await page.goBack();
+    await expect(screen).toHaveCount(0);
     const again = await openCreate(page);
-    await expect(again.getByLabel("Name")).toHaveValue("");
+    await expect(again.getByLabel("Name")).toHaveValue("half-done");
     await again.getByRole("button", { name: "Cancel" }).click();
     await expect(again).toHaveCount(0);
+    const fresh = await openCreate(page);
+    await expect(fresh.getByLabel("Name")).toHaveValue("");
   });
 });
 
@@ -544,15 +554,56 @@ test.describe("start and stop", () => {
     await expect(shop).toContainText("Running");
   });
 
-  test("a workspace stopped from elsewhere changes the card at once", async ({
+  test("the row menu opens the terminal tab", async ({ page, backend }) => {
+    await openList(page, backend);
+    const shop = card(page, "web-shop");
+    await shop.getByRole("button", { name: "More about web-shop" }).click();
+    await page.getByRole("menuitem", { name: "Terminal of web-shop" }).click();
+    await expect(page).toHaveURL(/\/workspaces\/web-shop\/terminal$/);
+  });
+
+  test("the row menu renames a workspace without leaving the list", async ({
     page,
     backend,
   }) => {
     await openList(page, backend);
-    await backend.control.emit({
-      type: "status_changed",
-      workspace: "web-shop",
-      status: "stopped",
+    const shop = card(page, "web-shop");
+    await shop.getByRole("button", { name: "More about web-shop" }).click();
+    await page.getByRole("menuitem", { name: "Rename web-shop" }).click();
+    const form = page.getByRole("dialog", { name: "Rename workspace" });
+    await form.getByLabel("Name").fill("Web shop (prod)");
+    await form.getByRole("button", { name: "Save" }).click();
+    await expect(toast(page, "Renamed to Web shop (prod).")).toBeVisible();
+    await expect(card(page, "Web shop (prod)")).toBeVisible();
+    await expect(page).toHaveURL(/\/workspaces$/);
+  });
+
+  test("the row menu deletes a stopped workspace after the check", async ({
+    page,
+    backend,
+  }) => {
+    await openList(page, backend);
+    const tools = card(page, "data-tools");
+    await tools.getByRole("button", { name: "More about data-tools" }).click();
+    await page.getByRole("menuitem", { name: "Delete data-tools" }).click();
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toContainText("found nothing unsaved");
+    await dialog.getByRole("checkbox", { name: /Delete data-tools/ }).click();
+    await dialog.getByRole("button", { name: "Delete workspace" }).click();
+    await expect(toast(page, "Deleted data-tools.")).toBeVisible();
+    await expect(tools).toHaveCount(0);
+  });
+
+  test("a workspace stopped from elsewhere changes the card at once", async ({
+    page,
+    request,
+    backend,
+  }) => {
+    await openList(page, backend);
+    // Stopped for real: the card takes the actions it offers from the record read after the
+    // event, so an event alone, with the host still saying running, offers nothing.
+    await request.post("/api/workspaces/web-shop/stop", {
+      headers: auth(backend),
     });
     await expect(card(page, "web-shop")).toContainText("Stopped");
     await expect(
@@ -1065,7 +1116,7 @@ test.describe("renaming", () => {
     await rename(page).click();
     const form = dialog(page);
     await expect(form.getByLabel("Name")).toHaveValue("web-shop");
-    await expect(form).toContainText("workspace id, web-shop");
+    await expect(form).toContainText("The new name shows everywhere");
     await form.getByLabel("Name").fill("  Web shop (prod) ");
     await form.getByRole("button", { name: "Save" }).click();
     await expect(form).toHaveCount(0);
@@ -1157,7 +1208,7 @@ test.describe("renaming", () => {
   }) => {
     await openList(page, backend);
     await page.getByRole("button", { name: "New workspace" }).first().click();
-    const create = page.getByRole("dialog", { name: "New workspace" });
+    const create = page.getByRole("region", { name: "New workspace" });
     await create
       .getByLabel("Git repository (HTTPS)")
       .fill("https://github.com/acme/shop.git");
@@ -1211,7 +1262,7 @@ test.describe("renaming", () => {
     await openList(page, backend);
     await backend.control.step({ do: "hold_workspaces" });
     await page.getByRole("button", { name: "New workspace" }).first().click();
-    const create = page.getByRole("dialog", { name: "New workspace" });
+    const create = page.getByRole("region", { name: "New workspace" });
     await create
       .getByLabel("Git repository (HTTPS)")
       .fill("https://github.com/acme/slow.git");
@@ -1410,7 +1461,7 @@ test.describe("the settings tab", () => {
       ),
     ).toBeVisible();
     await expect(
-      page.locator('[data-setting="memory"] .chip', {
+      page.locator('[data-setting="memory"] .meta', {
         hasText: "This workspace",
       }),
     ).toBeVisible();
@@ -1473,7 +1524,7 @@ test.describe("the settings tab", () => {
         overrides: { cpus: number | null };
       };
     expect((await read()).overrides.cpus).toBe(chosen);
-    await expect(page.locator('[data-setting="cpus"] .chip')).toHaveText(
+    await expect(page.locator('[data-setting="cpus"] .meta')).toHaveText(
       "This workspace",
     );
 
@@ -1786,16 +1837,13 @@ test.describe("keyboard only", () => {
     await openList(page, backend);
     await page.getByRole("button", { name: "New workspace" }).first().focus();
     await page.keyboard.press("Enter");
-    const dialog = page.getByRole("dialog", { name: "New workspace" });
+    const dialog = page.getByRole("region", { name: "New workspace" });
     await expect(dialog.getByLabel("Git repository (HTTPS)")).toBeFocused();
     await page.keyboard.type("https://github.com/acme/keys.git");
     await page.keyboard.press("Enter");
     await expect(dialog).toHaveCount(0);
     const created = card(page, "keys");
     await expect(created).toContainText("Not started");
-    await expect(
-      page.getByRole("button", { name: "New workspace" }).first(),
-    ).toBeFocused();
 
     await created.getByRole("button", { name: "Start keys" }).focus();
     await page.keyboard.press("Enter");
@@ -1871,10 +1919,9 @@ test.describe("accessibility", () => {
           .getByRole("button", { name: "New workspace" })
           .first()
           .click();
-        const create = page.getByRole("dialog", { name: "New workspace" });
+        const create = page.getByRole("region", { name: "New workspace" });
         await create.getByRole("button", { name: "Create workspace" }).click();
         await expect(create.getByRole("alert")).toHaveCount(2);
-        await create.getByText("Start folder, image, memory and CPUs").click();
         await scan(page, "create with errors");
         await create.getByRole("button", { name: "Cancel" }).click();
 
@@ -2003,7 +2050,9 @@ test.describe("a workspace whose volume is gone", () => {
     await openList(page, backend);
     const lost = card(page, "lost-disk");
     await expect(lost).toContainText("Volume missing");
-    await expect(lost).toContainText("Restore the volume ws-lost-disk");
+    await expect(lost).toContainText("Restore its volume");
+    await lost.getByText("Volume name").click();
+    await expect(lost).toContainText("ws-lost-disk");
     await expect(
       lost.getByRole("button", { name: "Start lost-disk" }),
     ).toBeEnabled();

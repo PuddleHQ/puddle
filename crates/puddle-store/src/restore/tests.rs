@@ -681,3 +681,64 @@ fn the_audit_log_rows_get_new_ids_in_the_order_of_the_backup() {
         .collect();
     assert_eq!(rows, ["1y", "2x"]);
 }
+
+#[test]
+fn the_preview_lists_the_pasted_tokens_of_the_backups_identities_and_no_other_source() {
+    use crate::identity::{Coverage, CredentialBinding};
+    use puddle_types::{HostName, SourceSpec, StoredId, TokenScope};
+    let host = HostName::new("github.com").unwrap();
+    let rest = Coverage::new(std::collections::BTreeSet::new(), true).unwrap();
+    let pasted = CredentialBinding::new(
+        &host,
+        SourceSpec::Stored {
+            id: StoredId::new("tok-1").unwrap(),
+            scope: TokenScope {
+                host: host.clone(),
+                org: None,
+            },
+        },
+        rest.clone(),
+    )
+    .unwrap();
+    let gh = CredentialBinding::new(
+        &host,
+        SourceSpec::Gh {
+            host: host.clone(),
+            account: puddle_types::AccountName::new("octo").unwrap(),
+        },
+        rest,
+    )
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let (here, there) = (dir.path().join("here.db"), dir.path().join("there.db"));
+    open(&here);
+    open(&there);
+    let insert = |label: &str, bindings: &[CredentialBinding]| {
+        format!(
+            "INSERT INTO identities (user_id, label, author_name, author_email, credentials, position, is_default, created_at, changed_at) \
+             VALUES (1, '{label}', 'A', 'a@example.org', '{}', 0, 0, 1, 1);",
+            serde_json::to_string(bindings).unwrap()
+        )
+    };
+    sql(
+        &there,
+        &[
+            insert("work", &[gh.clone(), pasted]),
+            insert("plain", &[gh]),
+            // Not the shape this build writes: no token is claimed, and nothing fails.
+            "INSERT INTO identities (user_id, label, author_name, author_email, credentials, position, is_default, created_at, changed_at) \
+             VALUES (1, 'odd', 'A', 'a@example.org', 'not json', 1, 0, 1, 1);"
+                .to_owned(),
+        ]
+        .concat(),
+    );
+    let preview = preview_merge(&here, &there).unwrap();
+    assert_eq!(
+        preview.identity_tokens,
+        vec![IdentityToken {
+            identity: "work".into(),
+            host: "github.com".into(),
+            secret_id: "tok-1".into()
+        }]
+    );
+}

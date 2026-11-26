@@ -48,6 +48,7 @@ fn unknown_argument_exits_2_with_usage_on_stderr() {
     assert!(stderr.contains("usage: puddle"), "{stderr}");
 }
 
+#[cfg(feature = "serve")] // `puddle serve` is dormant in the shipped build
 #[test]
 fn serve_without_a_bundled_runtime_exits_1_and_says_why() {
     // The test binary has no `runtime` folder beside it.

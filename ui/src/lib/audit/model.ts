@@ -266,13 +266,15 @@ const REASON_WORDS: Record<ReasonCode, string> = {
     "the request sent a credential Puddle chose to another address than its sign-in endpoint",
   peek_refused: "the request body was not one Puddle reads",
   stream_limit: "the connection had too many requests open at once",
+  workspace_not_running:
+    "Puddle holds no running state for the workspace, so it refuses its connections",
   puddle_request: "Puddle's own request",
   pki_distribution_point:
     "a certificate check address named in your company's root certificates",
   push_denied:
-    'the push is not on the workspace\'s push list yet (click "Allow push" in the notice, or turn off "Only push to listed repos" on its Git tab)',
+    'the push is not in the workspace\'s allowed repositories (click "Allow push" in the notice, or tick Push for it on the Git tab)',
   pull_denied:
-    'the fetch is not on the workspace\'s pull list yet (click "Allow pull" in the notice, or turn off "Only pull from listed repos" on its Git tab)',
+    'the fetch is not in the workspace\'s allowed repositories (click "Allow pull" in the notice, or tick Pull for it on the Git tab)',
   bad_git_path:
     "the Git address is not one Puddle reads, or names the repository in more than one way (use owner/repository)",
   ssh_command_unsupported:
@@ -529,6 +531,14 @@ const WORKSPACE_OPS: Record<
     done: "SSH agent question answered",
     failed: "Answering the SSH agent question failed",
   },
+  audit_retention_changed: {
+    done: "Activity log retention changed",
+    failed: "Changing the activity log retention failed",
+  },
+  audit_pruned: {
+    done: "Activity log pruned by hand",
+    failed: "Pruning the activity log failed",
+  },
   git_repaired: {
     done: "Git repaired after a crash",
     failed: "Repairing git after a crash failed",
@@ -587,10 +597,10 @@ function pendingOutcome(state: string): RowView["outcome"] {
 }
 
 /**
- * What a record's method field holds when the connection was Git over SSH: the proxy writes the
- * command (`git-receive-pack`) there, where HTTP writes `POST`. A command Puddle did not serve
+ * How a record of `protocol: "ssh"` words its method field: the proxy writes the Git command
+ * (`git-receive-pack`) there, where HTTP writes `POST`. A command Puddle did not serve
  * (`ssh-command`) and a refused channel request (`ssh-channel`) are written the same way. The
- * record has no protocol field yet, and no HTTP method is spelled in lower case with a hyphen.
+ * record's `protocol` says it is SSH; these tables only word the command.
  */
 const SSH_COMMANDS: Record<string, string> = {
   "git-receive-pack": "push to",
@@ -603,17 +613,17 @@ const SSH_REFUSED_WORDS: Record<string, string> = {
   "ssh-channel": "session request",
 };
 
-/** "SSH: push to github.com/acme/app", or `null` when the record is not Git over SSH. */
+/** "SSH: push to github.com/acme/app" for a record whose `protocol` is `ssh`. A command from a
+ * newer Puddle is shown as it was written. */
 function sshLine(
   record: Extract<AuditRecord, { type: "connection" }>,
   method: string,
-): string | null {
+): string {
   const verb = SSH_COMMANDS[method];
   if (verb !== undefined) {
     return `SSH: ${verb} ${record.host ?? ""}${record.path ?? ""}`;
   }
-  const refused = SSH_REFUSED_WORDS[method];
-  return refused === undefined ? null : `SSH: ${refused}`;
+  return `SSH: ${SSH_REFUSED_WORDS[method] ?? `${method} ${record.path ?? ""}`.trim()}`;
 }
 
 function connectionDetail(
@@ -621,9 +631,13 @@ function connectionDetail(
 ): string {
   const parts: string[] = [];
   if (record.method !== null) {
+    const http = `${record.method} ${record.path ?? ""}`.trim();
     parts.push(
-      sshLine(record, record.method) ??
-        `${record.method} ${record.path ?? ""}`.trim(),
+      record.protocol === "ssh"
+        ? sshLine(record, record.method)
+        : record.git_operation
+          ? `Git ${record.git_operation}: ${http}`
+          : http,
     );
   }
   const failed = record.reason.startsWith(FAILED_PREFIX)
@@ -984,4 +998,30 @@ export function jsonLine(record: AuditRecord): string {
 /** `puddle-activity-2026-10-07T12-00-00.jsonl`. */
 export function exportName(now: number): string {
   return `puddle-activity-${new Date(now).toISOString().slice(0, 19).replaceAll(":", "-")}.jsonl`;
+}
+
+/** A row as one sentence: "Blocked: SSH to host:22 is not supported". The raw record sits behind it. */
+export function sentence(row: RowView): string {
+  const what = [row.destination, row.detail].filter(
+    (s): s is string => s !== null && s !== "",
+  );
+  const head = row.outcome?.label ?? row.type;
+  return what.length === 0 ? head : `${head}: ${what.join(", ")}`;
+}
+
+/** Where "Make a rule from this" goes: a refused connection to a host a rule could allow. */
+export function ruleLink(
+  record: AuditRecord,
+  workspaceName: string | null,
+): string | null {
+  if (
+    record.type !== "connection" ||
+    record.decision !== "deny" ||
+    record.host === null
+  ) {
+    return null;
+  }
+  const query = new URLSearchParams({ "new-rule": record.host });
+  if (workspaceName !== null) query.set("workspace", workspaceName);
+  return `/rules?${query}`;
 }

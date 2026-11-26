@@ -25,36 +25,36 @@ use puddle_store::{AccountSecrets, Clock, Store};
 use puddle_types::Problems;
 use tokio::net::TcpListener;
 use tokio::sync::{Semaphore, watch};
-use tokio::task::{JoinHandle, JoinSet};
+use tokio::task::JoinHandle;
 use tokio_rustls::TlsAcceptor;
 use tower_http::timeout::TimeoutLayer;
 
 use crate::admin::AdminService;
 use crate::auth::{Guard, Listener, guard};
 use crate::authz::{Isolation, Principal, authorize};
-use crate::backup::{BackupService, NoBackup};
-use crate::credential_store::{CredentialStoreService, NoCredentialStore};
-use crate::credentials::{CredentialService, NoCredentials, NoSecretStore};
-use crate::dev_cert::{DevCertService, NoDevCert};
-use crate::doctor::{DoctorService, NoDoctor};
-use crate::error::ApiError;
 use crate::events::EventHub;
 use crate::front::{FrontAddresses, NameResolver, REFRESH_EVERY, SystemResolver};
-use crate::learned::{LearnedService, NoLearned};
-use crate::network_health::{NetworkHealthService, NoNetworkHealth};
-use crate::ports::{NoPorts, PortsService};
-use crate::proxy_sign_in::{NoProxySignIns, ProxySignInService};
 use crate::remote::{NetworkListener, PublicHost, Remote, RemoteError, RemoteServing};
 use crate::remote_editor::RemoteEditor;
-use crate::repos::{NoRepos, RepoService};
-use crate::restore::{NoRestore, RestoreService};
 use crate::routes::{AppState, api_router, slow_router};
 use crate::settings::SettingsRepo;
 use crate::signin::SignIn;
-use crate::terminals::{NoTerminals, Registry, TerminalService};
 use crate::token::{ApiToken, ConnectionInfo};
 use crate::ui::{UiAssets, UiService};
-use crate::workspaces::{NoWorkspaces, WorkspaceService};
+use puddle_services::backup::{BackupService, NoBackup};
+use puddle_services::credential_store::{CredentialStoreService, NoCredentialStore};
+use puddle_services::credentials::{CredentialService, NoCredentials, NoSecretStore};
+use puddle_services::dev_cert::{DevCertService, NoDevCert};
+use puddle_services::doctor::{DoctorService, NoDoctor};
+use puddle_services::error::ApiError;
+use puddle_services::learned::{LearnedService, NoLearned};
+use puddle_services::network_health::{NetworkHealthService, NoNetworkHealth};
+use puddle_services::ports::{NoPorts, PortsService};
+use puddle_services::proxy_sign_in::{NoProxySignIns, ProxySignInService};
+use puddle_services::repos::{NoRepos, RepoService};
+use puddle_services::restore::{NoRestore, RestoreService};
+use puddle_services::terminals::{NoTerminals, Registry, TerminalService};
+use puddle_services::workspaces::{NoWorkspaces, WorkspaceService};
 
 /// Largest request body (the biggest real one, a settings document, is well under 4 KiB).
 const MAX_BODY_BYTES: usize = 64 * 1024;
@@ -101,6 +101,9 @@ pub struct ApiConfig {
     /// Whether users other than the owner may sign in. Off by default: everything belongs to the
     /// one owner.
     pub multi_user: bool,
+    /// How often the admin reaper looks for deletions to finish when nobody asks. Tests shorten
+    /// it; the default is the production interval.
+    pub reap_every: Duration,
 }
 
 impl Default for ApiConfig {
@@ -117,6 +120,7 @@ impl Default for ApiConfig {
             ui,
             remote: None,
             multi_user: false,
+            reap_every: crate::admin::REAP_EVERY,
         }
     }
 }
@@ -514,23 +518,22 @@ fn tls_acceptor(identity: &crate::remote::TlsIdentity) -> Result<TlsAcceptor, Se
 }
 
 /// Binds the network listener and registers its address, before anything serves.
-async fn bind_network(
+fn bind_network(
     network: &NetworkListener,
     endpoints: &PuddleEndpoints,
 ) -> Result<BoundNetwork, ServeError> {
     let endpoint = network.endpoint();
     let requested = SocketAddr::new(endpoint.interface(), endpoint.port());
     let tls = tls_acceptor(network.tls())?;
-    let bound = async {
-        let listener = TcpListener::bind(requested).await?;
+    let bound = || {
+        let (listener, registration) = endpoints.bind(requested, EndpointKind::RemoteApi)?;
         let addr = listener.local_addr()?;
-        Ok::<_, io::Error>((listener, addr))
+        Ok::<_, io::Error>((TcpListener::from_std(listener)?, addr, registration))
     };
-    let (listener, addr) = bound.await.map_err(|source| ServeError::BindNetwork {
+    let (listener, addr, registration) = bound().map_err(|source| ServeError::BindNetwork {
         addr: requested,
         source,
     })?;
-    let registration = endpoints.register(addr, EndpointKind::RemoteApi);
     tracing::info!(%addr, "api listening for a reverse proxy (TLS)");
     Ok(BoundNetwork {
         listener,
@@ -609,12 +612,12 @@ async fn refresh_front_addresses(addresses: Arc<FrontAddresses>, mut stop: watch
 }
 
 /// Binds the network listener when remote serving has one.
-async fn bind_network_for(
+fn bind_network_for(
     config: &ApiConfig,
     endpoints: &PuddleEndpoints,
 ) -> Result<Option<BoundNetwork>, ServeError> {
     match config.remote.as_ref().and_then(Remote::network_listener) {
-        Some(network) => Ok(Some(bind_network(network, endpoints).await?)),
+        Some(network) => Ok(Some(bind_network(network, endpoints)?)),
         None => Ok(None),
     }
 }
@@ -693,6 +696,7 @@ fn admin_for(
         services.store.clone(),
         sign_in.clone(),
         services.workspaces.clone(),
+        config.reap_every,
     )))
 }
 
@@ -749,13 +753,14 @@ impl ApiServer {
             port: config.port,
             source,
         };
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, config.port))
-            .await
+        // Registered before anything can serve, so there is no moment a guest could reach it.
+        let (listener, registration) = services
+            .endpoints
+            .bind((Ipv4Addr::LOCALHOST, config.port), EndpointKind::Api)
             .map_err(bind_err)?;
         let addr = listener.local_addr().map_err(bind_err)?;
-        // Registered before anything can serve, so there is no moment a guest could reach it.
-        let registration = services.endpoints.register(addr, EndpointKind::Api);
-        let network = bind_network_for(&config, &services.endpoints).await?;
+        let listener = TcpListener::from_std(listener).map_err(bind_err)?;
+        let network = bind_network_for(&config, &services.endpoints)?;
         let fronts_names =
             OptionFuture::from(config.remote.as_ref().map(|r| front_blocks(r, &services))).await;
         let (stop, shutdown) = watch::channel(false);
@@ -1042,60 +1047,53 @@ async fn serve(
     admission: Admission,
     dispatch: Dispatch,
     open: Arc<Semaphore>,
-    mut shutdown: watch::Receiver<bool>,
+    shutdown: watch::Receiver<bool>,
 ) {
-    let mut connections = JoinSet::new();
-    loop {
-        // Reap finished connections so the set does not grow without bound.
-        while connections.try_join_next().is_some() {}
-        let accepted = tokio::select! {
-            _ = shutdown.wait_for(|stop| *stop) => break,
-            accepted = listener.accept() => accepted,
-        };
-        let (stream, peer) = match accepted {
-            Ok(accepted) => accepted,
-            Err(err) => {
-                tracing::warn!(error = %err, "api accept failed");
-                tokio::time::sleep(ACCEPT_BACKOFF).await;
-                continue;
+    let mut stopper = shutdown.clone();
+    let mut connections = puddle_ipc::accept_tcp(
+        listener,
+        ACCEPT_BACKOFF,
+        "api",
+        async move {
+            // either answer (stop asked, or the sender gone) ends the accepting
+            let _ = stopper.wait_for(|stop| *stop).await;
+        },
+        |connections, stream, peer| {
+            // Before any bytes are read, and for the network listener before the TLS handshake.
+            if !admission.admits(peer.ip()) {
+                tracing::warn!(%peer, "api connection refused: peer not admitted");
+                return;
             }
-        };
-        // Before any bytes are read, and for the network listener before the TLS handshake.
-        if !admission.admits(peer.ip()) {
-            tracing::warn!(%peer, "api connection refused: peer not admitted");
-            drop(stream);
-            continue;
-        }
-        let Ok(permit) = open.clone().try_acquire_owned() else {
-            tracing::warn!(%peer, "api connection refused: too many open");
-            drop(stream);
-            continue;
-        };
-        let dispatch = dispatch.clone();
-        let stop = shutdown.clone();
-        match &admission {
-            Admission::Loopback => {
-                connections.spawn(async move {
-                    serve_connection(stream, dispatch, stop).await;
-                    drop(permit);
-                });
-            }
-            Admission::Proxies { tls, .. } => {
-                let tls = tls.clone();
-                connections.spawn(async move {
-                    match tokio::time::timeout(HEADER_READ_TIMEOUT, tls.accept(stream)).await {
-                        Ok(Ok(stream)) => serve_connection(stream, dispatch, stop).await,
-                        Ok(Err(err)) => {
-                            tracing::debug!(error = %err, "api TLS handshake failed");
+            let Ok(permit) = open.clone().try_acquire_owned() else {
+                tracing::warn!(%peer, "api connection refused: too many open");
+                return;
+            };
+            let dispatch = dispatch.clone();
+            let stop = shutdown.clone();
+            match &admission {
+                Admission::Loopback => {
+                    connections.spawn(async move {
+                        serve_connection(stream, dispatch, stop).await;
+                        drop(permit);
+                    });
+                }
+                Admission::Proxies { tls, .. } => {
+                    let tls = tls.clone();
+                    connections.spawn(async move {
+                        match tokio::time::timeout(HEADER_READ_TIMEOUT, tls.accept(stream)).await {
+                            Ok(Ok(stream)) => serve_connection(stream, dispatch, stop).await,
+                            Ok(Err(err)) => {
+                                tracing::debug!(error = %err, "api TLS handshake failed");
+                            }
+                            Err(_) => tracing::debug!("api TLS handshake timed out"),
                         }
-                        Err(_) => tracing::debug!("api TLS handshake timed out"),
-                    }
-                    drop(permit);
-                });
+                        drop(permit);
+                    });
+                }
             }
-        }
-    }
-    drop(listener);
+        },
+    )
+    .await;
     let drained = async { while connections.join_next().await.is_some() {} };
     if tokio::time::timeout(SHUTDOWN_GRACE, drained).await.is_err() {
         tracing::warn!("api connections still open after the grace period; closing them");

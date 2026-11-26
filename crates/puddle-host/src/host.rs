@@ -16,10 +16,7 @@ use crate::agent_reports::ReportDesk;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use puddle_api::{
-    EventHub, HostCredentials, HostNetworkHealth, Launcher, ProxySignInService, PullProxyState,
-    RunningApi, Services, SettingsRepo, forward_network_changes, forward_proxy_sign_in_failures,
-};
+use puddle_api::{EventHub, RunningApi, Services, SettingsRepo};
 use puddle_certs::CorporateRoots;
 use puddle_compute::Runtime;
 use puddle_front::Front;
@@ -29,6 +26,12 @@ use puddle_netpolicy::{CompanySignals, LocalAccess, PuddleEndpoints};
 use puddle_ports::Ports;
 use puddle_proxy::{PortProbe, ProxyUrl, PullProxy, PullRoute, Resolver};
 use puddle_secrets::{SecretStore, ToolPaths};
+use puddle_services::{
+    credentials::HostCredentials, network_health::HostNetworkHealth,
+    network_health::PullProxyState, network_health::forward_network_changes,
+    network_health::forward_proxy_sign_in_failures, proxy_sign_in::ProxySignInService,
+    workspaces::Launcher,
+};
 use puddle_settings::resolve;
 use puddle_store::{
     AllUsers, ConnectionRecorder, DEFAULT_SWEEP_PERIOD, Limits, Store, Sweeper, SystemClock,
@@ -118,9 +121,9 @@ pub struct HostOptions {
     /// identities. On by default; off, SSH to a Git host is refused (`ssh_unsupported`).
     pub git_ssh: bool,
     /// Where new workspace ids come from. Without one, the operating system's random source
-    /// ([`puddle_api::RandomIds`]); a test that writes ids into paths itself gives
-    /// [`puddle_api::NameIds`], so a workspace called `acme` gets the id `acme`.
-    pub workspace_ids: Option<Arc<dyn puddle_api::IdSource>>,
+    /// ([`puddle_services::workspaces::RandomIds`]); a test that writes ids into paths itself gives
+    /// [`puddle_services::workspaces::NameIds`], so a workspace called `acme` gets the id `acme`.
+    pub workspace_ids: Option<Arc<dyn puddle_services::workspaces::IdSource>>,
     /// Where a root disk grow reads the free space of the data folder's drive. Without one, the
     /// real drive; tests give a fixed figure so a grow never depends on the machine's disk.
     pub free_space: Option<Arc<dyn crate::Space>>,
@@ -414,7 +417,7 @@ impl<R: Runtime + Clone> Host<R> {
         steps.push(Step::WorkspacesAdopted);
 
         // From here the host serves.
-        let serving = serve_background(&shared, &outbound, pull, &mut steps).await?;
+        let serving = serve_background(&shared, &outbound, pull, &mut steps)?;
 
         let lifecycle = Arc::new(Lifecycle::new(
             opened.runtime.clone(),
@@ -474,6 +477,13 @@ impl<R: Runtime + Clone> Host<R> {
     /// A confirm that came before the call resolves it at once.
     pub async fn restore_requested(&self) {
         self.restore_requested.notified().await;
+    }
+
+    /// The signal [`Host::restore_requested`] waits on, for a caller that must not keep the host
+    /// (and with it the data folder's lock) alive while it waits.
+    #[must_use]
+    pub fn restore_signal(&self) -> Arc<tokio::sync::Notify> {
+        Arc::clone(&self.restore_requested)
     }
 
     /// The API's origin, `http://127.0.0.1:<port>/`.
@@ -977,7 +987,7 @@ struct Serving {
 
 /// The pull proxy first: the first create pulls an image. Then the sweeper, the network watch and
 /// the browser editor's front.
-async fn serve_background(
+fn serve_background(
     shared: &Shared<'_>,
     outbound: &Outbound,
     pull: PullProxy,
@@ -1007,8 +1017,7 @@ async fn serve_background(
         outbound.ports.clone(),
         flavours.clone(),
         shared.problems,
-    )
-    .await?;
+    )?;
     steps.push(Step::BackgroundStarted);
     Ok(Serving {
         pull,
@@ -1108,7 +1117,7 @@ fn workspace_parts<R: Runtime + Clone>(
         ids: options
             .workspace_ids
             .clone()
-            .unwrap_or_else(|| Arc::new(puddle_api::RandomIds)),
+            .unwrap_or_else(|| Arc::new(puddle_services::workspaces::RandomIds)),
         login_markers: config.paths.login_markers(),
         space: crate::space_watch::space_or_drive(options.free_space.clone(), config.paths.data()),
     }
@@ -1143,10 +1152,17 @@ fn spawn_watchers<R: Runtime + Clone>(
         editor_windows.clone(),
     ));
     let space_watch = AbortOnDrop(crate::space_watch::spawn(
-        crate::space_watch::DriveOf(shared.config.paths.data().to_path_buf()),
+        crate::space_watch::space_or_drive(
+            shared.options.free_space.clone(),
+            shared.config.paths.data(),
+        ),
         shared.config.free_space,
         shared.settings.clone(),
         shared.events.clone(),
+        Arc::new({
+            let service = service.clone();
+            move |level| service.note_host_disk(level)
+        }),
     ));
     let disk_watch = AbortOnDrop(crate::disk_watch::spawn(service.clone()));
     Watchers {

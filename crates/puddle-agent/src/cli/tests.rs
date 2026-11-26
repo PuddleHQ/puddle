@@ -22,9 +22,10 @@ fn arguments_map_to_commands() {
     ] {
         assert!(matches!(parse(bad), Command::Usage(_)), "{bad:?}");
     }
-    let Command::Usage(msg) = parse(&["--help"]) else {
+    let Command::Usage(err) = parse(&["--help"]) else {
         panic!("not usage");
     };
+    let msg = err.to_string();
     assert!(msg.contains("--help") && msg.contains(USAGE));
     assert!(matches!(parse(&["--version", "x"]), Command::Usage(_)));
     assert!(matches!(
@@ -33,9 +34,9 @@ fn arguments_map_to_commands() {
     ));
     assert!(matches!(parse(&["merge-file"]), Command::Usage(_)));
     assert_eq!(
-        parse(&["mise-fetch", "/workspaces/w/.puddle/mise"]),
+        parse(&["mise-fetch", "/workspace/.puddle/mise"]),
         Command::MiseFetch(mise::Request {
-            dir: "/workspaces/w/.puddle/mise".into()
+            dir: "/workspace/.puddle/mise".into()
         })
     );
     for bad in [
@@ -43,23 +44,23 @@ fn arguments_map_to_commands() {
         &["mise-fetch", ""],
         &["mise-fetch", "a", "b"],
         &["mise-install"],
-        &["mise-install", "/workspaces/w", "--force"],
+        &["mise-install", "/workspace", "--force"],
         &["mise-tools"],
-        &["mise-tools", "/workspaces/w"],
+        &["mise-tools", "/workspace"],
     ] {
         assert!(matches!(parse(bad), Command::Usage(_)), "{bad:?}");
     }
     assert_eq!(
-        parse(&["mise-install", "/workspaces/w", "--missing"]),
+        parse(&["mise-install", "/workspace", "--missing"]),
         Command::MiseInstall(mise_install::Request {
-            root: "/workspaces/w".into(),
+            root: "/workspace".into(),
             report_only: true,
         })
     );
     assert_eq!(
-        parse(&["mise-tools", "/workspaces/w", "list"]),
+        parse(&["mise-tools", "/workspace", "list"]),
         Command::MiseTools(mise_tools::Request {
-            root: "/workspaces/w".into(),
+            root: "/workspace".into(),
             operation: mise_tools::Operation::List,
         })
     );

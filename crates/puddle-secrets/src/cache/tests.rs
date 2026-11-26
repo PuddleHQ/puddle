@@ -4,10 +4,10 @@ use std::future::Future;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::*;
-use crate::name::{AccountName, HostName, StoredId};
 use crate::secret::Secret;
 use crate::sources::Fetched;
-use crate::spec::TokenScope;
+use puddle_types::TokenScope;
+use puddle_types::{AccountName, HostName, StoredId};
 
 /// Answers from a script, one entry per call, and counts the calls.
 struct Script {
@@ -154,7 +154,7 @@ async fn a_used_stored_value_never_expires_and_invalidate_drops_it() {
 #[tokio::test(start_paused = true)]
 async fn az_cli_renews_five_minutes_before_expiry() {
     let az = SourceSpec::AzCli {
-        tenant: crate::name::TenantId::new("t1").unwrap(),
+        tenant: puddle_types::TenantId::new("t1").unwrap(),
         org: None,
     };
     // A token that ends in 20 minutes is renewed at minute 15, long before the 55 minute limit.
@@ -199,7 +199,7 @@ fn each_kind_of_source_has_its_own_time_to_live() {
     };
     let git = SourceSpec::GitCredential {
         host: host.clone(),
-        path: crate::name::UrlPath::new("acme").unwrap(),
+        path: puddle_types::UrlPath::new("acme").unwrap(),
         username: None,
     };
     let stored = SourceSpec::Stored {

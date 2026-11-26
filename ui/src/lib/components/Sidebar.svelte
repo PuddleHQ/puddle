@@ -5,10 +5,19 @@
   import { session } from "#lib/session/session.svelte.ts";
   import { admin } from "#lib/stores/admin.svelte.ts";
   import { live } from "#lib/stores/live.svelte.ts";
+  import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import DuckMark from "./DuckMark.svelte";
-  import ThemeToggle from "./ThemeToggle.svelte";
 
   const current = $derived(sectionFor(page.url.pathname)?.href);
+  // "3 - 1 running": what the list holds and how much of it is up, shown once it is read.
+  const running = $derived(
+    workspaces.list.filter((w) => w.status === "running").length,
+  );
+  const count = $derived(
+    workspaces.status === "ready" && workspaces.list.length > 0
+      ? `${workspaces.list.length}${running > 0 ? ` \u00b7 ${running} running` : ""}`
+      : null,
+  );
 </script>
 
 <aside class="sidebar">
@@ -24,8 +33,10 @@
             href={item.href}
             aria-current={current === item.href ? "page" : undefined}
           >
-            <item.icon aria-hidden="true" size={18} />
             <span>{item.label}</span>
+            {#if item.href === "/workspaces" && count}
+              <span class="totals" data-testid="workspaces-count">{count}</span>
+            {/if}
             {#if item.badge === "pending" && live.open > 0}
               <span class="badge" data-testid="pending-badge">
                 <span aria-hidden="true">{live.open}</span>
@@ -49,7 +60,6 @@
         >
       </p>
     {/if}
-    <ThemeToggle />
   </div>
 </aside>
 
@@ -112,6 +122,13 @@
   a[aria-current="page"] {
     background: var(--color-accent-subtle);
     font-weight: 600;
+  }
+  .totals {
+    margin-inline-start: auto;
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+    font-weight: 400;
+    white-space: nowrap;
   }
   .badge {
     margin-inline-start: auto;

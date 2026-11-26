@@ -102,10 +102,14 @@ impl Pki {
         } else {
             name.to_owned()
         };
-        let mut params = rcgen::CertificateParams::new(vec![sans]).unwrap();
-        params
-            .distinguished_name
-            .push(rcgen::DnType::CommonName, name);
+        // `name` may list several names, comma separated: the certificate is valid for each.
+        let mut params =
+            rcgen::CertificateParams::new(sans.split(',').map(str::to_owned).collect::<Vec<_>>())
+                .unwrap();
+        params.distinguished_name.push(
+            rcgen::DnType::CommonName,
+            name.split(',').next().unwrap_or(name),
+        );
         match flaw {
             Flaw::Expired => {
                 params.not_before = rcgen::date_time_ymd(2000, 1, 1);
@@ -889,10 +893,7 @@ impl RigBuilder {
             .with_resolver(Arc::new(resolver))
             .with_address_check(self.address_check)
             .with_config(self.config)
-            .with_termination(
-                Arc::clone(&terminations) as Arc<dyn puddle_proxy::TerminationSource>,
-                self.tls.unwrap(),
-            );
+            .with_termination(terminations.clone(), self.tls.unwrap());
         if let Some(upstream) = self.upstream {
             proxy = proxy.with_upstream(upstream);
         }
@@ -1054,12 +1055,12 @@ impl Link {
     }
 
     fn close(&self) {
-        if let Some(driver) = self
+        let driver = self
             .driver
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .take()
-        {
+            .take();
+        if let Some(driver) = driver {
             driver.abort();
         }
     }

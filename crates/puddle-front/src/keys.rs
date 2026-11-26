@@ -60,14 +60,6 @@ impl FileHalves {
     }
 }
 
-fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    bytes.iter().fold(String::new(), |mut s, b| {
-        let _ = write!(s, "{b:02x}"); // writing to a String cannot fail
-        s
-    })
-}
-
 fn unhex(text: &str) -> Option<[u8; HALF_LEN]> {
     let text = text.trim();
     if text.len() != HALF_LEN * 2 || !text.is_ascii() {
@@ -102,7 +94,7 @@ impl ServerHalves for FileHalves {
             let mut half = [0_u8; HALF_LEN];
             getrandom::fill(&mut half)
                 .map_err(|e| io::Error::other(format!("no randomness: {e}")))?;
-            puddle_fs::private::write_atomic(&path, hex(&half).as_bytes())?;
+            puddle_fs::private::write_atomic(&path, puddle_types::hex_lower(&half).as_bytes())?;
             half
         };
         cache.insert(workspace.clone(), half);

@@ -247,7 +247,9 @@ fn a_command_the_folder_refuses_fails_with_the_reason() {
     let dir = tempfile::tempdir().unwrap();
     let _host = puddle_fs::DataLock::acquire(dir.path()).unwrap();
     let args = args_for(Action::Migrate(StoreKind::File), dir.path());
-    let err = execute_with(&args, &SecretSetup::default()).unwrap_err();
+    let err = execute_with(&args, &SecretSetup::default())
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("already using the data folder"), "{err}");
     assert!(!exit_is_success(run(&args)));
 }

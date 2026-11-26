@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::SystemTime;
 
 use crate::error::SourceError;
-use crate::spec::SourceSpec;
+use puddle_types::SourceSpec;
 
 /// What asked for the read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

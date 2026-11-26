@@ -1,9 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    reason = "test code: a panic is how a test fails"
-)]
+#![expect(clippy::unwrap_used, reason = "test code: a panic is how a test fails")]
 //! The sources against fake `gh` and `git` executables and an in-memory store. Nothing here reads
 //! the user's real credentials.
 
@@ -203,10 +199,8 @@ fn stored_spec(id: &str) -> SourceSpec {
 #[tokio::test]
 async fn stored_tokens_come_from_the_store() {
     let store = Arc::new(MemoryStore::new());
-    let src = Sources::new(
-        ToolPaths::default(),
-        Arc::clone(&store) as Arc<dyn SecretStore>,
-    );
+    let shared: Arc<dyn SecretStore> = store.clone();
+    let src = Sources::new(ToolPaths::default(), shared);
     let spec = stored_spec("t1");
     assert_eq!(
         src.fetch(&spec).await.unwrap_err(),

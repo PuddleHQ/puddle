@@ -191,7 +191,7 @@ pub struct WorkspaceDeletion {
     /// The secrets it had of its own, by name and by the id of the value in the operating
     /// system's credential store (the values are not in the database, so the caller removes them
     /// there).
-    pub secrets: Vec<(crate::EnvName, puddle_secrets::StoredId)>,
+    pub secrets: Vec<(crate::EnvName, puddle_types::StoredId)>,
 }
 
 /// Per-workspace in-memory limits state (R-26). Lost on restart, which only resets the limits.
@@ -356,6 +356,7 @@ impl Store {
         }
         conn.pragma_update(None, "journal_mode", "wal")?;
         conn.pragma_update(None, "synchronous", "normal")?;
+        conn.pragma_update(None, "journal_size_limit", audit_retention::WAL_LIMIT_BYTES)?;
         let mut store = Self::init(conn, clock, limits)?;
         // Before anything is served, so no decision waits on the rebuild.
         audit_retention::rebuild_older_file_on_open(&lock(&store.conn));
@@ -1086,6 +1087,10 @@ impl Policy for Store {
             .map_err(|err| PolicyError {
                 reason: err.to_string(),
             })
+    }
+
+    fn workspace_name(&self, workspace: &WorkspaceId) -> Option<String> {
+        self.current_workspace_name(workspace)
     }
 }
 

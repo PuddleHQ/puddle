@@ -473,6 +473,17 @@ export function moved<T>(list: readonly T[], item: T, by: -1 | 1): T[] {
   return next;
 }
 
+/** `list` with `item` taken out and put where `target` is; unchanged when either is absent. */
+export function movedTo<T>(list: readonly T[], item: T, target: T): T[] {
+  const from = list.indexOf(item);
+  const to = list.indexOf(target);
+  const next = [...list];
+  if (from < 0 || to < 0 || from === to) return next;
+  next.splice(from, 1);
+  next.splice(to, 0, item);
+  return next;
+}
+
 /** What the identity is used by, for a row. */
 export function usedBy(identity: Identity): string {
   const n = identity.workspaces.length;

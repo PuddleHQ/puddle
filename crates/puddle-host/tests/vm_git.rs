@@ -15,8 +15,8 @@
     reason = "VM test: a failed step fails the test; measurements go to stderr"
 )]
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::collections::BTreeSet;
 use std::time::Duration;
@@ -363,7 +363,10 @@ async fn vm_git_clones_and_pushes_with_two_identities_and_the_guest_never_holds_
          git push origin HEAD:main 2>&1 || true",
     )
     .await;
-    assert!(out.contains("not on this workspace's push list"), "{out}");
+    assert!(
+        out.contains("not in this workspace's allowed repositories"),
+        "{out}"
+    );
     assert!(
         fake.seen()
             .iter()

@@ -107,6 +107,10 @@ pub struct Control {
     /// Held by an install, a staging download and a clean-up: a clean-up during a download would
     /// remove the download's folders.
     work: Mutex<()>,
+    /// Set by a rollback that could not clean up because a download held `work`: the holder
+    /// cleans up before it lets go, so the failed build's folder does not stay until some later
+    /// confirmation.
+    cleanup_owed: std::sync::atomic::AtomicBool,
     restart: Notify,
     /// Held by whoever reads or moves the pointers (a switch, a claim of the build to run, a
     /// confirmation, a rollback), never across an await: those run in a few microseconds and must
@@ -139,6 +143,7 @@ impl Control {
         Arc::new(Self {
             builds: PathBuf::from(&server.dir),
             work: Mutex::new(()),
+            cleanup_owed: std::sync::atomic::AtomicBool::new(false),
             restart: Notify::new(),
             pointers: std::sync::Mutex::new(()),
             times,
@@ -301,13 +306,9 @@ fn boot_password(config: &EditorConfig) -> io::Result<String> {
 ///
 /// When the system has no randomness (the server must not start with a guessable password).
 pub fn new_password() -> io::Result<String> {
-    use std::fmt::Write as _;
     let mut bytes = [0_u8; PASSWORD_BYTES];
     getrandom::fill(&mut bytes).map_err(|e| io::Error::other(format!("no randomness: {e}")))?;
-    Ok(bytes.iter().fold(String::new(), |mut s, b| {
-        let _ = write!(s, "{b:02x}"); // writing to a String can't fail
-        s
-    }))
+    Ok(puddle_types::hex_lower(&bytes))
 }
 
 /// The password already in `path`, when it is one this module wrote.
@@ -422,7 +423,7 @@ struct Launch {
 /// variables when there is one (else as the agent's own user, root).
 fn command(
     launch: &Launch,
-    password: &str,
+    password: Option<&str>,
     inherited: impl IntoIterator<Item = String>,
     account: Option<&Account>,
 ) -> Command {
@@ -431,7 +432,7 @@ fn command(
         .args(&launch.args)
         .stdin(Stdio::null())
         .kill_on_drop(true);
-    if launch.password_env {
+    if let Some(password) = password.filter(|_| launch.password_env) {
         command.env("PASSWORD", password);
     }
     for name in inherited.into_iter().filter(|n| withheld(n)) {
@@ -675,7 +676,16 @@ async fn update_loop(control: Arc<Control>, fetch: Arc<impl Fetch>) {
     loop {
         let looked = {
             let _work = control.work.lock().await;
-            microsoft::stage_update(&*fetch, platform, &control.builds).await
+            let looked = microsoft::stage_update(&*fetch, platform, &control.builds).await;
+            // A rollback during this download could not clean up; `work` is still held here.
+            if control
+                .cleanup_owed
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                let _pointers = control.pointers_lock();
+                microsoft::clean_up(&control.builds);
+            }
+            looked
         };
         let is_ok = looked.is_ok();
         let wait = match looked {
@@ -843,12 +853,23 @@ async fn confirm_when_listening(control: Arc<Control>, port: u16, commit: String
 /// for the build it replaced.
 ///
 /// `work` is only tried: a download of a newer build can hold it for minutes, and the editor must
-/// not stay down meanwhile. The clean-up of the folders no pointer names then waits for the next
-/// one (a confirmation or a rollback), since it would delete the download's folders.
+/// not stay down meanwhile. The clean-up of the folders no pointer names is then left to the download's holder, which
+/// runs it before it lets go of `work` (`cleanup_owed`), since it would delete the download's
+/// folders.
 fn settle_trial(control: &Control, commit: &str) {
+    // Set before the try, so a holder that is still going sees it before it lets go.
+    control
+        .cleanup_owed
+        .store(true, std::sync::atomic::Ordering::SeqCst);
     let work = control.work.try_lock();
     let _pointers = control.pointers_lock();
-    match microsoft::roll_back(&control.builds, commit, work.is_ok()) {
+    let clean_up = work.is_ok();
+    if clean_up {
+        control
+            .cleanup_owed
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+    match microsoft::roll_back(&control.builds, commit, clean_up) {
         Ok(true) => {
             tracing::error!(
                 "the new editor server build exited before it started; running the previous one again"
@@ -956,8 +977,11 @@ async fn start_once(
             }
         }
     }
+    if config.server.kind == ServerKind::CodeServer {
+        defaults::merge_at_start(&config.server, &launch.program, account.as_ref())?;
+    }
     let inherited = std::env::vars_os().filter_map(|(k, _)| k.into_string().ok());
-    let mut child = command(launch, &password, inherited, account.as_ref()).spawn()?;
+    let mut child = command(launch, Some(&password), inherited, account.as_ref()).spawn()?;
     tracing::info!(
         port = config.server.port,
         grace_secs = config.server.grace_secs,
@@ -991,6 +1015,8 @@ async fn start_once(
     }
     status
 }
+
+mod defaults;
 
 #[cfg(test)]
 mod tests;

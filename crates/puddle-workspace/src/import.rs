@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use puddle_compute::ExecRequest;
-use puddle_types::{CheckoutDir, GuestEnv, GuestPath};
+use puddle_types::{CheckoutDir, GuestEnv, GuestPath, OriginRefusal};
 
 use crate::WorkspaceError;
 use crate::layout::Layout;
@@ -44,6 +44,70 @@ const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
 /// How long the import's clone of one checkout may take (as a clone over the network).
 pub(crate) const IMPORT_TIMEOUT: Duration = Duration::from_secs(600);
 
+/// Why a folder is no checkout Puddle can start a workspace from. It displays as the message
+/// shown to the user.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum CheckoutRefusal {
+    /// The path is relative.
+    #[error("{} is not an absolute path", folder.display())]
+    NotAbsolute {
+        /// The path as given.
+        folder: PathBuf,
+    },
+    /// The folder is missing or can't be resolved.
+    #[error("{} can't be opened: {cause}", folder.display())]
+    CantOpen {
+        /// The path as given.
+        folder: PathBuf,
+        /// The operating system's words.
+        cause: String,
+    },
+    /// The folder is a bare repository.
+    #[error(
+        "{} is a bare repository, which has no checkout to start from; use its address instead",
+        folder.display()
+    )]
+    Bare {
+        /// The folder.
+        folder: PathBuf,
+    },
+    /// The folder has no `.git`.
+    #[error("{} is not a git checkout: it has no .git", folder.display())]
+    NoGit {
+        /// The folder.
+        folder: PathBuf,
+    },
+    /// The `.git` entry has the wrong shape (a link file, a link, a linked worktree).
+    #[error("the checkout {} {why}", folder.display())]
+    Shape {
+        /// The folder.
+        folder: PathBuf,
+        /// What is wrong with the `.git` entry.
+        why: puddle_compute::CheckoutDirRefusal,
+    },
+    /// The objects live in another repository.
+    #[error(
+        "the checkout {} keeps its objects in another repository (alternates), which the clone \
+         can't reach; use its address instead",
+        folder.display()
+    )]
+    Alternates {
+        /// The folder.
+        folder: PathBuf,
+    },
+    /// The repository is a partial clone.
+    #[error(
+        "the checkout {} is a partial clone, whose missing objects the clone can't fetch; \
+         use its address instead",
+        folder.display()
+    )]
+    PartialClone {
+        /// The folder.
+        folder: PathBuf,
+    },
+}
+
 /// A checkout on this computer, as a create names it: its `.git` directory and what its config
 /// says about `origin`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,7 +118,7 @@ pub struct LocalCheckout {
     pub folder: PathBuf,
     /// The HTTPS address of its `origin` remote, when it has one Puddle can use; the reason
     /// otherwise.
-    pub origin: Result<String, String>,
+    pub origin: Result<String, OriginRefusal>,
 }
 
 impl LocalCheckout {
@@ -65,12 +129,16 @@ impl LocalCheckout {
     /// A message for the user: the folder is missing, holds no `.git`, is a bare repository, its
     /// `.git` is a worktree's or submodule's link file or not a git directory, or its objects
     /// are kept elsewhere.
-    pub fn open(folder: &Path) -> Result<Self, String> {
+    pub fn open(folder: &Path) -> Result<Self, CheckoutRefusal> {
         if !folder.is_absolute() {
-            return Err(format!("{} is not an absolute path", folder.display()));
+            return Err(CheckoutRefusal::NotAbsolute {
+                folder: folder.to_path_buf(),
+            });
         }
-        let picked = dunce::canonicalize(folder)
-            .map_err(|e| format!("{} can't be opened: {e}", folder.display()))?;
+        let picked = dunce::canonicalize(folder).map_err(|e| CheckoutRefusal::CantOpen {
+            folder: folder.to_path_buf(),
+            cause: e.to_string(),
+        })?;
         let git_dir = if picked.file_name().is_some_and(|n| n == ".git") {
             picked.clone()
         } else {
@@ -79,36 +147,28 @@ impl LocalCheckout {
         let folder = git_dir
             .parent()
             .map_or_else(|| picked.clone(), Path::to_path_buf);
-        let refuse = |why: &str| format!("the checkout {} {why}", folder.display());
         if std::fs::symlink_metadata(&git_dir).is_err() {
             let bare = ["HEAD", "objects", "refs"]
                 .iter()
                 .all(|e| folder.join(e).exists());
             return Err(if bare {
-                format!(
-                    "{} is a bare repository, which has no checkout to start from; \
-                     use its address instead",
-                    folder.display()
-                )
+                CheckoutRefusal::Bare { folder }
             } else {
-                format!("{} is not a git checkout: it has no .git", folder.display())
+                CheckoutRefusal::NoGit { folder }
             });
         }
-        puddle_compute::check_checkout_dir(&git_dir).map_err(|why| refuse(&why))?;
+        puddle_compute::check_checkout_dir(&git_dir).map_err(|why| CheckoutRefusal::Shape {
+            folder: folder.clone(),
+            why,
+        })?;
         if std::fs::symlink_metadata(git_dir.join("objects").join("info").join("alternates"))
             .is_ok()
         {
-            return Err(refuse(
-                "keeps its objects in another repository (alternates), which the clone can't \
-                 reach; use its address instead",
-            ));
+            return Err(CheckoutRefusal::Alternates { folder });
         }
         let config = read_config(&git_dir.join("config"));
         if config.as_deref().is_ok_and(is_partial_clone) {
-            return Err(refuse(
-                "is a partial clone, whose missing objects the clone can't fetch; \
-                 use its address instead",
-            ));
+            return Err(CheckoutRefusal::PartialClone { folder });
         }
         let origin = config
             .and_then(|text| origin_url(&text))
@@ -129,20 +189,24 @@ fn layout(e: impl std::fmt::Display) -> WorkspaceError {
     }
 }
 
-fn read_config(config: &Path) -> Result<String, String> {
+fn read_config(config: &Path) -> Result<String, OriginRefusal> {
     if !std::fs::symlink_metadata(config).is_ok_and(|m| m.is_file()) {
-        return Err("it has no config file, so no origin remote".into());
+        return Err(OriginRefusal::NoConfigFile);
     }
-    let file = std::fs::File::open(config).map_err(|e| format!("its config can't be read: {e}"))?;
+    let file = std::fs::File::open(config).map_err(|e| OriginRefusal::ConfigUnreadable {
+        cause: e.to_string(),
+    })?;
     if !file.metadata().is_ok_and(|m| m.is_file()) {
-        return Err("its config is not a plain file".into());
+        return Err(OriginRefusal::ConfigNotPlain);
     }
     let mut bytes = Vec::new();
     file.take(MAX_CONFIG_BYTES + 1)
         .read_to_end(&mut bytes)
-        .map_err(|e| format!("its config can't be read: {e}"))?;
+        .map_err(|e| OriginRefusal::ConfigUnreadable {
+            cause: e.to_string(),
+        })?;
     if bytes.len() as u64 > MAX_CONFIG_BYTES {
-        return Err("its config file is too large to read".into());
+        return Err(OriginRefusal::ConfigTooLarge);
     }
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
@@ -155,17 +219,13 @@ fn is_partial_clone(text: &str) -> bool {
     })
 }
 
-/// The reason given for an origin this reader could read differently from git.
-const UNREADABLE: &str = "its origin is written in a way Puddle does not read (a continued line, \
-                          an include before it, or an escape); give the repository's HTTPS address";
-
 /// The first `url` in the `[remote "origin"]` section of git config text. Text git could read
 /// differently from this reader (a line continued with `\`, an include before the origin, an
 /// escape other than `\"` and `\\`) is refused rather than guessed at.
-fn origin_url(text: &str) -> Result<String, String> {
+fn origin_url(text: &str) -> Result<String, OriginRefusal> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     if text.lines().any(|l| l.trim_end().ends_with('\\')) {
-        return Err(UNREADABLE.into());
+        return Err(OriginRefusal::Unreadable);
     }
     let mut in_origin = false;
     for raw in text.lines() {
@@ -173,7 +233,7 @@ fn origin_url(text: &str) -> Result<String, String> {
         if let Some(header) = line.strip_prefix('[') {
             let name = header.trim_start().to_ascii_lowercase();
             if name.starts_with("include") {
-                return Err(UNREADABLE.into());
+                return Err(OriginRefusal::Unreadable);
             }
             in_origin = is_origin_header(line);
             continue;
@@ -187,9 +247,9 @@ fn origin_url(text: &str) -> Result<String, String> {
         if !key.trim().eq_ignore_ascii_case("url") {
             continue;
         }
-        return config_value(value.trim()).ok_or_else(|| UNREADABLE.into());
+        return config_value(value.trim()).ok_or(OriginRefusal::Unreadable);
     }
-    Err("it has no origin remote".into())
+    Err(OriginRefusal::NoOrigin)
 }
 
 /// `[remote "origin"]` (section names ignore case, subsection names do not) or the old
@@ -263,20 +323,16 @@ fn authority(rest: &str) -> (&str, &str) {
 ///
 /// Why the address can't be used, for a remote of any other kind; the message never shows a
 /// password the address held.
-pub fn https_form(url: &str) -> Result<String, String> {
+pub fn https_form(url: &str) -> Result<String, OriginRefusal> {
     let shown = redacted(url);
     if url.chars().any(|c| c.is_whitespace() || c.is_control()) {
-        return Err(format!(
-            "its origin {shown} holds spaces or control characters; give the repository's HTTPS address"
-        ));
+        return Err(OriginRefusal::ControlCharacters { shown });
     }
     let lower = url.to_ascii_lowercase();
     if lower.starts_with("https://") {
         let (host, tail) = authority(&url["https://".len()..]);
         if host.is_empty() || !tail.starts_with('/') {
-            return Err(format!(
-                "its origin {shown} names no repository on a host; give the repository's HTTPS address"
-            ));
+            return Err(OriginRefusal::NoRepository { shown });
         }
         return Ok(format!("https://{host}{tail}"));
     }
@@ -294,14 +350,10 @@ pub fn https_form(url: &str) -> Result<String, String> {
             path.trim_start_matches('/').to_owned(),
         )
     } else {
-        return Err(format!(
-            "its origin {shown} is not an HTTPS or SSH address; give the repository's HTTPS address"
-        ));
+        return Err(OriginRefusal::NotHttpsOrSsh { shown });
     };
     if path.contains(['?', '#', '\\']) {
-        return Err(format!(
-            "its origin {shown} is an SSH address Puddle can't read; give the repository's HTTPS address"
-        ));
+        return Err(OriginRefusal::SshUnreadable { shown });
     }
     match host.as_str() {
         "github.com" | "ssh.github.com" => Ok(format!("https://github.com/{path}")),
@@ -320,16 +372,10 @@ pub fn https_form(url: &str) -> Result<String, String> {
                         format!("https://{org}.visualstudio.com/{project}/_git/{repo}")
                     })
                 }
-                _ => Err(format!(
-                    "its origin {shown} is an Azure DevOps SSH address Puddle can't read; \
-                     give the repository's HTTPS address"
-                )),
+                _ => Err(OriginRefusal::AzureUnreadable { shown }),
             }
         }
-        _ => Err(format!(
-            "its origin {shown} is an SSH address of a host Puddle knows no HTTPS form for; \
-             give the repository's HTTPS address"
-        )),
+        _ => Err(OriginRefusal::UnknownHost { shown }),
     }
 }
 

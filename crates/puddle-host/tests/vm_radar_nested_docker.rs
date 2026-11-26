@@ -19,8 +19,8 @@
     reason = "VM test: a failed step fails the test; what each step said goes to the log"
 )]
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::time::Duration;
 
@@ -171,8 +171,10 @@ cd $d
 trap 'tail -n 40 /tmp/aspire-run.log' EXIT
 # Aspire talks to Docker as the session user, like Docker's post-install steps arrange: join the docker group.
 sudo usermod -aG docker "$(id -un)"
-sg docker -c 'docker ps >/dev/null'
-(sg docker -c "nohup aspire run --non-interactive >/tmp/aspire-run.log 2>&1" &)
+# `sg` is not in every guest image; sudo runs the command with the docker group the same way.
+as_docker() { sudo -u "$(id -un)" -g docker env "PATH=$PATH" "HOME=$HOME" "$@"; }
+as_docker docker ps >/dev/null
+(as_docker nohup aspire run --non-interactive >/tmp/aspire-run.log 2>&1 &)
 for i in $(seq 1 150); do sudo docker ps --format '{{.Image}}' | grep -qi redis && break; sleep 2; done
 sudo docker ps --format '{{.Image}}' | grep -qi redis
 # Which port is the web frontend is not readable (the process runs with the docker group, so ss -p hides it): try them all. It answers its weather page, which goes through the API service to Redis.

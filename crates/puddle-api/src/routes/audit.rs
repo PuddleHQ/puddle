@@ -3,16 +3,16 @@
 
 use axum::Json;
 use axum::extract::State;
-use puddle_store::{AuditCursor, AuditFilter};
+use puddle_store::{AuditCursor, AuditFilter, WorkspaceOpKind};
 use puddle_types::WorkspaceId;
 use serde::Deserialize;
 
-use crate::ApiErrorBody;
 use crate::authz::Principal;
-use crate::error::{ApiError, blocking};
 use crate::extract::Query;
-use crate::routes::AppState;
-use crate::wire::{
+use crate::routes::{AppState, record_op};
+use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, blocking};
+use puddle_services::wire::{
     AuditEntry, AuditOutcome, AuditPage, AuditRecord, AuditRetentionRequest, AuditSize, AuditType,
     ConnectionOrigin,
 };
@@ -212,6 +212,7 @@ pub(crate) async fn get_retention(
 )]
 pub(crate) async fn put_retention(
     State(state): State<AppState>,
+    principal: Principal,
     crate::extract::Json(body): crate::extract::Json<AuditRetentionRequest>,
 ) -> Result<Json<AuditSize>, ApiError> {
     if !(1..=puddle_store::MAX_AUDIT_RETENTION_DAYS).contains(&body.days) {
@@ -222,7 +223,20 @@ pub(crate) async fn put_retention(
         )));
     }
     blocking(move || {
+        let before = state.store.audit_retention_days()?;
         state.store.set_audit_retention_days(body.days)?;
+        if before != body.days {
+            record_op(
+                &state.store,
+                principal.user,
+                WorkspaceOpKind::AuditRetentionChanged,
+                None,
+                Some(format!(
+                    "the activity log is kept for {} days, was {before}",
+                    body.days
+                )),
+            );
+        }
         Ok(Json(state.store.audit_stats()?.into()))
     })
     .await

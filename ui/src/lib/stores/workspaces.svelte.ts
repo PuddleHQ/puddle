@@ -39,6 +39,8 @@ export interface Progress {
   detail: string | null;
   /** The checkout directory a cloning step is about; `null` for any other step. */
   repository: string | null;
+  /** Bytes done and in all, for the steps that count them (the image download and unpack). */
+  bytes?: { done: number; total: number | null } | null;
   /** The operation it belongs to, when the record said (`busy`). */
   operation: Operation | null;
   failed: boolean;
@@ -246,7 +248,14 @@ export class WorkspaceStore {
           void this.refresh();
           return;
         }
-        this.#put({ ...w, status: event.status });
+        // What the new state admits is the server's to say: offer nothing until the record
+        // comes back. A change during an operation is read when the operation ends.
+        if (w.busy === null) {
+          this.#put({ ...w, status: event.status, actions: [] });
+          void this.refresh();
+        } else {
+          this.#put({ ...w, status: event.status });
+        }
         // Nothing installs in a workspace that is down, and the next start tells afresh.
         if (isDown(event.status) && id in this.tools) {
           const { [id]: _gone, ...rest } = this.tools;
@@ -288,6 +297,7 @@ export class WorkspaceStore {
                   step: event.step,
                   detail: event.detail,
                   repository: event.repository ?? null,
+                  bytes: null,
                   operation,
                   failed,
                 },
@@ -310,6 +320,10 @@ export class WorkspaceStore {
             step: event.step,
             detail: event.detail,
             repository: event.repository ?? null,
+            bytes:
+              typeof event.bytes_done === "number"
+                ? { done: event.bytes_done, total: event.bytes_total ?? null }
+                : null,
             operation,
             failed: false,
           },

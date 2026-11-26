@@ -11,6 +11,7 @@
     type Identity,
   } from "#lib/identities/model.ts";
   import { parseRepoUrl, repoName } from "#lib/identities/repo.ts";
+  import RepositoryAddress from "#lib/components/RepositoryAddress.svelte";
   import { identities } from "#lib/stores/identities.svelte.ts";
   import { toasts } from "#lib/stores/toasts.svelte.ts";
   import {
@@ -18,6 +19,7 @@
     type RepoRow,
   } from "#lib/stores/workspace-git.svelte.ts";
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
+  import { resolveRepoAddress } from "#lib/workspaces/model.ts";
   import "#lib/theme/controls.css";
 
   const id = $derived(page.params["id"] ?? "");
@@ -31,6 +33,8 @@
   let repoUrl = $state("");
   let newPull = $state(true);
   let newPush = $state(true);
+  let cloneNow = $state(true);
+  let adding = $state(false);
   let repoProblem = $state<string | null>(null);
   let switchProblem = $state<string | null>(null);
   let rowProblem = $state<string | null>(null);
@@ -153,26 +157,48 @@
   async function addRepo(event: SubmitEvent) {
     event.preventDefault();
     repoProblem = null;
-    const parsed = parseRepoUrl(repoUrl);
+    // The create form's rules: `owner/repo` means GitHub, an SSH address means its HTTPS twin.
+    const resolved = resolveRepoAddress(repoUrl);
+    if ("message" in resolved) {
+      repoProblem = resolved.message;
+      document.getElementById(`${fid}-url`)?.focus();
+      return;
+    }
+    const parsed = parseRepoUrl(resolved.url);
     if (!parsed.ok) {
       repoProblem = parsed.message;
       document.getElementById(`${fid}-url`)?.focus();
       return;
     }
-    const result = await store.addRepo({
-      host: parsed.host,
-      owner: parsed.owner,
-      repo: parsed.repo,
-      pull: newPull,
-      push: newPush,
-    });
-    if (!result.ok) {
-      repoProblem = result.message;
-      document.getElementById(`${fid}-url`)?.focus();
-      return;
+    adding = true;
+    try {
+      const result = cloneNow
+        ? await store.cloneRepo({
+            url: resolved.url,
+            pull: newPull,
+            push: newPush,
+          })
+        : await store.addRepo({
+            host: parsed.host,
+            owner: parsed.owner,
+            repo: parsed.repo,
+            pull: newPull,
+            push: newPush,
+          });
+      if (!result.ok) {
+        repoProblem = result.message;
+        document.getElementById(`${fid}-url`)?.focus();
+        return;
+      }
+      toasts.push(
+        cloneNow
+          ? `Cloning ${repoName(parsed)}.`
+          : `Listed ${repoName(parsed)}.`,
+      );
+      repoUrl = "";
+    } finally {
+      adding = false;
     }
-    toasts.push(`Listed ${repoName(parsed)}.`);
-    repoUrl = "";
   }
 </script>
 
@@ -435,39 +461,38 @@
     {/if}
 
     <form class="add" onsubmit={addRepo} novalidate>
-      <div class="field grow">
-        <label for="{fid}-url">Add a repository</label>
-        <input
-          id="{fid}-url"
-          type="text"
-          inputmode="url"
-          autocomplete="off"
-          autocapitalize="off"
-          spellcheck="false"
-          placeholder="https://github.com/owner/repo"
-          bind:value={repoUrl}
-          aria-invalid={repoProblem ? "true" : undefined}
-          aria-describedby={repoProblem
-            ? `${fid}-url-error`
-            : `${fid}-url-hint`}
-        />
+      <RepositoryAddress
+        id="{fid}-url"
+        bind:value={repoUrl}
+        label="Add a repository"
+        identities={identities.identities}
+        error={repoProblem}
+        hint="The list holds for Git over HTTPS and over SSH to GitHub, GitLab, Bitbucket and Azure DevOps. An address like git@github.com:owner/repo.git is listed as the same repository as its HTTPS address; owner/repo means GitHub."
+        oninput={() => (repoProblem = null)}
+        onPick={(repo) => {
+          repoUrl = repo.url;
+          repoProblem = null;
+        }}
+      />
+      <div class="add-row">
+        <label class="choice">
+          <input type="checkbox" bind:checked={newPull} />Pull
+        </label>
+        <label class="choice">
+          <input type="checkbox" bind:checked={newPush} />Push
+        </label>
+        <label class="choice">
+          <input type="checkbox" bind:checked={cloneNow} />Clone immediately
+        </label>
+        <button type="submit" class="btn" disabled={adding}>
+          Add repository
+        </button>
       </div>
-      <label class="choice">
-        <input type="checkbox" bind:checked={newPull} />Pull
-      </label>
-      <label class="choice">
-        <input type="checkbox" bind:checked={newPush} />Push
-      </label>
-      <button type="submit" class="btn">Add repository</button>
     </form>
-    {#if repoProblem}
-      <p class="error" id="{fid}-url-error" role="alert">{repoProblem}</p>
-    {/if}
-    <p class="muted note" id="{fid}-url-hint">
-      The list holds for Git over HTTPS and over SSH to GitHub, GitLab,
-      Bitbucket and Azure DevOps. An address like
-      <span class="mono">git@github.com:owner/repo.git</span> is listed as the same
-      repository as its HTTPS address.
+    <p class="muted note">
+      With Clone immediately on, Puddle clones the repository into the running
+      workspace now and lists it. Off, it only lists the repository, so Git may
+      use it; the code is not fetched.
     </p>
   </section>
 
@@ -554,12 +579,25 @@
     align-items: flex-start;
     gap: var(--space-2);
   }
-  .attach,
-  .add {
+  .attach {
     display: flex;
     flex-wrap: wrap;
     align-items: flex-end;
     gap: var(--space-3);
+  }
+  .add {
+    display: grid;
+    gap: var(--space-3);
+  }
+  .add-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+  }
+  .add :global(.field > label) {
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
   }
   .field {
     display: grid;

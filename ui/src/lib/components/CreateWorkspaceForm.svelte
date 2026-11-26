@@ -2,7 +2,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
   import { goto } from "$app/navigation";
-  import RepoPicker from "./RepoPicker.svelte";
+  import RepositoryAddress from "./RepositoryAddress.svelte";
   import RepositoryHostsNotice from "./RepositoryHostsNotice.svelte";
   import { allowedNotice, type HostCheck } from "#lib/workspaces/hosts.ts";
   import { covering, type Identity } from "#lib/identities/model.ts";
@@ -195,14 +195,6 @@
     rowErrors[row.key]?.[field] ??
     (field === "url" ? addressProblem(row) : undefined) ??
     live.get(row.key)?.[field];
-
-  /** "Will clone ..." when the field means another address than the one typed. */
-  function willClone(row: RowDraft): string | null {
-    const resolved = resolveRepoAddress(row.url);
-    return "url" in resolved && resolved.url !== row.url.trim()
-      ? `Will clone ${resolved.url}`
-      : null;
-  }
 
   const offeredFor = (row: RowDraft) =>
     matchingUrl(identities.identities, addressOf(row), row.listedBy);
@@ -552,52 +544,27 @@
           </div>
         {/if}
 
-        <div class="field">
-          <label for={rowId(row, "url")}>
-            {row.source === "folder"
-              ? "Git repository (HTTPS, optional)"
-              : "Git repository (HTTPS)"}
-          </label>
-          <input
-            id={rowId(row, "url")}
-            type="text"
-            inputmode="url"
-            autocomplete="off"
-            spellcheck="false"
-            placeholder="https://github.com/you/project.git"
-            bind:value={row.url}
-            oninput={() => {
-              row.listedBy = null;
-              row.identity = null;
-              rowErrors = { ...rowErrors, [row.key]: {} };
-              left = { ...left, [row.key]: false };
-            }}
-            onblur={() => (left = { ...left, [row.key]: true })}
-            aria-invalid={urlError ? "true" : undefined}
-            aria-describedby={urlError
-              ? rowId(row, "url-error")
-              : rowId(row, "url-hint")}
-          />
-          {#if urlError}
-            <p class="error" id={rowId(row, "url-error")} role="alert">
-              {urlError}
-            </p>
-          {:else}
-            <p class="hint" id={rowId(row, "url-hint")} aria-live="polite">
-              {willClone(row) ??
-                (row.source === "folder"
-                  ? "Left empty, the checkout's own origin is used. An SSH origin on GitHub, GitLab, Bitbucket or Azure DevOps is turned into its HTTPS address; for any other host, give the HTTPS address here."
-                  : "An HTTPS URL, owner/repo for GitHub, or an SSH address of GitHub, GitLab, Bitbucket or Azure DevOps (git@github.com:you/project.git); the repository is cloned over HTTPS.")}
-            </p>
-          {/if}
-        </div>
-
-        {#if row.source === "address"}
-          <RepoPicker
-            identities={identities.identities}
-            onPick={(repo, by) => picked(row, repo, by)}
-          />
-        {/if}
+        <RepositoryAddress
+          id={rowId(row, "url")}
+          bind:value={row.url}
+          label={row.source === "folder"
+            ? "Git repository (HTTPS, optional)"
+            : "Git repository (HTTPS)"}
+          identities={identities.identities}
+          error={urlError ?? null}
+          hint={row.source === "folder"
+            ? "Left empty, the checkout's own origin is used. An SSH origin on GitHub, GitLab, Bitbucket or Azure DevOps is turned into its HTTPS address; for any other host, give the HTTPS address here."
+            : "An HTTPS URL, owner/repo for GitHub, or an SSH address of GitHub, GitLab, Bitbucket or Azure DevOps (git@github.com:you/project.git); the repository is cloned over HTTPS."}
+          picker={row.source === "address"}
+          oninput={() => {
+            row.listedBy = null;
+            row.identity = null;
+            rowErrors = { ...rowErrors, [row.key]: {} };
+            left = { ...left, [row.key]: false };
+          }}
+          onblur={() => (left = { ...left, [row.key]: true })}
+          onPick={(repo, by) => picked(row, repo, by)}
+        />
 
         {#if tableCannotHold(addressOf(row))}
           <p class="hint warn" data-testid="table-cannot-hold">

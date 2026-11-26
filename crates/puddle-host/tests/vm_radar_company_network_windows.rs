@@ -38,6 +38,7 @@ use std::time::{Duration, SystemTime};
 use puddle_certs::{CorporateRoots, read_host_stores};
 use puddle_e2e::lab::{Interceptor, NtlmLeg, WebAnswer, WebHost, WebOptions};
 use puddle_store::{Actor, Effect, NewRule, Pattern, Scope};
+use puddle_test_kit::eventually_async;
 use puddle_types::WorkspaceId;
 use puddle_upstream::Mode;
 use serde_json::{Value, json};
@@ -292,23 +293,18 @@ async fn run(tag: &str, sync_root: bool) -> Option<Seen> {
     // the change and the first request below is the first to take the new route.
     let _server = RegValue::set("ProxyServer", "REG_SZ", &format!("127.0.0.1:{port}"));
     let _on = RegValue::set("ProxyEnable", "REG_DWORD", "1");
-    let mut followed = false;
-    for _ in 0..60 {
-        let report = api.get("/api/network-health").await;
-        let report: Value = serde_json::from_str(&report.body).unwrap();
-        if report["proxy"]["https_proxy"]
-            .as_str()
-            .is_some_and(|p| p.ends_with(&format!(":{port}")))
-        {
-            followed = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-    assert!(
-        followed,
-        "the host never reported the user's proxy 127.0.0.1:{port}"
-    );
+    eventually_async(
+        "the host reports the user's proxy",
+        Duration::from_secs(30),
+        || async {
+            let report = api.get("/api/network-health").await;
+            let report: Value = serde_json::from_str(&report.body).unwrap();
+            report["proxy"]["https_proxy"]
+                .as_str()
+                .is_some_and(|p| p.ends_with(&format!(":{port}")))
+        },
+    )
+    .await;
 
     let guest = guest_within(
         &vm.runtime,

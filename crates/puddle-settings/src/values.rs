@@ -318,12 +318,12 @@ pub enum AppIconChoice {
     /// The duck on its patch of water, on a clear background.
     #[default]
     Duck,
-    /// The duck on a pond-blue disc.
-    DuckPond,
-    /// The duck on a dark night-blue disc.
-    DuckNight,
-    /// A white duck on a sunny yellow disc.
-    DuckSun,
+    /// A rubber bath duck, side view.
+    #[serde(alias = "duck_pond", alias = "duck_sun")]
+    RubberDuck,
+    /// The duck seen from the front.
+    #[serde(alias = "duck_night")]
+    DuckFront,
     /// The image the user gave (kept per user, next to the settings).
     Custom,
 }

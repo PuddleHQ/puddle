@@ -55,8 +55,15 @@
     surface: () => base.surface,
     text: () => base.text,
   };
+  // A pick is one colour for both themes, so a colour that suits the theme on screen can still miss
+  // AA in the other. That is a quieter note, apart from what is hard to read right now.
+  const missed = $derived(failures(choice, custom, schemesOf(theme)));
+  const now = $derived(activeScheme(theme));
   const problems = $derived(
-    failures(choice, custom, schemesOf(theme)).map(describeFailure),
+    missed.filter((f) => f.scheme === now).map(describeFailure),
+  );
+  const elsewhere = $derived(
+    missed.filter((f) => f.scheme !== now).map(describeFailure),
   );
 </script>
 
@@ -123,6 +130,22 @@
       </ul>
     </div>
   {/if}
+  {#if elsewhere.length > 0}
+    <div class="note" role="status">
+      <p>
+        <b>In the other theme, some of these colours are harder to read.</b> It isn't
+        showing now; a theme set to follow your computer switches to it.
+      </p>
+      <ul>
+        {#each elsewhere.slice(0, SHOWN) as line (line)}
+          <li>{line}</li>
+        {/each}
+        {#if elsewhere.length > SHOWN}
+          <li>and {elsewhere.length - SHOWN} more.</li>
+        {/if}
+      </ul>
+    </div>
+  {/if}
 {/if}
 
 <style>
@@ -140,7 +163,14 @@
     border-radius: var(--radius-md);
     color: var(--color-text);
   }
-  .warning ul {
+  .note {
+    padding: var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    color: var(--color-text);
+  }
+  .warning ul,
+  .note ul {
     margin: var(--space-2) 0 0;
     padding-left: var(--space-4);
     font-size: var(--text-sm);

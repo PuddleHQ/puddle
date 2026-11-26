@@ -642,9 +642,10 @@ fn net_gets_the_certificate_in_the_session_users_home_and_again_when_the_user_ch
         "{owned}"
     );
     assert!(
-        !owned.contains("/home/agent/.aspnet"),
-        "not made, so not given: {owned}"
+        owned.lines().any(|l| l == "1000:1000 /home/agent/.aspnet"),
+        "the trust folder SSL_CERT_DIR names is made and given to the user: {owned}"
     );
+    assert!(g.p("/home/agent/.aspnet/dev-certs/trust").is_dir());
 
     // The same certificate for root: imported again, into root's home.
     let t = with_dev(&dev);
@@ -738,6 +739,10 @@ fn an_image_without_net_or_openssl_keeps_the_certificate_and_says_so() {
             .contains("certificate in place; no .NET SDK in this image")
     );
     assert!(g.p("/etc/puddle/dev-cert/localhost.key").exists());
+    assert!(
+        g.p("/root/.aspnet/dev-certs/trust").is_dir(),
+        "every folder SSL_CERT_DIR names exists, .NET or not"
+    );
 
     // dotnet without a working openssl: the import file can't be built.
     assert!(has_openssl());

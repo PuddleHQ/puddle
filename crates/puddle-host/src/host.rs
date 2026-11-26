@@ -796,7 +796,8 @@ fn build_outbound(
         endpoints.clone(),
         Arc::new(StorePins::new(store.clone())),
         events.clone(),
-    );
+    )
+    .with_auto_forward();
     // Who `ssh -T` greets: read from the store, named once the repository reader exists.
     let ssh_accounts = Arc::new(crate::ssh_accounts::SshAccounts::new(store.clone()));
     let mut egress_parts = EgressParts::new(

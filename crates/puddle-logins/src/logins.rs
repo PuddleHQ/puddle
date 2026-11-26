@@ -680,7 +680,22 @@ impl Logins {
         let (profile, endpoint) = route;
         let mut parsed =
             TokenBody::parse(content_type, body).map_err(|_| Problem::UnexpectedAnswer)?;
-        if holds_unnamed_token(endpoint, &parsed.fields()) {
+        let mut fields = parsed.fields();
+        // An identifier in a field named like a credential (a `token_uuid`) is no credential.
+        fields.retain(|field| {
+            !matches!(field.kind, FieldKind::Text(_))
+                || !parsed
+                    .text_at(&field.path)
+                    .is_some_and(|text| is_uuid(&text))
+        });
+        if let Some(field) = holds_unnamed_token(endpoint, &fields) {
+            // The name only, never the value: it is what lets the profile name the field.
+            tracing::warn!(
+                workspace = %self.inner.workspace,
+                profile = profile.id,
+                field = %field.path,
+                "a sign-in answer carries a token in a field the profile does not name"
+            );
             return Err(Problem::UnnamedToken);
         }
         let mut found: Vec<(&'static Field, Zeroizing<String>)> = Vec::new();
@@ -976,16 +991,27 @@ fn token_like(name: &str) -> bool {
 
 /// Whether the answer holds a credential Puddle would not replace: a token-like text in a field
 /// the endpoint does not name (at any depth), or a named field that is repeated or structured
-/// (the tool may read the one Puddle did not).
-fn holds_unnamed_token(endpoint: &Endpoint, fields: &[BodyField]) -> bool {
+/// (the tool may read the one Puddle did not). A UUID is an identifier, not a credential, and is
+/// removed from `fields` by the caller.
+fn holds_unnamed_token<'a>(endpoint: &Endpoint, fields: &'a [BodyField]) -> Option<&'a BodyField> {
     let named = |field: &BodyField| endpoint.fields.iter().any(|f| f.path == field.path);
-    fields.iter().any(|field| {
+    fields.iter().find(|field| {
         if named(field) {
             let repeated = fields.iter().filter(|f| f.path == field.path).count() > 1;
             return repeated || field.kind == FieldKind::Structured;
         }
         matches!(field.kind, FieldKind::Text(n) if n >= MIN_TOKEN_LEN) && token_like(&field.name)
     })
+}
+
+/// Whether a text is a UUID (8-4-4-4-12 hex digits): an identifier a service names a token by,
+/// not a secret.
+fn is_uuid(text: &str) -> bool {
+    text.len() == 36
+        && text.char_indices().all(|(i, c)| match i {
+            8 | 13 | 18 | 23 => c == '-',
+            _ => c.is_ascii_hexdigit(),
+        })
 }
 
 /// What the tool is told when its login is refused: the reason, and what to do.

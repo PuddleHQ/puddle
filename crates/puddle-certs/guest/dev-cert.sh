@@ -41,6 +41,20 @@ if [ "$owner" != 0:0 ]; then
     fi
 fi
 
+# SSL_CERT_DIR (set for every session) names .NET's trust folder first. A tool that walks the list
+# (mise, rustls-native-certs) warns about a folder that is not there, so it exists from the first
+# boot, whether or not the image has .NET, and belongs to the session user as .NET's own tooling
+# will find it.
+home=${PUDDLE_SESSION_HOME:-/root}
+trust_dir=$home/.aspnet/dev-certs/trust
+if mkdir -p "$ROOT$trust_dir" && [ "$owner" != 0:0 ]; then
+    if [ -n "$ROOT" ]; then
+        printf '%s %s\n' "$owner" "$home/.aspnet" >>"$ROOT/owned"
+    elif ! chown -R -h "$owner" "$home/.aspnet"; then
+        echo "certificate in place, but $home/.aspnet could not be given to the session user"
+    fi
+fi
+
 if ! command -v dotnet >/dev/null 2>&1; then
     rm -f "$STAMP"
     echo "certificate in place; no .NET SDK in this image"
@@ -57,7 +71,6 @@ if command -v sha256sum >/dev/null 2>&1; then
 else
     have=$(cksum "$CRT" | cut -d ' ' -f 1,2 | tr ' ' -)
 fi
-home=${PUDDLE_SESSION_HOME:-/root}
 have="$have $home"
 if [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$have" ]; then
     echo "certificate unchanged; .NET already has it"
@@ -65,7 +78,6 @@ if [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$have" ]; then
 fi
 rm -f "$STAMP"
 
-trust_dir=$home/.aspnet/dev-certs/trust
 work=$(mktemp -d "${TMPDIR:-/tmp}/puddle-dev-cert.XXXXXX") || {
     echo "certificate in place; .NET not set up (no temporary folder)"
     exit 0

@@ -15,9 +15,7 @@ const RED_PNG = Buffer.from(
 async function open(page: Page, backend: Backend) {
   await backend.signIn(page);
   await page.goto("/settings");
-  await expect(
-    page.getByRole("radio", { name: "Duck on a pond" }),
-  ).toBeVisible();
+  await expect(page.getByRole("radio", { name: "Rubber duck" })).toBeVisible();
 }
 
 /** The icon is stored the moment it is chosen; wait for that. */
@@ -47,12 +45,7 @@ test.describe("the app icon", () => {
     await expect(
       page.getByRole("radio", { name: "Duck", exact: true }),
     ).toBeChecked();
-    for (const name of [
-      "Duck",
-      "Duck on a pond",
-      "Duck at night",
-      "Duck in the sun",
-    ]) {
+    for (const name of ["Duck", "Rubber duck", "Duck, front view"]) {
       const picture = page
         .locator("label.choice", {
           has: page.getByRole("radio", { name, exact: true }),
@@ -68,13 +61,13 @@ test.describe("the app icon", () => {
       page.getByRole("radio", { name: "Your image" }),
     ).toBeDisabled();
 
-    await page.getByRole("radio", { name: "Duck at night" }).check();
+    await page.getByRole("radio", { name: "Duck, front view" }).check();
     await save(page);
-    await expect.poll(() => stored(backend, request)).toBe("duck_night");
+    await expect.poll(() => stored(backend, request)).toBe("duck_front");
 
     await page.goto("/settings");
     await expect(
-      page.getByRole("radio", { name: "Duck at night" }),
+      page.getByRole("radio", { name: "Duck, front view" }),
     ).toBeChecked();
     await staysEmpty(page, csp);
   });

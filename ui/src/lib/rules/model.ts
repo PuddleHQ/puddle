@@ -191,4 +191,4 @@ export function sentence(message: string): string {
 }
 
 export const PRECEDENCE =
-  "The most specific rule wins: an exact host beats a pattern, and a longer pattern beats a shorter one. At the same specificity a workspace rule beats an every-workspace rule, then deny beats allow. Rule sets come after your rules: a set never opens what your rules close.";
+  "The most specific rule wins: an exact host beats a pattern, and a more specific pattern beats a more generic pattern. At the same specificity a workspace rule beats an every-workspace rule, then deny beats allow. Rule sets come after your rules: a set never opens what your rules close.";

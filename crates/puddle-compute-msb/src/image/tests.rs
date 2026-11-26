@@ -257,6 +257,7 @@ async fn a_pull_whose_manifest_came_in_time_runs_to_its_end() {
     sender.send(resolved(1, None));
     let mut tally = Tally::default();
     let task = tokio::spawn(async move {
+        // The pause must outlast the 50 ms deadline: it is what the test is about.
         tokio::time::sleep(Duration::from_millis(150)).await;
         drop(sender);
     });

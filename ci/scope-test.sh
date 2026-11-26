@@ -74,6 +74,14 @@ while IFS= read -r line; do
     esac
 done <"$fixture"
 flush
+# Every path of the fixture exists in this checkout: a moved or deleted file leaves the replay
+# classifying a path the rules no longer see.
+while IFS= read -r line; do
+    case $line in
+    '#'* | '' | @*) ;;
+    *) [ -e "$here/../$line" ] || bad "fixture path does not exist: $line (point it at the file's new home, or swap in a live path of the same class)" ;;
+    esac
+done <"$fixture"
 [ "$replayed" -ge 58 ] || bad "fixture replayed only $replayed pull requests (want at least 58)"
 for c in full docs ui rust mixed; do
     [ -n "${seen_class[$c]:-}" ] || bad "the fixture has no pull request of class $c"

@@ -7,10 +7,14 @@
 import { connect } from "./cdp.mjs";
 import { until } from "./poll.mjs";
 
-/** The DevTools targets of type page: `[{ url, webSocketDebuggerUrl }]`. */
+/**
+ * The DevTools targets of type page that show a web page: `[{ url, webSocketDebuggerUrl }]`. WebView2 lists its
+ * own browser UI (the clipboard permission prompt, `edge://permission-request-dialog/`) as a page too, and a
+ * pending Ask prompt sorts first: breaking that target leaves Puddle's page loaded.
+ */
 async function pages(port) {
   const list = await (await fetch(`http://127.0.0.1:${port}/json`, { signal: AbortSignal.timeout(5000) })).json();
-  return list.filter((t) => t.type === "page" && t.webSocketDebuggerUrl);
+  return list.filter((t) => t.type === "page" && t.webSocketDebuggerUrl && /^https?:/.test(t.url));
 }
 
 /**

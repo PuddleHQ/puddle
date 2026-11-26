@@ -22,7 +22,8 @@
 # Evidence only: both modes exit 0 whatever they find (the guard's kill is the one action, and only under the
 # floor). Knobs: DISK_WATCH_WARN_GB (30), DISK_WATCH_FLOOR_GB (5), DISK_WATCH_INTERVAL (2 s),
 # DISK_WATCH_ROOT (/), DISK_WATCH_SIZES (1: always walk the sizes), DISK_WATCH_FREE_FILE (test only: a file
-# holding the free GB instead of df).
+# holding the free GB instead of df), DISK_WATCH_PATHS_ONLY (test only: 1 walks just DISK_WATCH_PATHS, not the
+# runner's real dirs, whose size walk takes a minute on a loaded runner).
 set -uo pipefail
 
 warn_gb=${DISK_WATCH_WARN_GB:-30}
@@ -50,6 +51,10 @@ say() { # <text>: stdout and the job summary
 # the toolchains and caches, the workspace and its target, and the places a crash or a runaway log lands.
 paths() {
     local w=${GITHUB_WORKSPACE:-$PWD}
+    if [ "${DISK_WATCH_PATHS_ONLY:-}" = 1 ]; then
+        printf '%s\n' "${DISK_WATCH_PATHS:-}" | tr ':' '\n'
+        return
+    fi
     printf '%s\n' "$temp" "$temp/bundle" "$temp/vmx" "$temp/msb" "$temp/pvm" "$temp/code-server" \
         "$HOME/.rustup" "$HOME/.cargo" "$HOME/.cache" "$HOME/.npm" "$w" "$w/target" "$w/ui/node_modules" \
         /var/crash /var/lib/systemd/coredump /var/lib/docker /var/log /var/cache/apt /tmp \

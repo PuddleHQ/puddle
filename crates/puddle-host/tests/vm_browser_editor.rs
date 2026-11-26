@@ -540,7 +540,7 @@ const WINDOW_LOGS: &str = "(async () => {
           const get = all.get(key);
           get.onsuccess = get.onerror = () => {
             const body = get.result === undefined ? '' : text(get.result);
-            const lines = body.split('\n').filter(l => interesting.test(l)).slice(-60);
+            const lines = body.split('\\n').filter(l => interesting.test(l)).slice(-60);
             found.push({ key: String(key), bytes: body.length, lines });
             if (found.length === wanted.length) done(found);
           };

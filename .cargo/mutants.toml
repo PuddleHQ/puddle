@@ -64,6 +64,8 @@ exclude_re = [
     "git_path\\.rs:\\d+:\\d+: replace \\| with \\^ in decode_segment",
     # The default body of `Policy::lookup` is `Ok(None)`, so replacing it with `Ok(None)` is the same code.
     'replace Policy::lookup -> Result<Option<Decision>, PolicyError> with Ok\(None\)',
+    # The default body of `Policy::workspace_name` is `None`, so replacing it with `None` is the same code.
+    'replace Policy::workspace_name -> Option<String> with None',
     # `keyword` returns `Some("")` for a blank line and `Some("#...")` for a comment when `||` becomes
     # `&&`; both callers only ask whether the word is `include`, `host` or `match`, which neither is.
     'sshconfig\.rs:\d+:\d+: replace \|\| with && in keyword',

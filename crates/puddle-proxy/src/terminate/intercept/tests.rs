@@ -211,3 +211,16 @@ async fn new_limits_drop_a_host_as_old_as_the_new_time() {
     list.set_limits(Duration::from_secs(30), 8);
     assert_eq!(list.list(), [], "a host as old as the new time is dropped");
 }
+
+/// `list`, `contains` and `learn` all hide or drop an expired host themselves, so only the stored
+/// entries show whether `set_limits` itself dropped the host that is exactly as old as the new time.
+#[tokio::test(start_paused = true)]
+async fn new_limits_forget_a_host_as_old_as_the_new_time() {
+    let list = PassThrough::with_limits(Duration::from_secs(3600), 8);
+    list.learn(&host("edge.example"));
+    tokio::time::advance(Duration::from_secs(30)).await;
+    list.learn(&host("fresh.example"));
+    list.set_limits(Duration::from_secs(30), 8);
+    let stored: Vec<String> = list.inner().seen.keys().cloned().collect();
+    assert_eq!(stored, ["fresh.example"]);
+}

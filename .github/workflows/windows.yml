@@ -178,7 +178,7 @@ jobs:
           shared-key: windows
           cache-on-failure: true # a red build must not forfeit the dependencies
           save-if: ${{ github.ref == 'refs/heads/develop' }}
-      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
         if: steps.changed.outputs.run == 'true'
         with:
           tool: cargo-nextest@0.9.146
@@ -238,7 +238,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.test-build.outputs.run == 'true'
-      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
         if: needs.test-build.outputs.run == 'true'
         with:
           tool: cargo-nextest@0.9.146

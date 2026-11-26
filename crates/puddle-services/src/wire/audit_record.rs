@@ -8,8 +8,8 @@ use utoipa::ToSchema;
 
 use super::{
     AuditPending, AuditRequestRule, AuditRule, AuditRuleSet, ConnectionDecision, ConnectionOrigin,
-    ConnectionOutcome, ConnectionProtocol, PendingExpiryReason, RuleDeleteReason, RuleSwitchKind,
-    SystemReason, WorkspaceOpKind, WorkspaceOpOutcome,
+    ConnectionOutcome, ConnectionProtocol, GitOperation, PendingExpiryReason, RuleDeleteReason,
+    RuleSwitchKind, SystemReason, WorkspaceOpKind, WorkspaceOpOutcome,
 };
 
 /// One audit record (rules spec R-24): a tagged union on `type`. `host`, `path` and the like come
@@ -142,6 +142,11 @@ pub enum AuditRecord {
         /// HTTP path without query string, where `method` is set.
         #[schema(required = true)]
         path: Option<String>,
+        /// `push` or `fetch` for a Git smart-HTTP request, whose `path` cannot tell them apart
+        /// (both start with `/info/refs`; the query is dropped). `null` for any other request and
+        /// in records written before it existed.
+        #[schema(required = true)]
+        git_operation: Option<GitOperation>,
         /// Whether `path` was cut to fit.
         path_truncated: bool,
         /// Bytes from the guest.
@@ -387,6 +392,7 @@ impl From<store::ConnectionRecord> for AuditRecord {
             protocol,
             method,
             path,
+            git_operation,
             path_truncated,
             bytes_up,
             bytes_down,
@@ -423,6 +429,7 @@ impl From<store::ConnectionRecord> for AuditRecord {
                 .or_else(|| method.is_some().then_some(ConnectionProtocol::Http)),
             method,
             path,
+            git_operation: git_operation.map(Into::into),
             path_truncated,
             bytes_up,
             bytes_down,

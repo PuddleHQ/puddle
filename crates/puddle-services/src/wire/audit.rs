@@ -380,6 +380,26 @@ impl From<puddle_types::ConnectionProtocol> for ConnectionProtocol {
     }
 }
 
+/// What a Git smart-HTTP request of a connection record does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GitOperation {
+    /// `git push`: the service is `git-receive-pack`.
+    Push,
+    /// `git fetch`, `clone` or `pull`: the service is `git-upload-pack`.
+    Fetch,
+}
+
+impl From<puddle_types::GitOperation> for GitOperation {
+    fn from(operation: puddle_types::GitOperation) -> Self {
+        match operation {
+            puddle_types::GitOperation::Push => Self::Push,
+            // An operation this API doesn't know yet is read as a fetch (it moves no commits to the host).
+            _ => Self::Fetch,
+        }
+    }
+}
+
 /// How reaching the destination went after the proxy let a connection through.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]

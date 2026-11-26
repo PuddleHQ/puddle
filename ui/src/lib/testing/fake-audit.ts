@@ -45,6 +45,7 @@ export function connection(
       protocol: null,
       method: null,
       path: null,
+      git_operation: null,
       path_truncated: false,
       resolved_ip: null,
       upstream: null,

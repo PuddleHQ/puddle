@@ -432,3 +432,24 @@ fn a_protocol_is_its_wire_name_and_an_ssh_line_carries_it() {
     assert_eq!(line.method(), "git-receive-pack");
     assert_eq!(line.path(), "/o/r.git");
 }
+
+#[test]
+fn git_smart_http_targets_name_their_operation() {
+    let op = GitOperation::of_target;
+    assert_eq!(
+        op("/a/b.git/info/refs?service=git-receive-pack"),
+        Some(GitOperation::Push)
+    );
+    assert_eq!(
+        op("http://h.example/a/b.git/info/refs?x=1&service=git-upload-pack"),
+        Some(GitOperation::Fetch)
+    );
+    assert_eq!(op("/a/b.git/git-receive-pack"), Some(GitOperation::Push));
+    assert_eq!(op("/a/b.git/git-upload-pack"), Some(GitOperation::Fetch));
+    // Not Git smart HTTP, or no service named.
+    assert_eq!(op("/a/b.git/info/refs"), None);
+    assert_eq!(op("/a/b.git/info/refs?service=other"), None);
+    assert_eq!(op("/x?service=git-receive-pack"), None);
+    assert_eq!(op("/git-receive-pack/readme"), None);
+    assert_eq!(HttpRequestLine::new("GET", "/").git_operation(), None);
+}

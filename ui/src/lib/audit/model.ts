@@ -631,10 +631,13 @@ function connectionDetail(
 ): string {
   const parts: string[] = [];
   if (record.method !== null) {
+    const http = `${record.method} ${record.path ?? ""}`.trim();
     parts.push(
       record.protocol === "ssh"
         ? sshLine(record, record.method)
-        : `${record.method} ${record.path ?? ""}`.trim(),
+        : record.git_operation
+          ? `Git ${record.git_operation}: ${http}`
+          : http,
     );
   }
   const failed = record.reason.startsWith(FAILED_PREFIX)

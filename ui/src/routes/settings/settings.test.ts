@@ -34,13 +34,12 @@ import { NO_CUSTOM } from "#lib/theme/palette.ts";
 import { theme } from "#lib/theme/theme.svelte.ts";
 import Appearance from "./(pages)/appearance/+page.svelte";
 import Editor from "./(pages)/editor/+page.svelte";
-import EditorAndGit from "./(pages)/editor-and-git/+page.svelte";
 import Network from "./(pages)/network/+page.svelte";
 import Notifications from "./(pages)/notifications/+page.svelte";
 import ThisComputer from "./(pages)/this-computer/+page.svelte";
 import Workspaces from "./(pages)/workspaces/+page.svelte";
 
-// Every test here mounts all seven pages of Settings, so one test costs about a second on an idle
+// Every test here mounts all six pages of Settings, so one test costs about a second on an idle
 // host and several times that on a loaded one; the default 5 s limit is under the loaded cost.
 vi.setConfig({ testTimeout: 30_000 });
 
@@ -50,7 +49,6 @@ const ALL = [
   Workspaces,
   Network,
   Editor,
-  EditorAndGit,
   ThisComputer,
 ];
 

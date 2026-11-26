@@ -406,10 +406,14 @@ fn show_badge<R: Runtime>(
         let _ = window.set_title(&badge::window_title(count, badge_on));
         #[cfg(windows)]
         {
-            let overlay = (badge_on && count > 0).then(|| {
-                let number = badge::overlay_number(count);
-                tauri::image::Image::new_owned(number.rgba, number.size, number.size)
-            });
+            // drawn at the size Windows shows it for this display, so it is not scaled
+            let scale = window.scale_factor().unwrap_or(1.0);
+            let overlay = (badge_on && count > 0)
+                .then(|| badge::overlay_number(count, scale))
+                .flatten()
+                .map(|number| {
+                    tauri::image::Image::new_owned(number.rgba, number.size, number.size)
+                });
             // the badge is cosmetic; a window that closed meanwhile has nothing to badge
             let _ = window.set_overlay_icon(overlay);
         }

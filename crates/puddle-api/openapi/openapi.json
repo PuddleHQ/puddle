@@ -19309,7 +19309,7 @@
         "properties": {
           "api_version": {
             "type": "string",
-            "description": "The API contract's version ([`crate::API_VERSION`])."
+            "description": "The API contract's version (`API_VERSION` in `puddle-api`)."
           },
           "ui_build_id": {
             "type": [

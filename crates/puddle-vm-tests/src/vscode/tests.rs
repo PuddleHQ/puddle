@@ -245,6 +245,51 @@ async fn a_window_that_never_answers_names_the_port_and_is_stopped() {
 }
 
 #[tokio::test]
+async fn a_window_starts_only_once_an_earlier_window_let_go_of_the_debug_port() {
+    let modules = stub_modules();
+    let earlier = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).expect("bind");
+    let port = earlier.local_addr().expect("addr").port();
+    let started = stub_window(&modules, port, Duration::from_secs(30));
+    tokio::pin!(started);
+    let seen = modules.path().join("env-seen");
+    assert!(
+        tokio::time::timeout(Duration::from_secs(2), &mut started)
+            .await
+            .is_err(),
+        "the window started while the port was taken"
+    );
+    assert!(
+        !seen.exists(),
+        "the window's program ran while the port was taken"
+    );
+    drop(earlier);
+    let window = started.await.expect("started once the port was free");
+    puddle_test_kit::eventually("the window's program ran", Duration::from_secs(10), || {
+        seen.is_file()
+    })
+    .await;
+    window.close().await.expect("closed");
+}
+
+#[tokio::test]
+async fn a_debug_port_that_stays_taken_is_named_in_the_error() {
+    let held = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).expect("bind");
+    let port = held.local_addr().expect("addr").port();
+    let err = port_free(port, Duration::from_millis(600))
+        .await
+        .expect_err("still taken");
+    assert!(
+        err.to_string()
+            .contains(&format!("port {port} is still taken")),
+        "{err}"
+    );
+    drop(held);
+    port_free(port, Duration::from_millis(600))
+        .await
+        .expect("free once let go");
+}
+
+#[tokio::test]
 async fn the_palette_takes_the_row_with_exactly_that_label() {
     let modules = stub_modules();
     let mut window = stub_window(&modules, 9230, Duration::from_secs(30))

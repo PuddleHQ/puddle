@@ -197,6 +197,39 @@ pub enum ThemeChoice {
     Dark,
 }
 
+/// How much Puddle writes to its log: `info` is what a user needs day to day, `debug` and `trace`
+/// are for finding out what Puddle did ("upload a debug log"). A log level in the environment
+/// (`PUDDLE_LOG`) wins over this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LogLevelChoice {
+    /// Only what went wrong.
+    Error,
+    /// Problems that were worked around, and errors.
+    Warn,
+    /// One line for each thing Puddle did or decided.
+    #[default]
+    Info,
+    /// Detail for each request and each step, without secrets.
+    Debug,
+    /// Every step and frame, without secrets; very long.
+    Trace,
+}
+
+impl LogLevelChoice {
+    /// The level's name as `PUDDLE_LOG` spells it.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Error => "error",
+            Self::Warn => "warn",
+            Self::Info => "info",
+            Self::Debug => "debug",
+            Self::Trace => "trace",
+        }
+    }
+}
+
 /// Which colour palette Puddle's window uses on top of the light or dark base.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

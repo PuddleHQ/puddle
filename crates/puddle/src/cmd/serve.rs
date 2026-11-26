@@ -13,7 +13,6 @@ use std::process::ExitCode;
 
 use puddle_host::{Host, HostConfig, HostOptions, MsbFactory, SystemPlatform, prepare};
 use puddle_lifecycle::{Role, supervise, wait_for_shutdown};
-use puddle_log::init_stderr;
 
 use crate::cli::{Command, UsageError};
 
@@ -189,13 +188,21 @@ pub fn run(args: &ServeArgs) -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
-    init_stderr(options.log_filter(), false);
+    // A level from the options or the environment is final; without one the settings set it.
+    puddle_log::init_logging(options.log_filter(), false, options.log_is_set());
     // Before the first credential is read; `PUDDLE_ALLOW_DUMPS=1` keeps native dumps for diagnosis.
     puddle_no_dump::harden_from_env().log();
     // Everything up to the async runtime happens while this is the only thread.
     let prepared = match std::env::current_exe()
         .map_err(puddle_host::HostError::ProgramFolder)
         .and_then(|exe| config(&options, &exe))
+        .inspect(|config| {
+            if let Err(err) =
+                puddle_log::attach_log_file(&puddle_log::log_folder(config.paths.data()))
+            {
+                tracing::warn!(%err, "the log is not kept in a file");
+            }
+        })
         .and_then(|config| prepare(config, &SystemPlatform::new().with_dev_override_from_env()))
     {
         Ok(prepared) => prepared,

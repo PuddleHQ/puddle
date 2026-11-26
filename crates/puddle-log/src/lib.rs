@@ -11,6 +11,17 @@
 //! guest agent), so the rule is written once, here.
 #![forbid(unsafe_code)]
 
+mod bundle;
+mod file;
+mod redact;
+
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock, PoisonError, RwLock};
+
+pub use bundle::{Bundle, BundleError, write_bundle};
+pub use file::{FILE_NAME, MAX_FILE_BYTES, RollingFile};
+pub use redact::{REDACTED, redact, redact_json};
+
 use tracing::{Level, Metadata, Subscriber};
 use tracing_subscriber::Layer;
 use tracing_subscriber::filter::{LevelFilter, Targets};
@@ -31,6 +42,7 @@ pub struct BadFilter;
 pub struct ScopedFilter {
     puddle: Targets,
     others: Targets,
+    level: LevelFilter,
 }
 
 /// Whether `target` (a module path) belongs to one of Puddle's crates.
@@ -82,6 +94,7 @@ impl ScopedFilter {
         Self {
             puddle: targets.clone(),
             others: targets,
+            level: LevelFilter::TRACE,
         }
     }
 
@@ -89,6 +102,7 @@ impl ScopedFilter {
         Self {
             puddle: named.clone().with_default(level),
             others: named.with_default(level.min(DEPENDENCY_CEILING)),
+            level,
         }
     }
 
@@ -115,18 +129,106 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Filter<S> for ScopedFilter {
     }
 }
 
-/// Starts logging to stderr through `filter`; the first subscriber of the process wins, and this
-/// says whether it was this one.
-pub fn init_stderr(filter: ScopedFilter, ansi: bool) -> bool {
+/// The folder under the data folder that holds the log files.
+pub const LOG_FOLDER: &str = "logs";
+
+/// The folder `data`'s log files are in.
+#[must_use]
+pub fn log_folder(data: &Path) -> PathBuf {
+    data.join(LOG_FOLDER)
+}
+
+/// A filter that can be replaced while the program runs, which is what lets the setting in the app
+/// change the level without a restart.
+#[derive(Debug, Clone)]
+struct LiveFilter(Arc<RwLock<ScopedFilter>>);
+
+impl<S: Subscriber + for<'a> LookupSpan<'a>> Filter<S> for LiveFilter {
+    fn enabled(&self, meta: &Metadata<'_>, _: &Context<'_, S>) -> bool {
+        self.0
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .would_enable(meta.target(), meta.level())
+    }
+    // No `max_level_hint`: the level can go up later, so no call site may be switched off for good.
+}
+
+/// The handle on a program's running log: its level, and its file.
+#[derive(Debug)]
+pub struct LogControl {
+    filter: LiveFilter,
+    file: file::SharedFile,
+    pinned: bool,
+}
+
+static CONTROL: OnceLock<LogControl> = OnceLock::new();
+
+/// Puts Puddle's crates at `level`, as the settings ask. Returns whether the level changed:
+/// `false` when it was the level already, when the environment pinned the level or before logging
+/// started.
+pub fn apply_setting(level: LevelFilter) -> bool {
+    let Some(control) = CONTROL.get().filter(|c| !c.pinned) else {
+        return false;
+    };
+    let mut current = control
+        .filter
+        .0
+        .write()
+        .unwrap_or_else(PoisonError::into_inner);
+    let changed = current.level != level;
+    *current = ScopedFilter::at(level);
+    changed
+}
+
+/// Whether the log level came from the environment (`PUDDLE_LOG`, `RUST_LOG` or `--log`) and so
+/// ignores the setting in the app.
+#[must_use]
+pub fn level_is_pinned() -> bool {
+    CONTROL.get().is_some_and(|c| c.pinned)
+}
+
+/// Starts keeping the log file in `folder`, from the next line on. Does nothing before logging has
+/// started; a folder that cannot be written is returned so the caller can say so.
+///
+/// # Errors
+///
+/// The I/O error of making the folder or opening the file.
+pub fn attach_log_file(folder: &Path) -> std::io::Result<()> {
+    match CONTROL.get() {
+        Some(control) => control.file.file().attach(folder, MAX_FILE_BYTES),
+        None => Ok(()),
+    }
+}
+
+/// Starts logging to stderr, and to the log file once [`attach_log_file`] names its folder,
+/// through `filter`. With `pinned` the level is fixed: the setting in the app does not change it.
+/// The first subscriber of the process wins, and this says whether it was this one.
+pub fn init_logging(filter: ScopedFilter, ansi: bool, pinned: bool) -> bool {
+    let control = CONTROL.get_or_init(|| LogControl {
+        filter: LiveFilter(Arc::new(RwLock::new(filter))),
+        file: file::SharedFile::default(),
+        pinned,
+    });
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
                 .with_ansi(ansi)
                 .with_writer(std::io::stderr)
-                .with_filter(filter),
+                .with_filter(control.filter.clone()),
+        )
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(control.file.clone())
+                .with_filter(control.filter.clone()),
         )
         .try_init()
         .is_ok()
+}
+
+/// [`init_logging`] with the level pinned, for a program with no settings (the guest agent).
+pub fn init_stderr(filter: ScopedFilter, ansi: bool) -> bool {
+    init_logging(filter, ansi, true)
 }
 
 #[cfg(test)]

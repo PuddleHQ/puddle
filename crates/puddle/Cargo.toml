@@ -29,6 +29,7 @@ puddle-log = { workspace = true }
 puddle-no-dump = { workspace = true }
 puddle-secrets = { workspace = true }
 puddle-settings = { workspace = true }
+serde_json = { workspace = true }
 puddle-ssh = { workspace = true }
 puddle-types = { workspace = true }
 thiserror = { workspace = true }
@@ -42,7 +43,8 @@ puddle-store = { workspace = true, features = ["testing"] }
 puddle-test-kit = { workspace = true }
 puddle-upstream = { workspace = true }
 tracing-subscriber = { workspace = true }
-serde_json = { workspace = true }
+flate2 = { workspace = true }
+tar = { workspace = true }
 puddle-boot = { workspace = true }
 puddle-compute = { workspace = true, features = ["fake"] }
 puddle-certs = { workspace = true }

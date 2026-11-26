@@ -5,6 +5,7 @@ pub mod audit;
 pub mod backup;
 pub mod data_folder;
 pub mod doctor;
+pub mod logs;
 pub mod secrets;
 pub mod serve;
 pub mod ssh_bridge;

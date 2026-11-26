@@ -430,6 +430,46 @@ impl From<ThemeChoice> for settings::ThemeChoice {
     }
 }
 
+/// How much Puddle writes to its log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LogLevelChoice {
+    /// Only what went wrong.
+    Error,
+    /// Problems that were worked around, and errors.
+    Warn,
+    /// One line for each thing Puddle did or decided.
+    Info,
+    /// Detail for each request and each step, without secrets.
+    Debug,
+    /// Every step and frame, without secrets; very long.
+    Trace,
+}
+
+impl From<settings::LogLevelChoice> for LogLevelChoice {
+    fn from(c: settings::LogLevelChoice) -> Self {
+        match c {
+            settings::LogLevelChoice::Error => Self::Error,
+            settings::LogLevelChoice::Warn => Self::Warn,
+            settings::LogLevelChoice::Info => Self::Info,
+            settings::LogLevelChoice::Debug => Self::Debug,
+            settings::LogLevelChoice::Trace => Self::Trace,
+        }
+    }
+}
+
+impl From<LogLevelChoice> for settings::LogLevelChoice {
+    fn from(c: LogLevelChoice) -> Self {
+        match c {
+            LogLevelChoice::Error => Self::Error,
+            LogLevelChoice::Warn => Self::Warn,
+            LogLevelChoice::Info => Self::Info,
+            LogLevelChoice::Debug => Self::Debug,
+            LogLevelChoice::Trace => Self::Trace,
+        }
+    }
+}
+
 /// How much room the window leaves around its content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -642,6 +682,11 @@ pub struct UiPrefs {
     #[serde(default)]
     #[schema(required = true, max_length = 1024)]
     pub ssh_agent_pipe: Option<String>,
+    /// How much Puddle writes to its log (default `info`); takes effect at once. `PUDDLE_LOG` in
+    /// the environment wins over it.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub log_level: Option<LogLevelChoice>,
 }
 
 impl From<&settings::UiPrefs> for UiPrefs {
@@ -674,6 +719,7 @@ impl From<&settings::UiPrefs> for UiPrefs {
             disk_warn_free_gb: u.disk_warn_free_gb.map(Into::into),
             disk_fail_free_gb: u.disk_fail_free_gb.map(Into::into),
             ssh_agent_pipe: u.ssh_agent_pipe.clone(),
+            log_level: u.log_level.map(Into::into),
         }
     }
 }
@@ -745,6 +791,7 @@ impl UiPrefs {
             disk_warn_free_gb,
             disk_fail_free_gb,
             ssh_agent_pipe,
+            log_level,
         } = self;
         prefs.theme = theme.map(Into::into);
         prefs.density = density.map(Into::into);
@@ -774,6 +821,7 @@ impl UiPrefs {
         prefs.disk_warn_free_gb = free_gb(disk_warn_free_gb)?;
         prefs.disk_fail_free_gb = free_gb(disk_fail_free_gb)?;
         prefs.ssh_agent_pipe = agent_pipe_text(ssh_agent_pipe)?;
+        prefs.log_level = log_level.map(Into::into);
         // The failure line above the warning line would make the warning unreachable.
         settings::DiskSpaceLimits::new(
             prefs

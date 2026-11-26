@@ -518,6 +518,13 @@ impl Effective {
         self.switch("headless") == Some(true)
     }
 
+    /// Whether a log filter was set, by a flag, the environment or the config file: the settings
+    /// screen then leaves the level alone.
+    #[must_use]
+    pub fn log_is_set(&self) -> bool {
+        self.values.contains_key("log")
+    }
+
     /// The log filter, `info` when none was set.
     #[must_use]
     pub fn log_filter(&self) -> ScopedFilter {

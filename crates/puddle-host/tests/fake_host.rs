@@ -9,7 +9,7 @@
     reason = "a failed step fails the test; emptiness reads best as a plain assert"
 )]
 
-mod support;
+use puddle_host_test_support::support;
 
 #[cfg(target_os = "linux")]
 #[path = "fake_host/api_latency.rs"]

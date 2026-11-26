@@ -7,8 +7,8 @@
 //! The control first: with the route dead, pulling an image that is not in the cache fails with
 //! the registry named, so the later start is not a start that happened to have a route.
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;

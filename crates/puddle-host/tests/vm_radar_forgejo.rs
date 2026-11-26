@@ -15,8 +15,8 @@
 //! "" windows`) through the same fixture (`vm_radar_*` is left out of the per-pull-request VM jobs:
 //! ci/vm-filter.sh; lab-forgejo.yml runs it on both).
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::collections::BTreeSet;
 use std::time::Duration;

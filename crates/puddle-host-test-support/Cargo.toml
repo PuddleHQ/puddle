@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[package]
+name = "puddle-host-test-support"
+description = "Rigs the puddle-host integration tests share (API client, event stream, VM host harness); dev-dependency only, never part of the product"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+base64 = { workspace = true }
+puddle-api = { workspace = true }
+puddle-certs = { workspace = true }
+puddle-compute = { workspace = true }
+puddle-compute-msb = { workspace = true }
+puddle-e2e = { workspace = true }
+puddle-host = { workspace = true }
+puddle-proxy = { workspace = true, features = ["testing"] }
+puddle-runtime = { workspace = true }
+puddle-secrets = { workspace = true }
+puddle-ssh = { workspace = true }
+puddle-store = { workspace = true, features = ["testing"] }
+puddle-test-kit = { workspace = true }
+puddle-types = { workspace = true, features = ["testing"] }
+puddle-upstream = { workspace = true, features = ["testing"] }
+puddle-vm-tests = { workspace = true }
+rustls = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+url = { workspace = true }
+
+[lints]
+workspace = true

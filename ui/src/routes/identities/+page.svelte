@@ -167,7 +167,7 @@
           <th scope="col">Last test</th>
           <th scope="col">Used by</th>
           <th scope="col">
-            Order{" "}<span class="visually-hidden">
+            Order <span class="visually-hidden">
               (first match is the commit author)
             </span>
           </th>

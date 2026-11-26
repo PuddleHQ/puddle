@@ -15,7 +15,7 @@ use std::sync::{Mutex, PoisonError};
 
 use puddle_store::UserId;
 
-use crate::wire::{UiError, UiErrorList, UiErrorReport};
+use puddle_services::wire::{UiError, UiErrorList, UiErrorReport};
 
 /// The most errors kept, for all users together; the oldest make room.
 pub(crate) const KEEP: usize = 50;

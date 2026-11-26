@@ -9,10 +9,12 @@
 
 use std::collections::BTreeMap;
 
-use puddle_api::phase::begin;
-use puddle_api::{
-    AddRepository, Checkouts, Found, FoundList, NewRepository, RemoteNote, RepoUrl, check_addition,
-    check_seen, checkouts_view, why_no_remote,
+use puddle_services::workspaces::phase::begin;
+use puddle_services::{
+    checkouts::AddRepository, checkouts::Checkouts, checkouts::Found, checkouts::FoundList,
+    checkouts::RemoteNote, checkouts::check_addition, checkouts::check_seen,
+    checkouts::checkouts_view, checkouts::why_no_remote, workspaces::NewRepository,
+    workspaces::RepoUrl,
 };
 
 use super::{
@@ -463,8 +465,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }
         };
         check_seen(directory, seen, &url)?;
-        let entry = puddle_api::new_entry_id(|e| record.repositories.iter().any(|r| r.entry == *e))
-            .map_err(WorkspaceError::unavailable)?;
+        let entry = puddle_services::workspaces::new_entry_id(|e| {
+            record.repositories.iter().any(|r| r.entry == *e)
+        })
+        .map_err(WorkspaceError::unavailable)?;
         let new = NewRepository {
             repository: Repository {
                 entry,

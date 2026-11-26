@@ -14,9 +14,10 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use puddle_api::{
-    EndReason, MAX_MESSAGE_BYTES, TerminalEnd, TerminalError, TerminalInput, TerminalLink,
-    TerminalOutput, TerminalSize, WINDOW_BYTES,
+use puddle_services::{
+    terminals::EndReason, terminals::MAX_MESSAGE_BYTES, terminals::TerminalEnd,
+    terminals::TerminalError, terminals::TerminalInput, terminals::TerminalLink,
+    terminals::TerminalOutput, terminals::TerminalSize, terminals::WINDOW_BYTES,
 };
 use puddle_types::WorkspaceId;
 use russh::client::{self, Handler};

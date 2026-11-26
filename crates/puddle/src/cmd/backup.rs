@@ -11,6 +11,7 @@ use std::process::ExitCode;
 use puddle_host::HostPaths;
 
 use crate::cli::{Command, UsageError};
+use crate::cmd::CommandError;
 use crate::cmd::data_folder;
 use crate::cmd::serve::options::Flags;
 
@@ -62,7 +63,7 @@ where
 )]
 pub fn run(args: &BackupArgs) -> ExitCode {
     let located = std::env::current_dir()
-        .map_err(|e| e.to_string())
+        .map_err(CommandError::WorkingDirectory)
         .and_then(|cwd| {
             execute(
                 args,
@@ -103,13 +104,12 @@ fn execute(
     env: &dyn Fn(&str) -> Option<OsString>,
     cwd: &Path,
     default_data_dir: Result<PathBuf, puddle_fs::DataDirError>,
-    // string-error-ok: a subcommand's error is the line main prints before exiting 1; nothing matches on a kind
-) -> Result<puddle_host::BackupReport, String> {
-    let data = match data_folder::configured(&args.flags, env, cwd).map_err(|e| e.to_string())? {
+) -> Result<puddle_host::BackupReport, CommandError> {
+    let data = match data_folder::configured(&args.flags, env, cwd)? {
         Some(dir) => dir,
-        None => default_data_dir.map_err(|e| e.to_string())?,
+        None => default_data_dir?,
     };
-    puddle_host::backup(&HostPaths::new(data), &args.dest).map_err(|e| e.to_string())
+    Ok(puddle_host::backup(&HostPaths::new(data), &args.dest)?)
 }
 
 #[cfg(test)]

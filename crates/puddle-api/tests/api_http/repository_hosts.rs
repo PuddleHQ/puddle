@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Creating a workspace allows the host of its repositories (rules R-58), over real HTTP.
 
-use puddle_api::{DisplayName, RepoUrl, Repository, Unsaved, WorkspaceRecord};
+use puddle_services::{
+    fake_workspaces::Unsaved, workspaces::DisplayName, workspaces::RepoUrl, workspaces::Repository,
+    workspaces::WorkspaceRecord,
+};
 use puddle_store::UserId;
 use puddle_types::{CheckoutDir, EntryId, WorkspaceId, WorkspaceStatus};
 use serde_json::{Value, json};
@@ -249,7 +252,7 @@ async fn the_form_reads_the_default_image_and_a_line_about_it() {
     let reply = api.get("/api/workspaces/default-image").await;
     assert_eq!(reply.status, 200, "{}", reply.body);
     let body = reply.json();
-    assert_eq!(body["image"], puddle_api::DEFAULT_IMAGE);
+    assert_eq!(body["image"], puddle_services::workspaces::DEFAULT_IMAGE);
     assert!(
         body["description"]
             .as_str()

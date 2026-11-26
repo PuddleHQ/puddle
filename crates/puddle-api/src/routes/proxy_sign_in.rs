@@ -7,11 +7,11 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use puddle_upstream::ProxyAddr;
 
-use crate::ApiErrorBody;
-use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
-use crate::wire::{ProxySignInList, ProxySignInRequest};
+use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, blocking};
+use puddle_services::wire::{ProxySignInList, ProxySignInRequest};
 
 fn proxy_addr(text: &str) -> Result<ProxyAddr, ApiError> {
     ProxyAddr::parse(text).map_err(|_| {

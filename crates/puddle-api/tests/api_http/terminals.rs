@@ -2,11 +2,13 @@
 //! Terminals over a real WebSocket: the ticket, the limits, the messages and the ends.
 
 use futures_util::{SinkExt as _, StreamExt as _};
-use puddle_api::{
-    ApiConfig, EndReason, MAX_IN_ALL, MAX_MESSAGE_BYTES, MAX_PER_WORKSPACE, SUBPROTOCOL,
-    TerminalEnd, TerminalError,
-};
+use puddle_api::ApiConfig;
 use puddle_api::{PublicHost, Remote, RemoteServing};
+use puddle_services::{
+    terminals::EndReason, terminals::MAX_IN_ALL, terminals::MAX_MESSAGE_BYTES,
+    terminals::MAX_PER_WORKSPACE, terminals::SUBPROTOCOL, terminals::TerminalEnd,
+    terminals::TerminalError,
+};
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message;
@@ -338,7 +340,7 @@ async fn a_ticket_runs_out_after_thirty_seconds() {
     workspace(&api, "shop").await;
     let (terminal, ticket) = ticket(&api, "shop").await;
     tokio::time::pause();
-    tokio::time::advance(puddle_api::TICKET_LIFETIME).await;
+    tokio::time::advance(puddle_services::terminals::TICKET_LIFETIME).await;
     tokio::time::resume();
     let offer = format!("{SUBPROTOCOL}, ticket.{ticket}");
     assert_eq!(

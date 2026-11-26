@@ -351,7 +351,10 @@ async fn the_health_report_names_what_windows_holds_and_hides_what_is_secret() {
         )
     };
     let pac = pac_server().await;
-    let with_secrets = pac.replacen("http://", "http://svc:hunter2@", 1) + "?key=topsecret";
+    let with_secrets = format!(
+        "{}?key=topsecret",
+        pac.replacen("http://", "http://svc:hunter2@", 1)
+    );
     let _url = RegValue::set("AutoConfigURL", "REG_SZ", &with_secrets);
     let health = discovery().health().await;
     assert_eq!(health.detected, Detected::Pac);

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! A workspace's managed tools: what its mise files ask for, and edits of the root `mise.toml`
-//! through mise's own commands. The routes only translate; [`crate::WorkspaceService`] does the
+//! through mise's own commands. The routes only translate; [`puddle_services::workspaces::WorkspaceService`] does the
 //! work. Everything in an answer that came from the guest is untrusted text: escape it.
 
 use axum::Json;
@@ -9,12 +9,12 @@ use axum::http::StatusCode;
 use puddle_types::{ToolName, ToolVersion, ToolsFileHash};
 use serde::Deserialize;
 
-use crate::ApiErrorBody;
-use crate::error::ApiError;
 use crate::extract::{Path, Query};
 use crate::routes::AppState;
 use crate::routes::workspaces::workspace_id;
-use crate::wire::{ToolChangeRequest, ToolRegistry, ToolVersions, ToolsListing};
+use puddle_services::error::ApiError;
+use puddle_services::error::ApiErrorBody;
+use puddle_services::wire::{ToolChangeRequest, ToolRegistry, ToolVersions, ToolsListing};
 
 fn invalid<E: std::fmt::Display>(e: E) -> ApiError {
     ApiError::invalid(e.to_string())

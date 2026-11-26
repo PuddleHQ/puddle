@@ -2,7 +2,7 @@
 use puddle_store::UserId;
 
 use super::*;
-use crate::wire::{UiErrorKind, UiErrorReport};
+use puddle_services::wire::{UiErrorKind, UiErrorReport};
 
 const API_TOKEN: &str = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0";
 

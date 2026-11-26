@@ -3,7 +3,7 @@
 //! three sandboxes at once with their own routes, `--max-memory` never set, the guest's open-file
 //! limits, a stop that gives the guest's processes their SIGTERM first, and (fork) SSH reporting a
 //! signal-killed command as a failure.
-mod support;
+use puddle_compute_msb_test_support as support;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

@@ -195,12 +195,21 @@ pub async fn read_events_at(slot: ApiSlot, state: Arc<SseState>) {
 #[derive(Debug, Default)]
 pub struct W4Window {
     seen: VecDeque<(u64, bool)>,
+    paused: bool,
 }
 
 impl W4Window {
-    /// Notes the outcome of one request at `time` (epoch seconds).
+    /// Notes the outcome of one request at `time` (epoch seconds); nothing while paused.
     pub fn record(&mut self, time: u64, ok: bool) {
-        self.seen.push_back((time, ok));
+        if !self.paused {
+            self.seen.push_back((time, ok));
+        }
+    }
+
+    /// Stops (or resumes) counting requests: a planned restart of the server leaves the forwarded
+    /// port unanswered by design, so that gap is not a failure.
+    pub fn pause(&mut self, paused: bool) {
+        self.paused = paused;
     }
 
     /// The share of the requests in the last `window` seconds that failed; `None` with no request
@@ -232,6 +241,34 @@ pub async fn probe_web_app(
             .is_ok_and(|r| (200..400).contains(&r.status));
         window.lock().unwrap().record(now(), ok);
         tokio::time::sleep(every).await;
+    }
+}
+
+/// Seconds the web app may take to answer again after a planned restart, counted from the moment
+/// the workspaces are back; slower is a MAJOR finding.
+pub const W4_RECOVERY_BOUND: Duration = Duration::from_secs(60);
+
+/// Requests `path` from `target` every `poll` until it answers with a 2xx or 3xx status; the time
+/// that took, or `None` when it still has not answered after `bound`.
+pub async fn time_to_answer(
+    target: &Target,
+    path: &str,
+    bound: Duration,
+    poll: Duration,
+) -> Option<Duration> {
+    let start = Instant::now();
+    // flake-ok: the run's own wait for the app after a restart, bounded by `bound`, not a test wait
+    loop {
+        if get(target, path)
+            .await
+            .is_ok_and(|r| (200..400).contains(&r.status))
+        {
+            return Some(start.elapsed());
+        }
+        if start.elapsed() >= bound {
+            return None;
+        }
+        tokio::time::sleep(poll).await;
     }
 }
 
@@ -397,11 +434,16 @@ pub struct Sampler {
     root: Arc<Mutex<Option<u32>>>,
     sse: Arc<SseState>,
     w4: Arc<Mutex<W4Window>>,
+    w4_window_secs: u64,
     cpu_before: Option<(u64, u64)>,
 }
 
-/// Seconds the failed-request share covers.
+/// Seconds the failed-request share covers when the caller names no other (5 playbook minutes of
+/// the full profile).
 pub const W4_WINDOW_SECS: u64 = 300;
+
+/// Seconds between the web-app requests when the caller names no other.
+pub const W4_EVERY: Duration = Duration::from_secs(10);
 
 impl Sampler {
     /// A sampler with its event reader and web-app prober started on the current tokio runtime.
@@ -411,22 +453,51 @@ impl Sampler {
         let api = Arc::new(Mutex::new(cfg.api.clone()));
         tokio::spawn(read_events_at(api.clone(), sse.clone()));
         let w4 = Arc::new(Mutex::new(W4Window::default()));
-        if let Some(target) = cfg.w4.clone() {
-            tokio::spawn(probe_web_app(
-                target,
-                "/".to_owned(),
-                Duration::from_secs(10),
-                w4.clone(),
-                now,
-            ));
-        }
-        Self {
+        let mut sampler = Self {
             cfg,
             api,
             root: Arc::new(Mutex::new(None)),
             sse,
             w4,
+            w4_window_secs: W4_WINDOW_SECS,
             cpu_before: None,
+        };
+        if let Some(target) = sampler.cfg.w4.clone() {
+            sampler.watch_web_app(target, W4_EVERY, W4_WINDOW_SECS, now);
+        }
+        sampler
+    }
+
+    /// Starts requesting the web app every `every`; the share that failed covers `window_secs`.
+    /// A run calls this once the app is up, so the time it took to start is not counted.
+    pub fn watch_web_app(
+        &mut self,
+        target: Target,
+        every: Duration,
+        window_secs: u64,
+        now: fn() -> u64,
+    ) {
+        self.w4_window_secs = window_secs;
+        tokio::spawn(probe_web_app(
+            target,
+            "/".to_owned(),
+            every,
+            self.w4.clone(),
+            now,
+        ));
+    }
+
+    /// Stops counting the web-app requests (or counts them again) around a planned restart.
+    pub fn w4_paused(&self, paused: bool) {
+        self.w4.lock().unwrap().pause(paused);
+    }
+
+    /// After a planned restart: how long the web app takes to answer, or `None` past `bound`; a run
+    /// that does not watch the web app has nothing to wait for (zero).
+    pub async fn web_recovery(&self, bound: Duration) -> Option<Duration> {
+        match &self.cfg.w4 {
+            Some(target) => time_to_answer(target, "/", bound, Duration::from_secs(1)).await,
+            None => Some(Duration::ZERO),
         }
     }
 
@@ -452,9 +523,9 @@ impl Sampler {
         into.push(now, "sse.age_s", age);
         #[expect(clippy::cast_precision_loss, reason = "reconnect counts are tiny")]
         into.push(now, "sse.reconnects", reconnects as f64);
-        if self.cfg.w4.is_some()
-            && let Some(share) = self.w4.lock().unwrap().fail_share(now, W4_WINDOW_SECS)
-        {
+        let window = self.w4_window_secs;
+        let share = self.w4.lock().unwrap().fail_share(now, window);
+        if let Some(share) = share {
             into.push(now, "w4.fail_share", share);
         }
     }

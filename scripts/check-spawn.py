@@ -48,6 +48,8 @@ EXEMPT = {
     "puddle-vm-tests": "a test harness",
     "puddle-test-kit": "a test harness",
     "puddle-proxy-test-support": "a test harness",
+    "puddle-host-test-support": "a test harness",
+    "puddle-compute-msb-test-support": "a test harness",
 }
 
 FIX = (

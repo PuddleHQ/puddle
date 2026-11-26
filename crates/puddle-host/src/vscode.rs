@@ -8,7 +8,10 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
-use puddle_api::{DesktopTarget, LaunchError, Launcher, WorkspaceRecord};
+use puddle_services::{
+    workspaces::DesktopTarget, workspaces::LaunchError, workspaces::Launcher,
+    workspaces::WorkspaceRecord,
+};
 
 /// How long `code` is given to say it failed. It normally hands the request to the running
 /// VS Code and returns at once; one that is still running after this is VS Code starting up.

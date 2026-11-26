@@ -80,7 +80,11 @@ fn the_request_takes_a_folder_and_an_optional_report_flag() {
         &["", "--missing"],
         &["a", "--missing", "x"],
     ] {
-        assert_eq!(Request::parse(bad), Err(USAGE.to_owned()), "{bad:?}");
+        assert_eq!(
+            Request::parse(bad),
+            Err(UsageError::Shape(USAGE)),
+            "{bad:?}"
+        );
     }
 }
 

@@ -47,7 +47,7 @@ impl Report {
             .or_else(|| payload.downcast_ref::<String>().cloned())
             .unwrap_or_else(|| "(no message)".to_owned());
         Self {
-            version: env!("CARGO_PKG_VERSION").to_owned(),
+            version: puddle_types::VERSION.to_owned(),
             platform: format!("{} {}", std::env::consts::OS, std::env::consts::ARCH),
             thread: std::thread::current()
                 .name()
@@ -110,7 +110,7 @@ pub fn write_startup_error(dir: &Path, reason: &str) -> io::Result<PathBuf> {
     let text = format!(
         "Puddle did not start. This file stays on this computer; nothing was sent anywhere.\n\n\
          version:  {}\nplatform: {} {}\nreason:   {reason}\n",
-        env!("CARGO_PKG_VERSION"),
+        puddle_types::VERSION,
         std::env::consts::OS,
         std::env::consts::ARCH,
     );

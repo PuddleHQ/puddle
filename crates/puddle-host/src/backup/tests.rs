@@ -426,7 +426,7 @@ fn the_archive_of_a_folder_without_a_database_is_refused_and_leaves_nothing() {
 
 #[tokio::test]
 async fn the_api_service_streams_the_archive_and_names_a_missing_database() {
-    use puddle_api::BackupService as _;
+    use puddle_services::backup::BackupService as _;
     use tokio::io::AsyncReadExt as _;
 
     let root = tempfile::tempdir().unwrap();

@@ -11,7 +11,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use futures_util::future::BoxFuture;
-use puddle_api::{RepoUrl, Repository, SettingsRepo, SettingsRepoError, StartFolder};
+use puddle_api::{SettingsRepo, SettingsRepoError};
+use puddle_services::{workspaces::RepoUrl, workspaces::Repository, workspaces::StartFolder};
 use puddle_store::{UserId, WorkspaceOwners};
 use puddle_types::{CheckoutDir, EntryId, SessionUser, WorkspaceId};
 use serde::{Deserialize, Serialize};
@@ -342,7 +343,7 @@ pub(crate) struct Stored {
     /// The user the workspace belongs to.
     pub(crate) owner: UserId,
     /// What the user calls the workspace: display text, nothing is keyed by it.
-    pub(crate) name: puddle_api::DisplayName,
+    pub(crate) name: puddle_services::workspaces::DisplayName,
     /// The repositories Puddle manages for it, in the order they were added.
     pub(crate) repositories: Vec<Repository>,
     /// Where terminals land and what the editor opens; `None` is the volume root.
@@ -504,7 +505,7 @@ impl EntryV3 {
     /// The entry as a [`Stored`] of `owner`.
     fn check(self, owner: UserId) -> Result<Stored, BookError> {
         let id = WorkspaceId::new(&self.id).map_err(|e| bad_entry(&self.id, "has a bad id", e))?;
-        let name = puddle_api::DisplayName::parse(&self.name)
+        let name = puddle_services::workspaces::DisplayName::parse(&self.name)
             .map_err(|e| bad_entry(&self.id, "has a bad name", e))?;
         let mut taken: Vec<EntryId> = Vec::new();
         for given in self.repositories.iter().filter_map(|r| r.entry.as_deref()) {
@@ -525,7 +526,7 @@ impl EntryV3 {
                 EntryId::new(given)
                     .map_err(|e| bad_entry(&self.id, "has a bad repository entry id", e))?
             } else {
-                let fresh = puddle_api::new_entry_id(|e| taken.contains(e))
+                let fresh = puddle_services::workspaces::new_entry_id(|e| taken.contains(e))
                     .map_err(|e| bad_entry(&self.id, "could not give a repository an id", e))?;
                 taken.push(fresh.clone());
                 fresh

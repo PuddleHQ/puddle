@@ -32,29 +32,29 @@ use tower_http::timeout::TimeoutLayer;
 use crate::admin::AdminService;
 use crate::auth::{Guard, Listener, guard};
 use crate::authz::{Isolation, Principal, authorize};
-use crate::backup::{BackupService, NoBackup};
-use crate::credential_store::{CredentialStoreService, NoCredentialStore};
-use crate::credentials::{CredentialService, NoCredentials, NoSecretStore};
-use crate::dev_cert::{DevCertService, NoDevCert};
-use crate::doctor::{DoctorService, NoDoctor};
-use crate::error::ApiError;
 use crate::events::EventHub;
 use crate::front::{FrontAddresses, NameResolver, REFRESH_EVERY, SystemResolver};
-use crate::learned::{LearnedService, NoLearned};
-use crate::network_health::{NetworkHealthService, NoNetworkHealth};
-use crate::ports::{NoPorts, PortsService};
-use crate::proxy_sign_in::{NoProxySignIns, ProxySignInService};
 use crate::remote::{NetworkListener, PublicHost, Remote, RemoteError, RemoteServing};
 use crate::remote_editor::RemoteEditor;
-use crate::repos::{NoRepos, RepoService};
-use crate::restore::{NoRestore, RestoreService};
 use crate::routes::{AppState, api_router, slow_router};
 use crate::settings::SettingsRepo;
 use crate::signin::SignIn;
-use crate::terminals::{NoTerminals, Registry, TerminalService};
 use crate::token::{ApiToken, ConnectionInfo};
 use crate::ui::{UiAssets, UiService};
-use crate::workspaces::{NoWorkspaces, WorkspaceService};
+use puddle_services::backup::{BackupService, NoBackup};
+use puddle_services::credential_store::{CredentialStoreService, NoCredentialStore};
+use puddle_services::credentials::{CredentialService, NoCredentials, NoSecretStore};
+use puddle_services::dev_cert::{DevCertService, NoDevCert};
+use puddle_services::doctor::{DoctorService, NoDoctor};
+use puddle_services::error::ApiError;
+use puddle_services::learned::{LearnedService, NoLearned};
+use puddle_services::network_health::{NetworkHealthService, NoNetworkHealth};
+use puddle_services::ports::{NoPorts, PortsService};
+use puddle_services::proxy_sign_in::{NoProxySignIns, ProxySignInService};
+use puddle_services::repos::{NoRepos, RepoService};
+use puddle_services::restore::{NoRestore, RestoreService};
+use puddle_services::terminals::{NoTerminals, Registry, TerminalService};
+use puddle_services::workspaces::{NoWorkspaces, WorkspaceService};
 
 /// Largest request body (the biggest real one, a settings document, is well under 4 KiB).
 const MAX_BODY_BYTES: usize = 64 * 1024;
@@ -518,23 +518,22 @@ fn tls_acceptor(identity: &crate::remote::TlsIdentity) -> Result<TlsAcceptor, Se
 }
 
 /// Binds the network listener and registers its address, before anything serves.
-async fn bind_network(
+fn bind_network(
     network: &NetworkListener,
     endpoints: &PuddleEndpoints,
 ) -> Result<BoundNetwork, ServeError> {
     let endpoint = network.endpoint();
     let requested = SocketAddr::new(endpoint.interface(), endpoint.port());
     let tls = tls_acceptor(network.tls())?;
-    let bound = async {
-        let listener = TcpListener::bind(requested).await?;
+    let bound = || {
+        let (listener, registration) = endpoints.bind(requested, EndpointKind::RemoteApi)?;
         let addr = listener.local_addr()?;
-        Ok::<_, io::Error>((listener, addr))
+        Ok::<_, io::Error>((TcpListener::from_std(listener)?, addr, registration))
     };
-    let (listener, addr) = bound.await.map_err(|source| ServeError::BindNetwork {
+    let (listener, addr, registration) = bound().map_err(|source| ServeError::BindNetwork {
         addr: requested,
         source,
     })?;
-    let registration = endpoints.register(addr, EndpointKind::RemoteApi);
     tracing::info!(%addr, "api listening for a reverse proxy (TLS)");
     Ok(BoundNetwork {
         listener,
@@ -613,12 +612,12 @@ async fn refresh_front_addresses(addresses: Arc<FrontAddresses>, mut stop: watch
 }
 
 /// Binds the network listener when remote serving has one.
-async fn bind_network_for(
+fn bind_network_for(
     config: &ApiConfig,
     endpoints: &PuddleEndpoints,
 ) -> Result<Option<BoundNetwork>, ServeError> {
     match config.remote.as_ref().and_then(Remote::network_listener) {
-        Some(network) => Ok(Some(bind_network(network, endpoints).await?)),
+        Some(network) => Ok(Some(bind_network(network, endpoints)?)),
         None => Ok(None),
     }
 }
@@ -754,13 +753,14 @@ impl ApiServer {
             port: config.port,
             source,
         };
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, config.port))
-            .await
+        // Registered before anything can serve, so there is no moment a guest could reach it.
+        let (listener, registration) = services
+            .endpoints
+            .bind((Ipv4Addr::LOCALHOST, config.port), EndpointKind::Api)
             .map_err(bind_err)?;
         let addr = listener.local_addr().map_err(bind_err)?;
-        // Registered before anything can serve, so there is no moment a guest could reach it.
-        let registration = services.endpoints.register(addr, EndpointKind::Api);
-        let network = bind_network_for(&config, &services.endpoints).await?;
+        let listener = TcpListener::from_std(listener).map_err(bind_err)?;
+        let network = bind_network_for(&config, &services.endpoints)?;
         let fronts_names =
             OptionFuture::from(config.remote.as_ref().map(|r| front_blocks(r, &services))).await;
         let (stop, shutdown) = watch::channel(false);

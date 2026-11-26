@@ -311,6 +311,9 @@ run_gate() {
         # are off) shows nothing of `puddle serve`, mise or the built-in mise rule set: not in the
         # CLI help or usage, not in the rule list, and no stored switch turns the layer on. The
         # `test` gate runs these tests with every feature on, where they check the opposite.
+        # the shipped crates also compile as libraries with default features: the test builds below set cfg(test),
+        # which hides an item that is gated on the `testing` feature and re-exported without that gate
+        "$cargo" check --locked -p puddle -p puddle-api -p puddle-services
         "$cargo" test --locked -p puddle --test dormant
         # the advice (doctor findings, the vault warning) names no command this build refuses
         "$cargo" test --locked -p puddle-doctor --test snapshots the_no_desktop_advice_names_the_serve_command_only_when_it_is_built_in
@@ -324,7 +327,11 @@ run_gate() {
         "$cargo" test --locked --doc --workspace $skip_app --no-fail-fast
         # the fake-host and HTTP suites are the integration tests that exercise the layer; the
         # others of the workspace need a VM (vm_*) or a UI build
-        "$cargo" test --locked -p puddle-host --test fake_host
+        # The churn tests count the descriptors and threads of their whole process, so each runs
+        # alone, as under nextest (one process per test): beside 340 parallel tests in one
+        # process their counts drift by hundreds and the run fails without a leak.
+        "$cargo" test --locked -p puddle-host --test fake_host -- --skip churn::
+        "$cargo" test --locked -p puddle-host --test fake_host -- churn:: --test-threads=1
         "$cargo" test --locked -p puddle-api --test api_http
         "$cargo" test --locked -p puddle --test cli --test serve_config
         "$cargo" test --locked -p puddle-settings --test properties

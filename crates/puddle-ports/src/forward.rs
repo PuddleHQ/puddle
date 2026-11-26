@@ -52,16 +52,18 @@ impl Drop for Forward {
 }
 
 impl Forward {
-    /// Starts carrying `listener`'s connections to `guest_port` through `link`.
+    /// Binds `127.0.0.1:host_port`, registers it, and starts carrying its connections to
+    /// `guest_port` through `link`.
     pub(crate) fn start(
-        listener: TcpListener,
+        host_port: u16,
         guest_port: u16,
         link: &LinkCell,
         endpoints: &PuddleEndpoints,
         max_connections: usize,
     ) -> std::io::Result<Self> {
-        let local = listener.local_addr()?;
-        let registration = endpoints.register(local, EndpointKind::PinnedForward);
+        let (listener, registration) =
+            endpoints.bind(("127.0.0.1", host_port), EndpointKind::PinnedForward)?;
+        let listener = TcpListener::from_std(listener)?;
         let last_error = Arc::new(Mutex::new(LastError::default()));
         let task = tokio::spawn(serve(
             listener,

@@ -50,7 +50,7 @@ pub(super) fn create_file(path: &Path) -> io::Result<File> {
 }
 
 pub(super) fn check(file: &File) -> Result<(), CheckError> {
-    win::dacl_is_owner_only(file)?.map_err(|why| CheckError::Exposed(Exposed::Acl(why)))
+    win::dacl_is_owner_only(file)?.map_err(|why| CheckError::Exposed(Exposed::Acl(why.to_string())))
 }
 
 pub(super) fn tighten_dir(dir: &Path) -> io::Result<Option<Exposed>> {
@@ -71,7 +71,7 @@ pub(super) fn tighten_dir(dir: &Path) -> io::Result<Option<Exposed>> {
     // the files already inside, which the folder's owner-only promise covers.
     win::set_owner_only_acl(dir, true)?;
     win::dacl_is_owner_only(&open()?)?.map_err(io::Error::other)?;
-    Ok(Some(Exposed::Acl(was)))
+    Ok(Some(Exposed::Acl(was.to_string())))
 }
 
 pub(super) fn tighten_file(path: &Path) -> io::Result<Option<Exposed>> {
@@ -101,7 +101,7 @@ pub(super) fn tighten_file(path: &Path) -> io::Result<Option<Exposed>> {
     };
     win::set_owner_only_acl_on(&file)?;
     win::dacl_is_owner_only(&file)?.map_err(io::Error::other)?;
-    Ok(Some(Exposed::Acl(was)))
+    Ok(Some(Exposed::Acl(was.to_string())))
 }
 
 #[cfg(test)]

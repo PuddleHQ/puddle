@@ -80,7 +80,7 @@ where
     let mut tcp = match connect(port).await {
         Ok(tcp) => tcp,
         Err(reason) => {
-            answer(&mut stream, &Answer::refused(&reason)).await;
+            answer(&mut stream, &Answer::refused(&reason.to_string())).await;
             return;
         }
     };

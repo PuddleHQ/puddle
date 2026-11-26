@@ -35,7 +35,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use puddle_api::OpenTarget;
+use puddle_services::workspaces::OpenTarget;
 use puddle_settings::{ClipboardRead, Effective};
 use puddle_types::WorkspaceId;
 use tauri::webview::{

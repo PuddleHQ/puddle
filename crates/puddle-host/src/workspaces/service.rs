@@ -2,20 +2,27 @@
 //! The `TerminalService` and `WorkspaceService` implementations of the host.
 
 use futures_util::future::BoxFuture;
-use puddle_api::phase::{Action, admit, begin};
-use puddle_api::{
-    AttachMode, Attached, DEFAULT_IMAGE, DeleteCheck, DisplayName, GitSetup, KeptLogins,
-    LocalCheckoutError, LocalSource, NewWorkspace, Operation, ShellInitCheck, StartFolder,
-    StartFolderChange, WorkspaceError, WorkspaceRecord, WorkspaceService, admit_delete_fingerprint,
-    admit_grow_size,
-};
-use puddle_api::{TerminalError, TerminalLink, TerminalService, TerminalSize};
 use puddle_compute::{DiskSize, Runtime};
+use puddle_services::workspaces::phase::{Action, admit, begin};
+use puddle_services::{
+    terminals::TerminalError, terminals::TerminalLink, terminals::TerminalService,
+    terminals::TerminalSize,
+};
+use puddle_services::{
+    workspaces::AttachMode, workspaces::Attached, workspaces::DEFAULT_IMAGE,
+    workspaces::DeleteCheck, workspaces::DisplayName, workspaces::GitSetup, workspaces::KeptLogins,
+    workspaces::LocalCheckoutError, workspaces::LocalSource, workspaces::NewWorkspace,
+    workspaces::Operation, workspaces::ShellInitCheck, workspaces::StartFolder,
+    workspaces::StartFolderChange, workspaces::WorkspaceError, workspaces::WorkspaceRecord,
+    workspaces::WorkspaceService, workspaces::admit_delete_fingerprint,
+    workspaces::admit_grow_size,
+};
 use puddle_store::{WorkspaceOpKind, WorkspaceOpOutcome};
 use puddle_types::{EntryId, SessionUser, WorkspaceId, WorkspaceStatus, WorkspaceStep};
 
 use puddle_workspace::{Import, LocalCheckout};
 
+use super::plumbing::CreateSaveError;
 use super::{
     HostWorkspaces, Room, SAVE_HINT, Slot, checkout_refusal, delete_check, kept_login_row,
     not_found, problem_key, room, workspace_error,
@@ -75,8 +82,8 @@ impl<R: Runtime + Clone> TerminalService for HostWorkspaces<R> {
 
 impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
     fn local_checkout(&self, path: &str) -> Result<LocalSource, LocalCheckoutError> {
-        let found =
-            LocalCheckout::open(std::path::Path::new(path)).map_err(LocalCheckoutError::Refused)?;
+        let found = LocalCheckout::open(std::path::Path::new(path))
+            .map_err(|why| LocalCheckoutError::Refused(why.to_string()))?;
         // The runtime's own rule (owner, Puddle's folders) now, not only when the create runs.
         self.inner
             .runtime
@@ -153,7 +160,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                         "Puddle is shutting down".to_owned(),
                     ));
                 }
-                if puddle_api::label_taken(
+                if puddle_services::workspaces::label_taken(
                     state.slots.values().map(|s| &s.record),
                     new.owner,
                     new.name.as_str(),
@@ -204,7 +211,8 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
             };
             let saved = {
                 let mut state = self.state();
-                let saved = stored.and_then(|()| self.persist(&state).map_err(|e| e.to_string()));
+                let saved =
+                    stored.and_then(|()| self.persist(&state).map_err(CreateSaveError::from));
                 if saved.is_err() {
                     // `git.claim` wrote the owner row, so the id is retired like a failed
                     // create's; the next save that works keeps it.
@@ -460,7 +468,11 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                         "Puddle is shutting down".to_owned(),
                     ));
                 }
-                puddle_api::check_rename(state.slots.values().map(|s| &s.record), id, &name)?;
+                puddle_services::workspaces::check_rename(
+                    state.slots.values().map(|s| &s.record),
+                    id,
+                    &name,
+                )?;
                 let slot = state.slots.get_mut(id).ok_or_else(|| not_found(id))?;
                 let before = std::mem::replace(&mut slot.record.name, name);
                 if let Err(e) = self.persist(&state) {
@@ -515,7 +527,10 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                         "Puddle is shutting down".to_owned(),
                     ));
                 }
-                puddle_api::check_start_folder_change(state.slots.values().map(|s| &s.record), id)?;
+                puddle_services::workspaces::check_start_folder_change(
+                    state.slots.values().map(|s| &s.record),
+                    id,
+                )?;
                 let slot = state.slots.get_mut(id).ok_or_else(|| not_found(id))?;
                 let before = std::mem::replace(&mut slot.record.start_folder, start_folder);
                 if let Err(e) = self.persist(&state) {
@@ -556,7 +571,10 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                     "Puddle is shutting down".to_owned(),
                 ));
             }
-            puddle_api::check_session_user_change(state.slots.values().map(|s| &s.record), id)?;
+            puddle_services::workspaces::check_session_user_change(
+                state.slots.values().map(|s| &s.record),
+                id,
+            )?;
             let slot = state.slots.get_mut(id).ok_or_else(|| not_found(id))?;
             let before = std::mem::replace(&mut slot.record.session_user, user);
             if let Err(e) = self.persist(&state) {
@@ -670,7 +688,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         &'a self,
         id: &'a WorkspaceId,
         owner: puddle_store::UserId,
-        repository: Option<puddle_api::RepoUrl>,
+        repository: Option<puddle_services::workspaces::RepoUrl>,
         git: &'a dyn GitSetup,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move { self.restore_orphan_volume(id, owner, repository, git).await })
@@ -683,14 +701,14 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
     fn checkouts<'a>(
         &'a self,
         id: &'a WorkspaceId,
-    ) -> BoxFuture<'a, Result<puddle_api::Checkouts, WorkspaceError>> {
+    ) -> BoxFuture<'a, Result<puddle_services::checkouts::Checkouts, WorkspaceError>> {
         Box::pin(async move { self.checkouts_of(id).await })
     }
 
     fn tools<'a>(
         &'a self,
         id: &'a WorkspaceId,
-    ) -> BoxFuture<'a, Result<puddle_api::wire::ToolsListing, WorkspaceError>> {
+    ) -> BoxFuture<'a, Result<puddle_services::wire::ToolsListing, WorkspaceError>> {
         Box::pin(async move { self.tools_of(id).await })
     }
 
@@ -700,7 +718,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         name: &'a puddle_types::ToolName,
         version: &'a puddle_types::ToolVersion,
         hash: &'a puddle_types::ToolsFileHash,
-    ) -> BoxFuture<'a, Result<puddle_api::wire::ToolsListing, WorkspaceError>> {
+    ) -> BoxFuture<'a, Result<puddle_services::wire::ToolsListing, WorkspaceError>> {
         Box::pin(async move { self.set_tool_in(id, name, version, hash).await })
     }
 
@@ -709,14 +727,14 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         id: &'a WorkspaceId,
         name: &'a puddle_types::ToolName,
         hash: &'a puddle_types::ToolsFileHash,
-    ) -> BoxFuture<'a, Result<puddle_api::wire::ToolsListing, WorkspaceError>> {
+    ) -> BoxFuture<'a, Result<puddle_services::wire::ToolsListing, WorkspaceError>> {
         Box::pin(async move { self.remove_tool_in(id, name, hash).await })
     }
 
     fn tool_registry<'a>(
         &'a self,
         id: &'a WorkspaceId,
-    ) -> BoxFuture<'a, Result<puddle_api::wire::ToolRegistry, WorkspaceError>> {
+    ) -> BoxFuture<'a, Result<puddle_services::wire::ToolRegistry, WorkspaceError>> {
         Box::pin(async move { self.tool_registry_of(id).await })
     }
 
@@ -724,7 +742,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         &'a self,
         id: &'a WorkspaceId,
         name: &'a puddle_types::ToolName,
-    ) -> BoxFuture<'a, Result<puddle_api::wire::ToolVersions, WorkspaceError>> {
+    ) -> BoxFuture<'a, Result<puddle_services::wire::ToolVersions, WorkspaceError>> {
         Box::pin(async move { self.tool_versions_of(id, name).await })
     }
 
@@ -738,7 +756,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
     fn add_repository<'a>(
         &'a self,
         id: &'a WorkspaceId,
-        add: puddle_api::AddRepository,
+        add: puddle_services::checkouts::AddRepository,
         git: &'a dyn GitSetup,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move { self.add_repository_to(id, add, git).await })

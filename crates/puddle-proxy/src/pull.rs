@@ -205,10 +205,10 @@ impl PullProxy {
     ///
     /// When the port can't be bound or the OS has no randomness.
     pub fn bind(endpoints: &PuddleEndpoints) -> io::Result<Self> {
-        let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+        let (listener, registration) =
+            endpoints.bind((Ipv4Addr::LOCALHOST, 0), EndpointKind::PullProxy)?;
         let addr = listener.local_addr()?;
         let token = PullToken::generate()?;
-        let registration = endpoints.register(addr, EndpointKind::PullProxy);
         let access = default_pull_access();
         Ok(Self {
             listener,

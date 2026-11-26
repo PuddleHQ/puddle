@@ -4,11 +4,11 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use puddle_api::WorkspaceRecord;
-use puddle_api::phase::Move;
-use puddle_api::{EndReason, TerminalError};
 use puddle_boot::GatedSandbox;
 use puddle_compute::{DiskSize, RootDiskGrowth, Runtime};
+use puddle_services::workspaces::WorkspaceRecord;
+use puddle_services::workspaces::phase::Move;
+use puddle_services::{terminals::EndReason, terminals::TerminalError};
 use puddle_store::{WorkspaceOpKind, WorkspaceOpOutcome};
 use puddle_types::{
     CheckoutDir, ImageRef, Problem, SessionUser, WorkspaceId, WorkspaceStatus, WorkspaceStep,

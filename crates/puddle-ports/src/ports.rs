@@ -15,7 +15,6 @@ use puddle_agent_proto::forward::GuestLink;
 use puddle_agent_proto::host::GuestWatcher;
 use puddle_netpolicy::{HostAddrs, OwnAddresses, PuddleEndpoints};
 use puddle_types::{Event, EventSink, WorkspaceId};
-use tokio::net::TcpListener;
 
 use crate::forward::{Forward, LinkCell, MAX_CONNECTIONS, link_cell};
 use crate::owner::{PortOwner, ProgramLookup, SystemPrograms};
@@ -278,7 +277,7 @@ impl Ports {
             Ok(pins) => {
                 for pin in pins {
                     // Nothing runs yet, so no forward is moved here.
-                    if let Err(err) = self.open(workspace, pin).await {
+                    if let Err(err) = self.open(workspace, pin) {
                         self.fail(workspace, pin, err.to_string());
                     }
                 }
@@ -454,7 +453,7 @@ impl Ports {
             .pinned(workspace)?
             .iter()
             .any(|p| p.guest_port == guest_port);
-        let opened = self.open(workspace, pin).await?;
+        let opened = self.open(workspace, pin)?;
         let saved = if pinned {
             self.inner.pins.pin(workspace, pin)
         } else if was_pinned {
@@ -523,7 +522,7 @@ impl Ports {
     }
 
     /// Opens (or keeps, or moves) the forward for `pin`; a forward it moved is not closed.
-    async fn open(&self, workspace: &WorkspaceId, pin: Pin) -> Result<Opened, PortsError> {
+    fn open(&self, workspace: &WorkspaceId, pin: Pin) -> Result<Opened, PortsError> {
         let link = {
             let mut entries = self.entries();
             let entry = entries.entry(workspace.clone()).or_default();
@@ -539,11 +538,8 @@ impl Ports {
                 owner,
             });
         }
-        let listener = TcpListener::bind(("127.0.0.1", pin.host_port))
-            .await
-            .map_err(|err| self.bind_failed(pin.host_port, &err))?;
         let forward = Forward::start(
-            listener,
+            pin.host_port,
             pin.guest_port,
             &link,
             &self.inner.endpoints,

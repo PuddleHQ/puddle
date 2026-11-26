@@ -21,8 +21,8 @@
 //! bar), `tight-stop` (the Stop bar is 2 s), `mirror-500` (the mirror answers 500: the exit
 //! codes of the jobs). The bars' own judges are unit-tested in `puddle_vm_tests::soak`.
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

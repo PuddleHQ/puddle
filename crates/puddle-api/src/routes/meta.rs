@@ -5,7 +5,7 @@ use axum::Json;
 use axum::extract::State;
 
 use crate::routes::AppState;
-use crate::wire::Health;
+use puddle_services::wire::Health;
 
 /// Puddle's version and the API contract's version.
 #[utoipa::path(

@@ -90,7 +90,7 @@ async fn a_start_does_not_announce_an_image_pull() {
 async fn the_default_image_is_described_from_its_labels_once_the_host_has_read_them() {
     let rig = Rig::named_ids();
     rig.runtime.add_image(
-        &ImageRef::new(puddle_api::DEFAULT_IMAGE).unwrap(),
+        &ImageRef::new(puddle_services::workspaces::DEFAULT_IMAGE).unwrap(),
         ImageConfig {
             labels: [
                 ("dev.containers.id", "base-debian"),
@@ -106,7 +106,7 @@ async fn the_default_image_is_described_from_its_labels_once_the_host_has_read_t
     let api = api(&host);
     // The first ask starts the download and does not wait for it.
     let first = api.get("/api/workspaces/default-image").await.json();
-    assert_eq!(first["image"], puddle_api::DEFAULT_IMAGE);
+    assert_eq!(first["image"], puddle_services::workspaces::DEFAULT_IMAGE);
     eventually("the labels are read", APPLY, || {
         host.workspaces().default_image_description().as_deref()
             == Some("Debian trixie dev container")

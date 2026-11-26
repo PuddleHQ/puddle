@@ -21,13 +21,13 @@ use puddle_store::{AdminAction, Role, Store, UserFacts, UserId};
 use puddle_types::{WorkspaceId, WorkspaceStatus};
 use tokio::sync::{Notify, watch};
 
-use crate::error::{ApiError, ErrorCode, blocking};
 use crate::signin::SignIn;
-use crate::wire::{
+use puddle_services::error::{ApiError, ErrorCode, blocking};
+use puddle_services::wire::{
     AdminActionKind, AdminAuditLine, AdminAuditList, AdminStats, AdminUser, AdminUserList,
     AdminUserState, InviteIssued,
 };
-use crate::workspaces::{WorkspaceRecord, WorkspaceService};
+use puddle_services::workspaces::{WorkspaceRecord, WorkspaceService};
 
 /// How often the reaper looks for deletions to finish when nobody asks, unless the
 /// configuration says otherwise.

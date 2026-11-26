@@ -13,6 +13,7 @@ use std::time::Duration;
 use puddle_compute::{ExecRequest, Sandbox};
 use puddle_types::{SandboxName, WorkspaceId};
 
+use crate::guest_output::ScriptOutputError;
 use crate::guest_text::clean;
 use crate::{Layout, WorkspaceError};
 
@@ -257,17 +258,17 @@ pub(crate) async fn run<S: Sandbox>(
             MAX_REASON,
         )));
     }
-    parse(&out.whole_stdout_text().map_err(|e| fail(e.to_string()))?).map_err(fail)
+    parse(&out.whole_stdout_text().map_err(|e| fail(e.to_string()))?)
+        .map_err(|e| fail(e.to_string()))
 }
 
 /// Parses the check's output (see `guest/delete-check.sh`).
-// string-error-ok: the text is the message shown to the user for a guest or folder answer it cannot use; no caller branches on a kind
-pub(crate) fn parse(stdout: &str) -> Result<Findings, String> {
+pub(crate) fn parse(stdout: &str) -> Result<Findings, ScriptOutputError> {
     let mut findings = Findings::default();
     let mut done = false;
     for line in stdout.lines() {
         if done {
-            return Err("output after the end marker".into());
+            return Err(ScriptOutputError::AfterEnd);
         }
         let mut fields = line.splitn(3, '\t');
         let tag = fields.next().unwrap_or_default();
@@ -277,7 +278,7 @@ pub(crate) fn parse(stdout: &str) -> Result<Findings, String> {
             ("D", None, None) => done = true,
             ("R", Some(dir), None) => {
                 if findings.repos.len() == MAX_REPOS {
-                    return Err(format!("more than {MAX_REPOS} checkouts"));
+                    return Err(ScriptOutputError::TooManyCheckouts { max: MAX_REPOS });
                 }
                 findings.repos.push(RepoReport {
                     dir: clean(dir, MAX_LINE),
@@ -293,25 +294,36 @@ pub(crate) fn parse(stdout: &str) -> Result<Findings, String> {
                 }
             }
             ("M", Some(kind), Some(count)) => {
-                let n: u64 = count
-                    .parse()
-                    .map_err(|_| format!("bad count line {:?}", truncate(line)))?;
-                let list = listing(&mut findings, kind)
-                    .ok_or_else(|| format!("bad count line {:?}", truncate(line)))?;
+                let n: u64 = count.parse().map_err(|_| ScriptOutputError::BadCount {
+                    line: truncate(line),
+                })?;
+                let list =
+                    listing(&mut findings, kind).ok_or_else(|| ScriptOutputError::BadCount {
+                        line: truncate(line),
+                    })?;
                 list.more = list.more.saturating_add(n);
             }
             ("U" | "C" | "S", Some(_), _) => {
                 // The item is everything after the tag (status lines may hold tabs).
                 let item = line.get(2..).unwrap_or_default();
-                let list = listing(&mut findings, tag)
-                    .ok_or_else(|| format!("{tag} line before any checkout"))?;
+                let list = listing(&mut findings, tag).ok_or_else(|| {
+                    ScriptOutputError::BeforeCheckout {
+                        tag: tag.to_owned(),
+                    }
+                })?;
                 list.push(item);
             }
-            _ => return Err(format!("unexpected output line {:?}", truncate(line))),
+            _ => {
+                return Err(ScriptOutputError::UnexpectedLine {
+                    line: truncate(line),
+                });
+            }
         }
     }
     if !done {
-        return Err("the check did not finish (no end marker)".into());
+        return Err(ScriptOutputError::Unfinished {
+            script: "the check",
+        });
     }
     Ok(findings)
 }

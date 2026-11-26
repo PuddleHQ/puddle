@@ -17,7 +17,7 @@ use puddle_front::remote_label::sync_shadow_problems;
 use puddle_types::Problems;
 
 use crate::remote::WorkspaceNames;
-use crate::workspaces::WorkspaceService;
+use puddle_services::workspaces::WorkspaceService;
 
 /// Where requests under the workspaces' names are answered.
 pub(crate) struct RemoteEditor {

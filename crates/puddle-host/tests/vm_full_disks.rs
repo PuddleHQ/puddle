@@ -21,8 +21,8 @@
     reason = "VM test: JSON read from the API, a missing key fails the test"
 )]
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -207,7 +207,7 @@ async fn host_disk_fills_and_recovers(mount: PathBuf) {
         200
     );
     let (workspace, name, mut events) = running_workspace(&vm, &api, "fulh").await;
-    let dir = format!("/workspaces/{name}");
+    let dir = puddle_workspace::WORKSPACE_DIR;
 
     // Files that must come through the full disk unchanged.
     guest_ok(
@@ -344,7 +344,7 @@ async fn volume_and_root_fill() {
     .await;
     let api = Api::new(vm.host.url(), vm.host.token());
     let (workspace, name, mut events) = running_workspace(&vm, &api, "fulv").await;
-    let dir = format!("/workspaces/{name}");
+    let dir = puddle_workspace::WORKSPACE_DIR;
     let one = || async {
         let list = api.get("/api/workspaces").await.json();
         list["workspaces"]

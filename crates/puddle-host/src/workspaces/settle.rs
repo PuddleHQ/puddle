@@ -6,9 +6,9 @@ use crate::git_hosts::Authors;
 use crate::op_error::OpError;
 use std::sync::{Arc, PoisonError};
 
-use puddle_api::WorkspaceRecord;
 use puddle_boot::GatedSandbox;
 use puddle_compute::{ComputeError, Runtime, Sandbox as _};
+use puddle_services::workspaces::WorkspaceRecord;
 use puddle_store::{Actor, NewWorkspaceOp, WorkspaceOpKind, WorkspaceOpOutcome};
 use puddle_types::{Event, EventSink, GuestEnv, Problem, WorkspaceId, WorkspaceStep};
 

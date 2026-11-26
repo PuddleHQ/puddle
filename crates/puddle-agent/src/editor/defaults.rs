@@ -22,7 +22,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use puddle_agent_proto::editor::{EditorDefaults, EditorServer};
-use puddle_types::{MergeEntry, MergeFormat, MergeSpec, Merged, parse_merge_file, unmerge};
+use puddle_types::{
+    MergeEntry, MergeFormat, MergeRefusal, MergeSpec, Merged, ValidationError, parse_merge_file,
+    unmerge,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -336,32 +339,41 @@ fn written(merged: Merged, old: Vec<u8>) -> Vec<u8> {
     }
 }
 
+/// Why the editor's settings file is left as it is.
+#[derive(Debug, thiserror::Error)]
+enum SettingsRefused {
+    /// The entries to write are not a valid merge.
+    #[error(transparent)]
+    Spec(#[from] ValidationError),
+    /// The file cannot be merged into or edited.
+    #[error(transparent)]
+    File(#[from] MergeRefusal),
+}
+
 /// `existing` with `sets` written and `removes` taken out: `None` when that changes nothing, or
 /// why the file is left alone.
 fn edit_settings(
     existing: Option<Vec<u8>>,
     sets: &[MergeEntry],
     removes: &[Vec<String>],
-    // string-error-ok: the text is only printed, as the reason a file is left alone; no caller branches on a kind
-) -> Result<Option<Vec<u8>>, String> {
+) -> Result<Option<Vec<u8>>, SettingsRefused> {
     let old = existing.unwrap_or_default();
     let mut text = old.clone();
     if !sets.is_empty() {
         text = with_sets(text, sets)?;
     }
     if !removes.is_empty() {
-        let gone = unmerge(MergeFormat::Jsonc, &text, removes).map_err(|e| e.to_string())?;
+        let gone = unmerge(MergeFormat::Jsonc, &text, removes)?;
         text = written(gone.merged, text);
     }
     Ok((text != old).then_some(text))
 }
 
 /// `text` with `sets` merged in, or why the file is left alone.
-// string-error-ok: the text is only printed, as the reason a file is left alone; no caller branches on a kind
-fn with_sets(text: Vec<u8>, sets: &[MergeEntry]) -> Result<Vec<u8>, String> {
-    let spec = MergeSpec::new(MergeFormat::Jsonc, sets.to_vec()).map_err(|e| e.to_string())?;
+fn with_sets(text: Vec<u8>, sets: &[MergeEntry]) -> Result<Vec<u8>, SettingsRefused> {
+    let spec = MergeSpec::new(MergeFormat::Jsonc, sets.to_vec())?;
     let from = (!text.is_empty()).then_some(text.as_slice());
-    let merged = spec.apply(from, &[]).map_err(|e| e.to_string())?;
+    let merged = spec.apply(from, &[])?;
     Ok(written(merged, text))
 }
 

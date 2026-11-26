@@ -53,7 +53,7 @@ fn check_as(git_dir: &Path, protected: &[&Path], owner: Option<u32>) -> Result<(
             canonical.display()
         )));
     }
-    puddle_compute::check_checkout_dir(git_dir).map_err(refuse)?;
+    puddle_compute::check_checkout_dir(git_dir).map_err(|why| refuse(why.to_string()))?;
     #[cfg(unix)]
     let meta =
         std::fs::symlink_metadata(git_dir).map_err(|e| refuse(format!("can't be read: {e}")))?;
@@ -76,7 +76,7 @@ fn check_as(git_dir: &Path, protected: &[&Path], owner: Option<u32>) -> Result<(
     }
     match owner {
         #[cfg(unix)]
-        Some(uid) => owned_by(&meta, uid).map_err(refuse),
+        Some(uid) => owned_by(&meta, uid).map_err(|why| refuse(why.to_string())),
         _ => Ok(()),
     }
 }
@@ -116,17 +116,25 @@ fn within_as(path: &Path, root: &Path, fold: bool) -> bool {
 /// On Unix the checkout must belong to the user Puddle runs as, as git itself asks of a
 /// repository before it reads its config (`safe.directory`).
 #[cfg(unix)]
-// string-error-ok: the text is spliced into one user-facing refusal; no caller branches on a kind
-fn owned_by(meta: &Metadata, uid: u32) -> Result<(), String> {
+fn owned_by(meta: &Metadata, uid: u32) -> Result<(), WrongOwner> {
     use std::os::unix::fs::MetadataExt;
     if meta.uid() == uid {
         Ok(())
     } else {
-        Err(format!(
-            "belongs to another user (uid {}, Puddle runs as {uid})",
-            meta.uid()
-        ))
+        Err(WrongOwner {
+            owner: meta.uid(),
+            expected: uid,
+        })
     }
+}
+
+/// A checkout that belongs to another user than the one Puddle runs as.
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("belongs to another user (uid {owner}, Puddle runs as {expected})")]
+struct WrongOwner {
+    owner: u32,
+    expected: u32,
 }
 
 #[cfg(test)]

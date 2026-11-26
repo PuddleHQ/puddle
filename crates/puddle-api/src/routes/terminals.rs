@@ -17,14 +17,14 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 use utoipa::ToSchema;
 
-use crate::ApiErrorBody;
 use crate::auth::ReachedPublicly;
 use crate::authz::{Principal, Via};
-use crate::error::{ApiError, ErrorCode};
 use crate::extract::{Json as BodyJson, Path};
 use crate::routes::AppState;
 use crate::routes::workspaces::named;
-use crate::terminals::{
+use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, ErrorCode};
+use puddle_services::terminals::{
     EndReason, MAX_MESSAGE_BYTES, SUBPROTOCOL, TerminalEnd, TerminalError, TerminalInput,
     TerminalLink, TerminalOutput, TerminalSize,
 };
@@ -66,22 +66,6 @@ struct Ended<'a> {
     status: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     message: Option<&'a str>,
-}
-
-impl From<TerminalError> for ApiError {
-    fn from(err: TerminalError) -> Self {
-        match err {
-            TerminalError::Unavailable(m) => {
-                Self::new(StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Unavailable, m)
-            }
-            TerminalError::NotRunning(m) => Self::new(StatusCode::CONFLICT, ErrorCode::Conflict, m),
-            TerminalError::Ended(end) => Self::new(
-                StatusCode::CONFLICT,
-                ErrorCode::Conflict,
-                end.message.unwrap_or_else(|| "the terminal ended".into()),
-            ),
-        }
-    }
 }
 
 /// Asks for a terminal in a running or starting workspace. The session opens when the socket

@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, NoNames, PublicHost, Remote,
-    RemoteServing, RunningApi, Services, SettingsRepo, reset_account,
+    RemoteServing, RunningApi, Services, reset_account,
 };
 use puddle_store::{Clock as _, Limits, ManualClock, Store, UserName};
 use serde_json::{Value, json};
@@ -61,7 +61,7 @@ pub(super) async fn site_built(
     workspaces: impl FnOnce(
         &Arc<EventHub>,
         &Arc<ManualClock>,
-    ) -> Option<Arc<dyn puddle_api::WorkspaceService>>,
+    ) -> Option<Arc<dyn puddle_services::workspaces::WorkspaceService>>,
 ) -> Site {
     site_reaping(multi_user, ApiConfig::default().reap_every, workspaces).await
 }
@@ -73,7 +73,7 @@ pub(super) async fn site_reaping(
     workspaces: impl FnOnce(
         &Arc<EventHub>,
         &Arc<ManualClock>,
-    ) -> Option<Arc<dyn puddle_api::WorkspaceService>>,
+    ) -> Option<Arc<dyn puddle_services::workspaces::WorkspaceService>>,
 ) -> Site {
     let clock = Arc::new(ManualClock::new(START_MS));
     let events = Arc::new(EventHub::default());
@@ -87,7 +87,7 @@ pub(super) async fn site_reaping(
     let made = workspaces(&events, &clock);
     let mut services = Services::new(
         store.clone(),
-        Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>,
+        Arc::new(MemorySettings::default()),
         events,
         clock.clone(),
     )
@@ -1172,7 +1172,7 @@ async fn with_remote_serving_off_there_is_nobody_to_sign_in_to() {
     let store = Arc::new(Store::open_in_memory(clock.clone(), Limits::default()).unwrap());
     let services = Services::new(
         store.clone(),
-        Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>,
+        Arc::new(MemorySettings::default()),
         events,
         clock,
     )
@@ -1211,7 +1211,7 @@ async fn without_accounts_the_routes_answer_unavailable() {
     let store = Arc::new(Store::open_in_memory(clock.clone(), Limits::default()).unwrap());
     let services = Services::new(
         store,
-        Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>,
+        Arc::new(MemorySettings::default()),
         Arc::new(EventHub::default()),
         clock,
     )
@@ -1297,7 +1297,10 @@ async fn signing_a_device_out_closes_its_open_terminal() {
         api.addr,
         &format!("/api/workspaces/box/terminals/{terminal}"),
         Some(HOST),
-        &format!("{}, ticket.{ticket}", puddle_api::SUBPROTOCOL),
+        &format!(
+            "{}, ticket.{ticket}",
+            puddle_services::terminals::SUBPROTOCOL
+        ),
     )
     .await;
     let id = one.json()["device"]["id"].as_i64().unwrap();

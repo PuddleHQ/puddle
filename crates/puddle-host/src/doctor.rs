@@ -5,10 +5,11 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use puddle_api::{HostDoctor, SettingsRepo};
+use puddle_api::SettingsRepo;
 use puddle_doctor::boot::boot_logs_dir;
 use puddle_doctor::{Options, SystemProbe, diagnose};
 use puddle_runtime::{DevOverride, RuntimeLayout, RuntimeVersion};
+use puddle_services::doctor::HostDoctor;
 use puddle_settings::{DiskSpaceLimits, GlobalSettings, UiPrefs};
 
 use crate::HostPaths;

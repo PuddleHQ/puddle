@@ -10,7 +10,7 @@ use puddle_proxy::{
     Placement, SecretValue, StandIn, StandInOrigin, TerminationSet, secret_stand_in,
 };
 use puddle_secrets::SecretStore;
-use puddle_store::{SecretPlace, StartValue, Store};
+use puddle_store::{MintError, SecretPlace, StartValue, Store};
 use puddle_types::{GuestEnv, WorkspaceId};
 
 /// Why a workspace's environment could not be resolved. The messages are for the user.
@@ -124,7 +124,7 @@ pub(crate) fn resolve(
 ) -> Result<Resolved, EnvironmentError> {
     let vars = store
         .env_for_start(workspace, &mut |name| {
-            secret_stand_in(name.as_str()).map_err(|e| e.to_string())
+            secret_stand_in(name.as_str()).map_err(MintError::from)
         })
         .map_err(EnvironmentError::store(workspace))?;
     let mut guest = GuestEnv::new();

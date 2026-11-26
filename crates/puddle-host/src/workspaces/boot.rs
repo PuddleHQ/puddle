@@ -4,9 +4,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use puddle_api::{StartFolder, WorkspaceRecord};
 use puddle_boot::{Gate, GatedSandbox};
 use puddle_compute::{DiskSize, ExecRequest, ImageConfig, Runtime, Sandbox as _};
+use puddle_services::{workspaces::StartFolder, workspaces::WorkspaceRecord};
 use puddle_types::{
     CheckoutDir, GuestEnv, GuestFile, GuestPath, Problem, SessionUser, WorkspaceId, WorkspaceStep,
 };
@@ -85,6 +85,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 return Err(self.abort_attachment(attachment, reason).await);
             }
         };
+        // The guests mount the code-server folder, which the host copies in the background.
+        if let Err(e) = inner.kit.code_server_ready().await {
+            route.shutdown().await;
+            return Err(self.abort_attachment(attachment, e.into()).await);
+        }
         let spec = attachment
             .add_to(
                 inner

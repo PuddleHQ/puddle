@@ -78,6 +78,10 @@ puddle-compute-msb-test-support = { path = "crates/puddle-compute-msb-test-suppo
 microsandbox = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.8", default-features = false, features = ["local", "net", "ssh"] }
 # The SDK's image crate: the SDK has no public "pull without creating" call.
 microsandbox-image = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.8", default-features = false }
+# The registry client msb pulls with: the pull error is matched on its typed variants (a refused connect); the same release msb pins.
+oci-client = { version = "0.18", default-features = false }
+# Builds a real connect failure for the pull error tests; the same release oci-client pulls in.
+reqwest = { version = "0.13", default-features = false }
 # Only for building the SDK's boot error in tests.
 microsandbox-runtime = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.8", default-features = false }
 object = { version = "0.41", default-features = false }

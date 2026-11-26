@@ -194,14 +194,14 @@ them on. Puddle's own endpoints and local addresses are the exceptions (9.2.6).
 
 ### 9.2.4 One rule list with an explicit precedence
 
-**Status:** accepted, built (the simple list; nested groups and the rest of the rules rewrite
+**Status:** accepted, built (the simple list; nested rule sets and the rest of the rules rewrite
 come later).
 
 **Context.** Rules used to decide by a hidden order (specificity, workspace over global, deny over
 allow, sets filling gaps), and "why was this allowed" had no answer on screen.
 
-**Options considered.** Keep the implicit order and explain it; rank rules in groups like
-free-standing rules; an explicit precedence on every rule.
+**Options considered.** Keep the implicit order and explain it; rank the rules of a rule set
+like free-standing rules; an explicit precedence on every rule.
 
 **Decision.** Every rule has a precedence from 1 to 9 (default 5); the highest matching
 precedence wins, even over a more specific rule. Built-in and System managed entries sit below

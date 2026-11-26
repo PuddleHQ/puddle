@@ -159,7 +159,7 @@ async fn a_window_that_cannot_sign_in_names_the_workspace_by_its_name_not_its_id
     create_as(&api, &mut events, "Acme Web", "acme-web").await;
     let _editor = editor_stand_in(&rig, "acme-web").await;
     let target = browser_target(&rig, &api, "acme-web").await;
-    let Some(puddle_api::EditorSignIn::Form(login)) = target.login else {
+    let Some(puddle_services::EditorSignIn::Form(login)) = target.login else {
         panic!("code-server signs in with its login form");
     };
     api.post("/api/workspaces/acme-web/stop", "").await;

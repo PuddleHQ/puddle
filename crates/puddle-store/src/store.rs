@@ -13,7 +13,8 @@ use std::time::Duration;
 
 use puddle_types::{
     ConnectionOrigin, Decision, EgressRequest, Event, EventSink, Host, NullSink, PendingId,
-    PendingOutcome, PendingSummary, Policy, PolicyError, RuleId, SuffixAllows, WorkspaceId,
+    PendingOutcome, PendingSummary, Policy, PolicyError, Program, RuleId, SuffixAllows,
+    WorkspaceId,
 };
 use rusqlite::{
     Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params,
@@ -551,6 +552,7 @@ impl Store {
     ) -> Result<PendingOutcome, StoreError> {
         let (workspace, host) = (request.workspace.as_str(), request.host.to_string());
         let exact_only = suffix_allows == SuffixAllows::Ignore;
+        let program = request.program.as_ref().map(Program::as_str);
         let existing: Option<i64> = tx
             .query_row(
                 "SELECT id FROM pending
@@ -562,9 +564,10 @@ impl Store {
         if let Some(id) = existing {
             let (attempts, last_seen): (i64, i64) = tx.query_row(
                 "UPDATE pending SET last_seen = max(last_seen, ?1), attempts = attempts + 1,
-                                    exact_only = max(exact_only, ?3)
+                                    exact_only = max(exact_only, ?3),
+                                    program = coalesce(program, ?4)
                  WHERE id = ?2 RETURNING attempts, last_seen",
-                params![sql_ts(now), id, exact_only],
+                params![sql_ts(now), id, exact_only, program],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
             fx.push(Event::PendingUpdated {
@@ -589,9 +592,16 @@ impl Store {
             return Ok(PendingOutcome::Unlisted);
         }
         tx.execute(
-            "INSERT INTO pending (workspace_id, host, port, first_seen, last_seen, exact_only)
-             VALUES (?1, ?2, ?3, ?4, ?4, ?5)",
-            params![workspace, host, request.port, sql_ts(now), exact_only],
+            "INSERT INTO pending (workspace_id, host, port, first_seen, last_seen, exact_only, program)
+             VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6)",
+            params![
+                workspace,
+                host,
+                request.port,
+                sql_ts(now),
+                exact_only,
+                program
+            ],
         )?;
         let id = PendingId(tx.last_insert_rowid());
         let row = load_pending(tx, id)?;

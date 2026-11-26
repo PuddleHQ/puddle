@@ -2,7 +2,7 @@
 //! Rule and pending rows: their SQL and the decoding of what the database stores.
 
 use puddle_types::{
-    Event, Host, PendingEnd, PendingId, PendingSummary, RuleId, SuffixAllows, WorkspaceId,
+    Event, Host, PendingEnd, PendingId, PendingSummary, Program, RuleId, SuffixAllows, WorkspaceId,
 };
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 
@@ -214,8 +214,9 @@ pub(super) fn reopen_rows(
             continue;
         }
         tx.execute(
-            "INSERT INTO pending (workspace_id, host, port, first_seen, last_seen, attempts, exact_only)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO pending (workspace_id, host, port, first_seen, last_seen, attempts, exact_only,
+                                  program)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 old.workspace.as_str(),
                 old.host.to_string(),
@@ -223,7 +224,8 @@ pub(super) fn reopen_rows(
                 sql_ts(old.first_seen),
                 sql_ts(old.last_seen),
                 sql_ts(old.attempts),
-                exact_only
+                exact_only,
+                old.program.as_ref().map(Program::as_str)
             ],
         )?;
         let row = load_pending(tx, PendingId(tx.last_insert_rowid()))?;
@@ -432,9 +434,9 @@ pub(super) fn load_rule(conn: &Connection, id: RuleId) -> Result<Rule, StoreErro
 }
 
 pub(super) const PENDING_COLUMNS: &str = "id, workspace_id, host, port, first_seen, last_seen, attempts, \
-                               state, decided_at, decided_by, rule_id, rule_set";
+                               state, decided_at, decided_by, rule_id, rule_set, program";
 /// How many columns [`PENDING_COLUMNS`] names.
-const PENDING_COLUMN_COUNT: usize = 12;
+const PENDING_COLUMN_COUNT: usize = 13;
 
 /// A `pending` row as SQLite holds it, before validation.
 pub(super) struct RawPending {
@@ -450,6 +452,7 @@ pub(super) struct RawPending {
     pub(super) decided_by: Option<String>,
     pub(super) rule_id: Option<i64>,
     pub(super) rule_set: Option<String>,
+    pub(super) program: Option<String>,
 }
 
 pub(super) fn raw_pending(row: &Row<'_>) -> rusqlite::Result<RawPending> {
@@ -466,6 +469,7 @@ pub(super) fn raw_pending(row: &Row<'_>) -> rusqlite::Result<RawPending> {
         decided_by: row.get(9)?,
         rule_id: row.get(10)?,
         rule_set: row.get(11)?,
+        program: row.get(12)?,
     })
 }
 
@@ -489,6 +493,11 @@ pub(super) fn pending_from_raw(raw: &RawPending) -> Result<PendingRow, StoreErro
             .transpose()?,
         rule_id: raw.rule_id.map(RuleId),
         rule_set: raw.rule_set.clone(),
+        program: raw
+            .program
+            .as_deref()
+            .map(|p| Program::sanitise(p).ok_or_else(|| bad("program")))
+            .transpose()?,
     })
 }
 

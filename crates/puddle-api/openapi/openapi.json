@@ -14785,7 +14785,8 @@
           "decided_at",
           "decided_by",
           "rule_id",
-          "rule_set"
+          "rule_set",
+          "program"
         ],
         "properties": {
           "attempts": {
@@ -14840,6 +14841,13 @@
             "format": "int32",
             "description": "The requested port.",
             "minimum": 0
+          },
+          "program": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The program that asked first, as the guest agent named it: a hint the guest can fake.\n`null` when none was named and in records from before Puddle recorded it."
           },
           "rule_id": {
             "type": [
@@ -20604,6 +20612,7 @@
           "decided_by",
           "rule_id",
           "rule_set",
+          "program",
           "blocked_by",
           "company_signal"
         ],
@@ -20682,6 +20691,13 @@
             "format": "int32",
             "description": "The requested port.",
             "minimum": 0
+          },
+          "program": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The program in the guest that asked first, as the guest agent named it (`pip`, `node`,\n`curl`). A display hint a guest can fake, never used by a rule; escape it when\nrendering. `null` when the agent named none, and for a request from before Puddle\nrecorded it."
           },
           "rule_id": {
             "type": [

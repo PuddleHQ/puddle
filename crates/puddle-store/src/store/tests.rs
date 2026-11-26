@@ -296,6 +296,7 @@ fn raw_pending_rows_with_bad_fields_are_corrupt() {
         decided_by: None,
         rule_id: None,
         rule_set: None,
+        program: None,
     };
     assert!(pending_from_raw(&base()).is_ok());
     let cases: Vec<fn(&mut RawPending)> = vec![
@@ -306,6 +307,7 @@ fn raw_pending_rows_with_bad_fields_are_corrupt() {
         |r| r.state = "open".into(),
         |r| r.decided_by = Some("guest".into()),
         |r| r.decided_at = Some(-1),
+        |r| r.program = Some(" / ".into()),
     ];
     for (index, case) in cases.into_iter().enumerate() {
         let mut raw = base();

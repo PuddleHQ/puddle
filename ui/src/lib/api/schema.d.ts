@@ -2955,6 +2955,11 @@ export interface components {
              */
             port: number;
             /**
+             * @description The program that asked first, as the guest agent named it: a hint the guest can fake.
+             *     `null` when none was named and in records from before Puddle recorded it.
+             */
+            program: string | null;
+            /**
              * Format: int64
              * @description The deciding rule.
              */
@@ -5440,6 +5445,13 @@ export interface components {
              * @description The requested port.
              */
             port: number;
+            /**
+             * @description The program in the guest that asked first, as the guest agent named it (`pip`, `node`,
+             *     `curl`). A display hint a guest can fake, never used by a rule; escape it when
+             *     rendering. `null` when the agent named none, and for a request from before Puddle
+             *     recorded it.
+             */
+            program: string | null;
             /**
              * Format: int64
              * @description The rule that decided it.

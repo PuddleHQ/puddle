@@ -21,8 +21,8 @@
     reason = "a plain test program for a VM: a failed step fails the run; measurements go to stderr"
 )]
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::process::ExitCode;
 

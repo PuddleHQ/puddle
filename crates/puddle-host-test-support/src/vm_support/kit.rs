@@ -28,14 +28,14 @@ use puddle_types::WorkspaceId;
 use super::VmHost;
 
 /// The fake website's name for kits; a workspace that installs from one allows it.
-pub(crate) const KIT_HOST: &str = "kit.invalid";
+pub const KIT_HOST: &str = "kit.invalid";
 
 /// Bumped when the way kits are built or installed changes, so old cache files are not reused.
 const KIT_VERSION: u32 = 1;
 
 /// The package manager of the guest image.
 #[derive(Clone, Copy)]
-pub(crate) enum Flavour {
+pub enum Flavour {
     /// Debian's `apt` (the default workspace image).
     Apt,
     /// Alpine's `apk` (`docker:dind`).
@@ -78,7 +78,7 @@ impl Flavour {
 }
 
 /// One install a test needs, from the cache or from the mirror.
-pub(crate) struct PackageKit {
+pub struct PackageKit {
     flavour: Flavour,
     packages: &'static str,
     mirror: &'static str,
@@ -91,7 +91,7 @@ pub(crate) struct PackageKit {
 impl PackageKit {
     /// The kit for `packages` on `image` (named only to key the cache); `mirror` names the live
     /// third party a cold run needs, for the failure message.
-    pub(crate) fn open(
+    pub fn open(
         flavour: Flavour,
         image: &str,
         packages: &'static str,
@@ -120,7 +120,7 @@ impl PackageKit {
 
     /// `base` with the fake website also serving this kit at `http://kit.invalid/kit.tar` (and
     /// whatever `base` already answers).
-    pub(crate) fn options(&self, base: WebOptions) -> WebOptions {
+    pub fn options(&self, base: WebOptions) -> WebOptions {
         let slot = self.bytes.clone();
         let inner: Option<Responder> = base.responder.clone();
         let responder: Responder = Arc::new(move |seen| {
@@ -147,12 +147,7 @@ impl PackageKit {
     /// Installs the packages in `workspace` and runs `check` (a guest command that fails when they
     /// are not usable); returns what `check` printed. The workspace must allow [`KIT_HOST`] and, for
     /// a cold run, the mirror.
-    pub(crate) async fn install(
-        &self,
-        vm: &VmHost,
-        workspace: &WorkspaceId,
-        check: &str,
-    ) -> String {
+    pub async fn install(&self, vm: &VmHost, workspace: &WorkspaceId, check: &str) -> String {
         let note = format!(
             " (live third party: {}; an outage there fails this test)",
             self.mirror

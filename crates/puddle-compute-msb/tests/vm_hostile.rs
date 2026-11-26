@@ -3,7 +3,7 @@
 //! make the host attach a file of its choosing as its root disk, and to map device registers.
 //! The cases that hold for any runtime (no network, only routed vsock ports) are in the contract
 //! suite. Each test boots a real microVM, so they run only under the VM profile (`vm_` prefix).
-mod support;
+use puddle_compute_msb_test_support as support;
 
 use std::io::Read as _;
 use std::path::Path;

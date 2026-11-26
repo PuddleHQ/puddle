@@ -247,9 +247,9 @@ async fn a_window_that_never_answers_names_the_port_and_is_stopped() {
 #[tokio::test]
 async fn a_window_starts_only_once_an_earlier_window_let_go_of_the_debug_port() {
     let modules = stub_modules();
-    // A port no other test process claims, below the range the system hands out: it stays free once let go.
-    let port = puddle_test_kit::quiet_port();
-    let earlier = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).expect("bind");
+    // flake-ok: the test is about a port that is let go and then bound by the code under test; bind(0) gets a port at a random offset, not one just let go
+    let earlier = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).expect("bind");
+    let port = earlier.local_addr().expect("addr").port();
     let started = stub_window(&modules, port, Duration::from_secs(30));
     tokio::pin!(started);
     let seen = modules.path().join("env-seen");
@@ -274,9 +274,9 @@ async fn a_window_starts_only_once_an_earlier_window_let_go_of_the_debug_port() 
 
 #[tokio::test]
 async fn a_debug_port_that_stays_taken_is_named_in_the_error() {
-    // A port no other test process claims, below the range the system hands out: it stays free once let go.
-    let port = puddle_test_kit::quiet_port();
-    let held = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).expect("bind");
+    // flake-ok: the test is about a port that is let go and then bound by the code under test; bind(0) gets a port at a random offset, not one just let go
+    let held = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).expect("bind");
+    let port = held.local_addr().expect("addr").port();
     let err = port_free(port, Duration::from_millis(600))
         .await
         .expect_err("still taken");
@@ -286,7 +286,8 @@ async fn a_debug_port_that_stays_taken_is_named_in_the_error() {
         "{err}"
     );
     drop(held);
-    port_free(port, Duration::from_millis(600))
+    // A child that another test is spawning right now can hold a copy of the socket until it execs.
+    port_free(port, Duration::from_secs(10))
         .await
         .expect("free once let go");
 }

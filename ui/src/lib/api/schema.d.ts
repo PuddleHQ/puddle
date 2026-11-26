@@ -2955,6 +2955,11 @@ export interface components {
              */
             port: number;
             /**
+             * @description The program that asked first, as the guest agent named it: a hint the guest can fake.
+             *     `null` when none was named and in records from before Puddle recorded it.
+             */
+            program: string | null;
+            /**
              * Format: int64
              * @description The deciding rule.
              */
@@ -4785,7 +4790,7 @@ export interface components {
         };
         /** @description The API's identity, for a client to check it reached Puddle. */
         Health: {
-            /** @description The API contract's version ([`crate::API_VERSION`]). */
+            /** @description The API contract's version (`API_VERSION` in `puddle-api`). */
             api_version: string;
             /**
              * @description The build of the app this server serves, read from the build's own `_app/version.json`: a
@@ -4892,6 +4897,12 @@ export interface components {
         };
         /** @description The inbox: open requests grouped by registrable domain, most recent group first. */
         Inbox: {
+            /**
+             * Format: int64
+             * @description Connections a rule allowed in the user's workspaces since `since`. Counted in memory, so
+             *     it starts again at zero when Puddle restarts.
+             */
+            allowed_today: number;
             /** @description The groups. */
             groups: components["schemas"]["InboxGroup"][];
             /**
@@ -4901,6 +4912,11 @@ export interface components {
              *     answers some (rules spec R-45).
              */
             open_limit: number;
+            /**
+             * Format: int64
+             * @description The start of the UTC day `allowed_today` counts, in milliseconds since the epoch.
+             */
+            since: number;
         };
         /** @description Open requests that share a registrable domain (R-18). Grouping is for display only. */
         InboxGroup: {
@@ -5429,6 +5445,13 @@ export interface components {
              * @description The requested port.
              */
             port: number;
+            /**
+             * @description The program in the guest that asked first, as the guest agent named it (`pip`, `node`,
+             *     `curl`). A display hint a guest can fake, never used by a rule; escape it when
+             *     rendering. `null` when the agent named none, and for a request from before Puddle
+             *     recorded it.
+             */
+            program: string | null;
             /**
              * Format: int64
              * @description The rule that decided it.

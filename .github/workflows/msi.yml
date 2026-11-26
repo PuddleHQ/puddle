@@ -144,7 +144,7 @@ jobs:
         if: steps.changed.outputs.run == 'true'
         shell: bash
         run: rustup toolchain install && rustc --version
-      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
         if: steps.changed.outputs.run == 'true'
         with:
           tool: cargo-about@0.9.2
@@ -220,6 +220,10 @@ jobs:
       - name: install, start, boot a workspace, upgrade, uninstall
         if: steps.changed.outputs.run == 'true'
         shell: pwsh
+        # A healthy run takes 22 to 25 minutes here (the build before it takes 40 to 55 of the job's 90).
+        # Past 40 the step fails by its own name with the installer logs uploaded, not by the job limit
+        # or by hand, which reads as a hang.
+        timeout-minutes: 40
         env:
           PLANT_FOOTPRINT: ${{ inputs.plant_footprint }}
         run: |

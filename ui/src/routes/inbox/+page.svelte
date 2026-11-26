@@ -219,6 +219,12 @@
     Requests that matched no rule. Each stays here until you decide. Meanwhile
     the tool that asked is told the host is waiting for approval, and can retry.
   </p>
+  {#if pending.status === "ready" && pending.allowedToday > 0}
+    <p class="muted" data-testid="allowed-today">
+      {pending.allowedToday}
+      {pending.allowedToday === 1 ? "request" : "requests"} allowed by rules today.
+    </p>
+  {/if}
 </div>
 
 {#each pending.full as workspace (workspace)}

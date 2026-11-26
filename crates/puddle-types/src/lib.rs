@@ -43,6 +43,7 @@ pub mod panic_hook;
 mod percent;
 mod policy;
 mod problems;
+mod program;
 mod query_name;
 mod reason_code;
 mod request_match;
@@ -92,6 +93,7 @@ pub use policy::{
     PolicyError, ProtocolHint, RuleId, RuleSetId, SuffixAllows,
 };
 pub use problems::{Problem, Problems};
+pub use program::{PROGRAM_MAX_CHARS, Program};
 pub use query_name::{MAX_QUERY_NAME_LEN, QueryName};
 pub use reason_code::{FailedRequestCode, LimitCode, PassThroughCode, ReasonCode, ReasonPrefix};
 pub use request_match::{

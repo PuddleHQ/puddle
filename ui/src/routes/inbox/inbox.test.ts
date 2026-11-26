@@ -97,8 +97,10 @@ function reset() {
   inbox.calls = [];
   inbox.down = false;
   inbox.openLimit = 1000;
+  inbox.allowedToday = 0;
   pending.rows = [];
   pending.openLimit = Number.POSITIVE_INFINITY;
+  pending.allowedToday = 0;
   pending.decided = [];
   workspaces.list = [];
   pending.status = "loading";
@@ -295,6 +297,21 @@ describe("the inbox page", () => {
     expect(document.querySelector(".held")).toBeNull();
     expect(pending.count).toBe(70);
     expect(inbox.calls.some((c) => c.includes("suppression"))).toBe(false);
+  });
+
+  it("says in a quiet line how many requests rules allowed today, and says nothing for none", async () => {
+    inbox.allowedToday = 214;
+    inbox.add(request(1, { host: "a.one.test" }), "one.test");
+    const view = render(InboxPage);
+    expect(await screen.findByTestId("allowed-today")).toHaveTextContent(
+      "214 requests allowed by rules today.",
+    );
+    view.unmount();
+    reset();
+    inbox.add(request(1, { host: "a.one.test" }), "one.test");
+    render(InboxPage);
+    await screen.findByRole("heading", { name: "one.test" });
+    expect(screen.queryByTestId("allowed-today")).toBeNull();
   });
 
   it("says when a workspace's list is full, and stops saying it once some are answered (R-45)", async () => {

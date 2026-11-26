@@ -416,6 +416,10 @@ pub struct PendingWire {
     /// The rule set whose entry decided it. Absent in records written before rule sets existed.
     #[serde(default)]
     pub rule_set: Option<String>,
+    /// The program that asked first, as the agent named it. Absent when none was named and in
+    /// records written before the column existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program: Option<String>,
 }
 
 impl From<&PendingRow> for PendingWire {
@@ -433,6 +437,7 @@ impl From<&PendingRow> for PendingWire {
             decided_by: row.decided_by.map(ActorWire::from),
             rule_id: row.rule_id.map(|id| id.0),
             rule_set: row.rule_set.clone(),
+            program: row.program.as_ref().map(ToString::to_string),
         }
     }
 }

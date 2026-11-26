@@ -14,7 +14,7 @@ use puddle_agent_proto::resolve::{Record, RecordType};
 
 use puddle_types::{
     ConnectionEvent, ConnectionLog, Decision, DomainName, EgressRequest, Host, PatternKind,
-    PendingId, PendingOutcome, Policy, PolicyError, RuleId, SuffixAllows, WorkspaceId,
+    PendingId, PendingOutcome, Policy, PolicyError, Program, RuleId, SuffixAllows, WorkspaceId,
 };
 
 use crate::destination::{AddressCheck, AddressVerdict, BoxFuture, Resolver};
@@ -53,6 +53,8 @@ pub struct PendingItem {
     pub attempts: u32,
     /// Whether it is still waiting.
     pub open: bool,
+    /// The program that asked first, as the agent named it.
+    pub program: Option<Program>,
 }
 
 impl StaticPolicy {
@@ -167,6 +169,9 @@ impl Policy for StaticPolicy {
         });
         if let Some(item) = open {
             item.attempts += 1;
+            if item.program.is_none() {
+                item.program.clone_from(&request.program);
+            }
             return Ok(Decision::Pending(PendingOutcome::Repeat(item.id)));
         }
         state.next_id += 1;
@@ -178,6 +183,7 @@ impl Policy for StaticPolicy {
             port: request.port,
             attempts: 1,
             open: true,
+            program: request.program.clone(),
         });
         Ok(Decision::Pending(PendingOutcome::New(id)))
     }

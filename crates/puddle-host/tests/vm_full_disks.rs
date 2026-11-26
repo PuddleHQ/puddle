@@ -305,7 +305,16 @@ async fn host_disk_fills_and_recovers(mount: PathBuf) {
     );
 
     // Freeing the space: the notice clears, the workspace starts, git is whole, the files are too.
+    // Removing the outside fill is not enough: the half-written `big.bin` still holds up to 1.5 GiB
+    // of the host's disk (the image is sparse and a guest `rm` gives nothing back by itself), so
+    // the free space can stay under the 5 GB warning line. The guest deletes it and trims.
     std::fs::remove_file(&fill).unwrap();
+    guest_ok(
+        &vm,
+        &workspace,
+        &format!("rm -f {dir}/big.bin && sync && fstrim {dir}"),
+    )
+    .await;
     events
         .until(disk_space("ok"), Duration::from_secs(60))
         .await;
@@ -322,7 +331,7 @@ async fn host_disk_fills_and_recovers(mount: PathBuf) {
         &vm,
         &workspace,
         &format!(
-            "cd {dir} && rm -f big.bin && git -c safe.directory='*' -C Hello-World fsck --full 2>&1 && sha256sum -c keep.sha 2>&1 && echo whole"
+            "cd {dir} && git -c safe.directory='*' -C Hello-World fsck --full 2>&1 && sha256sum -c keep.sha 2>&1 && echo whole"
         ),
     )
     .await;

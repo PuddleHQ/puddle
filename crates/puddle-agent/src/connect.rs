@@ -33,6 +33,7 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use puddle_agent_proto::origin::{CONTAINER, ORIGIN_HEADER};
+use puddle_agent_proto::program::{PROGRAM_HEADER, Program};
 use puddle_agent_proto::ssh::{BANNER_MIN, PROTOCOL_HEADER, SSH, is_banner};
 use tokio::io::{
     AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader,
@@ -423,8 +424,14 @@ pub(crate) async fn peek<I: AsyncRead + Unpin>(stdin: &mut I, limit: Duration) -
 
 /// A `CONNECT` for `authority` with the client's `first` bytes right behind it, the header that
 /// says "SSH" when they are an SSH identification line, so the proxy decides before it asks about
-/// the destination, and the one that says the client is in a container when `from_container`.
-pub(crate) fn connect_request(authority: &str, first: &[u8], from_container: bool) -> Vec<u8> {
+/// the destination, the one that says the client is in a container when `from_container`, and the
+/// one that names the client's `program`.
+pub(crate) fn connect_request(
+    authority: &str,
+    first: &[u8],
+    from_container: bool,
+    program: Option<&Program>,
+) -> Vec<u8> {
     let mut head = format!("CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n");
     if is_banner(first) {
         // writing into a `String` cannot fail
@@ -434,6 +441,10 @@ pub(crate) fn connect_request(authority: &str, first: &[u8], from_container: boo
         // writing into a `String` cannot fail
         let _ = write!(head, "{ORIGIN_HEADER}: {CONTAINER}\r\n");
     }
+    if let Some(program) = program {
+        // writing into a `String` cannot fail
+        let _ = write!(head, "{PROGRAM_HEADER}: {program}\r\n");
+    }
     head.push_str("\r\n");
     let mut out = head.into_bytes();
     out.extend_from_slice(first);
@@ -442,7 +453,7 @@ pub(crate) fn connect_request(authority: &str, first: &[u8], from_container: boo
 
 /// Sends the `CONNECT` (with the client's first bytes right behind it) and reads the answer.
 async fn open(settings: &Settings, request: &Request, first: &[u8]) -> io::Result<Opened> {
-    let out = connect_request(&request.authority(), first, false);
+    let out = connect_request(&request.authority(), first, false, None);
     let mut reader = BufReader::new(TcpStream::connect(settings.proxy).await?);
     reader.get_mut().write_all(&out).await?;
     let (status, body) = tokio::time::timeout(settings.answer, read_answer(&mut reader))

@@ -3,7 +3,10 @@
 
 use std::collections::HashMap;
 
-use puddle_types::{ConnectionEvent, ConnectionLog, ConnectionOrigin, Event, WorkspaceId};
+use puddle_types::{
+    ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOrigin, ConnectionReason, Event,
+    WorkspaceId,
+};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::audit::{
@@ -30,11 +33,18 @@ impl Store {
         let now = self.clock.now_ms();
         let limit = self.limits.connection_records_per_second;
         let (admitted, summary) = match &event.workspace {
-            Some(workspace) => lock(&self.workspaces)
-                .entry(workspace.clone())
-                .or_default()
-                .connections
-                .admit(now, limit),
+            Some(workspace) => {
+                let mut workspaces = lock(&self.workspaces);
+                let state = workspaces.entry(workspace.clone()).or_default();
+                // Counted before the record limit, so a flood is still counted in full. Puddle's
+                // own requests and certificate fetches have another reason and are not counted.
+                if matches!(event.decision, ConnectionDecision::Allow)
+                    && matches!(event.reason, ConnectionReason::Rule)
+                {
+                    state.allowed.bump(now);
+                }
+                state.connections.admit(now, limit)
+            }
             None => lock(&self.puddle_connections).admit(now, limit),
         };
         if !admitted && summary.is_none() {
@@ -59,6 +69,19 @@ impl Store {
             self.put_back(vec![Flushed(event.workspace.clone(), ts, count)]);
         }
         written
+    }
+
+    /// How many connections of `user`'s workspaces a rule allowed since the start of the UTC day,
+    /// and that start (epoch ms). Counted in memory, so a restart starts again at zero.
+    pub fn allowed_today(&self, user: UserId) -> (u64, u64) {
+        let now = self.clock.now_ms();
+        let index = self.snapshot();
+        let count = lock(&self.workspaces)
+            .iter()
+            .filter(|(workspace, _)| index.owner_of(workspace) == Some(user))
+            .map(|(_, state)| state.allowed.on(now))
+            .sum();
+        (count, now / super::DAY_MS * super::DAY_MS)
     }
 
     /// Writes a `workspace_op` record: a workspace operation or a change to the identities and

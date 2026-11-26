@@ -457,13 +457,13 @@ test.describe("the host note", () => {
   }) => {
     // A short window and three rows keep the screen scrolled, as it is on a small screen; the note's
     // answer (it goes once the last host is gone) comes 300 ms after the change, while the press
-    // that removes a row is still under way. Row 1 is a shorthand with no host to check, so
-    // removing row 2 empties the note whatever the screen's width: a host dropped from a list
+    // that removes a row is still under way. Row 1 stays empty: a typed address, a shorthand
+    // like acme/api included (it is github.com), always has a host to check, so only an empty row
+    // 1 lets the note go when row 2 does, whatever the screen's width: a host dropped from a list
     // that stays wrapped in as many lines would move nothing, and prove nothing.
     await page.setViewportSize({ width: 1280, height: 640 });
     await openList(page, backend);
     const dialog = await openCreate(page);
-    await addrOf(page, 1).fill("acme/api");
     await addButton(page).click();
     await addrOf(page, 2).fill(DOCS);
     await addButton(page).click();

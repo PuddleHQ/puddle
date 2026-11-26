@@ -138,6 +138,7 @@
             <ProgressText Action="RemoveShortcuts">Removing Puddle from the Start menu</ProgressText>
             <ProgressText Action="WriteRegistryValues">Saving where Puddle is installed</ProgressText>
             <ProgressText Action="RemoveRegistryValues">Removing the saved install settings</ProgressText>
+            <ProgressText Action="RegisterUser">Registering Puddle for your Windows account</ProgressText>
             <ProgressText Action="RegisterProduct">Adding Puddle to the Windows list of installed apps</ProgressText>
             <ProgressText Action="PublishProduct">Adding Puddle to the Windows list of installed apps</ProgressText>
             <ProgressText Action="PublishFeatures">Adding Puddle to the Windows list of installed apps</ProgressText>

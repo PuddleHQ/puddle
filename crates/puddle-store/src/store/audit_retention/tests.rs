@@ -119,6 +119,20 @@ fn a_shrink_that_fails_still_leaves_the_size_warning_in_the_sweep_report() {
 }
 
 #[test]
+fn a_log_truncation_that_fails_does_not_fail_the_sweep() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(
+        &dir.path().join("puddle.db"),
+        Arc::new(ManualClock::new(1_800_000_000_000)),
+        Limits::default(),
+    )
+    .unwrap();
+    store.refuse_pragma("wal_checkpoint");
+    assert!(store.checkpoint_wal().is_err());
+    store.sweep().unwrap();
+}
+
+#[test]
 fn the_sweeper_never_rebuilds_a_whole_file_and_the_next_open_does() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("puddle.db");

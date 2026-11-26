@@ -150,11 +150,8 @@ fn a_process_name_is_read_once_inside_the_cache_window() {
 
 #[test]
 fn a_row_with_a_cut_line_is_skipped() {
-    assert_eq!(
-        inode_of_row("   0: 0100007F:A028", peer("127.0.0.1:41000")),
-        None
-    );
-    assert_eq!(inode_of_row("", peer("127.0.0.1:41000")), None);
+    assert_eq!(table_row("   0: 0100007F:A028"), None);
+    assert_eq!(table_row(""), None);
 }
 
 #[tokio::test]
@@ -185,4 +182,55 @@ fn a_full_name_cache_is_emptied_before_the_next_name_is_kept() {
     }
     let kept = resolver.names.lock().unwrap().len();
     assert_eq!(kept, 1);
+}
+
+#[test]
+fn a_crowd_of_connections_shares_a_few_scans() {
+    let rows: String = (0..200u16)
+        .map(|n| row(&format!("0100007F:{:04X}", 40_000 + n), 5000 + u64::from(n)))
+        .collect();
+    let proc = Proc::new(&rows, "");
+    proc.process(900, 1, "/usr/bin/pnpm", "pnpm");
+    for n in 0..200u16 {
+        let link = proc.0.path().join(format!("900/fd/{}", 10 + n));
+        symlink(format!("socket:[{}]", 5000 + u32::from(n)), link).unwrap();
+    }
+    let mut resolver = proc.resolver();
+    resolver.wait_budget = Duration::MAX; // a slow test host must not turn a wait into no name
+    std::thread::scope(|scope| {
+        for n in 0..200u16 {
+            let resolver = &resolver;
+            scope.spawn(move || {
+                let found = resolver.resolve(peer(&format!("127.0.0.1:{}", 40_000 + n)));
+                assert_eq!(found.unwrap().as_str(), "pnpm");
+            });
+        }
+    });
+    let scans = resolver.scans.0.lock().unwrap();
+    assert!(
+        scans.started < 200,
+        "{} scans for 200 connections",
+        scans.started
+    );
+    assert_eq!(scans.started, scans.finished);
+}
+
+#[test]
+fn a_connection_does_not_queue_behind_a_scan_that_took_long() {
+    let proc = Proc::new(&row("0100007F:A028", 4242), "");
+    proc.process(812, 4242, "/usr/bin/pip", "pip");
+    let resolver = proc.resolver();
+    {
+        let mut scans = resolver.scans.0.lock().unwrap();
+        scans.running = true;
+        scans.last_cost = WAIT_BUDGET * 2;
+    }
+    assert_eq!(resolver.resolve(peer("127.0.0.1:41000")), None);
+    // Nothing is running any more, so the next caller scans and is named.
+    resolver.scans.0.lock().unwrap().running = false;
+    assert_eq!(
+        resolver.resolve(peer("127.0.0.1:41000")).unwrap().as_str(),
+        "pip"
+    );
+    assert!(resolver.scans.0.lock().unwrap().last_cost < WAIT_BUDGET);
 }

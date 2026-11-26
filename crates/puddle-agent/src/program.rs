@@ -20,16 +20,19 @@ use std::collections::HashMap;
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex, PoisonError};
+use std::sync::{Arc, Condvar, LazyLock, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use puddle_agent_proto::program::Program;
 use tokio::net::TcpStream;
 
 /// How long a process's name is reused. A build tool opens thousands of connections from a few
-/// processes; the descriptor scan still runs per connection (a socket's owner is not known
-/// without it), but the name is read once per process.
+/// processes; the name is read once per process, and one scan of the descriptors (see [`Scans`])
+/// serves every connection that was waiting for it.
 const NAME_TTL: Duration = Duration::from_secs(5);
+
+/// The longest a connection queues behind a running scan, judged by how long the last one took.
+const WAIT_BUDGET: Duration = Duration::from_millis(20);
 
 /// The cache is emptied when it holds this many processes, so short-lived processes cannot grow it.
 const CACHE_MAX: usize = 512;
@@ -51,43 +54,125 @@ static RESOLVER: LazyLock<Resolver> = LazyLock::new(|| Resolver::new("/proc"));
 /// Resolves client addresses to program names through a `/proc` tree.
 struct Resolver {
     root: PathBuf,
+    scans: Arc<(Mutex<Scans>, Condvar)>,
+    wait_budget: Duration,
     names: Mutex<HashMap<u32, (Instant, Option<Program>)>>,
+}
+
+/// What one pass over `/proc` found.
+#[derive(Default)]
+struct Table {
+    /// Socket inode by the local address the TCP tables list it under.
+    sockets: HashMap<SocketAddr, u64>,
+    /// The first process holding a descriptor for each socket inode.
+    owners: HashMap<u64, u32>,
+}
+
+/// The passes over `/proc`: how many began and ended, whether one runs, and the last result.
+#[derive(Default)]
+struct Scans {
+    started: u64,
+    finished: u64,
+    running: bool,
+    /// How long the last pass took.
+    last_cost: Duration,
+    latest: Arc<Table>,
 }
 
 impl Resolver {
     fn new(root: impl Into<PathBuf>) -> Self {
         Self {
             root: root.into(),
+            scans: Arc::default(),
+            wait_budget: WAIT_BUDGET,
             names: Mutex::new(HashMap::new()),
         }
     }
 
     fn resolve(&self, peer: SocketAddr) -> Option<Program> {
-        let inode = self.socket_inode(canonical(peer))?;
-        let pid = self.owner(inode)?;
+        let table = self.table_after_now()?;
+        let pid = *table.owners.get(table.sockets.get(&canonical(peer))?)?;
         self.name_of(pid)
     }
 
-    /// The inode of the socket whose local address is `peer`, which is the client's end of the
-    /// connection.
-    fn socket_inode(&self, peer: SocketAddr) -> Option<u64> {
-        ["net/tcp", "net/tcp6"].iter().find_map(|table| {
-            let text = fs::read_to_string(self.root.join(table)).ok()?;
-            text.lines().skip(1).find_map(|row| inode_of_row(row, peer))
-        })
+    /// A table read after this call began, so the connection that asks for it is in it. Scans run
+    /// one at a time and each serves every caller that arrived before it started, so the cost of
+    /// the walk over `/proc` follows the time that passes and not the number of connections: a
+    /// tool that opens 2048 sockets at once pays for a handful of scans, never 2048.
+    ///
+    /// The kernel prints every TCP socket for a read of the table, closed ones waiting out
+    /// `TIME_WAIT` included, so under a flood of short connections one scan takes tens of
+    /// milliseconds. A caller that finds a scan running and the last one dearer than
+    /// [`WAIT_BUDGET`] goes without a name instead of queueing behind it: the name is a hint, and a
+    /// connection must not wait for one.
+    fn table_after_now(&self) -> Option<Arc<Table>> {
+        let (lock, wake) = &*self.scans;
+        let mut scans = lock.lock().unwrap_or_else(PoisonError::into_inner);
+        let wanted = scans.started + 1;
+        while scans.finished < wanted {
+            if scans.running {
+                if scans.last_cost > self.wait_budget {
+                    return None;
+                }
+                scans = wake.wait(scans).unwrap_or_else(PoisonError::into_inner);
+                continue;
+            }
+            scans.running = true;
+            scans.started += 1;
+            let number = scans.started;
+            drop(scans);
+            let began = Instant::now();
+            let table = Arc::new(self.read_table());
+            scans = lock.lock().unwrap_or_else(PoisonError::into_inner);
+            scans.latest = table;
+            scans.finished = number;
+            scans.last_cost = began.elapsed();
+            scans.running = false;
+            wake.notify_all();
+        }
+        Some(Arc::clone(&scans.latest))
     }
 
-    /// The first process that holds a descriptor for socket `inode`.
-    fn owner(&self, inode: u64) -> Option<u32> {
-        let wanted = format!("socket:[{inode}]");
-        fs::read_dir(&self.root).ok()?.flatten().find_map(|entry| {
-            let pid: u32 = entry.file_name().to_str()?.parse().ok()?;
-            let holds = fs::read_dir(entry.path().join("fd"))
-                .ok()?
-                .flatten()
-                .any(|fd| fs::read_link(fd.path()).is_ok_and(|t| t.as_os_str() == wanted.as_str()));
-            holds.then_some(pid)
-        })
+    /// Every socket in the guest's TCP tables by local address, and the first process that holds
+    /// each socket descriptor.
+    fn read_table(&self) -> Table {
+        let mut sockets = HashMap::new();
+        for name in ["net/tcp", "net/tcp6"] {
+            let Ok(text) = fs::read_to_string(self.root.join(name)) else {
+                continue;
+            };
+            for (local, inode) in text.lines().skip(1).filter_map(table_row) {
+                sockets.entry(canonical(local)).or_insert(inode);
+            }
+        }
+        let mut owners = HashMap::new();
+        let processes = fs::read_dir(&self.root).into_iter().flatten().flatten();
+        for entry in processes {
+            let Some(pid) = entry
+                .file_name()
+                .to_str()
+                .and_then(|n| n.parse::<u32>().ok())
+            else {
+                continue;
+            };
+            let Ok(fds) = fs::read_dir(entry.path().join("fd")) else {
+                continue;
+            };
+            for fd in fds.flatten() {
+                let inode = fs::read_link(fd.path()).ok().and_then(|target| {
+                    let target = target.to_str()?;
+                    target
+                        .strip_prefix("socket:[")?
+                        .strip_suffix(']')?
+                        .parse::<u64>()
+                        .ok()
+                });
+                if let Some(inode) = inode {
+                    owners.entry(inode).or_insert(pid);
+                }
+            }
+        }
+        Table { sockets, owners }
     }
 
     fn name_of(&self, pid: u32) -> Option<Program> {
@@ -143,15 +228,12 @@ fn canonical(addr: SocketAddr) -> SocketAddr {
     SocketAddr::new(addr.ip().to_canonical(), addr.port())
 }
 
-/// The socket inode of one `/proc/net/tcp{,6}` row when its local address is `peer`.
-fn inode_of_row(row: &str, peer: SocketAddr) -> Option<u64> {
+/// The local address and socket inode of one `/proc/net/tcp{,6}` row.
+fn table_row(row: &str) -> Option<(SocketAddr, u64)> {
     let mut fields = row.split_whitespace();
     let local = parse_address(fields.nth(1)?)?;
-    if canonical(local) != peer {
-        return None;
-    }
     // After the local address: remote, state, queues, timer, retransmits, uid, timeout, inode.
-    fields.nth(7)?.parse().ok()
+    Some((local, fields.nth(7)?.parse().ok()?))
 }
 
 /// `0100007F:1F90` (IPv4) or `00000000000000000000000001000000:1F90` (IPv6): the address as the

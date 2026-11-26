@@ -1580,7 +1580,7 @@ test.describe("the settings tab", () => {
     const clipboard = page.getByLabel("Pages reading the clipboard", {
       exact: true,
     });
-    await expect(clipboard).toHaveValue("ask");
+    await expect(clipboard).toHaveValue("allow");
     await clipboard.selectOption("deny");
     await expect(page.getByText("Clipboard saved.")).toBeVisible();
     const stored = (await (

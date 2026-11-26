@@ -1454,6 +1454,29 @@ async fn a_long_token_in_a_field_the_profile_does_not_name_is_refused() {
     );
 }
 
+#[tokio::test]
+async fn an_identifier_in_a_token_named_field_does_not_stop_the_login() {
+    let rig = rig();
+    let mut answer: Value =
+        serde_json::from_slice(&claude_answer(REAL_ACCESS, REAL_REFRESH)).unwrap();
+    answer["token_uuid"] = json!("7a1b2c3d-0e4f-4a5b-8c6d-9e0f1a2b3c4d");
+    let exchange = rig
+        .logins
+        .begin(&host("platform.claude.com"), "POST", "/v1/oauth/token");
+    let body = answered(
+        exchange,
+        200,
+        Some("application/json"),
+        answer.to_string().as_bytes(),
+    )
+    .await
+    .expect("the login passes");
+    let given: Value = serde_json::from_slice(&body).unwrap();
+    assert_ne!(given["access_token"], REAL_ACCESS);
+    assert_eq!(given["token_uuid"], "7a1b2c3d-0e4f-4a5b-8c6d-9e0f1a2b3c4d");
+    assert_eq!(rig.notices.seen(), []);
+}
+
 const SESSION_FIELDS: &str = "tid=7a1b;exp=1790000000;sku=free_limited_copilot;proxy-ep=proxy.individual.githubcopilot.com;chat=1";
 const MAC_1: &str = "0badc0ffee0badc0ffee0badc0ffee0badc0ffee0badc0ffee0badc0ffee0bad";
 

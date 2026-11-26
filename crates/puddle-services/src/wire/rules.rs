@@ -136,6 +136,12 @@ pub struct PendingRequest {
     /// did.
     #[schema(required = true)]
     pub rule_set: Option<String>,
+    /// The program in the guest that asked first, as the guest agent named it (`pip`, `node`,
+    /// `curl`). A display hint a guest can fake, never used by a rule; escape it when
+    /// rendering. `null` when the agent named none, and for a request from before Puddle
+    /// recorded it.
+    #[schema(required = true)]
+    pub program: Option<String>,
     /// For an open request to a local destination (host loopback, private network, link-local,
     /// metadata, special) whose toggle is off in this workspace: the toggle that blocks approval.
     /// An allow rule would not let the connection through until the toggle is on. `null`
@@ -169,6 +175,7 @@ impl PendingRequest {
             decided_by,
             rule_id,
             rule_set,
+            program,
         } = row;
         Ok(Self {
             id: id.0,
@@ -183,6 +190,7 @@ impl PendingRequest {
             decided_by: decided_by.map(Actor::from_store).transpose()?,
             rule_id: rule_id.map(|r| r.0),
             rule_set,
+            program: program.map(|p| p.to_string()),
             blocked_by: None,
             company_signal: None,
         })

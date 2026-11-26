@@ -15,11 +15,11 @@ use crate::error::StoreError;
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
 const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24, V25, V26, V27, V28, V29, V30, V31, V32,
+    V22, V23, V24, V25, V26, V27, V28, V29, V30, V31, V32, V33,
 ];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 32;
+pub const SCHEMA_VERSION: u32 = 33;
 
 const V1: &str = "
 CREATE TABLE rules (
@@ -1003,6 +1003,14 @@ const V32: &str = "
 -- says so, so that closing waiting rows after a rule or set change asks for the same kind of
 -- allow the proxy asked for. A row stored before this column reads as not needing one.
 ALTER TABLE pending ADD COLUMN exact_only INTEGER NOT NULL DEFAULT 0 CHECK (exact_only IN (0, 1));
+";
+
+const V33: &str = "
+-- The name of the program in the guest that opened the connection, as the agent reported it
+-- when the row was opened. A display hint: the first program seen for the row stays. A row from
+-- before this column, or one whose client the agent could not name, reads NULL.
+ALTER TABLE pending ADD COLUMN program TEXT
+    CHECK (program IS NULL OR length(program) BETWEEN 1 AND 32);
 ";
 
 /// Migrates only up to `version`, to build the database an older Puddle left behind.

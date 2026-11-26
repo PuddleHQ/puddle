@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use puddle_types::{Host, PendingId, RuleId, WorkspaceId};
+use puddle_types::{Host, PendingId, Program, RuleId, WorkspaceId};
 use serde::{Deserialize, Serialize};
 
 use crate::rule::{Actor, Effect, Rule};
@@ -81,6 +81,9 @@ pub struct PendingRow {
     /// The rule set whose entry decided it (`system`, `builtin:<slug>`, `user:<id>`), when a
     /// set's entry did (R-37, R-41).
     pub rule_set: Option<String>,
+    /// The program that asked first, as the agent named it: a display hint the guest can fake,
+    /// never an input to a rule. `None` when the agent named none.
+    pub program: Option<Program>,
 }
 
 /// Rule scope for a decision (R-15). Defaults to the row's workspace.

@@ -267,6 +267,11 @@ pub struct AuditPending {
     #[serde(default)]
     #[schema(required = true)]
     pub rule_set: Option<String>,
+    /// The program that asked first, as the guest agent named it: a hint the guest can fake.
+    /// `null` when none was named and in records from before Puddle recorded it.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub program: Option<String>,
 }
 
 impl From<store::PendingWire> for AuditPending {
@@ -284,6 +289,7 @@ impl From<store::PendingWire> for AuditPending {
             decided_by,
             rule_id,
             rule_set,
+            program,
         } = row;
         Self {
             id,
@@ -298,6 +304,7 @@ impl From<store::PendingWire> for AuditPending {
             decided_by: decided_by.map(Actor::from),
             rule_id,
             rule_set,
+            program,
         }
     }
 }

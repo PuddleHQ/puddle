@@ -453,6 +453,7 @@ fn pending_wire(workspace: &str, host: &str, state: PendingState) -> PendingWire
         decided_by: None,
         rule_id: None,
         rule_set: None,
+        program: None,
     }
 }
 

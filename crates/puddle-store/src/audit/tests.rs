@@ -63,6 +63,7 @@ fn pending_wire() -> PendingWire {
         decided_by: None,
         rule_id: None,
         rule_set: None,
+        program: None,
     }
 }
 

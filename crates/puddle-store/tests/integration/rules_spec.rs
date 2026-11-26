@@ -404,6 +404,45 @@ fn r10_unmatched_request_is_recorded_with_first_and_last_seen() {
 }
 
 #[test]
+fn the_first_program_to_ask_stays_on_the_row_and_in_its_audit_record() {
+    let (_, store) = fixture();
+    let by = |program: Option<&str>| {
+        let request = req("a", "example.com", 443)
+            .with_program(program.and_then(puddle_types::Program::sanitise));
+        store.decide(&request, SuffixAllows::Count).unwrap()
+    };
+    let id = new_pending(by(None));
+    assert_eq!(store.pending(id).unwrap().program, None);
+    // A later attempt fills a missing name, and then nothing replaces it.
+    by(Some("pip"));
+    by(Some("curl"));
+    by(None);
+    let row = store.pending(id).unwrap();
+    assert_eq!(row.attempts, 4);
+    assert_eq!(row.program.map(|p| p.to_string()).as_deref(), Some("pip"));
+
+    // A new row names its first program in the audit record; one with none omits the key.
+    let named = new_pending(
+        store
+            .decide(
+                &req("a", "named.example", 443)
+                    .with_program(puddle_types::Program::sanitise("node")),
+                SuffixAllows::Count,
+            )
+            .unwrap(),
+    );
+    let created = audit_of(&store, "pending_created");
+    let program_of = |id: PendingId| {
+        created
+            .iter()
+            .find(|r| r["pending"]["id"] == id.0)
+            .map(|r| r["pending"]["program"].clone())
+    };
+    assert_eq!(program_of(named), Some(json!("node")));
+    assert_eq!(program_of(id), Some(Value::Null));
+}
+
+#[test]
 fn r11_repeats_dedupe_onto_the_open_row() {
     let (_, store) = fixture();
     let id = new_pending(decide(&store, "a", "example.com"));

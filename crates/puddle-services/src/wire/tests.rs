@@ -488,9 +488,11 @@ fn pending_rows_always_carry_every_field() {
         decided_by: None,
         rule_id: None,
         rule_set: Some("system".into()),
+        program: puddle_types::Program::sanitise("pip"),
     };
     let v = serde_json::to_value(PendingRequest::from_store(row).unwrap()).unwrap();
     assert_eq!(v["rule_set"], "system");
+    assert_eq!(v["program"], "pip");
     assert_eq!(v["decided_at"], Value::Null);
     assert_eq!(v["decided_by"], Value::Null);
     assert_eq!(v["rule_id"], Value::Null);
@@ -713,7 +715,7 @@ fn rule_set_records_serialise_as_stored() {
     let pending = serde_json::json!({
         "id": 2, "workspace_id": "box", "host": "open-vsx.org", "port": 443, "first_seen": 1,
         "last_seen": 1, "attempts": 1, "state": "allowed", "decided_at": 2,
-        "decided_by": "system", "rule_id": null, "rule_set": "system"
+        "decided_by": "system", "rule_id": null, "rule_set": "system", "program": null
     });
     for stored in [
         serde_json::json!({"type": "rule_set_created", "ts": 1, "rule_set": set, "actor": "ui"}),
@@ -735,6 +737,17 @@ fn rule_set_records_serialise_as_stored() {
             stored
         );
     }
+    // A request record names its program when the agent named one.
+    let named = serde_json::json!({"type": "pending_created", "ts": 1,
+        "pending": {"id": 2, "workspace_id": "box", "host": "pypi.org", "port": 443,
+            "first_seen": 1, "last_seen": 1, "attempts": 1, "state": "requested",
+            "decided_at": null, "decided_by": null, "rule_id": null, "rule_set": null,
+            "program": "pip"}});
+    let record: store::AuditRecord = serde_json::from_value(named.clone()).unwrap();
+    assert_eq!(
+        serde_json::to_value(AuditRecord::from(record)).unwrap(),
+        named
+    );
     // A set recorded before sets had a colour reads, and the wire says `null` for it.
     let old = serde_json::json!({"type": "rule_set_created", "ts": 1, "actor": "ui",
             "rule_set": {"id": 3, "name": "Work", "description": "", "created_at": 1,

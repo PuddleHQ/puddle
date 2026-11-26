@@ -273,7 +273,7 @@ fn the_machine_probes_answer() {
     assert_eq!(probe.arch(), std::env::consts::ARCH);
     let _hv = probe.hypervisor();
     assert_eq!(probe.code_integrity().is_some(), cfg!(windows));
-    assert_eq!(probe.global_secure_access().is_some(), cfg!(windows));
+    assert_eq!(probe.problematic_software().is_some(), cfg!(windows));
     let _job = probe.job();
 }
 

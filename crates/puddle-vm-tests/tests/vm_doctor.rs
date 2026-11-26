@@ -15,8 +15,9 @@ use std::time::Duration;
 
 use puddle_doctor::{
     AzCliFacts, BootFacts, CodeIntegrityFacts, CredentialStoreFacts, DataEncryption, DataPathFacts,
-    DiskEncryptionFacts, DiskFacts, GsaFacts, HypervisorFacts, JobFacts, LoginSession, Os, Probe,
-    ProcessOutcome, Protection, RuntimeFacts, SshAgentFacts, StoreHealth, SwapArea, SwapFacts,
+    DiskEncryptionFacts, DiskFacts, HypervisorFacts, JobFacts, LoginSession, Os, Probe,
+    ProcessOutcome, Protection, RuntimeFacts, SoftwareFacts, SshAgentFacts, StoreHealth, SwapArea,
+    SwapFacts,
 };
 use puddle_doctor::{CheckId, Finding, Options, Report, Status, SystemProbe, diagnose};
 use puddle_runtime::{
@@ -76,8 +77,8 @@ impl Probe for EncryptedHost {
     fn job(&self) -> Option<JobFacts> {
         self.0.job()
     }
-    fn global_secure_access(&self) -> Option<GsaFacts> {
-        self.0.global_secure_access()
+    fn problematic_software(&self) -> Option<Vec<SoftwareFacts>> {
+        self.0.problematic_software()
     }
     fn disk_space(&self) -> DiskFacts {
         self.0.disk_space()

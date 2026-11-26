@@ -139,31 +139,28 @@ test.describe("the list and the start screen", () => {
   }) => {
     await backend.control.reset("empty");
     await openList(page, backend);
-    await expect(
-      page.getByRole("textbox", { name: "Repository address" }),
-    ).toBeVisible();
+    const form = page.getByRole("region", { name: "New workspace" });
+    await expect(form).toBeVisible();
+    await expect(form.getByLabel("Image")).toBeVisible();
     await expect(page.getByText("No workspaces yet")).toHaveCount(0);
     await expect(page.getByText("requests waiting")).toHaveCount(0);
-    await page.getByRole("button", { name: "More options" }).click();
     await expect(
-      page.getByRole("region", { name: "New workspace" }),
-    ).toBeVisible();
+      page.getByRole("button", { name: "More options" }),
+    ).toHaveCount(0);
   });
 
-  test("the first workspace is made from the address alone", async ({
+  test("the first workspace is made with the full form", async ({
     page,
     backend,
   }) => {
     await backend.control.reset("empty");
     await openList(page, backend);
     await page
-      .getByRole("textbox", { name: "Repository address" })
+      .getByLabel("Git repository (HTTPS)")
       .fill("https://github.com/acme/ledger.git");
     await page.getByRole("button", { name: "Create workspace" }).click();
     await expect(card(page, "ledger")).toContainText("acme/ledger");
-    await expect(
-      page.getByRole("textbox", { name: "Repository address" }),
-    ).toHaveCount(0);
+    await expect(page.getByLabel("Git repository (HTTPS)")).toHaveCount(0);
   });
 
   test("a row opens the details", async ({ page, backend }) => {

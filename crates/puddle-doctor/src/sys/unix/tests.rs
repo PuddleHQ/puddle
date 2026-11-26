@@ -22,6 +22,6 @@ fn file_access_needs_read_and_execute() {
 fn windows_only_checks_are_absent() {
     assert_eq!(code_integrity(), None);
     assert_eq!(job(), None);
-    assert_eq!(global_secure_access(), None);
+    assert_eq!(problematic_software(), None);
     assert_eq!(ssh_agent_service(), None);
 }

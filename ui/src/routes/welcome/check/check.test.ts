@@ -128,7 +128,7 @@ describe("system check step", () => {
       ...report.checks[0]!,
       status: "warn",
       summary: "a client is installed",
-      finding: "gsa_installed",
+      finding: "problematic_software_installed",
       impact: "Company sites may not work from a workspace.",
       remedy: "Ask your IT team for another way in.",
       fix: "The long story, with every command.",

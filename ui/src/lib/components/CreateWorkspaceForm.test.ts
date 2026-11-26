@@ -745,7 +745,28 @@ describe("CreateWorkspaceForm", () => {
       expect(field("Git repository (HTTPS)").value).toBe(
         "https://github.com/acme/api.git",
       );
+      // The focus the screen takes on opening stays on the row the repository made.
+      await vi.waitFor(() =>
+        expect(document.activeElement).toBe(field("Git repository (HTTPS)")),
+      );
     });
+  });
+  it("replaces the row when another repository is handed in while it is open", async () => {
+    const view = render(CreateWorkspaceForm, {
+      props: {
+        store: { create: vi.fn() },
+        settings: settings(),
+        prefill: { url: "https://github.com/acme/api.git", identity: null },
+      },
+    } as never);
+    await view.rerender({
+      prefill: { url: "https://github.com/acme/web.git", identity: null },
+    } as never);
+    await vi.waitFor(() =>
+      expect(field("Git repository (HTTPS)").value).toBe(
+        "https://github.com/acme/web.git",
+      ),
+    );
   });
   it("warns with the identity it got when none covers the repository, and offers the Git tab", async () => {
     const { goto } = await import("$app/navigation");

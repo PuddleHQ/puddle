@@ -475,7 +475,7 @@ describe("interception step", () => {
   it("saves the chosen mode and goes to the next step", async () => {
     render(Interception);
     await screen.findByRole("group", { name: "Interception" });
-    await fireEvent.click(radio(/^Read all HTTPS traffic/));
+    await fireEvent.click(radio(/^All HTTPS traffic/));
     await fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await waitFor(() => expect(nav.goto).toHaveBeenCalledWith("/welcome/look"));
     expect(h.interception.bodies).toEqual([{ mode: "all" }]);
@@ -490,7 +490,7 @@ describe("interception step", () => {
     render(Interception);
     await screen.findByRole("group", { name: "Interception" });
     await waitFor(() =>
-      expect(radio(/only where a rule needs it/)).toBeChecked(),
+      expect(radio(/^Only where a rule needs it/)).toBeChecked(),
     );
   });
 

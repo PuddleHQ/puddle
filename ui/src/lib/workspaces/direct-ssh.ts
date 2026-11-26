@@ -35,7 +35,7 @@ export const trustWordsFor = (name: string): TrustWords => ({
 export const TRUST_WORDS_GLOBAL: TrustWords = {
   title: `${DIRECT_SSH_DEFAULT_LABEL}?`,
   summary:
-    "Every workspace that does not set its own switch becomes trusted, including the ones you already have.",
+    "Turns direct SSH on for every workspace that has no switch of its own, new and existing. This effectively gives the sandbox remote code execution on the host device, breaking every security boundary.",
   detail: TRUST_DETAIL,
   confirmLabel: "Allow by default",
 };

@@ -94,23 +94,27 @@ function mount(
 function settings(
   limits: { max_cpus: number; host_cpus: number } | null = null,
   byDefault = 4,
+  memoryMib = 8192,
 ) {
   return {
     load: vi.fn(async () => {}),
-    view: limits && {
-      effective_limits: { ...limits, default_cpus: byDefault },
-      effective: { cpus: { value: byDefault, source: "default" } },
+    view: {
+      effective_limits: limits && { ...limits, default_cpus: byDefault },
+      effective: {
+        cpus: { value: byDefault, source: "default" },
+        memory: { value: memoryMib, source: "default" },
+      },
     },
   } as never;
 }
 
 describe("the default image's description", () => {
-  function mountWith(description: string | null) {
+  function mountWith(description: string | null, image: string | null = null) {
     render(CreateWorkspaceForm, {
       props: {
         store: { create: vi.fn() },
         settings: settings(),
-        defaultImage: { description, load: vi.fn(async () => {}) },
+        defaultImage: { image, description, load: vi.fn(async () => {}) },
       },
     } as never);
   }
@@ -124,6 +128,24 @@ describe("the default image's description", () => {
     expect(
       screen.getByLabelText("Image").getAttribute("aria-describedby"),
     ).toBe(hint.id);
+  });
+
+  it("shows the default image's name and memory as the placeholders of the empty fields", async () => {
+    mountWith(null, "ghcr.io/puddle/dev:3");
+    expect(screen.getByLabelText("Image")).toHaveAttribute(
+      "placeholder",
+      "ghcr.io/puddle/dev:3",
+    );
+    expect(screen.getByLabelText("Memory (GiB)")).toHaveAttribute(
+      "placeholder",
+      "8 GiB",
+    );
+    cleanup();
+    mountWith(null);
+    expect(screen.getByLabelText("Image")).toHaveAttribute(
+      "placeholder",
+      "Default development image",
+    );
   });
 
   it("drops the line once an image is typed, and shows none before it is known", async () => {
@@ -1031,6 +1053,7 @@ describe("CreateWorkspaceForm identities and repositories", () => {
       "https://github.com/acme/web",
     );
     expect(field("Name")).toHaveFocus();
+    expect(document.querySelector("details.picker")).toHaveAttribute("open");
     // The list names Personal first, so it listed the repository first.
     expect(identityBox()).toHaveDisplayValue(
       /Personal \(listed this repository\)/,
@@ -1177,20 +1200,21 @@ describe("CreateWorkspaceForm with several repositories", () => {
     });
   });
 
-  it("sends a row whose Pull switch was cleared", async () => {
+  it("offers no Pull switch and never sends pull", async () => {
     const { create } = open();
     await screen.findByRole("region");
     await fireEvent.input(url(1), {
       target: { value: "https://github.com/acme/api.git" },
     });
-    await fireEvent.click(
-      within(row(1)).getByRole("checkbox", { name: "Pull" }),
-    );
+    expect(within(row(1)).queryByRole("checkbox", { name: "Pull" })).toBeNull();
+    expect(
+      within(row(1)).getByRole("checkbox", { name: "Push" }),
+    ).toBeChecked();
     await fireEvent.click(submit());
     await vi.waitFor(() => expect(create).toHaveBeenCalled());
     expect(create.mock.calls[0]?.[0]).toEqual({
       name: "api",
-      repositories: [{ url: "https://github.com/acme/api.git", pull: false }],
+      repositories: [{ url: "https://github.com/acme/api.git" }],
     });
   });
 

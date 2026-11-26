@@ -11,8 +11,8 @@
     reason = "VM test: a failed step fails the test; helpers outside #[test] fns panic; the timings go to stderr for the log"
 )]
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};

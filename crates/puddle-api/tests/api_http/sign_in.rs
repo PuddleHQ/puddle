@@ -61,7 +61,7 @@ pub(super) async fn site_built(
     workspaces: impl FnOnce(
         &Arc<EventHub>,
         &Arc<ManualClock>,
-    ) -> Option<Arc<dyn puddle_api::WorkspaceService>>,
+    ) -> Option<Arc<dyn puddle_services::workspaces::WorkspaceService>>,
 ) -> Site {
     site_reaping(multi_user, ApiConfig::default().reap_every, workspaces).await
 }
@@ -73,7 +73,7 @@ pub(super) async fn site_reaping(
     workspaces: impl FnOnce(
         &Arc<EventHub>,
         &Arc<ManualClock>,
-    ) -> Option<Arc<dyn puddle_api::WorkspaceService>>,
+    ) -> Option<Arc<dyn puddle_services::workspaces::WorkspaceService>>,
 ) -> Site {
     let clock = Arc::new(ManualClock::new(START_MS));
     let events = Arc::new(EventHub::default());
@@ -1297,7 +1297,10 @@ async fn signing_a_device_out_closes_its_open_terminal() {
         api.addr,
         &format!("/api/workspaces/box/terminals/{terminal}"),
         Some(HOST),
-        &format!("{}, ticket.{ticket}", puddle_api::SUBPROTOCOL),
+        &format!(
+            "{}, ticket.{ticket}",
+            puddle_services::terminals::SUBPROTOCOL
+        ),
     )
     .await;
     let id = one.json()["device"]["id"].as_i64().unwrap();

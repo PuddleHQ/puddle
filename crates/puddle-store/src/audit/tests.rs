@@ -3,8 +3,8 @@ use super::*;
 use crate::pending::PendingState;
 use proptest::prelude::*;
 use puddle_types::{
-    BlockReason, CompanySignal, EgressRequest, Host, HttpRequestLine, LocalCategory, RefusedReason,
-    RuleId,
+    BlockReason, CompanySignal, EgressRequest, GitOperation, Host, HttpRequestLine, LocalCategory,
+    RefusedReason, RuleId,
 };
 use serde_json::json;
 
@@ -711,6 +711,27 @@ fn a_record_names_the_protocol_of_its_request_and_older_lines_have_none() {
         AuditRecord::Connection(c) => assert_eq!(c.protocol, None),
         other => panic!("{other:?}"),
     }
+}
+
+#[test]
+fn a_git_smart_http_record_keeps_push_or_fetch_but_not_the_query() {
+    let mut e = event();
+    for (service, operation) in [
+        ("git-receive-pack", GitOperation::Push),
+        ("git-upload-pack", GitOperation::Fetch),
+    ] {
+        e.http = Some(HttpRequestLine::new(
+            "GET",
+            &format!("/acme/web.git/info/refs?service={service}"),
+        ));
+        let record = ConnectionRecord::from_event(1, &e);
+        assert_eq!(record.git_operation, Some(operation));
+        let line = AuditRecord::connection(record).to_line().unwrap();
+        assert!(line.contains(&format!(r#""git_operation":"{}""#, operation.as_str())));
+        assert!(!line.contains("service="));
+    }
+    e.http = Some(HttpRequestLine::new("GET", "/x"));
+    assert_eq!(ConnectionRecord::from_event(1, &e).git_operation, None);
 }
 
 #[test]

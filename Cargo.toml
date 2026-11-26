@@ -58,6 +58,10 @@ puddle-process = { path = "crates/puddle-process" }
 puddle-test-kit = { path = "crates/puddle-test-kit" }
 # Dev-dependency only, like the kit: the rigs the puddle-proxy integration tests share.
 puddle-proxy-test-support = { path = "crates/puddle-proxy-test-support" }
+# Dev-dependency only: the rigs the puddle-host integration tests share (API client, VM host harness).
+puddle-host-test-support = { path = "crates/puddle-host-test-support" }
+# Dev-dependency only: the VM rigs of the puddle-compute-msb tests.
+puddle-compute-msb-test-support = { path = "crates/puddle-compute-msb-test-support" }
 
 # External
 # msb SDK from Puddle's fork, tag `v<release>-puddle.N`. The SDK and the bundled runtime

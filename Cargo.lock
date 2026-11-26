@@ -6149,6 +6149,7 @@ dependencies = [
  "puddle-no-dump",
  "puddle-runtime",
  "puddle-secrets",
+ "puddle-services",
  "puddle-settings",
  "puddle-store",
  "puddle-test-kit",
@@ -6265,6 +6266,7 @@ dependencies = [
  "puddle-api",
  "puddle-boot",
  "puddle-compute",
+ "puddle-compute-msb-test-support",
  "puddle-fs",
  "puddle-ipc",
  "puddle-netpolicy",
@@ -6283,8 +6285,21 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "puddle-compute-msb-test-support"
+version = "0.0.0"
+dependencies = [
+ "puddle-compute",
+ "puddle-compute-msb",
+ "puddle-ipc",
+ "puddle-types",
+ "puddle-vm-tests",
+ "sha2 0.11.1",
+ "tokio",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -6337,6 +6352,7 @@ dependencies = [
  "puddle-proxy",
  "puddle-repos",
  "puddle-secrets",
+ "puddle-services",
  "puddle-settings",
  "puddle-store",
  "puddle-test-kit",
@@ -6455,6 +6471,7 @@ dependencies = [
  "puddle-front",
  "puddle-fs",
  "puddle-guest-env",
+ "puddle-host-test-support",
  "puddle-inject",
  "puddle-ipc",
  "puddle-lifecycle",
@@ -6466,6 +6483,7 @@ dependencies = [
  "puddle-repos",
  "puddle-runtime",
  "puddle-secrets",
+ "puddle-services",
  "puddle-settings",
  "puddle-ssh",
  "puddle-ssh-agent",
@@ -6490,6 +6508,36 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "zeroize",
+]
+
+[[package]]
+name = "puddle-host-test-support"
+version = "0.0.0"
+dependencies = [
+ "base64 0.23.1",
+ "puddle-api",
+ "puddle-certs",
+ "puddle-compute",
+ "puddle-compute-msb",
+ "puddle-e2e",
+ "puddle-host",
+ "puddle-proxy",
+ "puddle-runtime",
+ "puddle-secrets",
+ "puddle-services",
+ "puddle-ssh",
+ "puddle-store",
+ "puddle-test-kit",
+ "puddle-types",
+ "puddle-upstream",
+ "puddle-vm-tests",
+ "rustls",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
 ]
 
 [[package]]

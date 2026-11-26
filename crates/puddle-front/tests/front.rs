@@ -236,10 +236,16 @@ impl Answer {
 
 /// Sends `request` (a full request text) to the front and reads the answer to its end.
 async fn ask(front: &Front, request: &str) -> Answer {
+    ask_within(front, request, Duration::from_secs(10)).await
+}
+
+/// [`ask`] with `limit` to wait for the end of the answer: a test on a paused clock waits longer
+/// than the front's own timeouts.
+async fn ask_within(front: &Front, request: &str, limit: Duration) -> Answer {
     let mut stream = TcpStream::connect(front.local_addr()).await.unwrap();
     stream.write_all(request.as_bytes()).await.unwrap();
     let mut raw = Vec::new();
-    tokio::time::timeout(Duration::from_secs(10), stream.read_to_end(&mut raw))
+    tokio::time::timeout(limit, stream.read_to_end(&mut raw))
         .await
         .expect("the front did not finish its answer")
         .unwrap();
@@ -1036,6 +1042,34 @@ impl Editor for Refuses {
     }
 }
 
+/// An editor that accepts the connection and never says a word.
+struct Silent;
+
+impl Editor for Silent {
+    fn connect(&self) -> puddle_front::editor::BoxFuture<'_, Result<Io, Unreachable>> {
+        Box::pin(async {
+            let (ours, theirs) = tokio::io::duplex(1 << 16);
+            tokio::spawn(async move {
+                let _held = theirs;
+                std::future::pending::<()>().await;
+            });
+            let io: Io = Box::new(ours);
+            Ok(io)
+        })
+    }
+
+    fn connect_port(
+        &self,
+        _port: u16,
+    ) -> puddle_front::editor::BoxFuture<'_, Result<Io, Unreachable>> {
+        self.connect()
+    }
+
+    fn password(&self) -> puddle_front::editor::BoxFuture<'_, Result<String, Unreachable>> {
+        Box::pin(async { Ok(String::new()) })
+    }
+}
+
 fn start_editor(rig: &Rig, name: &str, editor: impl Editor + 'static) {
     rig.running.0.lock().unwrap().insert(
         name.to_owned(),
@@ -1086,6 +1120,25 @@ async fn an_editor_stream_that_fails_at_the_first_write_is_a_502_that_says_it_di
         answer.text()
     );
 }
+#[tokio::test(start_paused = true)]
+async fn an_editor_that_never_answers_is_a_502_that_says_it_did_not_answer_in_time() {
+    let rig = rig();
+    start_editor(&rig, "a", Silent);
+    let h = host(&rig, "a");
+    let answer = ask_within(
+        &rig.front,
+        &get(&rig, &h, "/", ""),
+        Duration::from_secs(300),
+    )
+    .await;
+    assert_eq!(answer.status, 502);
+    assert!(
+        answer.text().contains("it did not answer in time"),
+        "{}",
+        answer.text()
+    );
+}
+
 #[tokio::test]
 async fn a_client_that_sends_bytes_that_are_not_http_is_answered_and_its_connection_logged() {
     let (log, _guard) = capture_logs();

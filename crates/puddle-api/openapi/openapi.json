@@ -14899,6 +14899,7 @@
               "protocol",
               "method",
               "path",
+              "git_operation",
               "path_truncated",
               "bytes_up",
               "bytes_down",
@@ -14969,6 +14970,17 @@
                   "$ref": "#/components/schemas/ForeignCredentialKind"
                 },
                 "description": "The kinds of credential the requests carried that Puddle did not add or swap, each\nonce: `stale_stand_in`, `github_token`, `npm_token`, `gitlab_token`,\n`azure_devops_token` or `git_authorization`. Never a value. Records written before it\nexisted, and connections of a workspace that turned the warning off, read as empty."
+              },
+              "git_operation": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/GitOperation",
+                    "description": "`push` or `fetch` for a Git smart-HTTP request, whose `path` cannot tell them apart\n(both start with `/info/refs`; the query is dropped). `null` for any other request and\nin records written before it existed."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "host": {
                 "type": [
@@ -19012,6 +19024,14 @@
             "description": "Refuse a push to a repository not listed with Push on (built in: on)."
           }
         }
+      },
+      "GitOperation": {
+        "type": "string",
+        "description": "What a Git smart-HTTP request of a connection record does.",
+        "enum": [
+          "push",
+          "fetch"
+        ]
       },
       "GitRepoRequest": {
         "type": "object",

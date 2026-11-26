@@ -6,11 +6,11 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
-use puddle_api::DevCertService;
-use puddle_api::wire::{DevCertTrustResult, DevCertificate};
 use puddle_certs::devcert::{
     DevCertManager, DevCertReport, DevCertStatus, DevCertTrust, GuestDevCert, HostTrust,
 };
+use puddle_services::dev_cert::DevCertService;
+use puddle_services::wire::{DevCertTrustResult, DevCertificate};
 use puddle_store::Clock;
 
 /// Where a workspace's guest gets the development certificate from, at every boot.

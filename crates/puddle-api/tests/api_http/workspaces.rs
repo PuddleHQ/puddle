@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The workspaces resource over real HTTP, against `FakeWorkspaces`.
 
-use puddle_api::DisplayName;
-use puddle_api::{
-    Listing, Operation, RepoFindings, RepoUrl, Repository, SettingsRepo, Unsaved, WorkspaceRecord,
+use puddle_api::SettingsRepo;
+use puddle_services::workspaces::DisplayName;
+use puddle_services::{
+    fake_workspaces::Unsaved, workspaces::Listing, workspaces::Operation, workspaces::RepoFindings,
+    workspaces::RepoUrl, workspaces::Repository, workspaces::WorkspaceRecord,
 };
 use puddle_store::UserId;
 use puddle_types::{EntryId, WorkspaceId, WorkspaceStatus};
@@ -175,14 +177,14 @@ async fn create_is_accepted_busy_and_finishes_with_progress_events() {
             }],
             "start_folder": null,
             "session_user": "agent",
-            "image": puddle_api::DEFAULT_IMAGE,
+            "image": puddle_services::workspaces::DEFAULT_IMAGE,
             "memory_mib": 8192,
             "status": "created",
             "busy": "creating",
             // Nothing is admitted while the create runs.
             "actions": [],
             "created_at": START_MS,
-            "disk_size_mib": puddle_api::DEFAULT_DISK_MIB,
+            "disk_size_mib": puddle_services::workspaces::DEFAULT_DISK_MIB,
             "disk_used_mib": 0,
             "disk_warnings": [],
             "root_disk_size_mib": 4096,

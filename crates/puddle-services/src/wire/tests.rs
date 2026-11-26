@@ -858,7 +858,7 @@ fn typed_audit_records_serialise_as_stored() {
         "port": 443, "resolved_ip": "93.184.216.34", "upstream": "PROXY corp:3128",
         "decision": "allow", "outcome": "connected", "reason": "rule", "rule_id": 4, "rule_set": "user:2",
         "request_rule": 3, "refused_address": "10.0.0.8", "refused_reason": "toggle:private", "category": "company_network", "signal": "dns_suffix", "pending_id": null, "binding_id": null, "injected": false, "unswapped_stand_ins": [], "scrubbed_stand_ins": [], "foreign_credentials": [], "answer_credentials": [],
-        "protocol": "http", "method": "GET", "path": "/",
+        "protocol": "http", "method": "GET", "path": "/", "git_operation": "push",
         "path_truncated": false, "bytes_up": 1, "bytes_down": 2, "count": null
     });
     let record: store::AuditRecord = serde_json::from_value(stored.clone()).unwrap();

@@ -33,7 +33,7 @@ async fn attach_opens_the_desktop_editor_through_the_launcher() {
         .workspaces()
         .attach(
             &WorkspaceId::new("acme").unwrap(),
-            puddle_api::AttachMode::Desktop,
+            puddle_services::workspaces::AttachMode::Desktop,
         )
         .await
         .unwrap();
@@ -135,7 +135,7 @@ async fn a_browser_attach_gives_the_window_the_front_the_settings_and_a_way_to_t
     assert_eq!(host.editor_windows().connected(&acme), 0);
     // code-server asks for a password: the window reads it when it signs in, from the guest's file.
     // The agent may say hello after the window asked: the sign-in waits for it.
-    let Some(puddle_api::EditorSignIn::Form(login)) = target.login else {
+    let Some(puddle_services::workspaces::EditorSignIn::Form(login)) = target.login else {
         panic!("code-server signs in with its login form");
     };
     assert_eq!(login.password().await.unwrap(), "0".repeat(64));
@@ -307,7 +307,8 @@ async fn a_browser_attach_to_microsoft_s_server_gives_the_window_its_connection_
     let target = browser_target(&rig, &api, "acme").await;
     // The server's connection token is the guest's password file: the window carries it as a
     // cookie, and it is read only when the window asks.
-    let Some(puddle_api::EditorSignIn::ConnectionToken(token)) = target.login else {
+    let Some(puddle_services::workspaces::EditorSignIn::ConnectionToken(token)) = target.login
+    else {
         panic!("Microsoft's server signs in with its connection token");
     };
     assert_eq!(token.password().await.unwrap(), "0".repeat(64));

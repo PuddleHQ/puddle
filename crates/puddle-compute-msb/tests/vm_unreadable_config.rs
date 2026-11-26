@@ -11,7 +11,7 @@
     reason = "VM test helpers: a failed step fails the test"
 )]
 
-mod support;
+use puddle_compute_msb_test_support as support;
 
 use std::path::Path;
 use std::time::Duration;

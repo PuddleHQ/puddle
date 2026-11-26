@@ -4,8 +4,8 @@
 //! overwrites a key the user changed in the guest.
 #![cfg(target_os = "linux")]
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::time::Duration;
 

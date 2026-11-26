@@ -281,6 +281,11 @@ jobs:
           echo "ok=true" >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/kvm
         if: steps.kvm.outputs.ok == 'true'
+      # Ubuntu 24.04 runners refuse an unprivileged user namespace (AppArmor); the full-disk tests make
+      # a small RAM disk in one (`unshare --user --map-root-user`, "write failed /proc/self/uid_map").
+      - name: allow user namespaces (full-disk tests)
+        if: steps.kvm.outputs.ok == 'true'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || echo "sysctl not present; nothing to relax"
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         if: steps.kvm.outputs.ok == 'true'
         with:

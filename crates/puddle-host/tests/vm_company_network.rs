@@ -22,8 +22,8 @@
     reason = "VM test: a failed step fails the test"
 )]
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;

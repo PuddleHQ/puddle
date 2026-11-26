@@ -14,11 +14,11 @@
 
 use std::time::Duration;
 
-use puddle_api::WorkspaceError;
-use puddle_api::wire::{
+use puddle_compute::{ComputeError, ExecOutput, ExecRequest, Runtime, Sandbox as _};
+use puddle_services::wire::{
     RegistryTool, ToolEntry, ToolRegistry, ToolVersions, ToolsFile, ToolsListing,
 };
-use puddle_compute::{ComputeError, ExecOutput, ExecRequest, Runtime, Sandbox as _};
+use puddle_services::workspaces::WorkspaceError;
 use puddle_settings::MiseMode;
 use puddle_types::{ToolName, ToolVersion, ToolsFileHash, WorkspaceId, WorkspaceStatus};
 use puddle_workspace::WORKSPACE_DIR;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-use crate::error::ErrorCode;
 use crate::settings::{SettingsLock, SettingsRepoError};
 use futures_util::future::BoxFuture;
+use puddle_services::error::ErrorCode;
 use tokio::sync::OwnedMutexGuard;
 
 use super::*;

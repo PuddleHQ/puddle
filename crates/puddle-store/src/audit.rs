@@ -10,7 +10,7 @@ use std::io;
 
 use puddle_types::{
     ConnectionDecision, ConnectionEvent, ConnectionOrigin, ConnectionOutcome, ConnectionProtocol,
-    ConnectionReason, LocalCategory, WorkspaceId, request_path,
+    ConnectionReason, GitOperation, LocalCategory, WorkspaceId, request_path,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -129,6 +129,11 @@ pub struct ConnectionRecord {
     pub method: Option<String>,
     /// HTTP path without query string, where `method` is set.
     pub path: Option<String>,
+    /// `push` or `fetch` for a Git smart-HTTP request (`service=git-receive-pack` or
+    /// `git-upload-pack` in the query, which `path` drops). Absent in records written before it
+    /// existed.
+    #[serde(default)]
+    pub git_operation: Option<GitOperation>,
     /// Whether `path` was cut to fit (R-26).
     pub path_truncated: bool,
     /// Bytes from the guest.
@@ -141,13 +146,18 @@ pub struct ConnectionRecord {
 
 impl ConnectionRecord {
     pub(crate) fn from_event(ts: u64, event: &ConnectionEvent) -> Self {
-        let (protocol, method, path) = event.http.as_ref().map_or((None, None, None), |http| {
-            (
-                Some(http.protocol()),
-                Some(http.method().to_owned()),
-                Some(http.path().to_owned()),
-            )
-        });
+        let (protocol, method, path, git_operation) =
+            event
+                .http
+                .as_ref()
+                .map_or((None, None, None, None), |http| {
+                    (
+                        Some(http.protocol()),
+                        Some(http.method().to_owned()),
+                        Some(http.path().to_owned()),
+                        http.git_operation(),
+                    )
+                });
         Self {
             ts,
             workspace_id: event.workspace.as_ref().map(ToString::to_string),
@@ -178,6 +188,7 @@ impl ConnectionRecord {
             protocol,
             method,
             path,
+            git_operation,
             path_truncated: false,
             bytes_up: event.bytes_up,
             bytes_down: event.bytes_down,
@@ -234,6 +245,7 @@ impl ConnectionRecord {
             protocol: None,
             method: None,
             path: None,
+            git_operation: None,
             path_truncated: false,
             bytes_up: 0,
             bytes_down: 0,

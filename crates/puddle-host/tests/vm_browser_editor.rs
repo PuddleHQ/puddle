@@ -21,8 +21,8 @@
     reason = "VM test: a failed step fails the test"
 )]
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
@@ -30,11 +30,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
-use puddle_api::{
-    BrowserTarget, CONNECTION_TOKEN_COOKIE, DesktopTarget, EditorSignIn, LaunchError, Launcher,
-    WorkspaceRecord,
-};
 use puddle_compute_msb::MsbRuntime;
+use puddle_services::{
+    workspaces::BrowserTarget, workspaces::CONNECTION_TOKEN_COOKIE, workspaces::DesktopTarget,
+    workspaces::EditorSignIn, workspaces::LaunchError, workspaces::Launcher,
+    workspaces::WorkspaceRecord,
+};
 use puddle_store::{Actor, Effect, NewRule, Pattern, Scope};
 use puddle_types::WorkspaceId;
 use puddle_vm_tests::{BrowserClient, BrowserCookie, BrowserSession, PageId, PageRequest};
@@ -179,6 +180,18 @@ async fn explorer(
             // Logged before the guest is asked: a guest that does not answer fails the test in
             // `guest_within`, and the window's state must not be lost with it.
             tracing::error!(workspace = %sandbox, step, error = %e, %window, %storage, "the explorer did not get ready");
+            // One reload of the same window, after the dump: folders on the second load say the
+            // window's first read of the multi-root file lost a race, none say the server's answer
+            // was wrong; either way the next failure names which.
+            let reload = PageRequest::new("", "true")
+                .result("(setTimeout(() => location.reload(), 0), true)")
+                .budget(PAGE_BUDGET);
+            let _ = shell.browser.lock().await.wait(page, &reload).await;
+            let again = PageRequest::new("", EXPLORER_READY)
+                .result("true")
+                .budget(PAGE_BUDGET);
+            let reloaded = shell.browser.lock().await.wait(page, &again).await;
+            tracing::error!(workspace = %sandbox, step, shows_folders_after_reload = reloaded.is_ok(), "the same window reloaded");
             let server = guest_within(runtime, sandbox, SERVER_STATE, PAGE_BUDGET).await;
             panic!("{sandbox}'s explorer did not get ready ({step}); the guest:\n{server}");
         }
@@ -1810,7 +1823,19 @@ async fn vm_browser_code_server_a_killed_browser_is_picked_up_within_the_grace_a
     );
 
     // Killed again and nobody comes: the hosts of that window stay for the grace and go after it.
-    let hosts = editor.extension_hosts().await;
+    // The window opened again runs a host of its own: the first window's host is not its host, and its grace
+    // began at the first kill, so it ends about GRACE after that, whatever the second kill does.
+    let first_window = hosts;
+    let hosts: Vec<u32> = editor
+        .extension_hosts()
+        .await
+        .into_iter()
+        .filter(|host| !first_window.contains(host))
+        .collect();
+    assert!(
+        !hosts.is_empty(),
+        "the window opened again has an extension host"
+    );
     shell.crash_newest(name).await;
     let killed = std::time::Instant::now();
     // flake-ok: an absence window: the host must still run a third of the grace after the kill, and

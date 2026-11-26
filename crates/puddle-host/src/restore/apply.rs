@@ -106,7 +106,7 @@ fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), RestoreError> 
 
 /// The UTC time as `20261115T225500Z`, the name of a safety copy.
 fn utc_name(ms: u64) -> String {
-    puddle_api::archive_file_name(ms)
+    puddle_services::backup::archive_file_name(ms)
         .trim_start_matches("puddle-backup-")
         .trim_end_matches(".tar.gz")
         .to_owned()

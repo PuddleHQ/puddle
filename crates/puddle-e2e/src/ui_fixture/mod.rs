@@ -22,20 +22,26 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
 
-use puddle_api::wire::{CredentialSource, DevCertificate, FoundAccount, FoundVia};
 use puddle_api::{
-    ApiConfig, ApiServer, ApiToken, ConnectionInfo, EventHub, FakeBackup, FakeCredentials,
-    FakeDevCert, FakeDoctor, FakeLauncher, FakeLearned, FakeNetworkHealth, FakePorts,
-    FakeProxySignIns, FakeTerminals, FakeWorkspaces, Found, FoundList, Listing, MemorySettings,
-    Operation, RemoteNote, RepoFindings, Repository, RepositoryDraft, RunningApi, Services,
-    SettingsRepo, ShellInitCheck, StartFolder, Unsaved, WorkspaceRecord, check_repositories,
-    entry_id_from_text,
+    ApiConfig, ApiServer, ApiToken, ConnectionInfo, EventHub, MemorySettings, RunningApi, Services,
+    SettingsRepo,
 };
 use puddle_api::{NoNames, PublicHost, Remote, RemoteServing};
 use puddle_netpolicy::StaticSignals;
 use puddle_secrets::{
     AccountName, DiscoveredAccount, Discovery, HostName, Listing as FoundListing, OrgName,
     SignInStart, SourceError, Tool,
+};
+use puddle_services::wire::{CredentialSource, DevCertificate, FoundAccount, FoundVia};
+use puddle_services::{
+    backup::FakeBackup, checkouts::Found, checkouts::FoundList, checkouts::RemoteNote,
+    credentials::FakeCredentials, dev_cert::FakeDevCert, doctor::FakeDoctor,
+    fake_workspaces::FakeLauncher, fake_workspaces::FakeWorkspaces, fake_workspaces::Unsaved,
+    learned::FakeLearned, network_health::FakeNetworkHealth, ports::FakePorts,
+    proxy_sign_in::FakeProxySignIns, terminals::FakeTerminals, workspaces::Listing,
+    workspaces::Operation, workspaces::RepoFindings, workspaces::Repository,
+    workspaces::RepositoryDraft, workspaces::ShellInitCheck, workspaces::StartFolder,
+    workspaces::WorkspaceRecord, workspaces::check_repositories, workspaces::entry_id_from_text,
 };
 use puddle_settings::GLOBAL_SCHEMA_VERSION;
 use puddle_store::AccountSecrets;
@@ -214,7 +220,7 @@ struct State {
     repos: Arc<repos::HeldRepos>,
     doctor: Arc<FakeDoctor>,
     backup: Arc<FakeBackup>,
-    restore: Arc<puddle_api::FakeRestore>,
+    restore: Arc<puddle_services::restore::FakeRestore>,
     dev_cert: Arc<FakeDevCert>,
     /// The background problems the API lists; kept here so they outlive a rebind of the API.
     problems: Arc<Problems>,
@@ -287,7 +293,7 @@ impl Fixture {
         let repos = Arc::new(repos::HeldRepos::new(credentials.clone()));
         let doctor = Arc::new(FakeDoctor::new());
         let backup = Arc::new(FakeBackup::new());
-        let restore = Arc::new(puddle_api::FakeRestore::new());
+        let restore = Arc::new(puddle_services::restore::FakeRestore::new());
         let dev_cert = Arc::new(FakeDevCert::new(DevCertificate::NotChecked));
         let problems = Arc::new(Problems::new(events.clone()));
         let account_secrets = if scenario.multi_user {
@@ -878,10 +884,10 @@ impl State {
         let id = WorkspaceId::new(name).map_err(|err| format!("workspace id {name:?}: {err}"))?;
         self.workspaces.set_kept_logins(
             &id,
-            puddle_api::KeptLogins {
+            puddle_services::workspaces::KeptLogins {
                 logins: logins
                     .iter()
-                    .map(|login| puddle_api::KeptLogin {
+                    .map(|login| puddle_services::workspaces::KeptLogin {
                         service: login.service.clone(),
                         name: login.name.clone(),
                         since: login.since,
@@ -896,7 +902,7 @@ impl State {
     fn step_orphan_volume(&self, id: &str, remote: Option<&str>) -> Result<(), String> {
         let id = WorkspaceId::new(id).map_err(|err| format!("workspace id {id:?}: {err}"))?;
         let remote = remote
-            .map(puddle_api::RepoUrl::parse)
+            .map(puddle_services::workspaces::RepoUrl::parse)
             .transpose()
             .map_err(|e| e.to_string())?;
         self.workspaces.add_orphan_volume(&id, remote);
@@ -1023,7 +1029,7 @@ impl State {
     }
 
     fn workspace(&self, seed: &WorkspaceSeed, now: u64) -> Result<(), String> {
-        let name = puddle_api::DisplayName::parse(&seed.name)
+        let name = puddle_services::workspaces::DisplayName::parse(&seed.name)
             .map_err(|err| format!("workspace name {:?}: {err}", seed.name))?;
         let id = WorkspaceId::new(seed.id())
             .map_err(|err| format!("workspace id {:?}: {err}", seed.id()))?;
@@ -1460,24 +1466,27 @@ mod tests;
 
 /// The facts a restore preview answers with: one rule to add, the given workspaces without a disk
 /// here and the given secrets without a value here.
-fn restore_facts(missing_disks: &[String], secrets: &[String]) -> puddle_api::RestoreFacts {
-    puddle_api::RestoreFacts {
+fn restore_facts(
+    missing_disks: &[String],
+    secrets: &[String],
+) -> puddle_services::restore::RestoreFacts {
+    puddle_services::restore::RestoreFacts {
         staging_id: "0".repeat(32),
         format: 1,
         puddle_version: Some("0.1.0".to_owned()),
         schema_version: puddle_store::SCHEMA_VERSION,
         created_at_ms: Some(1_700_000_000_000),
         parts: vec![
-            puddle_api::wire::RestorePart {
-                name: puddle_api::wire::RestorePartName::Rules,
+            puddle_services::wire::RestorePart {
+                name: puddle_services::wire::RestorePartName::Rules,
                 in_backup: 5,
                 add: 2,
                 differ: 1,
                 same: 2,
                 only_here: 3,
             },
-            puddle_api::wire::RestorePart {
-                name: puddle_api::wire::RestorePartName::Settings,
+            puddle_services::wire::RestorePart {
+                name: puddle_services::wire::RestorePartName::Settings,
                 in_backup: 4,
                 add: 0,
                 differ: 0,
@@ -1491,7 +1500,7 @@ fn restore_facts(missing_disks: &[String], secrets: &[String]) -> puddle_api::Re
             .collect(),
         secret_refs: secrets
             .iter()
-            .map(|name| puddle_api::SecretRef {
+            .map(|name| puddle_services::restore::SecretRef {
                 workspace_id: None,
                 name: name.clone(),
                 secret_id: format!("restore-fixture-{name}"),
@@ -1502,10 +1511,13 @@ fn restore_facts(missing_disks: &[String], secrets: &[String]) -> puddle_api::Re
 }
 
 /// What the last restore did, as a step says it.
-fn restore_result(applied: bool, message: Option<&str>) -> Option<puddle_api::wire::RestoreResult> {
-    message.map(|message| puddle_api::wire::RestoreResult {
+fn restore_result(
+    applied: bool,
+    message: Option<&str>,
+) -> Option<puddle_services::wire::RestoreResult> {
+    message.map(|message| puddle_services::wire::RestoreResult {
         applied,
-        mode: puddle_api::wire::RestoreMode::Add,
+        mode: puddle_services::wire::RestoreMode::Add,
         safety_copy: "20231114T221320Z".to_owned(),
         at_ms: 1_700_000_000_000,
         message: message.to_owned(),
@@ -1513,10 +1525,10 @@ fn restore_result(applied: bool, message: Option<&str>) -> Option<puddle_api::wi
 }
 
 /// The safety copies the list shows, each 2 KiB.
-fn safety_copies(names: &[String]) -> Vec<puddle_api::wire::SafetyCopy> {
+fn safety_copies(names: &[String]) -> Vec<puddle_services::wire::SafetyCopy> {
     names
         .iter()
-        .map(|name| puddle_api::wire::SafetyCopy {
+        .map(|name| puddle_services::wire::SafetyCopy {
             name: name.clone(),
             size_bytes: 2048,
         })

@@ -6,7 +6,6 @@
     clippy::panic,
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
-#![allow(dead_code, reason = "each test binary uses some of the helpers")]
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -27,7 +26,7 @@ use tokio::net::TcpStream;
 /// folder is therefore made in `/dev/shm` when that is its own RAM-backed, executable mount;
 /// the test checks the host's logic, not the disk's durability, which the VM tests cover.
 /// A `TMPDIR` the runner set is respected, and everywhere else this is `tempfile::tempdir()`.
-pub(crate) fn scratch_dir() -> tempfile::TempDir {
+pub fn scratch_dir() -> tempfile::TempDir {
     #[cfg(target_os = "linux")]
     if std::env::var_os("TMPDIR").is_none()
         && is_ram_mount("/dev/shm")
@@ -43,7 +42,7 @@ pub(crate) fn scratch_dir() -> tempfile::TempDir {
 /// Whether `mount_point` is a mount of its own with file system type `tmpfs` that is writable
 /// and allows running programs, read from the kernel's mount table.
 #[cfg(target_os = "linux")]
-pub(crate) fn is_ram_mount(mount_point: &str) -> bool {
+pub fn is_ram_mount(mount_point: &str) -> bool {
     let Ok(table) = std::fs::read_to_string("/proc/self/mountinfo") else {
         return false;
     };
@@ -63,25 +62,25 @@ pub(crate) fn is_ram_mount(mount_point: &str) -> bool {
 }
 
 /// A client of one host's API.
-pub(crate) struct Api {
+pub struct Api {
     addr: SocketAddr,
     token: String,
 }
 
 /// One answer: the status code and the body.
-pub(crate) struct Reply {
+pub struct Reply {
     pub status: u16,
     pub body: String,
 }
 
 impl Reply {
-    pub(crate) fn json(&self) -> Value {
+    pub fn json(&self) -> Value {
         serde_json::from_str(&self.body).unwrap_or_else(|e| panic!("not JSON ({e}): {}", self.body))
     }
 }
 
 impl Api {
-    pub(crate) fn new(url: &url::Url, token: &str) -> Self {
+    pub fn new(url: &url::Url, token: &str) -> Self {
         let addr = SocketAddr::new(
             url.host_str().unwrap().parse().unwrap(),
             url.port().unwrap(),
@@ -92,7 +91,7 @@ impl Api {
         }
     }
 
-    pub(crate) async fn request(
+    pub async fn request(
         &self,
         method: &str,
         path: &str,
@@ -135,7 +134,7 @@ impl Api {
     }
 
     /// A `POST` whose body is `bytes` (a file), with the token.
-    pub(crate) async fn post_bytes(&self, path: &str, bytes: &[u8]) -> Reply {
+    pub async fn post_bytes(&self, path: &str, bytes: &[u8]) -> Reply {
         let mut stream = TcpStream::connect(self.addr).await.unwrap();
         let head = format!(
             "POST {path} HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\nContent-Type: application/gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -160,28 +159,28 @@ impl Api {
         }
     }
 
-    pub(crate) async fn get(&self, path: &str) -> Reply {
+    pub async fn get(&self, path: &str) -> Reply {
         self.request("GET", path, None, true).await
     }
 
-    pub(crate) async fn post(&self, path: &str, body: &str) -> Reply {
+    pub async fn post(&self, path: &str, body: &str) -> Reply {
         self.request("POST", path, Some(body), true).await
     }
 
-    pub(crate) async fn put(&self, path: &str, body: &str) -> Reply {
+    pub async fn put(&self, path: &str, body: &str) -> Reply {
         self.request("PUT", path, Some(body), true).await
     }
 
-    pub(crate) async fn patch(&self, path: &str, body: &str) -> Reply {
+    pub async fn patch(&self, path: &str, body: &str) -> Reply {
         self.request("PATCH", path, Some(body), true).await
     }
 
-    pub(crate) async fn delete(&self, path: &str, body: Option<&str>) -> Reply {
+    pub async fn delete(&self, path: &str, body: Option<&str>) -> Reply {
         self.request("DELETE", path, body, true).await
     }
 
     /// Opens the event stream.
-    pub(crate) async fn events(&self) -> Events {
+    pub async fn events(&self) -> Events {
         let mut stream = TcpStream::connect(self.addr).await.unwrap();
         let request = format!(
             "GET /api/events HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\nAccept: text/event-stream\r\n\r\n",
@@ -225,15 +224,15 @@ fn dechunk(head: &str, body: &str) -> String {
 }
 
 /// The server-sent events of the API, parsed as they arrive.
-pub(crate) struct Events {
+pub struct Events {
     stream: TcpStream,
     buf: String,
-    pub(crate) seen: Vec<Value>,
+    pub seen: Vec<Value>,
 }
 
 impl Events {
     /// Events read from an already connected stream.
-    pub(crate) fn over(stream: TcpStream) -> Self {
+    pub fn over(stream: TcpStream) -> Self {
         Self {
             stream,
             buf: String::new(),
@@ -272,7 +271,7 @@ impl Events {
     /// Reads events until one satisfies `pred`; returns it. Every event read is kept in `seen`.
     // flake-ok: reads the server-sent event stream (it consumes input, so a re-run probe cannot do it);
     // bounded by `within`, and the panic lists every event seen.
-    pub(crate) async fn until(&mut self, pred: impl Fn(&Value) -> bool, within: Duration) -> Value {
+    pub async fn until(&mut self, pred: impl Fn(&Value) -> bool, within: Duration) -> Value {
         let deadline = Instant::now() + within;
         loop {
             while let Some((record, rest)) = self.buf.split_once("\n\n") {
@@ -304,7 +303,7 @@ impl Events {
     }
 
     /// The workspace-progress steps seen so far for `workspace`, in order.
-    pub(crate) fn steps(&self, workspace: &str) -> Vec<String> {
+    pub fn steps(&self, workspace: &str) -> Vec<String> {
         self.seen
             .iter()
             .filter(|e| e["type"] == "workspace_progress" && e["workspace"] == workspace)
@@ -314,7 +313,7 @@ impl Events {
 }
 
 /// Matches the `workspace_progress` event of `workspace` that ends an operation.
-pub(crate) fn ended(workspace: &str) -> impl Fn(&Value) -> bool + use<> {
+pub fn ended(workspace: &str) -> impl Fn(&Value) -> bool + use<> {
     let workspace = workspace.to_owned();
     move |e| {
         e["type"] == "workspace_progress"
@@ -326,7 +325,7 @@ pub(crate) fn ended(workspace: &str) -> impl Fn(&Value) -> bool + use<> {
 /// Everything the process logs from here on, at every level, so a test can prove a value never
 /// reached a log line. One subscriber per process: a test that needs it calls this before the
 /// code under test runs, and the self-check fails loudly when another subscriber got there first.
-pub(crate) fn capture_logs() -> Arc<std::sync::Mutex<Vec<u8>>> {
+pub fn capture_logs() -> Arc<std::sync::Mutex<Vec<u8>>> {
     use std::io::Write;
     use std::sync::{Arc, Mutex, OnceLock};
 
@@ -370,7 +369,7 @@ pub(crate) fn capture_logs() -> Arc<std::sync::Mutex<Vec<u8>>> {
 /// The development certificate the host gives its guests: Puddle's own leaf in a folder of the
 /// test's, with no trust implementation, so nothing touches the machine's certificate stores.
 /// Off until a test turns it on.
-pub(crate) struct TestDevCert {
+pub struct TestDevCert {
     folder: tempfile::TempDir,
     manager: DevCertManager<Unsupported>,
     given: AtomicBool,
@@ -380,7 +379,7 @@ pub(crate) struct TestDevCert {
 }
 
 impl TestDevCert {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         let folder = scratch_dir();
         let manager = DevCertManager::new(folder.path(), Unsupported);
         Self {
@@ -391,16 +390,16 @@ impl TestDevCert {
         }
     }
 
-    pub(crate) fn asked(&self) -> usize {
+    pub fn asked(&self) -> usize {
         self.asked.load(Ordering::SeqCst)
     }
 
-    pub(crate) fn give(&self) {
+    pub fn give(&self) {
         self.given.store(true, Ordering::SeqCst);
     }
 
     /// The next start gets a new leaf, as after a renewal.
-    pub(crate) fn renew(&self) {
+    pub fn renew(&self) {
         let leaf = self.folder.path().join("dev-cert").join(LEAF_FILE);
         std::fs::remove_file(leaf).unwrap();
     }
@@ -416,14 +415,14 @@ impl GuestCertSource for TestDevCert {
     }
 }
 
-impl puddle_api::DevCertService for TestDevCert {
-    fn status(&self) -> puddle_api::wire::DevCertificate {
-        puddle_api::wire::DevCertificate::Unsupported
+impl puddle_services::dev_cert::DevCertService for TestDevCert {
+    fn status(&self) -> puddle_services::wire::DevCertificate {
+        puddle_services::wire::DevCertificate::Unsupported
     }
 
-    fn trust(&self) -> puddle_api::wire::DevCertTrustResult {
-        puddle_api::wire::DevCertTrustResult {
-            dev_certificate: puddle_api::wire::DevCertificate::Unsupported,
+    fn trust(&self) -> puddle_services::wire::DevCertTrustResult {
+        puddle_services::wire::DevCertTrustResult {
+            dev_certificate: puddle_services::wire::DevCertificate::Unsupported,
             detail: None,
             waiting: false,
         }
@@ -432,7 +431,7 @@ impl puddle_api::DevCertService for TestDevCert {
 
 /// A host that gives its guests no development certificate and reports none: the host's own
 /// would read the machine's certificate stores and trust a certificate in them.
-pub(crate) struct NoDevCert;
+pub struct NoDevCert;
 
 impl GuestCertSource for NoDevCert {
     fn guest_cert(&self) -> Option<GuestDevCert> {
@@ -440,14 +439,14 @@ impl GuestCertSource for NoDevCert {
     }
 }
 
-impl puddle_api::DevCertService for NoDevCert {
-    fn status(&self) -> puddle_api::wire::DevCertificate {
-        puddle_api::wire::DevCertificate::NotChecked
+impl puddle_services::dev_cert::DevCertService for NoDevCert {
+    fn status(&self) -> puddle_services::wire::DevCertificate {
+        puddle_services::wire::DevCertificate::NotChecked
     }
 
-    fn trust(&self) -> puddle_api::wire::DevCertTrustResult {
-        puddle_api::wire::DevCertTrustResult {
-            dev_certificate: puddle_api::wire::DevCertificate::NotChecked,
+    fn trust(&self) -> puddle_services::wire::DevCertTrustResult {
+        puddle_services::wire::DevCertTrustResult {
+            dev_certificate: puddle_services::wire::DevCertificate::NotChecked,
             detail: None,
             waiting: false,
         }
@@ -456,8 +455,8 @@ impl puddle_api::DevCertService for NoDevCert {
 
 /// Options that touch nothing of this machine's. A workspace's id is drawn at random, as on a real
 /// host, so a test that prints the id where the user reads the name fails. A test that must name
-/// its paths before the workspace exists sets `workspace_ids` to [`puddle_api::NameIds`].
-pub(crate) fn hermetic_options() -> HostOptions {
+/// its paths before the workspace exists sets `workspace_ids` to [`puddle_services::workspaces::NameIds`].
+pub fn hermetic_options() -> HostOptions {
     let mut options = HostOptions::default();
     options.dev_cert = Some(Arc::new(NoDevCert));
     options.free_space = Some(Arc::new(FixedSpace(FIXED_FREE_BYTES)));
@@ -474,18 +473,18 @@ pub(crate) fn hermetic_options() -> HostOptions {
 /// [`hermetic_options`] with ids made from names (`acme` gets `acme`), for a test that writes
 /// those ids into paths and URLs itself before the workspace exists. Every test that can read the
 /// id from the reply uses [`hermetic_options`] instead.
-pub(crate) fn named_id_options() -> HostOptions {
+pub fn named_id_options() -> HostOptions {
     let mut options = hermetic_options();
-    options.workspace_ids = Some(Arc::new(puddle_api::NameIds));
+    options.workspace_ids = Some(Arc::new(puddle_services::workspaces::NameIds));
     options
 }
 
 /// The free space every hermetic host sees on its drive: a test about a grow never depends on
 /// the machine it runs on.
-pub(crate) const FIXED_FREE_BYTES: u64 = 512 * 1024 * 1024 * 1024;
+pub const FIXED_FREE_BYTES: u64 = 512 * 1024 * 1024 * 1024;
 
 /// A drive with a fixed figure of free space.
-pub(crate) struct FixedSpace(pub(crate) u64);
+pub struct FixedSpace(pub u64);
 
 impl puddle_host::Space for FixedSpace {
     fn free_bytes(&self) -> std::io::Result<u64> {

@@ -24,7 +24,7 @@ fn stored(id: &str) -> Stored {
     Stored {
         id: WorkspaceId::new(id).unwrap(),
         owner: UserId::from_stored(2),
-        name: puddle_api::DisplayName::parse(id).unwrap(),
+        name: puddle_services::workspaces::DisplayName::parse(id).unwrap(),
         repositories: vec![
             repository("https://example.org/a/b", "b"),
             repository("https://example.org/a/c.git", "see"),

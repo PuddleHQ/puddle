@@ -9,9 +9,12 @@ use std::fs::{self, File};
 use std::io::{self, BufRead as _, BufReader, Read};
 use std::path::{Component, Path, PathBuf};
 
-use puddle_api::wire::{RestorePart, RestorePartName};
-use puddle_api::{IdentityTokenRef, RestoreFacts, RestoreServiceError, SecretRef};
 use puddle_fs::private;
+use puddle_services::wire::{RestorePart, RestorePartName};
+use puddle_services::{
+    restore::IdentityTokenRef, restore::RestoreFacts, restore::RestoreServiceError,
+    restore::SecretRef,
+};
 use puddle_store::DatabaseRefusal;
 
 use crate::HostPaths;
@@ -526,7 +529,7 @@ pub(crate) fn facts(paths: &HostPaths, staged: &Staged) -> Result<RestoreFacts, 
     })
 }
 
-/// Reads and applies restores for one data folder: [`puddle_api::RestoreService`] over
+/// Reads and applies restores for one data folder: [`puddle_services::restore::RestoreService`] over
 /// [`stage_archive`], [`facts`], [`apply::request`] and the safety copies. The upload is spooled to
 /// an unnamed temporary file first (its size does not set a memory bound), and the staging, the
 /// database reads and the copies run on a blocking thread.
@@ -560,10 +563,10 @@ fn refused_or_failed(error: RestoreError) -> RestoreServiceError {
     }
 }
 
-fn mode_of(mode: puddle_api::wire::RestoreMode) -> ApplyMode {
+fn mode_of(mode: puddle_services::wire::RestoreMode) -> ApplyMode {
     match mode {
-        puddle_api::wire::RestoreMode::Add => ApplyMode::Add,
-        puddle_api::wire::RestoreMode::Replace => ApplyMode::Replace,
+        puddle_services::wire::RestoreMode::Add => ApplyMode::Add,
+        puddle_services::wire::RestoreMode::Replace => ApplyMode::Replace,
     }
 }
 
@@ -617,10 +620,10 @@ fn entry_size(entry: &fs::DirEntry) -> u64 {
     entry.metadata().map_or(0, size)
 }
 
-impl puddle_api::RestoreService for DataFolderRestore {
+impl puddle_services::restore::RestoreService for DataFolderRestore {
     fn preview(
         &self,
-        upload: puddle_api::UploadStream,
+        upload: puddle_services::restore::UploadStream,
     ) -> futures_util::future::BoxFuture<'_, Result<RestoreFacts, RestoreServiceError>> {
         let paths = self.paths.clone();
         Box::pin(async move {
@@ -640,10 +643,10 @@ impl puddle_api::RestoreService for DataFolderRestore {
     fn apply<'a>(
         &'a self,
         staging_id: &'a str,
-        mode: puddle_api::wire::RestoreMode,
+        mode: puddle_services::wire::RestoreMode,
     ) -> futures_util::future::BoxFuture<
         'a,
-        Result<puddle_api::wire::RestoreApplied, RestoreServiceError>,
+        Result<puddle_services::wire::RestoreApplied, RestoreServiceError>,
     > {
         let paths = self.paths.clone();
         let id = staging_id.to_owned();
@@ -674,7 +677,7 @@ impl puddle_api::RestoreService for DataFolderRestore {
             })
             .await?;
             self.requested.notify_one();
-            Ok(puddle_api::wire::RestoreApplied {
+            Ok(puddle_services::wire::RestoreApplied {
                 safety_copy: requested.safety_copy,
                 restart_required: true,
             })
@@ -685,7 +688,7 @@ impl puddle_api::RestoreService for DataFolderRestore {
         &self,
     ) -> futures_util::future::BoxFuture<
         '_,
-        Result<Option<puddle_api::wire::RestoreResult>, RestoreServiceError>,
+        Result<Option<puddle_services::wire::RestoreResult>, RestoreServiceError>,
     > {
         let path = self.paths.restore_result();
         Box::pin(async move {
@@ -697,11 +700,11 @@ impl puddle_api::RestoreService for DataFolderRestore {
                                 "cannot read the last restore's result: {e}"
                             ))
                         })?;
-                    Ok(Some(puddle_api::wire::RestoreResult {
+                    Ok(Some(puddle_services::wire::RestoreResult {
                         applied: outcome.applied,
                         mode: match outcome.mode {
-                            ApplyMode::Add => puddle_api::wire::RestoreMode::Add,
-                            ApplyMode::Replace => puddle_api::wire::RestoreMode::Replace,
+                            ApplyMode::Add => puddle_services::wire::RestoreMode::Add,
+                            ApplyMode::Replace => puddle_services::wire::RestoreMode::Replace,
                         },
                         safety_copy: outcome.safety_copy,
                         at_ms: outcome.at_ms,
@@ -738,18 +741,18 @@ impl puddle_api::RestoreService for DataFolderRestore {
         &self,
     ) -> futures_util::future::BoxFuture<
         '_,
-        Result<Vec<puddle_api::wire::SafetyCopy>, RestoreServiceError>,
+        Result<Vec<puddle_services::wire::SafetyCopy>, RestoreServiceError>,
     > {
         let root = self.paths.safety_copies();
         Box::pin(async move {
             blocking(move || {
-                let mut copies: Vec<puddle_api::wire::SafetyCopy> = match fs::read_dir(&root) {
+                let mut copies: Vec<puddle_services::wire::SafetyCopy> = match fs::read_dir(&root) {
                     Ok(entries) => entries
                         .flatten()
                         .filter_map(|e| {
                             let name = e.file_name().to_string_lossy().into_owned();
                             (is_safety_name(&name) && e.path().is_dir()).then(|| {
-                                puddle_api::wire::SafetyCopy {
+                                puddle_services::wire::SafetyCopy {
                                     size_bytes: size_of(&e.path()),
                                     name,
                                 }
@@ -792,7 +795,7 @@ impl puddle_api::RestoreService for DataFolderRestore {
 /// Writes the upload into an unnamed temporary file made in `scratch` and returns it at its first
 /// byte; the file is gone when the last handle closes.
 async fn spool(
-    upload: puddle_api::UploadStream,
+    upload: puddle_services::restore::UploadStream,
     scratch: &Path,
 ) -> Result<File, RestoreServiceError> {
     use futures_util::StreamExt as _;

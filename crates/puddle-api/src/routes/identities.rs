@@ -11,13 +11,13 @@ use puddle_secrets::{SourceSpec, StoredId, TokenScope};
 use puddle_store::{CredentialBinding, IdentityId, SwitchChange, WorkspaceOpKind};
 use puddle_types::WorkspaceId;
 
-use crate::ApiErrorBody;
 use crate::authz::Principal;
-use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::workspaces::named;
 use crate::routes::{AppState, record_op};
-use crate::wire::{
+use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, blocking};
+use puddle_services::wire::{
     AttachIdentityRequest, GitDefaultsView, GitRepoRequest, GitRepoToggles, GitRepoView,
     GitSwitchesRequest, IdentityDeleted, IdentityList, IdentityOrderRequest, IdentityRequest,
     IdentityView, TokenLeft, WorkspaceGitView, WorkspaceIdentitiesRequest,

@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use puddle_api::{FakeWorkspaces, WorkspaceService};
+use puddle_services::{fake_workspaces::FakeWorkspaces, workspaces::WorkspaceService};
 use serde_json::{Value, json};
 
 use super::sign_in::{Req, Site, access_token, pw, site_reaping};
@@ -33,7 +33,7 @@ async fn admin_site_slow(multi_user: bool, step_delay: Duration) -> Admin {
         let fake = Arc::new(FakeWorkspaces::with_options(
             events.clone(),
             clock.clone(),
-            Arc::new(puddle_api::FakeLauncher::new()),
+            Arc::new(puddle_services::fake_workspaces::FakeLauncher::new()),
             step_delay,
         ));
         *made.lock().unwrap() = Some(fake.clone());
@@ -525,14 +525,16 @@ async fn a_deletion_whose_workspace_step_fails_is_finished_at_a_later_look() {
     }
 
     // The stop fails and later the delete fails: Ann stays as long as her box is left.
-    admin
-        .workspaces
-        .fail_next(puddle_api::Operation::Stopping, "the sandbox hangs");
+    admin.workspaces.fail_next(
+        puddle_services::workspaces::Operation::Stopping,
+        "the sandbox hangs",
+    );
     start_delete(&admin, ann_id, "Ann").await;
     admin.workspaces.idle().await;
-    admin
-        .workspaces
-        .fail_next(puddle_api::Operation::Deleting, "the volume is locked");
+    admin.workspaces.fail_next(
+        puddle_services::workspaces::Operation::Deleting,
+        "the volume is locked",
+    );
     // Ann needs four looks: the stop fails, the stop works, the delete fails, the delete works.
     // A deletion started while a look runs only queues one more look, so two deletions in a row
     // can share a look. Waiting until each other user is gone gives one look per deletion, and
@@ -580,9 +582,10 @@ async fn a_workspace_that_refuses_its_stop_is_tried_again_at_a_later_look() {
     // A paused box counts as up but cannot be stopped: the stop is refused at once.
     let mut record = admin.workspaces.list().await.unwrap().remove(0);
     record.status = puddle_types::WorkspaceStatus::Paused;
-    admin
-        .workspaces
-        .seed(record.clone(), puddle_api::Unsaved::default());
+    admin.workspaces.seed(
+        record.clone(),
+        puddle_services::fake_workspaces::Unsaved::default(),
+    );
 
     start_delete(&admin, ann_id, "Ann").await;
     // An absence window: nothing signals that the reaper looked and left Ann, so give it time.
@@ -592,7 +595,7 @@ async fn a_workspace_that_refuses_its_stop_is_tried_again_at_a_later_look() {
     record.status = puddle_types::WorkspaceStatus::Stopped;
     admin
         .workspaces
-        .seed(record, puddle_api::Unsaved::default());
+        .seed(record, puddle_services::fake_workspaces::Unsaved::default());
     start_delete(&admin, bob_id, "Bob").await;
     admin.gone("Ann").await;
     admin.gone("Bob").await;

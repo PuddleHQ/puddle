@@ -17,13 +17,13 @@ use puddle_store::{
     EnvDraft, EnvEntry, EnvName, EnvScope, EnvValue, SecretHost, Store, UserId, check_secret_value,
 };
 
-use crate::ApiErrorBody;
 use crate::authz::Principal;
-use crate::error::{ApiError, ErrorCode, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
 use crate::routes::workspaces::named;
-use crate::wire::{EnvList, EnvSetRequest, EnvVariable, SecretPlace, WorkspaceEnv};
+use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, ErrorCode, blocking};
+use puddle_services::wire::{EnvList, EnvSetRequest, EnvVariable, SecretPlace, WorkspaceEnv};
 
 fn unavailable() -> ApiError {
     ApiError::new(

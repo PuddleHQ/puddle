@@ -10,12 +10,12 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use puddle_types::WorkspaceId;
 
-use crate::ApiErrorBody;
-use crate::error::ApiError;
 use crate::extract::{Json as BodyJson, Path};
 use crate::routes::AppState;
 use crate::routes::workspaces::named;
-use crate::wire::{PortEntry, PortForwardRequest, WorkspacePorts};
+use puddle_services::error::ApiError;
+use puddle_services::error::ApiErrorBody;
+use puddle_services::wire::{PortEntry, PortForwardRequest, WorkspacePorts};
 
 /// The workspace's ports: the ones a process in it listens on (as the workspace reports them),
 /// the ones forwarded to this computer and the pinned ones. A stopped workspace lists its pinned

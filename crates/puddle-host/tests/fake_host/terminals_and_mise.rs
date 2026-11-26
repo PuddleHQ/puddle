@@ -25,9 +25,9 @@ async fn event_reader_sees_an_event_queued_past_the_deadline() {
 }
 
 async fn terminal_output_until(
-    link: &mut puddle_api::TerminalLink,
+    link: &mut puddle_services::terminals::TerminalLink,
     text: &str,
-) -> puddle_api::TerminalEnd {
+) -> puddle_services::terminals::TerminalEnd {
     let mut seen = String::new();
     loop {
         let item = tokio::time::timeout(Duration::from_secs(10), link.output.recv())
@@ -35,16 +35,20 @@ async fn terminal_output_until(
             .unwrap();
         // A link that closes without an end fails the caller's assertion on the reason.
         let Some(item) = item else {
-            return puddle_api::TerminalEnd::of(puddle_api::EndReason::Quitting);
+            return puddle_services::terminals::TerminalEnd::of(
+                puddle_services::terminals::EndReason::Quitting,
+            );
         };
         match item {
-            puddle_api::TerminalOutput::Bytes(b) => {
+            puddle_services::terminals::TerminalOutput::Bytes(b) => {
                 seen.push_str(&String::from_utf8_lossy(&b));
                 if seen.contains(text) {
-                    return puddle_api::TerminalEnd::of(puddle_api::EndReason::Exited);
+                    return puddle_services::terminals::TerminalEnd::of(
+                        puddle_services::terminals::EndReason::Exited,
+                    );
                 }
             }
-            puddle_api::TerminalOutput::Ended(end) => return end,
+            puddle_services::terminals::TerminalOutput::Ended(end) => return end,
         }
     }
 }
@@ -62,27 +66,37 @@ async fn a_terminal_runs_as_the_session_user_and_a_stop_ends_it_with_the_stopped
         .unwrap()
         .to_owned();
     let id = WorkspaceId::new("acme").unwrap();
-    let size = puddle_api::TerminalSize::new(80, 24).unwrap();
+    let size = puddle_services::terminals::TerminalSize::new(80, 24).unwrap();
 
     let service = host.workspaces();
-    puddle_api::TerminalService::check(service, &id)
+    puddle_services::terminals::TerminalService::check(service, &id)
         .await
         .unwrap();
-    let mut link = puddle_api::TerminalService::open(service, &id, size)
+    let mut link = puddle_services::terminals::TerminalService::open(service, &id, size)
         .await
         .unwrap();
     link.input
-        .send(puddle_api::TerminalInput::Bytes(b"whoami\r".to_vec()))
+        .send(puddle_services::terminals::TerminalInput::Bytes(
+            b"whoami\r".to_vec(),
+        ))
         .await
         .unwrap();
     let reached = terminal_output_until(&mut link, &format!("{user}\r\n")).await;
-    assert_eq!(reached.reason, puddle_api::EndReason::Exited, "{reached:?}");
+    assert_eq!(
+        reached.reason,
+        puddle_services::terminals::EndReason::Exited,
+        "{reached:?}"
+    );
     assert_eq!(service.open_terminals(), 1, "the shell counts as open");
 
     let stop = api.post("/api/workspaces/acme/stop", "").await;
     assert_eq!(stop.status, 202, "{}", stop.body);
     let end = terminal_output_until(&mut link, "never printed").await;
-    assert_eq!(end.reason, puddle_api::EndReason::Stopped, "{end:?}");
+    assert_eq!(
+        end.reason,
+        puddle_services::terminals::EndReason::Stopped,
+        "{end:?}"
+    );
     events.until(ended("acme"), Duration::from_secs(20)).await;
     eventually(
         "a stop leaves no terminal open",
@@ -92,16 +106,19 @@ async fn a_terminal_runs_as_the_session_user_and_a_stop_ends_it_with_the_stopped
     .await;
 
     // A stopped workspace has no terminal to open.
-    let refused = puddle_api::TerminalService::open(service, &id, size)
+    let refused = puddle_services::terminals::TerminalService::open(service, &id, size)
         .await
         .unwrap_err();
     assert!(
-        matches!(refused, puddle_api::TerminalError::NotRunning(_)),
+        matches!(
+            refused,
+            puddle_services::terminals::TerminalError::NotRunning(_)
+        ),
         "{refused:?}"
     );
     assert!(matches!(
-        puddle_api::TerminalService::check(service, &id).await,
-        Err(puddle_api::TerminalError::NotRunning(_))
+        puddle_services::terminals::TerminalService::check(service, &id).await,
+        Err(puddle_services::terminals::TerminalError::NotRunning(_))
     ));
     host.shutdown().await;
 }
@@ -112,12 +129,14 @@ async fn sandbox_a_terminal_reaches(
     workspace: &str,
 ) -> String {
     let id = WorkspaceId::new(workspace).unwrap();
-    let size = puddle_api::TerminalSize::new(80, 24).unwrap();
-    let mut link = puddle_api::TerminalService::open(service, &id, size)
+    let size = puddle_services::terminals::TerminalSize::new(80, 24).unwrap();
+    let mut link = puddle_services::terminals::TerminalService::open(service, &id, size)
         .await
         .unwrap();
     link.input
-        .send(puddle_api::TerminalInput::Bytes(b"hostname\r".to_vec()))
+        .send(puddle_services::terminals::TerminalInput::Bytes(
+            b"hostname\r".to_vec(),
+        ))
         .await
         .unwrap();
     let mut seen = String::new();
@@ -129,7 +148,7 @@ async fn sandbox_a_terminal_reaches(
         let Some(item) = item else {
             return format!("closed after {seen:?}");
         };
-        if let puddle_api::TerminalOutput::Bytes(b) = item {
+        if let puddle_services::terminals::TerminalOutput::Bytes(b) = item {
             seen.push_str(&String::from_utf8_lossy(&b));
             // The shell echoes the typed line, then answers with the name and a new prompt.
             if let Some((_, answer)) = seen.split_once("hostname\r\n")

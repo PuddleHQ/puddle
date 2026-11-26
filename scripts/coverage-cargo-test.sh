@@ -37,6 +37,13 @@ STUB
     chmod +x "$tmp/bin/$name"
 done
 chmod +x "$ws/scripts/coverage-run.sh"
+# The crate-selection check needs a real `cargo metadata`; the stub prints the ignore regex it would and passes its self-test.
+cat >"$ws/scripts/coverage-crates.py" <<'STUB'
+import sys
+
+if sys.argv[1:] != ["--self-test"]:
+    print("^$")
+STUB
 git -C "$ws" init -q -b develop
 git -C "$ws" add -A
 git -C "$ws" -c user.email=t@t -c user.name=t commit -q -m base

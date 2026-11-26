@@ -18,7 +18,7 @@ set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 # One pin line per file, found by its shape; a file with none or two fails the check.
-files=(crates/puddle-api/src/workspaces.rs crates/puddle-workspace/src/workspaces.rs crates/puddle-vm-tests/src/lib.rs crates/puddle-compute/src/fake/mod.rs)
+files=(crates/puddle-services/src/workspaces.rs crates/puddle-workspace/src/workspaces.rs crates/puddle-vm-tests/src/lib.rs crates/puddle-compute/src/fake/mod.rs)
 curl_bin=${CURL:-curl}
 gh_bin=${GH:-gh}
 branch=ci/refresh-image-pins

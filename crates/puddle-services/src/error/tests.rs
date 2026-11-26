@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use puddle_types::{PendingId, RuleId};
 
+use crate::terminals::{EndReason, TerminalEnd};
+
 use super::*;
 
 #[test]
@@ -131,8 +133,6 @@ fn settings_errors_map_newer_schema_to_a_conflict() {
         ApiError::settings_unreadable("the global settings", &"global settings must be an object");
     assert_eq!(damaged.status(), StatusCode::CONFLICT);
     assert_eq!(damaged.code(), ErrorCode::SettingsUnreadable);
-    let repo = ApiError::from(SettingsRepoError::new("disk full"));
-    assert_eq!(repo.code(), ErrorCode::Internal);
 }
 
 #[test]
@@ -191,4 +191,22 @@ async fn a_panicking_blocking_task_is_a_500() {
     assert_eq!(err.status(), StatusCode::INTERNAL_SERVER_ERROR);
     let ok = blocking(|| Ok(7)).await.unwrap();
     assert_eq!(ok, 7);
+}
+
+#[test]
+fn a_refusal_is_a_422_with_the_reason_and_a_missing_staging_is_a_404() {
+    let refused = ApiError::from(RestoreServiceError::Refused("not a gzip archive".into()));
+    assert_eq!(refused.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let gone = ApiError::from(RestoreServiceError::NotStaged("gone".into()));
+    assert_eq!(gone.status(), StatusCode::NOT_FOUND);
+    let down = ApiError::from(RestoreServiceError::Failed("disk full".into()));
+    assert_eq!(down.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[test]
+fn a_service_that_is_unavailable_or_ended_answers_with_the_status_a_client_can_act_on() {
+    let unavailable = ApiError::from(TerminalError::Unavailable("later".into()));
+    assert_eq!(unavailable.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let ended = ApiError::from(TerminalError::Ended(TerminalEnd::of(EndReason::BootFailed)));
+    assert_eq!(ended.status(), StatusCode::CONFLICT);
 }

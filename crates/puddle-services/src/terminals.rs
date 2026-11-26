@@ -325,8 +325,10 @@ fn fake_shell(workspace: WorkspaceId, mut size: TerminalSize) -> TerminalLink {
 
 /// A refusal to hand out a ticket.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Limit {
+pub enum Limit {
+    /// The `Workspace` case.
     Workspace,
+    /// The `All` case.
     All,
 }
 
@@ -356,7 +358,7 @@ struct Entry {
 /// The tickets handed out and the terminals they open, with the limits on both. A terminal counts
 /// from its ticket until its socket ends, or until its ticket runs out unused.
 #[derive(Default)]
-pub(crate) struct Registry {
+pub struct Registry {
     inner: Mutex<RegistryInner>,
 }
 
@@ -368,7 +370,10 @@ struct RegistryInner {
 
 impl Registry {
     /// Makes a terminal and its ticket (64 hex characters).
-    pub(crate) fn create(
+    ///
+    /// # Errors
+    /// An invalid-request [`ApiError`] (422) when a value is not valid.
+    pub fn create(
         &self,
         workspace: &WorkspaceId,
         size: TerminalSize,
@@ -408,7 +413,7 @@ impl Registry {
 
     /// Records that terminal `id` belongs to the signed-in browser `device`, so it ends when that
     /// device is signed out.
-    pub(crate) fn bind(&self, id: u64, device: puddle_store::DeviceId) {
+    pub fn bind(&self, id: u64, device: puddle_store::DeviceId) {
         if let Some(entry) = self
             .inner
             .lock()
@@ -421,7 +426,7 @@ impl Registry {
     }
 
     /// The signed-in browser terminal `id` was made for.
-    pub(crate) fn device_of(&self, id: u64) -> Option<puddle_store::DeviceId> {
+    pub fn device_of(&self, id: u64) -> Option<puddle_store::DeviceId> {
         self.inner
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -432,7 +437,7 @@ impl Registry {
 
     /// Uses the ticket of terminal `id` of `workspace`: works once, within its lifetime, for that
     /// terminal only. A wrong guess leaves the ticket as it was.
-    pub(crate) fn claim(
+    pub fn claim(
         &self,
         workspace: &WorkspaceId,
         id: u64,
@@ -453,7 +458,7 @@ impl Registry {
     }
 
     /// Frees the terminal's place.
-    pub(crate) fn release(&self, id: u64) {
+    pub fn release(&self, id: u64) {
         self.inner
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

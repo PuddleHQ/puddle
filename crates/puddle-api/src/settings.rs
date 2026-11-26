@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use futures_util::future::BoxFuture;
 use tokio::sync::OwnedMutexGuard;
 
+use puddle_services::error::ApiError;
 use puddle_types::WorkspaceId;
 use serde_json::Value;
 
@@ -191,3 +192,9 @@ impl SettingsRepo for MemorySettings {
 
 #[cfg(test)]
 mod tests;
+
+impl From<SettingsRepoError> for ApiError {
+    fn from(err: SettingsRepoError) -> Self {
+        Self::internal(&err)
+    }
+}

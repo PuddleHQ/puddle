@@ -49,94 +49,68 @@
 mod admin;
 mod auth;
 mod authz;
-mod backup;
-mod checkouts;
-#[cfg(any(test, feature = "testing"))]
-pub mod contract;
-mod credential_store;
-mod credentials;
-mod dev_cert;
-mod doctor;
-mod error;
 mod events;
 mod extract;
-#[cfg(any(test, feature = "testing"))]
-mod fake_workspaces;
 mod front;
-mod learned;
-mod network_health;
 mod openapi;
-mod ports;
 mod presence;
-mod proxy_sign_in;
 mod remote;
 mod remote_editor;
-mod repos;
-mod restore;
 mod routes;
 mod server;
 mod settings;
 mod signin;
 mod stored_ids;
 mod system_managed;
-mod terminals;
 mod token;
 mod ui;
 mod ui_errors;
-pub mod wire;
-mod workspaces;
 
-pub use backup::{
+pub use puddle_services::backup::{
     BackupArchive, BackupService, BackupServiceError, FAKE_BACKUP_BYTES, FakeBackup, NoBackup,
     archive_file_name,
 };
-pub use checkouts::{
+pub use puddle_services::checkouts::{
     AddRepository, Checkout, Checkouts, Found, FoundList, Manage, RemoteNote, check_addition,
     check_seen, checkouts_view, why_no_remote,
 };
-pub use credential_store::{CredentialStoreService, NoCredentialStore};
-pub use credentials::{
+#[cfg(any(test, feature = "testing"))]
+pub use puddle_services::contract;
+pub use puddle_services::credential_store::{CredentialStoreService, NoCredentialStore};
+pub use puddle_services::credentials::{
     Check, CredentialService, CredentialsError, FakeCredentials, HostCredentials, NoCredentials,
     NoSecretStore,
 };
-pub use dev_cert::{DevCertService, FakeDevCert, NoDevCert};
-pub use doctor::{DoctorError, DoctorService, FakeDoctor, HostDoctor, NoDoctor, RunChecks};
-pub use error::{ApiErrorBody, ErrorCode, ErrorField};
-pub use events::{DEFAULT_EVENT_BUFFER, EventHub, Lagged};
+pub use puddle_services::dev_cert::{DevCertService, FakeDevCert, NoDevCert};
+pub use puddle_services::doctor::{
+    DoctorError, DoctorService, FakeDoctor, HostDoctor, NoDoctor, RunChecks,
+};
+pub use puddle_services::error::{ApiErrorBody, ErrorCode, ErrorField};
 #[cfg(any(test, feature = "testing"))]
-pub use fake_workspaces::{FakeLauncher, FakeWorkspaces, Unsaved};
-pub use front::{NameResolver, NoNames, SystemResolver};
-pub use learned::{FakeLearned, LearnedService, NoLearned};
-pub use network_health::{
+pub use puddle_services::fake_workspaces;
+#[cfg(any(test, feature = "testing"))]
+pub use puddle_services::fake_workspaces::{FakeLauncher, FakeWorkspaces, Unsaved};
+pub use puddle_services::learned::{FakeLearned, LearnedService, NoLearned};
+pub use puddle_services::network_health::{
     FakeNetworkHealth, HostNetworkHealth, NetworkHealthError, NetworkHealthService,
     NoNetworkHealth, PullProxyState, forward_network_changes, forward_proxy_sign_in_failures,
 };
-pub use openapi::{API_VERSION, openapi, openapi_json};
-pub use ports::{FakePorts, NoPorts, PortsService, PortsServiceError};
-pub use proxy_sign_in::{FakeProxySignIns, NoProxySignIns, ProxySignInError, ProxySignInService};
-pub use remote::{
-    NetworkEndpoint, NetworkListener, PublicHost, Remote, RemoteError, RemoteServing, TlsIdentity,
-    WorkspaceNames,
+pub use puddle_services::ports::{FakePorts, NoPorts, PortsService, PortsServiceError};
+pub use puddle_services::proxy_sign_in::{
+    FakeProxySignIns, NoProxySignIns, ProxySignInError, ProxySignInService,
 };
-pub use repos::{FakeRepos, NoRepos, RepoService, ReposError};
-pub use restore::{
+pub use puddle_services::repos::{FakeRepos, NoRepos, RepoService, ReposError};
+pub use puddle_services::restore::{
     FAKE_RESTORE_MAGIC, FakeRestore, IdentityTokenRef, NoRestore, RestoreFacts, RestoreService,
     RestoreServiceError, SecretRef, UploadStream,
 };
-pub use server::{ApiConfig, ApiServer, RunningApi, ServeError, Services};
-pub use settings::{MemorySettings, SettingsLock, SettingsRepo, SettingsRepoError};
-pub use signin::{INVITE_TTL_MS, ResetError, ResetInvite, reset_account, reset_user_account};
-pub use terminals::{
+pub use puddle_services::terminals::{
     EndReason, FakeTerminals, MAX_IN_ALL, MAX_MESSAGE_BYTES, MAX_PER_WORKSPACE, NoTerminals,
     SUBPROTOCOL, TICKET_LIFETIME, TerminalEnd, TerminalError, TerminalInput, TerminalLink,
     TerminalOutput, TerminalService, TerminalSize, WINDOW_BYTES,
 };
-pub use token::{ApiToken, ConnectionFileError, ConnectionInfo};
-#[cfg(feature = "embedded-ui")]
-pub use ui::EmbeddedUi;
-pub use ui::{UiAssets, UiFile};
-pub use workspaces::phase;
-pub use workspaces::{
+pub use puddle_services::workspaces::phase;
+pub use puddle_services::workspaces::{
     AttachMode, Attached, BrowserTarget, CONNECTION_TOKEN_COOKIE, CheckoutProblem,
     DEFAULT_DISK_MIB, DEFAULT_IMAGE, DEFAULT_ROOT_DISK_MIB, DeleteCheck, DesktopTarget,
     DisplayName, DisplayNameError, EditorLogin, EditorSignIn, EntryProblem, GitSetup, IdDrawError,
@@ -150,3 +124,22 @@ pub use workspaces::{
     check_start_folder_change, describe_image, entry_id_from_text, label_taken, new_entry_id,
     not_found,
 };
+pub use puddle_services::{
+    backup, checkouts, credential_store, credentials, dev_cert, doctor, error, learned,
+    network_health, ports, proxy_sign_in, repos, restore, terminals, wire, workspaces,
+};
+
+pub use events::{DEFAULT_EVENT_BUFFER, EventHub, Lagged};
+pub use front::{NameResolver, NoNames, SystemResolver};
+pub use openapi::{API_VERSION, openapi, openapi_json};
+pub use remote::{
+    NetworkEndpoint, NetworkListener, PublicHost, Remote, RemoteError, RemoteServing, TlsIdentity,
+    WorkspaceNames,
+};
+pub use server::{ApiConfig, ApiServer, RunningApi, ServeError, Services};
+pub use settings::{MemorySettings, SettingsLock, SettingsRepo, SettingsRepoError};
+pub use signin::{INVITE_TTL_MS, ResetError, ResetInvite, reset_account, reset_user_account};
+pub use token::{ApiToken, ConnectionFileError, ConnectionInfo};
+#[cfg(feature = "embedded-ui")]
+pub use ui::EmbeddedUi;
+pub use ui::{UiAssets, UiFile};

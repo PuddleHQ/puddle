@@ -28,7 +28,9 @@ pub enum FoundVia {
 }
 
 impl FoundVia {
-    pub(crate) fn from_listing(listing: Listing) -> Self {
+    /// Builds the wire form from the listing.
+    #[must_use]
+    pub fn from_listing(listing: Listing) -> Self {
         match listing {
             Listing::GhAuthStatus => Self::Gh,
             Listing::GcmGithub => Self::GcmGithub,
@@ -55,7 +57,8 @@ pub struct FoundAccount {
 }
 
 impl FoundAccount {
-    pub(crate) fn from_discovered(account: &DiscoveredAccount) -> Self {
+    /// Builds the wire form from the discovered.
+    pub fn from_discovered(account: &DiscoveredAccount) -> Self {
         Self {
             via: FoundVia::from_listing(account.via),
             host: account.host.to_string(),
@@ -110,7 +113,9 @@ pub struct CheckResult {
 }
 
 impl CheckResult {
-    pub(crate) const fn readable() -> Self {
+    /// The result of a credential that read fine.
+    #[must_use]
+    pub const fn readable() -> Self {
         Self {
             readable: true,
             problem: None,
@@ -119,7 +124,9 @@ impl CheckResult {
         }
     }
 
-    pub(crate) fn from_error(source: &SourceSpec, err: &SourceError) -> Self {
+    /// Builds the wire form from the error.
+    #[must_use]
+    pub fn from_error(source: &SourceSpec, err: &SourceError) -> Self {
         Self {
             readable: false,
             problem: Some(source_problem(err)),
@@ -130,7 +137,8 @@ impl CheckResult {
 }
 
 /// A source's refusal in words the user can act on.
-pub(crate) fn source_problem(err: &SourceError) -> String {
+#[must_use]
+pub fn source_problem(err: &SourceError) -> String {
     match err {
         SourceError::NotSignedIn => "not signed in, or the sign-in has expired".to_owned(),
         SourceError::Timeout(tool) => format!(
@@ -159,7 +167,10 @@ pub struct StoreTokenRequest {
 
 impl StoreTokenRequest {
     /// What the token is for, and the token.
-    pub(crate) fn into_parts(self) -> Result<(TokenScope, Secret), ApiError> {
+    ///
+    /// # Errors
+    /// An invalid-request [`ApiError`] (422) when a value is not valid.
+    pub fn into_parts(self) -> Result<(TokenScope, Secret), ApiError> {
         let host = HostName::new(self.host).map_err(|_| ApiError::invalid("not a valid host"))?;
         let org = self
             .org

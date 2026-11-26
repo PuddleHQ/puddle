@@ -30,7 +30,9 @@ pub enum SystemReason {
 }
 
 impl SystemReason {
-    pub(crate) fn from_store(reason: store::SystemReason) -> Option<Self> {
+    /// Builds the wire form from the store.
+    #[must_use]
+    pub fn from_store(reason: store::SystemReason) -> Option<Self> {
         Some(match reason {
             store::SystemReason::MicrosoftServer => Self::MicrosoftServer,
             store::SystemReason::CodeServer => Self::CodeServer,
@@ -44,7 +46,7 @@ impl SystemReason {
     }
 
     /// The reasons named in an audit record; a name this version doesn't know is left out.
-    pub(crate) fn parse_all(names: &[String]) -> Vec<Self> {
+    pub fn parse_all(names: &[String]) -> Vec<Self> {
         names
             .iter()
             .filter_map(|name| store::SystemReason::parse(name))
@@ -70,7 +72,9 @@ pub struct SystemManagedHost {
 }
 
 impl SystemManagedHost {
-    pub(crate) fn from_store(host: store::SystemHost) -> Option<Self> {
+    /// Builds the wire form from the store.
+    #[must_use]
+    pub fn from_store(host: store::SystemHost) -> Option<Self> {
         Some(Self {
             pattern: host.pattern.to_owned(),
             note: host.note.to_owned(),
@@ -164,7 +168,8 @@ pub struct RuleSetView {
 }
 
 impl RuleSetView {
-    pub(crate) fn from_store(info: store::RuleSetInfo) -> Self {
+    /// Builds the wire form from the store.
+    pub fn from_store(info: store::RuleSetInfo) -> Self {
         let store::RuleSetInfo {
             id,
             name,
@@ -241,7 +246,8 @@ pub struct RuleSetEntryPage {
 }
 
 impl RuleSetEntryPage {
-    pub(crate) fn from_store(page: store::EntryPage) -> Self {
+    /// Builds the wire form from the store.
+    pub fn from_store(page: store::EntryPage) -> Self {
         Self {
             entries: page
                 .entries

@@ -35,7 +35,7 @@ fn unavailable() -> ApiError {
 
 /// A fresh id for a secret's value of `user`: `env-` and 128 random bits, with the user's mark.
 fn new_stored_id(user: UserId) -> Result<StoredId, ApiError> {
-    crate::stored_ids::fresh(user, "env").map_err(|err| ApiError::internal(&err))
+    puddle_services::stored_ids::fresh(user, "env").map_err(|err| ApiError::internal(&err))
 }
 
 /// Removes a secret's value that nothing refers to any more. The variable is already changed, so a

@@ -35,7 +35,6 @@ pub enum CredentialsError {
 
 /// What reading a credential came to. Never the value.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum Check {
     /// The source gave a value.
     Readable,

@@ -52,7 +52,8 @@ use puddle_store::{
 use puddle_types::{
     BlockReason, CompanySignal, ConnectionDecision, ConnectionEvent, ConnectionReason,
     EgressRequest, Event, EventSink, Host, HttpRequestLine, ImageRef, LocalCategory, MemoryMib,
-    Methods, PathPattern, Problem, Problems, Program, RuleId, SuffixAllows, WorkspaceId, WorkspaceStatus,
+    Methods, PathPattern, Problem, Problems, Program, RuleId, SuffixAllows, WorkspaceId,
+    WorkspaceStatus,
 };
 use tokio::sync::Mutex;
 

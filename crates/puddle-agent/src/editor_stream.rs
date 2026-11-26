@@ -74,6 +74,7 @@ where
     match request {
         Request::Connect => {
             if let Some(server) = access.server.clone() {
+                // A join error means the copy was not written; the connection goes on without it.
                 let _ = tokio::task::spawn_blocking(move || {
                     crate::editor::fill_workspace_cache(&server);
                 })

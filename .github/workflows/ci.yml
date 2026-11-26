@@ -80,6 +80,7 @@ jobs:
       actions: write
     outputs:
       ci_rust: ${{ steps.scope.outputs.ci_rust }}
+      msvc: ${{ steps.scope.outputs.msvc }}
       ui: ${{ steps.scope.outputs.ui }}
       light: ${{ steps.scope.outputs.light }}
       defer_linux_webkit: ${{ steps.scope.outputs.defer_linux_webkit }}
@@ -689,7 +690,7 @@ jobs:
   msvc:
     name: clippy (windows-msvc, cross-checked)
     needs: [scope, queue-tested]
-    if: ${{ !cancelled() && github.event_name != 'schedule' && needs.scope.outputs.ci_rust != 'false' && needs.queue-tested.outputs.skip != 'true' }}
+    if: ${{ !cancelled() && github.event_name != 'schedule' && needs.scope.outputs.msvc != 'false' && needs.queue-tested.outputs.skip != 'true' }}
     permissions:
       contents: read
       actions: write
@@ -976,7 +977,7 @@ jobs:
         uses: ./.github/actions/cancel-group
 
   # The light CI mode's Rust unit tier (PUDDLE_LIGHT_CI=on, ci/scope.sh `unit`): what a pull request to develop and a merge
-  # queue run check in that mode instead of the `rust`, `gates` and `msvc` jobs. Off the mode scope says `unit=false` and it
+  # queue run check in that mode instead of the `rust` and `gates` jobs (the `msvc` job still runs when a crate or fixture changed, scope `msvc`). Off the mode scope says `unit=false` and it
   # skips. It restores the `gates` job's Rust cache (its clippy, doc test and desktop shell builds cover these) and saves none.
   unit:
     name: unit (fmt, clippy, Rust unit tests)
@@ -1160,4 +1161,4 @@ jobs:
           PUDDLE_QUEUE_SKIP_PUSH: ${{ vars.PUDDLE_QUEUE_SKIP_PUSH }}
           PUDDLE_TIER: ${{ vars.PUDDLE_TIER }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
-        run: ci/scope.sh verdict rust=ci_rust,pushskip gates=ci_rust,pushskip hooks=ci_rust,pushskip msvc=ci_rust,pushskip light='!ci_rust' ui=ui,pushskip ui-webkit=ui,queue,pushskip,defer:defer_linux_webkit unit=unit unit-ui=unit_ui
+        run: ci/scope.sh verdict rust=ci_rust,pushskip gates=ci_rust,pushskip hooks=ci_rust,pushskip msvc=msvc,pushskip light='!ci_rust' ui=ui,pushskip ui-webkit=ui,queue,pushskip,defer:defer_linux_webkit unit=unit unit-ui=unit_ui

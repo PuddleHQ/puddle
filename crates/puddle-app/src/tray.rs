@@ -12,7 +12,9 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, Tray
 
 use tauri::{AppHandle, Runtime};
 
-use crate::badge::{self, Pixels};
+use puddle_appicon::Icon;
+
+use crate::badge;
 
 /// The menu entry that opens the window.
 pub const MENU_OPEN: &str = "open";
@@ -95,13 +97,27 @@ fn can_show() -> bool {
     tauri::async_runtime::block_on(watcher).unwrap_or(false)
 }
 
-/// The app icon, and the same with the badge dot when it can be drawn on it.
+/// The app icon as the tray shows it, and the same with the badge dot when it can be drawn on it.
+///
+/// On Windows the icon is drawn once at 32 pixels, which Windows scales down by a gentle factor for
+/// 100 to 150 percent displays; handing it the 256 pixel original made it scale by 16 and lose its
+/// edges. The dot is drawn at that size with smooth edges.
 fn icons(app_icon: &Image<'_>) -> (Image<'static>, Option<Image<'static>>) {
-    let (size, rgba) = (app_icon.width(), app_icon.rgba().to_vec());
-    let marked = badge::with_dot(&Pixels { size, rgba })
-        .filter(|dotted| dotted.size == app_icon.height())
+    let full = Icon {
+        size: app_icon.width(),
+        rgba: app_icon.rgba().to_vec(),
+    };
+    let square = app_icon.width() == app_icon.height();
+    let shown = if cfg!(windows) && square {
+        full.resized(puddle_appicon::tray_side()).unwrap_or(full)
+    } else {
+        full
+    };
+    let marked = badge::with_dot(&shown)
+        .filter(|dotted| square && dotted.size == shown.size)
         .map(|dotted| Image::new_owned(dotted.rgba, dotted.size, dotted.size));
-    (app_icon.clone().to_owned(), marked)
+    let plain = Image::new_owned(shown.rgba, shown.size, shown.size);
+    (plain, marked)
 }
 
 /// What the tray icon shows now: the app icon, with and without the badge dot, and how many

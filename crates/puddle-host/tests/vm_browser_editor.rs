@@ -180,6 +180,18 @@ async fn explorer(
             // Logged before the guest is asked: a guest that does not answer fails the test in
             // `guest_within`, and the window's state must not be lost with it.
             tracing::error!(workspace = %sandbox, step, error = %e, %window, %storage, "the explorer did not get ready");
+            // One reload of the same window, after the dump: folders on the second load say the
+            // window's first read of the multi-root file lost a race, none say the server's answer
+            // was wrong; either way the next failure names which.
+            let reload = PageRequest::new("", "true")
+                .result("(setTimeout(() => location.reload(), 0), true)")
+                .budget(PAGE_BUDGET);
+            let _ = shell.browser.lock().await.wait(page, &reload).await;
+            let again = PageRequest::new("", EXPLORER_READY)
+                .result("true")
+                .budget(PAGE_BUDGET);
+            let reloaded = shell.browser.lock().await.wait(page, &again).await;
+            tracing::error!(workspace = %sandbox, step, shows_folders_after_reload = reloaded.is_ok(), "the same window reloaded");
             let server = guest_within(runtime, sandbox, SERVER_STATE, PAGE_BUDGET).await;
             panic!("{sandbox}'s explorer did not get ready ({step}); the guest:\n{server}");
         }

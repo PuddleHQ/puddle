@@ -25,6 +25,18 @@ pub fn chain(extra: impl Fn(&PanicHookInfo<'_>) + Send + Sync + 'static) {
     }));
 }
 
+/// Replaces the current hook with `hook`, dropping the earlier one.
+pub fn replace(hook: impl Fn(&PanicHookInfo<'_>) + Send + Sync + 'static) {
+    let _swap = lock();
+    std::panic::set_hook(Box::new(hook));
+}
+
+/// Puts the standard library's default hook back, dropping the current one.
+pub fn reset() {
+    let _swap = lock();
+    drop(std::panic::take_hook());
+}
+
 /// Runs `make` with this thread's panic messages switched off, returning `None` if it panicked.
 /// A panic on any other thread meanwhile still goes to the earlier hook, so a crash report is not
 /// lost. The earlier hook is back when this returns.

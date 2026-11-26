@@ -572,6 +572,24 @@ describe("a record as a row", () => {
     );
     expect(http.detail).toMatch(/^POST \/acme\/other\/git-receive-pack · /);
   });
+  it.each([
+    ["push", "Git push: GET /acme/app.git/info/refs"],
+    ["fetch", "Git fetch: GET /acme/app.git/info/refs"],
+  ] as const)(
+    "words a Git smart-HTTP %s connection by its operation",
+    (git_operation, words) => {
+      const view = row(
+        connection(1, {
+          host: "github.com",
+          protocol: "http",
+          method: "GET",
+          path: "/acme/app.git/info/refs",
+          git_operation,
+        }).record,
+      );
+      expect(view.detail).toMatch(new RegExp(`^${words}`));
+    },
+  );
   it("words a method by the record's protocol, not by its spelling", () => {
     const base = { host: "github.com", path: "/acme/app", reason: "rule" };
     const http = row(

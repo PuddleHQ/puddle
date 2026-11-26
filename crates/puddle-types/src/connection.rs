@@ -89,6 +89,53 @@ impl ConnectionProtocol {
     }
 }
 
+/// What a Git smart-HTTP request does: it sends commits (`git push`) or fetches them
+/// (`git fetch`, `clone`, `pull`). The first request of both is `GET .../info/refs` and differs
+/// only in the query (`service=git-receive-pack` or `service=git-upload-pack`), which a record
+/// drops, so the kind is kept on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum GitOperation {
+    /// `git-receive-pack`.
+    Push,
+    /// `git-upload-pack`.
+    Fetch,
+}
+
+impl GitOperation {
+    /// The stored and wire name: `push` or `fetch`.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Push => "push",
+            Self::Fetch => "fetch",
+        }
+    }
+
+    /// The operation a request target asks for: `/info/refs?service=git-receive-pack` and
+    /// `/git-receive-pack` are a push, the `git-upload-pack` forms a fetch, any other target none.
+    /// `target` is as received, so the query is still on it.
+    #[must_use]
+    pub fn of_target(target: &str) -> Option<Self> {
+        let path = request_path(target);
+        if path.ends_with("/info/refs") {
+            let query = target.split_once('?')?.1;
+            let query = query.split('#').next().unwrap_or_default();
+            return query.split('&').find_map(|pair| match pair {
+                "service=git-receive-pack" => Some(Self::Push),
+                "service=git-upload-pack" => Some(Self::Fetch),
+                _ => None,
+            });
+        }
+        match path.rsplit('/').next() {
+            Some("git-receive-pack") => Some(Self::Push),
+            Some("git-upload-pack") => Some(Self::Fetch),
+            _ => None,
+        }
+    }
+}
+
 /// How reaching the destination went, once the proxy had decided to let a connection through
 /// (R-24). A refusal Puddle made on purpose has none: a `403` is a decision, not an outcome.
 /// Without this an allowed connection that ended in a `502` or `504` reads like any other allow.
@@ -278,6 +325,7 @@ pub struct HttpRequestLine {
     protocol: ConnectionProtocol,
     method: String,
     path: String,
+    git_operation: Option<GitOperation>,
 }
 
 impl HttpRequestLine {
@@ -288,6 +336,7 @@ impl HttpRequestLine {
             protocol: ConnectionProtocol::Http,
             method: method.into(),
             path: request_path(target).to_owned(),
+            git_operation: GitOperation::of_target(target),
         }
     }
 
@@ -317,6 +366,13 @@ impl HttpRequestLine {
     #[must_use]
     pub fn path(&self) -> &str {
         &self.path
+    }
+
+    /// Push or fetch, for a Git smart-HTTP request; `None` for any other request and for Git over
+    /// SSH (whose command is the method).
+    #[must_use]
+    pub fn git_operation(&self) -> Option<GitOperation> {
+        self.git_operation
     }
 }
 

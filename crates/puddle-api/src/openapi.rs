@@ -37,6 +37,7 @@ const BEARER: &str = "bearer";
         puddle_services::wire::AuditOutcome,
         puddle_services::wire::ConnectionOrigin,
         puddle_services::wire::ConnectionProtocol,
+        puddle_services::wire::GitOperation,
         puddle_services::wire::ConnectionOutcome,
         puddle_types::WorkspaceId,
         puddle_types::ReasonCode,

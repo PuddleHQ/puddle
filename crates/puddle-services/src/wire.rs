@@ -58,7 +58,7 @@ pub use app_icon::{AppIconChoice, AppIcons, BuiltInIcon, CustomIcon};
 pub use audit::{
     AuditEntry, AuditOutcome, AuditPage, AuditPending, AuditRequestRule, AuditRequestRuleScope,
     AuditRetentionRequest, AuditRule, AuditRuleScope, AuditRuleSet, AuditSize, AuditType,
-    ConnectionDecision, ConnectionOrigin, ConnectionOutcome, ConnectionProtocol,
+    ConnectionDecision, ConnectionOrigin, ConnectionOutcome, ConnectionProtocol, GitOperation,
     PendingExpiryReason, RuleDeleteReason, RuleSwitchKind, WorkspaceOpKind, WorkspaceOpOutcome,
 };
 pub use audit_record::AuditRecord;

@@ -31,8 +31,8 @@ use puddle_e2e::lab::{Responder, WebAnswer, WebOptions};
 use puddle_test_kit::eventually_async;
 use puddle_types::WorkspaceId;
 use puddle_vm_tests::soak::{
-    STOP_WITHIN_SECS, judge_heartbeat, judge_incremental, judge_latency, judge_rounds, parse_tree,
-    tree_changes,
+    STOP_WITHIN_SECS, Sample, judge_heartbeat, judge_incremental, judge_latency, judge_rounds,
+    parse_tree, tree_changes,
 };
 use puddle_vm_tests::{parse_ticks, resident_bytes};
 use serde_json::json;
@@ -474,6 +474,23 @@ async fn vm_soak_four_busy_workspaces_and_a_bystander() {
         })
         .collect();
 
+    // The runner's witness: a thread that asks nothing of the host and ticks the run's clock about
+    // every 100 ms. A tick far behind the last means the runner did not run this process.
+    let clock = Instant::now();
+    let witness_on = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let witness = {
+        let on = witness_on.clone();
+        std::thread::spawn(move || {
+            let mut ticks = Vec::new();
+            // flake-ok: ticks the run's clock until told to stop; it waits for no condition
+            while on.load(std::sync::atomic::Ordering::Relaxed) {
+                ticks.push(i64::try_from(clock.elapsed().as_millis()).unwrap_or(i64::MAX));
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            ticks
+        })
+    };
+
     // The bystander's API, asked twice a second while the others work.
     let mut samples = Vec::new();
     let mut peak_rss = 0_u64;
@@ -484,7 +501,10 @@ async fn vm_soak_four_busy_workspaces_and_a_bystander() {
         let ws = api
             .get(&format!("/api/workspaces/{}", bystander.as_str()))
             .await;
-        samples.push(from.elapsed().as_secs_f64() * 1000.0);
+        samples.push(Sample {
+            at_ms: i64::try_from(from.duration_since(clock).as_millis()).unwrap_or(i64::MAX),
+            took_ms: from.elapsed().as_secs_f64() * 1000.0,
+        });
         assert_eq!(ws.status, 200, "{}", ws.body);
         peak_rss = peak_rss.max(resident_bytes(std::process::id()).unwrap_or(0));
         if last_log.elapsed() > Duration::from_secs(60) {
@@ -500,8 +520,10 @@ async fn vm_soak_four_busy_workspaces_and_a_bystander() {
     }
     eprintln!("host after the load: {}", host_load());
     eprintln!("REPORT host RSS peak {} MiB", peak_rss >> 20);
-    let latency =
-        judge_latency(&samples, 10, BYSTANDER_BOUND_MS).unwrap_or_else(|why| panic!("{why}"));
+    witness_on.store(false, std::sync::atomic::Ordering::Relaxed);
+    let witness = witness.join().expect("the witness thread ends");
+    let latency = judge_latency(&samples, &witness, 10, BYSTANDER_BOUND_MS)
+        .unwrap_or_else(|why| panic!("{why}"));
     eprintln!(
         "REPORT bystander API: {} answers, slowest {:.0} ms",
         latency.samples, latency.worst_ms

@@ -310,7 +310,7 @@ describe("the inbox page", () => {
     reset();
     inbox.add(request(1, { host: "a.one.test" }), "one.test");
     render(InboxPage);
-    await screen.findByText("a.one.test");
+    await screen.findByRole("heading", { name: "one.test" });
     expect(screen.queryByTestId("allowed-today")).toBeNull();
   });
 

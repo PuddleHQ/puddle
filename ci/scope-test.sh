@@ -278,7 +278,7 @@ main_case() { # main_case <label> <want class> <args of run_main>
     grep -q "^class=$exp$" <<<"$out" || bad "main: $label: want class $exp, got: $(tr '\n' ' ' <<<"$out")"
     grep -q '^rc=0$' <<<"$out" || bad "main: $label: exit status not 0"
     grep -q "^class=$exp$" "$tmp/out" || bad "main: $label: GITHUB_OUTPUT lacks class=$exp"
-    [ "$(grep -c . "$tmp/out")" = 12 ] || bad "main: $label: GITHUB_OUTPUT has not exactly the twelve outputs"
+    [ "$(grep -c . "$tmp/out")" = 13 ] || bad "main: $label: GITHUB_OUTPUT has not exactly the thirteen outputs"
     grep -q "^light=${WANT_LIGHT:-false}$" "$tmp/out" || bad "main: $label: want light=${WANT_LIGHT:-false}, got: $(tr '\n' ' ' <"$tmp/out")"
 }
 printf '.github/workflows/ci.yml\ncrates/puddle-host/tests/fake_host.rs\n' >"$tmp/other-workflow.txt"
@@ -423,14 +423,23 @@ light_ci_want() { # light_ci_want <label> <want "ci_rust win_rust ui vm unit uni
     local label=$1 exp=$2 got
     shift 2
     main_case "light CI: $label" "$@"
+    # The cross-checked Windows clippy (`msvc`): in the light CI mode it follows win_rust (a crate or fixture changed),
+    # not the unit tier's ci_rust; everywhere else it follows ci_rust.
+    local want_msvc=${MSVC_WANT:-}
+    if [ -z "$want_msvc" ]; then
+        case $exp in "false false false false"*) want_msvc=$(awk '{print $5}' <<<"$exp") ;; *) want_msvc=true ;; esac
+    fi
+    grep -qx "msvc=$want_msvc" "$tmp/out" || bad "main: light CI: $label: want msvc=$want_msvc, got $(grep '^msvc=' "$tmp/out")"
     got=$(awk -F= '{v[$1]=$2} END {print v["ci_rust"], v["win_rust"], v["ui"], v["vm"], v["unit"], v["unit_ui"]}' "$tmp/out")
     [ "$got" = "$exp" ] || bad "main: light CI: $label: got '$got', want '$exp'"
 }
 HEAVY_OFF="false false false false"
 # A crate no UI or VM job builds: the Rust unit tier only.
 printf 'crates/puddle-freshness/src/lib.rs\n' >"$tmp/rust-only.txt"
+printf 'scripts/coverage-baseline.json\n' >"$tmp/gate-only.txt"
 MAIN_ENV=(PUDDLE_LIGHT_CI=on)
 light_ci_want "rust-only pull request" "$HEAVY_OFF true false" rust pull_request develop ok "$tmp/rust-only.txt"
+MSVC_WANT=false light_ci_want "a gate-only pull request: the unit tier runs, the Windows clippy does not" "$HEAVY_OFF true true" rust pull_request develop ok "$tmp/gate-only.txt"
 light_ci_want "ui-only pull request" "$HEAVY_OFF false true" ui pull_request develop ok "$tmp/ui.txt"
 light_ci_want "docs-only pull request" "$HEAVY_OFF false false" docs pull_request develop ok "$tmp/docs.txt"
 light_ci_want "always-run path" "$HEAVY_OFF true true" full pull_request develop ok "$tmp/rename.txt"
@@ -685,7 +694,7 @@ matrix() { # matrix <label> <nightly flag or ""> <outputs: key,key> <job=key[,fl
 # The three run side by side (about 2000 cases); each prints its case count.
 matrix_bg() { (fail=0; matrix "$@"; echo "matrix $1: $MATRIX_CASES cases" >&2; exit "$fail") & mpids+=($!); }
 mpids=()
-matrix_bg ci "" ci_rust,ui rust=ci_rust,pushskip gates=ci_rust,pushskip hooks=ci_rust,pushskip msvc=ci_rust,pushskip 'light=!ci_rust' ui=ui,pushskip ui-webkit=ui,queue,pushskip,defer:defer_linux_webkit
+matrix_bg ci "" ci_rust,msvc,ui rust=ci_rust,pushskip gates=ci_rust,pushskip hooks=ci_rust,pushskip msvc=msvc,pushskip 'light=!ci_rust' ui=ui,pushskip ui-webkit=ui,queue,pushskip,defer:defer_linux_webkit
 # ci.yml's light CI unit tier, apart: its two outputs vary independently of the others (one matrix would be 81 states a context).
 matrix_bg ci-unit "" unit,unit_ui unit=unit unit-ui=unit_ui
 matrix_bg windows "" win_rust,ui clippy=win_rust,queue,defer:defer_win_clippy test-build=win_rust tests=win_rust docs=win_rust ui-e2e=ui,queue,defer:defer_win_ui ui-unit=ui,queue,defer:defer_win_ui
@@ -770,7 +779,7 @@ VERDICT_ENV=()
 
 # A develop push run whose commit a green merge queue run tested: the heavy ci jobs may skip when
 # PUDDLE_QUEUE_SKIP_PUSH=on and the queue-tested job succeeded and said so; anything else runs them.
-CI_P=('rust=ci_rust,pushskip' 'gates=ci_rust,pushskip' 'hooks=ci_rust,pushskip' 'msvc=ci_rust,pushskip' 'light=!ci_rust' 'ui=ui,pushskip' 'ui-webkit=ui,queue,pushskip,defer:defer_linux_webkit')
+CI_P=('rust=ci_rust,pushskip' 'gates=ci_rust,pushskip' 'hooks=ci_rust,pushskip' 'msvc=msvc,pushskip' 'light=!ci_rust' 'ui=ui,pushskip' 'ui-webkit=ui,queue,pushskip,defer:defer_linux_webkit')
 TESTED='queue-tested=success'
 needs_tested() { needs "$@" | jq -c '.["queue-tested"].outputs = {skip: "'"${SKIP_OUT-true}"'"}'; }
 push_case() { # push_case <want> <label> <job=result>...
@@ -827,7 +836,7 @@ if python3 -c 'import yaml' 2>/dev/null; then
 import re, sys, yaml
 d = sys.argv[1]
 results = {  # workflow: (result job id, required name, verdict specs as the matrix above tests them)
-    "ci": ("linux", "linux (all gates)", "rust=ci_rust,pushskip gates=ci_rust,pushskip hooks=ci_rust,pushskip msvc=ci_rust,pushskip light=!ci_rust ui=ui,pushskip ui-webkit=ui,queue,pushskip,defer:defer_linux_webkit unit=unit unit-ui=unit_ui"),
+    "ci": ("linux", "linux (all gates)", "rust=ci_rust,pushskip gates=ci_rust,pushskip hooks=ci_rust,pushskip msvc=msvc,pushskip light=!ci_rust ui=ui,pushskip ui-webkit=ui,queue,pushskip,defer:defer_linux_webkit unit=unit unit-ui=unit_ui"),
     "windows": ("windows", "windows-msvc (build, clippy, tests)", "clippy=win_rust,queue,defer:defer_win_clippy test-build=win_rust tests=win_rust docs=win_rust ui-e2e=ui,queue,defer:defer_win_ui ui-unit=ui,queue,defer:defer_win_ui"),
     "vm-linux": ("vm-linux", "vm-linux (KVM, msb microVMs)", "--nightly-skips build=vm,queue agent=vm,queue tests=vm,queue"),
     "vm-windows": ("vm-windows", "vm-windows (WHP, msb microVMs)", "--nightly-skips build=vm,queue,defer:defer_vm_windows agent=vm,queue,defer:defer_vm_windows tests=vm,queue,defer:defer_vm_windows"),

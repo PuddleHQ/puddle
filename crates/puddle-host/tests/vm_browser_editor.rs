@@ -1811,7 +1811,19 @@ async fn vm_browser_code_server_a_killed_browser_is_picked_up_within_the_grace_a
     );
 
     // Killed again and nobody comes: the hosts of that window stay for the grace and go after it.
-    let hosts = editor.extension_hosts().await;
+    // The window opened again runs a host of its own: the first window's host is not its host, and its grace
+    // began at the first kill, so it ends about GRACE after that, whatever the second kill does.
+    let first_window = hosts;
+    let hosts: Vec<u32> = editor
+        .extension_hosts()
+        .await
+        .into_iter()
+        .filter(|host| !first_window.contains(host))
+        .collect();
+    assert!(
+        !hosts.is_empty(),
+        "the window opened again has an extension host"
+    );
     shell.crash_newest(name).await;
     let killed = std::time::Instant::now();
     // flake-ok: an absence window: the host must still run a third of the grace after the kill, and

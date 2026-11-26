@@ -930,8 +930,8 @@ public static class PuddleWin {
 '@
 
 # What the installer's buttons are pressed in, first match wins: a person clicks through Next, Install and
-# Finish, and dismisses a message with OK. Cancel and Back are never pressed.
-$DialogButtonOrder = @('^&?Install$', '^&?Remove$', '^&?Next\b', '^&?Finish$', '^&?OK$', '^&?Close$')
+# Finish, dismisses a message with OK and confirms the uninstall prompt with Yes. Cancel and Back are never pressed.
+$DialogButtonOrder = @('^&?Install$', '^&?Remove$', '^&?Next\b', '^&?Finish$', '^&?OK$', '^&?Close$', '^&?Yes$')
 
 # The enabled button to press on a dialog, or $null when there is none (the progress page has only Cancel).
 function Select-DialogButton($Buttons) {

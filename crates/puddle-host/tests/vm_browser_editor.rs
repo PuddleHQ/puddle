@@ -177,6 +177,14 @@ async fn explorer(
                 Ok(outcome) => outcome.result.to_string(),
                 Err(e) => format!("(not read: {e})"),
             };
+            let logs = PageRequest::new("", "true")
+                .result(WINDOW_LOGS)
+                .budget(PAGE_BUDGET);
+            let logs = match shell.browser.lock().await.wait(page, &logs).await {
+                Ok(outcome) => outcome.result.to_string(),
+                Err(e) => format!("(not read: {e})"),
+            };
+            tracing::error!(workspace = %sandbox, step, %logs, "the window's own logs");
             // Logged before the guest is asked: a guest that does not answer fails the test in
             // `guest_within`, and the window's state must not be lost with it.
             tracing::error!(workspace = %sandbox, step, error = %e, %window, %storage, "the explorer did not get ready");
@@ -236,6 +244,8 @@ struct ShellStandIn {
     opened: Mutex<Vec<String>>,
     /// The uncaught errors every page reported, in order.
     page_errors: Mutex<Vec<String>>,
+    /// Whether the windows opened from now on log at trace level (see [`PAGE_TRACE`]).
+    trace_pages: std::sync::atomic::AtomicBool,
 }
 
 impl ShellStandIn {
@@ -255,6 +265,7 @@ impl ShellStandIn {
             closed: Mutex::default(),
             opened: Mutex::default(),
             page_errors: Mutex::default(),
+            trace_pages: std::sync::atomic::AtomicBool::default(),
         })
     }
 
@@ -463,7 +474,11 @@ impl Launcher for ShellStandIn {
             self.opened.lock().unwrap().push(target.origin.clone());
             // The shell's launcher returns once the window is built and the page loads after; a
             // load waited for here would run into the API's request limit on a slow host.
-            let request = PageRequest::new(start_address(target), "true")
+            let mut address = start_address(target);
+            if self.trace_pages.load(std::sync::atomic::Ordering::Relaxed) {
+                address.push_str(PAGE_TRACE);
+            }
+            let request = PageRequest::new(address, "true")
                 .on_commit()
                 .budget(PAGE_BUDGET);
             let (browser, pages) = (Arc::clone(&self.browser), Arc::clone(&self.pages));
@@ -495,6 +510,45 @@ impl Launcher for ShellStandIn {
         })
     }
 }
+
+/// Appended to a window's address when its log level is raised: the web workbench reads
+/// `logLevel` from the `payload` query (a JSON list of pairs), and keeps its logs, the file
+/// service's reads of the multi-root file among them, in the page's `vscode-logs-store`.
+const PAGE_TRACE: &str = "&payload=%5B%5B%22logLevel%22%2C%22trace%22%5D%5D";
+
+/// The window's own logs from `vscode-logs-store`: every file's name and size, and the lines of
+/// the biggest ones that name a workspace file read, a cancel, an error or the remote file
+/// system, so a window that shows no folders says which read of the multi-root file failed.
+const WINDOW_LOGS: &str = "(async () => {
+  const text = v => typeof v === 'string' ? v : new TextDecoder().decode(v);
+  return await new Promise(done => {
+    const open = indexedDB.open('vscode-web-db');
+    open.onerror = () => done(`(no database: ${open.error})`);
+    open.onsuccess = () => {
+      const db = open.result;
+      const store = 'vscode-logs-store';
+      if (!db.objectStoreNames.contains(store)) { done(`(no ${store})`); return; }
+      const all = db.transaction(store, 'readonly').objectStore(store);
+      const keys = all.getAllKeys();
+      keys.onerror = () => done(`(keys not read: ${keys.error})`);
+      keys.onsuccess = () => {
+        const wanted = keys.result;
+        if (!wanted.length) { done([]); return; }
+        const found = [];
+        const interesting = /code-workspace|readFile|atomic|cancel|error|remoteFilesystem|RemoteFileSystem|workspace/i;
+        for (const key of wanted) {
+          const get = all.get(key);
+          get.onsuccess = get.onerror = () => {
+            const body = get.result === undefined ? '' : text(get.result);
+            const lines = body.split('\n').filter(l => interesting.test(l)).slice(-60);
+            found.push({ key: String(key), bytes: body.length, lines });
+            if (found.length === wanted.length) done(found);
+          };
+        }
+      };
+    };
+  });
+})()";
 
 /// The address the shell's window opens: the editor's root with the place the host named, as the
 /// shell builds it (`/?workspace=<file>` or `/?folder=<path>`), or the root alone.
@@ -1996,6 +2050,12 @@ async fn vm_soak_browser_code_server_ten_opens_and_closes_leave_no_extension_hos
     let editor = Box::pin(Editor::start("wch", None)).await;
     let sandbox = &editor.sandbox;
     let windows = editor.vm.host.editor_windows();
+    // Only the soak: a first load that misses the folders is a rare race, and its window's trace
+    // logs are what name the read that failed (the other tests keep the default level).
+    editor
+        .shell
+        .trace_pages
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     editor
         .guest(&format!(
             "cd {} && git init -q api && git init -q web && echo loose >notes.txt && chown -R agent:agent .",

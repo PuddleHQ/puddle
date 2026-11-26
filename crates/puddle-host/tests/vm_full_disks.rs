@@ -207,7 +207,7 @@ async fn host_disk_fills_and_recovers(mount: PathBuf) {
         200
     );
     let (workspace, name, mut events) = running_workspace(&vm, &api, "fulh").await;
-    let dir = format!("/workspaces/{name}");
+    let dir = puddle_workspace::WORKSPACE_DIR;
 
     // Files that must come through the full disk unchanged.
     guest_ok(
@@ -344,7 +344,7 @@ async fn volume_and_root_fill() {
     .await;
     let api = Api::new(vm.host.url(), vm.host.token());
     let (workspace, name, mut events) = running_workspace(&vm, &api, "fulv").await;
-    let dir = format!("/workspaces/{name}");
+    let dir = puddle_workspace::WORKSPACE_DIR;
     let one = || async {
         let list = api.get("/api/workspaces").await.json();
         list["workspaces"]

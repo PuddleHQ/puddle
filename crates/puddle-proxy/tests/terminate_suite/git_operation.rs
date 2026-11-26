@@ -30,7 +30,13 @@ async fn recorded_line(request: &str) -> HttpRequestLine {
     client.send(request.as_bytes()).await;
     assert_eq!(client.response("GET").await.status, 200);
     client.close().await;
-    rig.events(1).await[0].http.clone().unwrap()
+    rig.events(1)
+        .await
+        .into_iter()
+        .next()
+        .unwrap()
+        .http
+        .unwrap()
 }
 
 #[tokio::test]

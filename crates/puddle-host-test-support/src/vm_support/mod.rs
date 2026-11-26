@@ -7,13 +7,12 @@
     clippy::panic,
     reason = "VM test: a failed step fails the test; measurements go to stderr"
 )]
-#![allow(dead_code, reason = "each test binary uses some of the helpers")]
 #![expect(
     clippy::indexing_slicing,
     reason = "VM test: JSON read from the API, a missing key fails the test"
 )]
 
-pub(crate) mod kit;
+pub mod kit;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -40,9 +39,9 @@ use serde_json::json;
 
 /// The harness has set the environment and checked the runtime pair already.
 #[derive(Default)]
-pub(crate) struct HarnessPlatform {
+pub struct HarnessPlatform {
     /// The corporate roots the host reports (the guest trusts them, the upstream TLS leg uses them).
-    pub(crate) roots: CorporateRoots,
+    pub roots: CorporateRoots,
 }
 
 impl Platform for HarnessPlatform {
@@ -56,7 +55,7 @@ impl Platform for HarnessPlatform {
 }
 
 /// Opens msb over the harness's private home and runtime pair.
-pub(crate) struct HarnessFactory {
+pub struct HarnessFactory {
     settings: Settings,
     msb: std::path::PathBuf,
     libkrunfw: std::path::PathBuf,
@@ -122,7 +121,7 @@ impl Resolver for FakeNames {
 /// `options` with the names in `names` that have a real name (`github.com`) as fake sites (see
 /// [`FakeNames`]): the host never asks the real DNS about them. A name under `.invalid` is left
 /// out, because the proxy never looks it up. [`web_internet`] does this for its names.
-pub(crate) fn with_fake_names<'a>(
+pub fn with_fake_names<'a>(
     mut options: HostOptions,
     names: impl IntoIterator<Item = &'a str>,
 ) -> HostOptions {
@@ -139,12 +138,12 @@ pub(crate) fn with_fake_names<'a>(
 
 /// `options` with the host's upstream route set to the company proxy `proxy` (the only thing that
 /// knows the fake hosts' names).
-pub(crate) fn through_company_proxy(options: HostOptions, proxy: &NameProxy) -> HostOptions {
+pub fn through_company_proxy(options: HostOptions, proxy: &NameProxy) -> HostOptions {
     through_company_proxy_port(options, proxy.port())
 }
 
 /// [`through_company_proxy`] for a company proxy that is only known by its port on `127.0.0.1`.
-pub(crate) fn through_company_proxy_port(mut options: HostOptions, port: u16) -> HostOptions {
+pub fn through_company_proxy_port(mut options: HostOptions, port: u16) -> HostOptions {
     let os = FakeOs::new(ProxyConfig {
         rules: ProxyRules::parse(&format!("http://127.0.0.1:{port}")),
         ..ProxyConfig::default()
@@ -155,7 +154,7 @@ pub(crate) fn through_company_proxy_port(mut options: HostOptions, port: u16) ->
 
 /// A platform that reports `roots` as the corporate roots: the guest trusts them and the host's
 /// upstream TLS leg verifies against them, so a fake host signed by one is a host that works.
-pub(crate) fn platform_trusting<'a>(
+pub fn platform_trusting<'a>(
     roots: impl IntoIterator<Item = &'a rustls::pki_types::CertificateDer<'static>>,
 ) -> HarnessPlatform {
     let mut snapshot = StoreSnapshot::new();
@@ -179,18 +178,18 @@ pub(crate) fn platform_trusting<'a>(
 /// host" to reach, so that it never depends on a real site being up. `web` answers every name
 /// given to [`web_internet`] on ports 80 and 443; any other name goes to the real internet as it
 /// stands. Start the host with `options` and `platform`.
-pub(crate) struct WebInternet {
-    pub(crate) web: WebHost,
-    pub(crate) proxy: NameProxy,
-    pub(crate) options: HostOptions,
-    pub(crate) platform: HarnessPlatform,
+pub struct WebInternet {
+    pub web: WebHost,
+    pub proxy: NameProxy,
+    pub options: HostOptions,
+    pub platform: HarnessPlatform,
     /// The fake `github.com` of [`web_internet_with_github`]; `None` for [`web_internet`].
-    pub(crate) git: Option<GitHost>,
+    pub git: Option<GitHost>,
 }
 
 /// The repositories the tests create workspaces from, as `github.com` has them: public, on branch
 /// `main`, one commit each.
-pub(crate) const GITHUB_REPOS: [&str; 2] = ["octocat/Hello-World", "octocat/Spoon-Knife"];
+pub const GITHUB_REPOS: [&str; 2] = ["octocat/Hello-World", "octocat/Spoon-Knife"];
 
 /// The fake `github.com`: a git host answering to that name with [`GITHUB_REPOS`].
 async fn github() -> GitHost {
@@ -204,7 +203,7 @@ async fn github() -> GitHost {
 /// Starts the fake website for `names` and the company proxy that holds them. A name that is not
 /// a real service's takes the `.invalid` zone, which the proxy answers "no such name" without a
 /// lookup (RFC 6761); a real service's name (`github.com`) is made unresolvable by [`FakeNames`].
-pub(crate) async fn web_internet(
+pub async fn web_internet(
     names: &[&str],
     web_options: WebOptions,
     options: HostOptions,
@@ -214,7 +213,7 @@ pub(crate) async fn web_internet(
 
 /// [`web_internet`] with a fake `github.com` (see [`GITHUB_REPOS`]) behind the same proxy, for a
 /// test whose workspace clones. The host's report of corporate roots names both roots.
-pub(crate) async fn web_internet_with_github(
+pub async fn web_internet_with_github(
     names: &[&str],
     web_options: WebOptions,
     options: HostOptions,
@@ -250,15 +249,15 @@ async fn build_web_internet(
 }
 
 /// A fake `github.com` alone, behind a company proxy: for a test that only clones.
-pub(crate) struct GithubInternet {
-    pub(crate) git: GitHost,
-    pub(crate) proxy: NameProxy,
-    pub(crate) options: HostOptions,
-    pub(crate) platform: HarnessPlatform,
+pub struct GithubInternet {
+    pub git: GitHost,
+    pub proxy: NameProxy,
+    pub options: HostOptions,
+    pub platform: HarnessPlatform,
 }
 
 /// Starts the fake `github.com` (see [`GITHUB_REPOS`]) and the company proxy that holds it.
-pub(crate) async fn github_internet(options: HostOptions) -> GithubInternet {
+pub async fn github_internet(options: HostOptions) -> GithubInternet {
     let git = github().await;
     let proxy = NameProxy::start(&[("github.com:443", git.addr())]).await;
     let options = with_fake_names(through_company_proxy(options, &proxy), ["github.com"]);
@@ -273,26 +272,26 @@ pub(crate) async fn github_internet(options: HostOptions) -> GithubInternet {
 
 /// [`start_vm_host_config`] on a fake `github.com`: the host clones from it, never from the real
 /// one. Keep the returned internet alive while the host runs.
-pub(crate) async fn start_vm_host_github(tag: &str) -> (VmHost, GithubInternet) {
+pub async fn start_vm_host_github(tag: &str) -> (VmHost, GithubInternet) {
     let net = github_internet(crate::support::named_id_options()).await;
     let vm = start_vm_host_platform(tag, net.options.clone(), &net.platform, |_| {}).await;
     (vm, net)
 }
 
 /// A host on a real msb runtime in the test's own scratch home.
-pub(crate) struct VmHost {
-    pub(crate) host: Host<MsbRuntime>,
-    pub(crate) runtime: MsbRuntime,
-    pub(crate) settings: Settings,
+pub struct VmHost {
+    pub host: Host<MsbRuntime>,
+    pub runtime: MsbRuntime,
+    pub settings: Settings,
     /// The host's data folder.
-    pub(crate) root: std::path::PathBuf,
+    pub root: std::path::PathBuf,
     /// Where the host keeps the values of secrets: never the machine's own credential store.
-    pub(crate) secrets: Arc<MemoryStore>,
+    pub secrets: Arc<MemoryStore>,
 }
 
 /// The host configuration over `root`: what [`start_vm_host_with`] and the second process of the
 /// refusal test both build, so they name the same data folder the same way.
-pub(crate) fn harness_config(
+pub fn harness_config(
     settings: &Settings,
     pair: &RuntimePair,
     root: &std::path::Path,
@@ -308,7 +307,7 @@ pub(crate) fn harness_config(
 
 /// The folder the guest tools of the VM tests are kept in between runs: `PUDDLE_VM_TOOLS_CACHE` (CI
 /// restores it) or `~/.cache/puddle-vm-tools`; `None` when neither can be named (every run is cold).
-pub(crate) fn cache_root() -> Option<std::path::PathBuf> {
+pub fn cache_root() -> Option<std::path::PathBuf> {
     std::env::var_os("PUDDLE_VM_TOOLS_CACHE")
         .map(std::path::PathBuf::from)
         .or_else(|| {
@@ -339,16 +338,16 @@ fn share_image_cache(settings: &Settings) {
 /// what one test creates (an identity, a rule, a workspace) is never in another's host. Tests of
 /// one binary share the run's prefix, and a host over a shared folder reads the identities an
 /// earlier test left.
-pub(crate) async fn start_vm_host(tag: &str) -> VmHost {
+pub async fn start_vm_host(tag: &str) -> VmHost {
     start_vm_host_with(tag, crate::support::named_id_options()).await
 }
 
-pub(crate) async fn start_vm_host_with(tag: &str, options: HostOptions) -> VmHost {
+pub async fn start_vm_host_with(tag: &str, options: HostOptions) -> VmHost {
     start_vm_host_config(tag, options, |_| {}).await
 }
 
 /// [`start_vm_host_with`] with `tweak` applied to the host's configuration first.
-pub(crate) async fn start_vm_host_config(
+pub async fn start_vm_host_config(
     tag: &str,
     options: HostOptions,
     tweak: impl FnOnce(&mut HostConfig),
@@ -357,7 +356,7 @@ pub(crate) async fn start_vm_host_config(
 }
 
 /// [`start_vm_host_config`] over `platform` (a host that reports corporate roots, say).
-pub(crate) async fn start_vm_host_platform(
+pub async fn start_vm_host_platform(
     tag: &str,
     options: HostOptions,
     platform: &HarnessPlatform,
@@ -406,7 +405,7 @@ pub(crate) async fn start_vm_host_platform(
 
 /// Quits `vm`'s host and starts a new one over the same data folder and runtime, as a quit and a
 /// launch of Puddle do (or a reboot of the computer): the sandboxes stay in the runtime, stopped.
-pub(crate) async fn restart_vm_host(vm: VmHost) -> VmHost {
+pub async fn restart_vm_host(vm: VmHost) -> VmHost {
     let VmHost {
         host,
         settings,
@@ -446,12 +445,12 @@ pub(crate) async fn restart_vm_host(vm: VmHost) -> VmHost {
 }
 
 /// Runs `script` as root in the guest and returns what it printed; fails the test if it fails.
-pub(crate) async fn guest(runtime: &MsbRuntime, sandbox: &WorkspaceId, script: &str) -> String {
+pub async fn guest(runtime: &MsbRuntime, sandbox: &WorkspaceId, script: &str) -> String {
     guest_within(runtime, sandbox, script, Duration::from_secs(120)).await
 }
 
 /// [`guest`] with its own time limit, for a script that may take longer than two minutes.
-pub(crate) async fn guest_within(
+pub async fn guest_within(
     runtime: &MsbRuntime,
     sandbox: &WorkspaceId,
     script: &str,
@@ -462,7 +461,7 @@ pub(crate) async fn guest_within(
 
 /// [`guest`] for a script that reaches a live third party on purpose (`hosts`, for example a
 /// package mirror): a timeout or a failure then says that host is the thing to check.
-pub(crate) async fn guest_live(
+pub async fn guest_live(
     runtime: &MsbRuntime,
     sandbox: &WorkspaceId,
     script: &str,
@@ -527,11 +526,7 @@ fn split_word(value: &str) -> String {
 /// file of the disk, neither plain nor in the two base64 forms a Git `Authorization` header takes.
 /// The control comes first: the first token planted in a file and in a process's environment must
 /// be found, or the search proves nothing.
-pub(crate) async fn assert_guest_holds_no_token(
-    vm: &VmHost,
-    sandbox: &WorkspaceId,
-    tokens: &[&str],
-) {
+pub async fn assert_guest_holds_no_token(vm: &VmHost, sandbox: &WorkspaceId, tokens: &[&str]) {
     let first = tokens.first().expect("at least one token to look for");
     let patterns = tokens.iter().fold(String::new(), |mut out, token| {
         use std::fmt::Write as _;
@@ -572,7 +567,7 @@ pub(crate) async fn assert_guest_holds_no_token(
 /// Runs `script` in a login shell as `user`, the way a terminal of the workspace does and
 /// returns its exit code and what it printed. The script is an argument, not stdin, so a tool that
 /// reads stdin cannot eat the rest of it.
-pub(crate) async fn guest_as(
+pub async fn guest_as(
     runtime: &MsbRuntime,
     sandbox: &WorkspaceId,
     user: &str,
@@ -600,7 +595,7 @@ pub(crate) async fn guest_as(
 
 /// Kills the VM of `sandbox` the hard way (no shutdown, no flush), the way a crash or a power cut
 /// of the VMM would, and waits until the runtime sees it down.
-pub(crate) async fn kill_vm(runtime: &MsbRuntime, settings: &Settings, sandbox: &WorkspaceId) {
+pub async fn kill_vm(runtime: &MsbRuntime, settings: &Settings, sandbox: &WorkspaceId) {
     let harness = VmEnv::new(settings.clone()).await.unwrap();
     let pid = harness
         .process_id_of(sandbox.as_str())
@@ -643,7 +638,7 @@ pub(crate) async fn kill_vm(runtime: &MsbRuntime, settings: &Settings, sandbox: 
     clippy::print_stderr,
     reason = "the bridge's own message to ssh, which shows it"
 )]
-pub(crate) fn ssh_bridge(endpoint: Option<&str>) -> std::process::ExitCode {
+pub fn ssh_bridge(endpoint: Option<&str>) -> std::process::ExitCode {
     let Some(endpoint) = endpoint else {
         eprintln!("puddle: missing endpoint");
         return std::process::ExitCode::from(2);
@@ -668,7 +663,7 @@ pub(crate) fn ssh_bridge(endpoint: Option<&str>) -> std::process::ExitCode {
 }
 
 /// [`create_workspace`] with `extra` fields (an image, a memory size) in the request.
-pub(crate) async fn create_workspace_from(
+pub async fn create_workspace_from(
     vm: &VmHost,
     api: &crate::support::Api,
     tag: &str,
@@ -712,7 +707,7 @@ pub(crate) async fn create_workspace_from(
 /// and a Docker config of its own, so no proxy variable from the CLI's config reaches a container.
 /// `dsudo` is `sudo docker` where the image has `sudo`, and plain `docker` (the `docker` group,
 /// which the boot grants the session user) where it has none, as `docker:dind` has not.
-pub(crate) const DOCKER_PRELUDE: &str = r#"now() { echo $(( $(date +%s%N) / 1000000 )); }
+pub const DOCKER_PRELUDE: &str = r#"now() { echo $(( $(date +%s%N) / 1000000 )); }
 export DOCKER_CONFIG=/tmp/docker-without-proxy
 mkdir -p "$DOCKER_CONFIG"
 dsudo() { if [ -x /usr/bin/sudo ] || [ -x /usr/local/bin/sudo ]; then sudo env DOCKER_CONFIG="$DOCKER_CONFIG" docker "$@"; else docker "$@"; fi; }
@@ -720,7 +715,7 @@ dsudo() { if [ -x /usr/bin/sudo ] || [ -x /usr/local/bin/sudo ]; then sudo env D
 
 /// Builds the probe image `FROM scratch`: busybox and the loader it needs, copied from the guest's
 /// own files, and nothing else. No registry is involved.
-pub(crate) const PROBE_IMAGE: &str = r"d=/tmp/probe-image
+pub const PROBE_IMAGE: &str = r"d=/tmp/probe-image
 mkdir -p $d/rootfs/bin $d/rootfs/lib
 cp /bin/busybox $d/rootfs/bin/busybox
 for l in /lib/ld-musl-*.so.1; do cp -L $l $d/rootfs/lib/; done
@@ -728,7 +723,7 @@ printf 'FROM scratch\nCOPY rootfs/ /\n' > $d/Dockerfile
 dsudo build -q -t probe:local $d";
 
 /// Runs `script` as `agent` (the session user) with [`DOCKER_PRELUDE`] first.
-pub(crate) async fn as_agent(vm: &VmHost, workspace: &WorkspaceId, script: &str) -> (i32, String) {
+pub async fn as_agent(vm: &VmHost, workspace: &WorkspaceId, script: &str) -> (i32, String) {
     guest_as(
         &vm.runtime,
         workspace,
@@ -740,14 +735,14 @@ pub(crate) async fn as_agent(vm: &VmHost, workspace: &WorkspaceId, script: &str)
 }
 
 /// The value after `key=` on the first line of `text` that has it.
-pub(crate) fn field<'a>(text: &'a str, key: &str) -> &'a str {
+pub fn field<'a>(text: &'a str, key: &str) -> &'a str {
     text.lines()
         .find_map(|l| l.split_whitespace().find_map(|w| w.strip_prefix(key)))
         .unwrap_or_else(|| panic!("no {key} in: {text}"))
 }
 
 /// How many requests the fake website saw with `Host: host`.
-pub(crate) fn reached_by_host(web: &WebHost, host: &str) -> usize {
+pub fn reached_by_host(web: &WebHost, host: &str) -> usize {
     web.seen()
         .iter()
         .filter(|r| r.headers_named("host") == [host])
@@ -755,7 +750,7 @@ pub(crate) fn reached_by_host(web: &WebHost, host: &str) -> usize {
 }
 
 /// The number of allowed connection records to `host:port` in the audit.
-pub(crate) fn allowed_connections(vm: &VmHost, host: &str, port: u16) -> usize {
+pub fn allowed_connections(vm: &VmHost, host: &str, port: u16) -> usize {
     vm.host
         .store()
         .audit_lines(0, 100_000)
@@ -776,7 +771,7 @@ pub(crate) fn allowed_connections(vm: &VmHost, host: &str, port: u16) -> usize {
 /// The proxy writes a connection's record when the connection ends, which is after the guest
 /// tool that opened it has exited and the test has read its output, so reading the audit
 /// right away races the proxy's write.
-pub(crate) async fn wait_for_connection_record(vm: &VmHost, host: &str, port: u16, before: usize) {
+pub async fn wait_for_connection_record(vm: &VmHost, host: &str, port: u16, before: usize) {
     eventually(
         &format!("a connection record for {host}:{port}"),
         Duration::from_secs(20),
@@ -801,7 +796,7 @@ pub(crate) async fn wait_for_connection_record(vm: &VmHost, host: &str, port: u1
 
 /// A container's fetch of `url` on `network`: what proxy variables it sees, then wget's output, the
 /// exit code and the milliseconds it took.
-pub(crate) fn container_fetch(docker: &str, network: &str, url: &str) -> String {
+pub fn container_fetch(docker: &str, network: &str, url: &str) -> String {
     format!(
         "s=$(now); {docker} run --rm --pull=never --network {network} probe:local /bin/busybox \
          sh -c '/bin/busybox env | /bin/busybox grep -i proxy; /bin/busybox wget -T 10 -q -O - {url}' 2>&1; \
@@ -813,7 +808,7 @@ pub(crate) fn container_fetch(docker: &str, network: &str, url: &str) -> String 
 /// the last end, and returns the step each ended with. One operation per workspace: the event
 /// stream keeps what it reads, so the end of one workspace that arrives while another is awaited
 /// is not lost.
-pub(crate) async fn all_ended(
+pub async fn all_ended(
     events: &mut crate::support::Events,
     names: &[String],
     within: Duration,

@@ -18,8 +18,8 @@
     reason = "a VM test: a failed step fails the run; the browsers' output goes to stderr for the log"
 )]
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 // The dialog answerer and the store helpers of the host-side test of the same certificate.
 #[expect(dead_code, reason = "this binary uses part of the helpers")]

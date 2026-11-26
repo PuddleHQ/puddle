@@ -23,8 +23,8 @@
     reason = "VM test: a failed step fails the test; figures go to stderr"
 )]
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::time::{Duration, Instant};
 

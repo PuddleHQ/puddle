@@ -78,6 +78,7 @@ puddle-ssh-agent = { workspace = true, features = ["testing"] }
 microsandbox = { workspace = true }
 puddle-agent = { workspace = true }
 puddle-e2e = { workspace = true }
+puddle-host-test-support = { workspace = true }
 puddle-compute = { workspace = true, features = ["fake"] }
 puddle-repos = { workspace = true, features = ["testing"] }
 puddle-upstream = { workspace = true, features = ["testing"] }

@@ -13,8 +13,8 @@
     reason = "VM test: a failed step fails the test; measurements go to stderr"
 )]
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::collections::BTreeSet;
 use std::io::Write as _;

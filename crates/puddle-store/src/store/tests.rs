@@ -55,9 +55,15 @@ fn a_workspace_name_that_cannot_be_written_is_dropped_and_the_record_has_no_name
         store.note_workspace_name(&ws, "Acme"),
         "a rename replaces it"
     );
+    assert_eq!(store.current_workspace_name(&ws).as_deref(), Some("Acme"));
     store.break_database("DROP TABLE workspace_names");
     assert!(!store.note_workspace_name(&ws, "Lost"));
     assert!(store.set_workspace_name(&ws, "Lost").is_err());
+    assert_eq!(
+        store.current_workspace_name(&ws),
+        None,
+        "an unreadable name is none"
+    );
 }
 
 /// Set by the busy handler of `a_write_waits_for_another_connection_holding_the_file`.

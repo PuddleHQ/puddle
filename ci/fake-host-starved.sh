@@ -7,7 +7,8 @@
 # Why its own job and not the nextest runs of stress.yml: nextest runs every test in its own process, and a
 # descriptor copied by fork() only exists when another test thread of the SAME process spawns a child (git, ssh, ...)
 # while a data-folder lock is being released. That window is only there when the binary runs all its tests as threads of
-# one process, so this script runs the binary itself, the way plain `cargo test` does.
+# one process, so this script runs the binary itself, the way plain `cargo test` does (the churn tests, which count the
+# whole process, run in a second invocation of it, alone).
 #
 # On a failing run it keeps the log of the FIRST failure (first-failure.log) and prints who held host.lock: the pid
 # the refusal names, and the processes a sampler (pinned off the starved CPUs) saw with a host.lock open during that
@@ -106,7 +107,11 @@ for ((i = 1; i <= runs; i++)); do
     taskset -c "$sampler_cpus" bash -c "$(declare -f sample_holders); period=$period; sample_holders $holders" &
     sampler_pid=$!
     rc=0
-    (cd "$workdir" && taskset -c "$cpus" "$bin" >"$log" 2>&1) || rc=$?
+    # The churn tests count the descriptors and threads of their whole process, so they run apart from the other tests
+    # (one test at a time, as scripts/check.sh runs them): beside the rest of the suite's threads their counts drift
+    # without a leak. Everything else stays threads of one process, which is what this loop exists for.
+    (cd "$workdir" && taskset -c "$cpus" "$bin" --skip churn:: >"$log" 2>&1 &&
+        taskset -c "$cpus" "$bin" churn:: --test-threads=1 >>"$log" 2>&1) || rc=$?
     stop_sampler
     if [ "$rc" = 0 ]; then
         echo "run $i of $runs: ok"

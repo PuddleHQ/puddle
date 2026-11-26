@@ -14,7 +14,7 @@ section that answers your question.
 | [6. Runtime view](06-runtime-view.md)                          | How the parts work together in the important scenarios                               |
 | [7. Deployment view](07-deployment-view.md)                    | What runs where, on Windows and Linux hosts and in the VM                            |
 | [8. Cross-cutting concepts](08-crosscutting-concepts.md)       | Security, identity, audit, persistence, errors, testing and other shared rules       |
-| [9. Architecture decisions](09-architecture-decisions.md)      | The significant decisions, with context, options and consequences                    |
+| [9. Architecture decisions](09-architecture-decision-log.md)   | The significant decisions, with context, options and consequences                    |
 | [10. Quality requirements](10-quality-requirements.md)         | The quality tree and the scenarios Puddle is measured against                        |
 | [11. Risks and technical debt](11-risks-and-technical-debt.md) | What could go wrong and what is knowingly unfinished                                 |
 | [12. Glossary](12-glossary.md)                                 | The product terms used in code, UI and these pages                                   |

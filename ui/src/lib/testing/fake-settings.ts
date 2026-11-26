@@ -233,7 +233,7 @@ export class FakeSettings {
         capture_logins: this.pick(l.capture_logins, true),
         warn_foreign_credentials: this.pick(l.warn_foreign_credentials, true),
         clipboard_read: {
-          value: l.clipboard_read ?? "ask",
+          value: l.clipboard_read ?? "allow",
           source: l.clipboard_read === null ? "default" : "global",
         },
         editor: {

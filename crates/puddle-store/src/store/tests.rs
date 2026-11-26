@@ -47,6 +47,18 @@ fn an_audit_record_carries_the_name_its_workspace_had_when_it_was_written() {
 }
 
 #[test]
+fn the_policy_reports_the_current_name_of_a_workspace() {
+    let (_, store) = store();
+    let acme = WorkspaceId::new("acme").unwrap();
+    assert_eq!(Policy::workspace_name(&store, &acme), None);
+    store.set_workspace_name(&acme, "Acme shop").unwrap();
+    assert_eq!(
+        Policy::workspace_name(&store, &acme).as_deref(),
+        Some("Acme shop")
+    );
+}
+
+#[test]
 fn a_workspace_name_that_cannot_be_written_is_dropped_and_the_record_has_no_name() {
     let (_, store) = store();
     let ws = WorkspaceId::new("acme").unwrap();

@@ -4,7 +4,7 @@
   import { onMount } from "svelte";
   import Plus from "@lucide/svelte/icons/plus";
   import OrphanVolumesNotice from "#lib/components/OrphanVolumesNotice.svelte";
-  import FirstWorkspaceForm from "#lib/components/FirstWorkspaceForm.svelte";
+  import CreateWorkspaceForm from "#lib/components/CreateWorkspaceForm.svelte";
   import WorkspaceRow from "#lib/components/WorkspaceRow.svelte";
   import { orphanVolumes } from "#lib/stores/orphan-volumes.svelte.ts";
   import { pending } from "#lib/stores/pending.svelte.ts";
@@ -31,31 +31,36 @@
       counts[row.request.workspace] = (counts[row.request.workspace] ?? 0) + 1;
     return counts;
   });
+  const first = $derived(
+    workspaces.status === "ready" && workspaces.list.length === 0,
+  );
   const running = $derived(
     workspaces.list.filter((w) => w.status === "running").length,
   );
 </script>
 
-<div class="head">
-  <div>
-    <h1>Workspaces</h1>
-    {#if workspaces.status === "ready" && workspaces.list.length > 0}
-      <p class="sub">
-        {workspaces.list.length}
-        {workspaces.list.length === 1 ? "workspace" : "workspaces"}, {running} running
-      </p>
+{#if !first}
+  <div class="head">
+    <div>
+      <h1>Workspaces</h1>
+      {#if workspaces.status === "ready" && workspaces.list.length > 0}
+        <p class="sub">
+          {workspaces.list.length}
+          {workspaces.list.length === 1 ? "workspace" : "workspaces"}, {running} running
+        </p>
+      {/if}
+    </div>
+    {#if workspaces.list.length > 0}
+      <button
+        type="button"
+        class="btn primary"
+        onclick={() => actions.openCreate()}
+      >
+        <Plus aria-hidden="true" size={16} />New workspace
+      </button>
     {/if}
   </div>
-  {#if workspaces.list.length > 0}
-    <button
-      type="button"
-      class="btn primary"
-      onclick={() => actions.openCreate()}
-    >
-      <Plus aria-hidden="true" size={16} />New workspace
-    </button>
-  {/if}
-</div>
+{/if}
 
 <OrphanVolumesNotice store={orphanVolumes} />
 
@@ -68,7 +73,8 @@
 {:else if workspaces.status === "failed"}
   <LoadNotice what="the workspaces" message={workspaces.loadError} />
 {:else if workspaces.list.length === 0}
-  <FirstWorkspaceForm onMore={() => actions.openCreate()} />
+  <!-- The first workspace gets the whole form, like every later one. -->
+  <CreateWorkspaceForm />
 {:else}
   <div class="columns" aria-hidden="true">
     <span>State</span><span>Name</span><span>Repository</span><span>

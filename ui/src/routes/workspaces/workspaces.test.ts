@@ -134,41 +134,18 @@ describe("the workspace list", () => {
     expect(screen.getByText("1 workspace, 0 running")).toBeInTheDocument();
   });
 
-  it("shows the create form itself when there is none, not a box about it", async () => {
+  it("shows the whole create form when there is none, not a short one or a box about it", async () => {
     await mount();
     expect(
-      await screen.findByRole("textbox", { name: "Repository address" }),
+      await screen.findByRole("region", { name: "New workspace" }),
     ).toBeInTheDocument();
+    expect(screen.getByLabelText("Name")).toBeVisible();
+    expect(screen.getByLabelText("Image")).toBeVisible();
+    expect(screen.getByLabelText("Memory (GiB)")).toBeVisible();
     expect(screen.queryByText("No workspaces yet")).toBeNull();
+    expect(screen.queryByRole("button", { name: "More options" })).toBeNull();
     expect(screen.queryByRole("button", { name: "New workspace" })).toBeNull();
-    await fireEvent.click(screen.getByRole("button", { name: "More options" }));
-    expect(goto).toHaveBeenCalledWith("/workspaces/new");
-  });
-
-  it("creates the first workspace from the address alone, named after the repository", async () => {
-    await mount();
-    await fireEvent.input(
-      await screen.findByRole("textbox", { name: "Repository address" }),
-      { target: { value: "https://github.com/acme/ledger.git" } },
-    );
-    expect(screen.getByText("It will be called ledger.")).toBeInTheDocument();
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Create workspace" }),
-    );
-    await vi.waitFor(() => expect(api.bodies).toHaveLength(1));
-    expect(api.bodies[0]).toEqual({
-      name: "ledger",
-      repositories: [{ url: "https://github.com/acme/ledger.git" }],
-    });
-  });
-
-  it("says why an address cannot be used, at the field", async () => {
-    await mount();
-    await fireEvent.click(
-      await screen.findByRole("button", { name: "Create workspace" }),
-    );
-    expect(await screen.findByRole("alert")).toHaveTextContent(/address/i);
-    expect(api.bodies).toHaveLength(0);
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
   });
 
   it("opens the New workspace screen from the header button", async () => {

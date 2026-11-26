@@ -2,8 +2,8 @@
 use std::time::Duration;
 
 use puddle_doctor::{
-    BootFacts, CodeIntegrityFacts, DiskFacts, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts,
-    KeptLogs, Os, ProcessOutcome, RuntimeFacts, RuntimeState,
+    BootFacts, CodeIntegrityFacts, DiskFacts, HypervisorApi, HypervisorFacts, JobFacts, KeptLogs,
+    Os, ProcessOutcome, RuntimeFacts, RuntimeState, SoftwareFacts,
 };
 
 use super::*;
@@ -85,7 +85,7 @@ impl Probe for Fake {
     fn job(&self) -> Option<JobFacts> {
         None
     }
-    fn global_secure_access(&self) -> Option<GsaFacts> {
+    fn problematic_software(&self) -> Option<Vec<SoftwareFacts>> {
         None
     }
     fn disk_space(&self) -> DiskFacts {

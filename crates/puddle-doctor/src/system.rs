@@ -17,9 +17,8 @@ use puddle_ssh_agent::{
 use crate::diagnose::Probe;
 use crate::facts::{
     AccessDenied, AgentService, AzCliFacts, BootFacts, CodeIntegrityFacts, CredentialStoreFacts,
-    DataPathFacts, DiskEncryptionFacts, DiskFacts, GsaFacts, HypervisorFacts, JobFacts, Os,
-    ProcessOutcome, RuntimeFacts, RuntimeState, SealedKeyFacts, SshAgentFacts, TpmFacts,
-    VaultFacts,
+    DataPathFacts, DiskEncryptionFacts, DiskFacts, HypervisorFacts, JobFacts, Os, ProcessOutcome,
+    RuntimeFacts, RuntimeState, SealedKeyFacts, SoftwareFacts, SshAgentFacts, TpmFacts, VaultFacts,
 };
 use crate::{boot, launch, sys};
 
@@ -233,8 +232,8 @@ impl Probe for SystemProbe {
         sys::job()
     }
 
-    fn global_secure_access(&self) -> Option<GsaFacts> {
-        sys::global_secure_access()
+    fn problematic_software(&self) -> Option<Vec<SoftwareFacts>> {
+        sys::problematic_software()
     }
 
     fn disk_space(&self) -> DiskFacts {

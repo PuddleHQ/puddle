@@ -234,3 +234,37 @@ fn a_connect_look_alike_in_the_text_is_not_a_failed_connect() {
     let err = ImageError::ManifestParse("client error (Connect)".to_owned());
     assert_eq!(explain_connect(&err, "registry.test"), chain(&err));
 }
+
+#[tokio::test]
+async fn a_pull_with_no_manifest_in_time_is_given_up() {
+    let (mut events, sender) = progress_channel();
+    sender.send(MsbPull::Resolving {
+        reference: "r".into(),
+    });
+    let mut tally = Tally::default();
+    let answered =
+        drain_progress(&mut events, Duration::from_millis(50), &mut tally, &|_| {}).await;
+    assert!(!answered);
+    assert!(
+        no_answer("registry.test", Duration::from_secs(20))
+            .starts_with("could not connect to registry.test: ")
+    );
+}
+
+#[tokio::test]
+async fn a_pull_whose_manifest_came_in_time_runs_to_its_end() {
+    let (mut events, sender) = progress_channel();
+    sender.send(resolved(1, None));
+    let mut tally = Tally::default();
+    let task = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        drop(sender);
+    });
+    let answered =
+        drain_progress(&mut events, Duration::from_millis(50), &mut tally, &|_| {}).await;
+    task.await.unwrap();
+    assert!(
+        answered,
+        "the deadline applies only until the manifest is read"
+    );
+}

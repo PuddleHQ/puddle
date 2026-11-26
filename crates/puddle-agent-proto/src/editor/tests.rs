@@ -56,6 +56,23 @@ fn the_workspace_file_is_optional_and_reads_back() {
 }
 
 #[test]
+fn the_window_authority_is_optional_reads_back_and_refuses_spaces() {
+    let server = EditorServer::new("/d", "/f", 300).with_window_authority("w.localhost:43021");
+    let env = server.env();
+    let vars: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    assert_eq!(read(&vars), Ok(Some(server)));
+    let base = [(ENV_DIR, "/e"), (ENV_DATA, "/d"), (ENV_FOLDER, "/f")];
+    assert_eq!(read(&base).unwrap().unwrap().window_authority, None);
+    let spaced = read(&[
+        base[0],
+        base[1],
+        base[2],
+        (ENV_WINDOW_AUTHORITY, "w host:1"),
+    ]);
+    assert_eq!(spaced.unwrap_err().var, ENV_WINDOW_AUTHORITY);
+}
+
+#[test]
 fn microsoft_s_server_keeps_its_builds_below_its_data_and_reads_back() {
     for (telemetry, auto_update) in [(false, true), (true, false), (false, false)] {
         let server = EditorServer::microsoft(

@@ -565,6 +565,14 @@ pub fn wait_after_refusal(refused: u32) -> Duration {
         .min(MAX_REFUSED_WAIT)
 }
 
+/// Puts code-server's cached copy of the multi-root file in place for the window address the host
+/// named (see `workspace_cache`), so a window does not start from an empty copy.
+pub(crate) fn fill_workspace_cache(server: &EditorServer) {
+    if server.kind == ServerKind::CodeServer {
+        workspace_cache::fill(server, &Path::new(&server.data).join(USER_DATA));
+    }
+}
+
 /// Makes the data folders. The server makes the rest.
 fn prepare(server: &EditorServer) -> io::Result<()> {
     for sub in [USER_DATA, EXTENSIONS] {
@@ -978,6 +986,7 @@ async fn start_once(
         }
     }
     if config.server.kind == ServerKind::CodeServer {
+        fill_workspace_cache(&config.server);
         defaults::merge_at_start(&config.server, &launch.program, account.as_ref())?;
     }
     let inherited = std::env::vars_os().filter_map(|(k, _)| k.into_string().ok());
@@ -1017,6 +1026,7 @@ async fn start_once(
 }
 
 mod defaults;
+mod workspace_cache;
 
 #[cfg(test)]
 mod tests;

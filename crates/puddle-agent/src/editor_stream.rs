@@ -25,6 +25,9 @@ pub struct EditorAccess {
     /// Why no editor server can run in this image, when it cannot (musl, no glibc): every request
     /// is answered with it.
     pub unsupported: Option<&'static str>,
+    /// The server whose cached copy of the multi-root file is put in place before each
+    /// connection (a window's first request comes before it reads the copy), when there is one.
+    pub server: Option<puddle_agent_proto::editor::EditorServer>,
 }
 
 impl EditorAccess {
@@ -35,6 +38,7 @@ impl EditorAccess {
             port: config.server.port,
             password_file: config.password_file.clone(),
             unsupported: unsupported_image(&config.root),
+            server: Some(config.server.clone()),
         }
     }
 }
@@ -68,7 +72,15 @@ where
         return;
     }
     match request {
-        Request::Connect => connect_through(stream, access.port).await,
+        Request::Connect => {
+            if let Some(server) = access.server.clone() {
+                let _ = tokio::task::spawn_blocking(move || {
+                    crate::editor::fill_workspace_cache(&server);
+                })
+                .await;
+            }
+            connect_through(stream, access.port).await;
+        }
         Request::Password => send_password(stream, access).await,
     }
 }

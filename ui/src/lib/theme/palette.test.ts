@@ -62,6 +62,27 @@ describe("the preset palettes", () => {
     }
   }
 
+  for (const preset of PRESETS) {
+    for (const scheme of ["light", "dark"] as const) {
+      it(`${preset} in ${scheme} typed in as custom colours gives no warning in that theme`, () => {
+        const t = PALETTES[preset][scheme];
+        const all = custom({
+          accent: t.accent,
+          background: t.bg,
+          surface: t.surface,
+          text: t.text,
+        });
+        expect(failures("custom", all, [scheme])).toEqual([]);
+        for (const [key, value] of Object.entries(all)) {
+          expect(
+            failures("custom", custom({ [key]: value }), [scheme]),
+            key,
+          ).toEqual([]);
+        }
+      });
+    }
+  }
+
   it("each preset is a different look", () => {
     const accents = PRESETS.map((p) => PALETTES[p].light.accent);
     expect(new Set(accents).size).toBe(PRESETS.length);
@@ -124,6 +145,15 @@ describe("a custom palette", () => {
       /^Text on cards has \d\.\d:1 in the light theme; it needs 4\.5:1\.$/,
     );
     expect(failures("custom", custom({ text: "#cccccc" }), [])).toEqual([]);
+  });
+
+  it("keeps the accent's tint readable by easing it toward the page, and falls back to the page", () => {
+    const meadow = PALETTES.meadow.light;
+    const t = resolve("custom", custom({ accent: meadow.accent }), "light");
+    expect(contrast(t.accent, t["accent-subtle"])).toBeGreaterThanOrEqual(4.5);
+    // An accent too pale to read on anything leaves the tint at the page colour.
+    const pale = resolve("custom", custom({ accent: "#e8f4f8" }), "light");
+    expect(pale["accent-subtle"]).toBe(pale.bg);
   });
 
   it("reports a failing accent against the surfaces it sits on", () => {

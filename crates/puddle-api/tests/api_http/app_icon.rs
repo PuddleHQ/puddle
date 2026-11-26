@@ -39,7 +39,7 @@ async fn the_built_in_icons_come_drawn_for_a_preview_and_there_is_no_custom_one_
         .iter()
         .map(|i| i["choice"].as_str().unwrap().to_owned())
         .collect();
-    assert_eq!(choices, ["duck", "duck_pond", "duck_night", "duck_sun"]);
+    assert_eq!(choices, ["duck", "rubber_duck", "duck_front"]);
     for icon in view["built_in"].as_array().unwrap() {
         let drawn = decode(icon["png_base64"].as_str().unwrap());
         assert_eq!(drawn.size, 64);
@@ -47,7 +47,7 @@ async fn the_built_in_icons_come_drawn_for_a_preview_and_there_is_no_custom_one_
     // What the window shows is what the preview shows.
     assert_eq!(
         decode(view["built_in"][1]["png_base64"].as_str().unwrap()),
-        built_in(AppIconChoice::DuckPond, 64).unwrap()
+        built_in(AppIconChoice::RubberDuck, 64).unwrap()
     );
     assert_eq!(view["custom_png_base64"], json!(null));
     api.running.shutdown().await;
@@ -159,7 +159,7 @@ async fn your_own_icon_can_only_be_chosen_with_an_image_and_not_removed_while_in
         "still there"
     );
 
-    api.send("PUT", "/api/settings", Some(&choose("duck_sun")))
+    api.send("PUT", "/api/settings", Some(&choose("duck_front")))
         .await;
     let reply = api.send("DELETE", "/api/app-icons/custom", None).await;
     assert_eq!(reply.status, 204, "{}", reply.body);

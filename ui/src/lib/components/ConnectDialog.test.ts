@@ -105,7 +105,7 @@ describe("the Connect dialog", () => {
     const link = screen.getByRole("link", {
       name: "Change the server in Settings",
     });
-    expect(link).toHaveAttribute("href", "/settings/editor#set-server");
+    expect(link).toHaveAttribute("href", "/settings/editor-server#set-server");
     link.addEventListener("click", (event) => event.preventDefault());
     await fireEvent.click(link);
     await gone();

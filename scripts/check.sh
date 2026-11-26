@@ -178,7 +178,32 @@ ui_install() {
 # failure, with its message and stack). A failing run also leaves ui/vitest-out/vitest-failed-<UTC time>.log, which a
 # rerun never overwrites, and prints its path: a failure that happens once (it once lost its output, so the test that failed
 # stayed unknown) must stay diagnosable. CI uploads ui/vitest-out (ci.yml, job ui).
+# A shared host can run at many times its core count (2026-11-25: load about 500 on 40 cores, a 46 ms vitest
+# test lost 7.5 s to an 8142 ms event-loop stall). Before vitest, wait until the 1-minute load average is under
+# the core count, at most CHECK_LOAD_WAIT seconds (default 900; 0 turns it off; CI runners are skipped), then go
+# on and say so. A wait, never a longer test timeout: a stall of the machine is not a slow test.
+wait_for_load() {
+    [ -z "${CI:-}" ] || return 0
+    _lw_max=${CHECK_LOAD_WAIT:-900}
+    [ "$_lw_max" -gt 0 ] 2>/dev/null || return 0
+    _lw_cores=${CHECK_LOAD_CORES:-$(nproc 2>/dev/null || echo 1)}
+    _lw_t=0
+    while :; do
+        _lw_l=$(awk '{print $1}' "${CHECK_LOADAVG_FILE:-/proc/loadavg}" 2>/dev/null)
+        [ -n "$_lw_l" ] || return 0
+        awk -v l="$_lw_l" -v c="$_lw_cores" 'BEGIN { exit !(l + 0 < c + 0) }' && break
+        if [ "$_lw_t" -ge "$_lw_max" ]; then
+            echo "ui: load $_lw_l on $_lw_cores cores still not under the core count after ${_lw_t} s; running vitest anyway" >&2
+            return 0
+        fi
+        [ "$_lw_t" -gt 0 ] || echo "ui: load $_lw_l on $_lw_cores cores; waiting for it to drop below the core count before vitest (at most $_lw_max s; CHECK_LOAD_WAIT=0 skips)" >&2
+        sleep "${CHECK_LOAD_POLL:-10}"
+        _lw_t=$((_lw_t + ${CHECK_LOAD_POLL:-10}))
+    done
+}
+
 ui_test() {
+    wait_for_load
     mkdir -p ui/vitest-out
     # The pipe hides npm's status (a plain sh pipeline), so the status goes through a file.
     rm -f ui/vitest-out/vitest.rc

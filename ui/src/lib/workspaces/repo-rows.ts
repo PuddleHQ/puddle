@@ -89,7 +89,6 @@ export interface RowDraft {
   identity: string | null;
   /** The identity that listed the address in the picker, while the address is still as picked. */
   listedBy: number | null;
-  pull: boolean;
   push: boolean;
 }
 
@@ -102,7 +101,6 @@ export function newRow(key: number, url = ""): RowDraft {
     directory: "",
     identity: null,
     listedBy: null,
-    pull: true,
     push: true,
   };
 }

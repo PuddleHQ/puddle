@@ -193,8 +193,11 @@ fn data_folder(options: &Options) -> Option<PathBuf> {
 #[must_use]
 pub fn report_startup_failure(options: &Options, err: &ShellError) -> String {
     let reason = startup_reason(err);
-    let file =
-        data_folder(options).and_then(|folder| crash::write_startup_error(&folder, &reason).ok());
+    let file = crash::write_startup_error_or_fallback(
+        data_folder(options).as_deref(),
+        &crash::fallback_dir(),
+        &reason,
+    );
     crash::startup_message(&reason, file.as_deref())
 }
 
@@ -210,6 +213,16 @@ fn startup_reason(err: &ShellError) -> String {
              Puddle again. Nothing in the data folder was changed"
         ),
         other => other.to_string(),
+    }
+}
+
+/// What `run` returns once the event loop ended: the error the setup hook stored, if any. The hook
+/// ends the loop instead of returning the error because Tauri panics on a setup error inside
+/// `run`, where nothing could report it.
+fn setup_outcome(stored: &Mutex<Option<ShellError>>) -> Result<(), ShellError> {
+    match stored.lock().unwrap_or_else(PoisonError::into_inner).take() {
+        Some(err) => Err(err),
+        None => Ok(()),
     }
 }
 
@@ -724,9 +737,11 @@ pub fn run(options: &Options) -> Result<(), ShellError> {
     let app = with_plugins(builder)
         .setup(move |app| {
             if let Err(err) = start(app.handle(), &options, source) {
-                let text = err.to_string();
                 *kept.lock().unwrap_or_else(PoisonError::into_inner) = Some(err);
-                return Err(text.into());
+                // Returning the error would make Tauri panic inside `run`; end the loop and let
+                // `run` return it to `main`, which shows it.
+                app.handle().exit(1);
+                return Ok(());
             }
             if let Err(err) = desktop::install_quit_shortcut(app.handle()) {
                 tracing::warn!(%err, "Ctrl+Q will not quit");
@@ -735,13 +750,13 @@ pub fn run(options: &Options) -> Result<(), ShellError> {
         })
         .build(context())
         .map_err(|err| build_failure(&setup_failure, err))?;
-    app.run(|handle, event| {
+    app.run_return(|handle, event| {
         if matches!(event, RunEvent::Exit) {
             // the process is exiting; there is no one left to report a failed stop to
             let _ = stop(handle);
         }
     });
-    Ok(())
+    setup_outcome(&setup_failure)
 }
 
 #[cfg(test)]

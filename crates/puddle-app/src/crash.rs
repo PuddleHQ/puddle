@@ -118,6 +118,25 @@ pub fn write_startup_error(dir: &Path, reason: &str) -> io::Result<PathBuf> {
     Ok(path)
 }
 
+/// Where a start-up error or crash file goes when the data folder cannot be written (a folder
+/// that cannot be locked or created is the likeliest reason the program did not start).
+#[must_use]
+pub fn fallback_dir() -> PathBuf {
+    std::env::temp_dir().join("puddle-crash")
+}
+
+/// Writes the start-up error into `dir`, or into `fallback` when `dir` is missing or unwritable.
+/// `None` when neither could be written.
+#[must_use]
+pub fn write_startup_error_or_fallback(
+    dir: Option<&Path>,
+    fallback: &Path,
+    reason: &str,
+) -> Option<PathBuf> {
+    dir.and_then(|dir| write_startup_error(dir, reason).ok())
+        .or_else(|| write_startup_error(fallback, reason).ok())
+}
+
 /// What the user is told when the program does not start: the reason and, when it was written,
 /// the file that holds it.
 #[must_use]
@@ -153,11 +172,26 @@ fn prune(dir: &Path, keep: usize) {
     }
 }
 
+/// [`write`] into `dir`, or into `fallback` when that fails.
+fn write_with_fallback(
+    dir: &Path,
+    fallback: &Path,
+    report: &Report,
+    now: SystemTime,
+) -> io::Result<PathBuf> {
+    write(dir, report, now).or_else(|_| write(fallback, report, now))
+}
+
 /// Makes every panic write a crash file into `dir`, then run the hook that was there before (the
 /// message on stderr).
 pub fn install(dir: PathBuf) {
+    install_with_fallback(dir, fallback_dir());
+}
+
+/// [`install`], writing into `fallback` when `dir` cannot be written.
+fn install_with_fallback(dir: PathBuf, fallback: PathBuf) {
     puddle_types::panic_hook::chain(move |info| {
-        match write(&dir, &Report::of(info), SystemTime::now()) {
+        match write_with_fallback(&dir, &fallback, &Report::of(info), SystemTime::now()) {
             Ok(path) => {
                 tracing::error!(file = %path.display(), "Puddle crashed; wrote a crash file");
             }

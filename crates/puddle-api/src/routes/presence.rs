@@ -5,11 +5,11 @@
 use axum::extract::State;
 use axum::http::StatusCode;
 
-use crate::ApiErrorBody;
 use crate::authz::Principal;
-use crate::error::ApiError;
 use crate::routes::AppState;
-use crate::wire::PresenceReport;
+use puddle_services::error::ApiError;
+use puddle_services::error::ApiErrorBody;
+use puddle_services::wire::PresenceReport;
 
 /// A client's report of itself. Clients send it every 30 seconds and when something in it changes.
 /// A client that stops reporting is no longer picked after about a minute.

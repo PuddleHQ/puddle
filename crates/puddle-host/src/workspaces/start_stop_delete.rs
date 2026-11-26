@@ -4,11 +4,13 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use puddle_api::EndReason;
-use puddle_api::{DisplayName, WorkspaceError, WorkspaceRecord};
 use puddle_boot::{BootError, Gate, GatedSandbox};
 use puddle_compute::SandboxInfo;
 use puddle_compute::{ComputeError, Runtime, Sandbox as _, StartRefusal, VsockRoute};
+use puddle_services::terminals::EndReason;
+use puddle_services::{
+    workspaces::DisplayName, workspaces::WorkspaceError, workspaces::WorkspaceRecord,
+};
 use puddle_types::{GuestEnv, ImageRef, Problem, WorkspaceId, WorkspaceStep};
 use puddle_workspace::WORKSPACE_DIR;
 

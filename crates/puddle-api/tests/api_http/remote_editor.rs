@@ -9,8 +9,12 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use puddle_api::{
-    ApiConfig, ApiServer, ApiToken, DisplayName, EventHub, FakeWorkspaces, MemorySettings, NoNames,
-    PublicHost, Remote, RemoteServing, RunningApi, Services, Unsaved, WorkspaceRecord,
+    ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, NoNames, PublicHost, Remote,
+    RemoteServing, RunningApi, Services,
+};
+use puddle_services::{
+    fake_workspaces::FakeWorkspaces, fake_workspaces::Unsaved, workspaces::DisplayName,
+    workspaces::WorkspaceRecord,
 };
 use puddle_store::{Limits, ManualClock, Store, UserId};
 use puddle_types::WorkspaceId;

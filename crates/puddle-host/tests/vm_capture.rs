@@ -280,7 +280,7 @@ async fn vm_capture_reaches_what_a_rule_allows_with_no_proxy_setting_and_refuses
 async fn vm_capture_survives_a_root_that_deletes_the_rules() {
     let kit = PackageKit::open(
         Flavour::Apt,
-        puddle_api::DEFAULT_IMAGE,
+        puddle_services::workspaces::DEFAULT_IMAGE,
         "nftables",
         "deb.debian.org and security.debian.org",
     );
@@ -415,7 +415,7 @@ async fn vm_capture_apt_update_works_with_no_proxy_file_and_no_proxy_setting() {
 async fn vm_capture_python_urllib_and_pip_work_with_an_empty_environment() {
     let kit = PackageKit::open(
         Flavour::Apt,
-        puddle_api::DEFAULT_IMAGE,
+        puddle_services::workspaces::DEFAULT_IMAGE,
         "python3 python3-pip",
         "deb.debian.org and security.debian.org",
     );

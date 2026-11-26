@@ -7,10 +7,13 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use puddle_agent_proto::host_control::{HostMessage, HostReply};
-use puddle_api::phase::{Move, Next, Outcome, begin};
-use puddle_api::{Operation, Repository, WorkspaceError, WorkspaceRecord};
 use puddle_compute::{ImageConfig, PullPhase, PullProgress, Runtime};
 use puddle_ports::Ports;
+use puddle_services::workspaces::phase::{Move, Next, Outcome, begin};
+use puddle_services::{
+    workspaces::Operation, workspaces::Repository, workspaces::WorkspaceError,
+    workspaces::WorkspaceRecord,
+};
 use puddle_settings::{WorkspaceSettings, host_cpu_count, resolve, resolve_on_host};
 use puddle_store::{Actor, NewWorkspaceOp, WorkspaceOpKind, WorkspaceOpOutcome};
 use puddle_types::{
@@ -471,7 +474,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         Some(ssh.endpoint().path().to_path_buf())
     }
 
-    /// Begins `op` on `id` when its phase admits it (see [`puddle_api::phase`]): the busy mark
+    /// Begins `op` on `id` when its phase admits it (see [`puddle_services::workspaces::phase`]): the busy mark
     /// goes on and the status becomes the one `op` shows while it runs.
     pub(super) fn accept(
         &self,
@@ -967,9 +970,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
         let this = self.clone();
         self.spawn(async move {
-            let next = match ImageRef::new(puddle_api::DEFAULT_IMAGE) {
+            let next = match ImageRef::new(puddle_services::workspaces::DEFAULT_IMAGE) {
                 Ok(image) => match this.inner.runtime.pull_image(&image).await {
-                    Ok(config) => ImageNote::Read(puddle_api::describe_image(&config.labels)),
+                    Ok(config) => ImageNote::Read(puddle_services::workspaces::describe_image(&config.labels)),
                     Err(e) => {
                         tracing::warn!(image = %image, error = %e, "the default image was not downloaded to read its description");
                         ImageNote::Cold

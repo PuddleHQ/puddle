@@ -7,8 +7,10 @@ use std::pin::pin;
 use std::task::Poll;
 
 use futures_util::future::BoxFuture;
-use puddle_api::{
-    AddRepository, DisplayName, GitSetup, NewRepository, NewWorkspace, RepoUrl, Repository,
+use puddle_services::{
+    checkouts::AddRepository, workspaces::DisplayName, workspaces::GitSetup,
+    workspaces::NewRepository, workspaces::NewWorkspace, workspaces::RepoUrl,
+    workspaces::Repository,
 };
 use puddle_types::{EntryId, WorkspaceStatus};
 
@@ -32,10 +34,10 @@ impl GitSetup for GitThatWaits<'_> {
         &self,
         workspace: &WorkspaceId,
         owner: puddle_store::UserId,
-    ) -> Result<(), puddle_api::WorkspaceError> {
-        self.0
-            .set_workspace_owner(workspace, owner)
-            .map_err(|err| puddle_api::WorkspaceError::Unavailable(err.to_string()))
+    ) -> Result<(), puddle_services::workspaces::WorkspaceError> {
+        self.0.set_workspace_owner(workspace, owner).map_err(|err| {
+            puddle_services::workspaces::WorkspaceError::Unavailable(err.to_string())
+        })
     }
 }
 
@@ -245,7 +247,7 @@ impl GitSetup for GitThatBreaksTheList {
         &self,
         _: &WorkspaceId,
         _: puddle_store::UserId,
-    ) -> Result<(), puddle_api::WorkspaceError> {
+    ) -> Result<(), puddle_services::workspaces::WorkspaceError> {
         Ok(())
     }
 }

@@ -4,7 +4,10 @@
 
 use std::sync::Arc;
 
-use puddle_api::{FakeNetworkHealth, FakeProxySignIns, ProxySignInService};
+use puddle_services::{
+    network_health::FakeNetworkHealth, proxy_sign_in::FakeProxySignIns,
+    proxy_sign_in::ProxySignInService,
+};
 use puddle_store::ManualClock;
 use puddle_upstream::ProxyAddr;
 use serde_json::json;
@@ -193,7 +196,7 @@ async fn the_network_report_names_stored_sign_ins_without_a_password() {
 
 #[tokio::test]
 async fn a_build_without_the_service_lists_nothing_and_refuses_a_change() {
-    use puddle_api::NoProxySignIns;
+    use puddle_services::proxy_sign_in::NoProxySignIns;
     let none = NoProxySignIns;
     assert_eq!(none.list().len(), 0);
     assert!(none.set(&proxy(), "a", "b").is_err());

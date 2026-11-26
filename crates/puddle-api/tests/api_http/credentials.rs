@@ -4,11 +4,11 @@
 
 use std::sync::Arc;
 
-use puddle_api::{HostCredentials, NoCredentials};
 use puddle_secrets::{
     AccountName, DiscoveredAccount, Discovery, HostName, Listing, MemoryStore, OrgName,
     SignInStart, SourceError, SourceSpec, Tool, ToolPaths,
 };
+use puddle_services::{credentials::HostCredentials, credentials::NoCredentials};
 use serde_json::{Value, json};
 
 use crate::common::{start, start_with_credentials};

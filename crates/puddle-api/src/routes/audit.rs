@@ -7,12 +7,12 @@ use puddle_store::{AuditCursor, AuditFilter, WorkspaceOpKind};
 use puddle_types::WorkspaceId;
 use serde::Deserialize;
 
-use crate::ApiErrorBody;
 use crate::authz::Principal;
-use crate::error::{ApiError, blocking};
 use crate::extract::Query;
 use crate::routes::{AppState, record_op};
-use crate::wire::{
+use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, blocking};
+use puddle_services::wire::{
     AuditEntry, AuditOutcome, AuditPage, AuditRecord, AuditRetentionRequest, AuditSize, AuditType,
     ConnectionOrigin,
 };

@@ -5,12 +5,12 @@
 
 use std::sync::Arc;
 
-use puddle_api::{FakeRepos, RepoService};
 use puddle_repos::{
     Freshness, ListState, Note, NoteKind, Problem, ProblemKind, Profile, ProfileRead, Read,
     Repository, Role, SourceList, Visibility,
 };
 use puddle_secrets::{AccountName, HostName, SourceSpec};
+use puddle_services::{repos::FakeRepos, repos::RepoService};
 use puddle_store::IdentityId;
 use serde_json::{Value, json};
 

@@ -3,7 +3,7 @@
 //! own tests run the same suite on the in-memory service.
 
 use futures_util::future::LocalBoxFuture;
-use puddle_api::contract::{self, Reply, Subject};
+use puddle_services::contract::{self, Reply, Subject};
 use serde_json::Value;
 
 use super::{Rig, api};

@@ -51,7 +51,7 @@ async fn an_entrypoint_that_failed_at_once_is_a_problem_until_a_start_where_it_d
 #[tokio::test(flavor = "multi_thread")]
 async fn problem_text_names_a_workspace_by_its_display_name_never_by_its_random_id() {
     let rig = Rig::new();
-    *rig.ids.lock().unwrap() = Some(Arc::new(puddle_api::RandomIds));
+    *rig.ids.lock().unwrap() = Some(Arc::new(puddle_services::workspaces::RandomIds));
     let host = rig.start().await;
     let api = api(&host);
     let mut events = api.events().await;

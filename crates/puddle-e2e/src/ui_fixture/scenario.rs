@@ -8,7 +8,7 @@
 
 use std::collections::BTreeMap;
 
-use puddle_api::wire::{
+use puddle_services::wire::{
     CredentialSource, DevCertificate, DoctorReport, FoundAccount, FoundVia, IdentityRequest,
     NetworkHealth, RepoListState, RepoNoteCode, RepoProblemCode, RepoRole, RepoVisibility,
     SignInStarted,

@@ -415,14 +415,14 @@ impl GuestCertSource for TestDevCert {
     }
 }
 
-impl puddle_api::DevCertService for TestDevCert {
-    fn status(&self) -> puddle_api::wire::DevCertificate {
-        puddle_api::wire::DevCertificate::Unsupported
+impl puddle_services::dev_cert::DevCertService for TestDevCert {
+    fn status(&self) -> puddle_services::wire::DevCertificate {
+        puddle_services::wire::DevCertificate::Unsupported
     }
 
-    fn trust(&self) -> puddle_api::wire::DevCertTrustResult {
-        puddle_api::wire::DevCertTrustResult {
-            dev_certificate: puddle_api::wire::DevCertificate::Unsupported,
+    fn trust(&self) -> puddle_services::wire::DevCertTrustResult {
+        puddle_services::wire::DevCertTrustResult {
+            dev_certificate: puddle_services::wire::DevCertificate::Unsupported,
             detail: None,
             waiting: false,
         }
@@ -439,14 +439,14 @@ impl GuestCertSource for NoDevCert {
     }
 }
 
-impl puddle_api::DevCertService for NoDevCert {
-    fn status(&self) -> puddle_api::wire::DevCertificate {
-        puddle_api::wire::DevCertificate::NotChecked
+impl puddle_services::dev_cert::DevCertService for NoDevCert {
+    fn status(&self) -> puddle_services::wire::DevCertificate {
+        puddle_services::wire::DevCertificate::NotChecked
     }
 
-    fn trust(&self) -> puddle_api::wire::DevCertTrustResult {
-        puddle_api::wire::DevCertTrustResult {
-            dev_certificate: puddle_api::wire::DevCertificate::NotChecked,
+    fn trust(&self) -> puddle_services::wire::DevCertTrustResult {
+        puddle_services::wire::DevCertTrustResult {
+            dev_certificate: puddle_services::wire::DevCertificate::NotChecked,
             detail: None,
             waiting: false,
         }
@@ -455,7 +455,7 @@ impl puddle_api::DevCertService for NoDevCert {
 
 /// Options that touch nothing of this machine's. A workspace's id is drawn at random, as on a real
 /// host, so a test that prints the id where the user reads the name fails. A test that must name
-/// its paths before the workspace exists sets `workspace_ids` to [`puddle_api::NameIds`].
+/// its paths before the workspace exists sets `workspace_ids` to [`puddle_services::workspaces::NameIds`].
 pub fn hermetic_options() -> HostOptions {
     let mut options = HostOptions::default();
     options.dev_cert = Some(Arc::new(NoDevCert));
@@ -475,7 +475,7 @@ pub fn hermetic_options() -> HostOptions {
 /// id from the reply uses [`hermetic_options`] instead.
 pub fn named_id_options() -> HostOptions {
     let mut options = hermetic_options();
-    options.workspace_ids = Some(Arc::new(puddle_api::NameIds));
+    options.workspace_ids = Some(Arc::new(puddle_services::workspaces::NameIds));
     options
 }
 

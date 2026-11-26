@@ -4973,9 +4973,9 @@ async fn vm_host_a_login_shell_lands_in_the_start_folder_and_a_missing_one_opens
 
 /// The next thing the terminal says, within `within`.
 async fn terminal_next(
-    link: &mut puddle_api::TerminalLink,
+    link: &mut puddle_services::terminals::TerminalLink,
     within: Duration,
-) -> Option<puddle_api::TerminalOutput> {
+) -> Option<puddle_services::terminals::TerminalOutput> {
     tokio::time::timeout(within, link.output.recv())
         .await
         .expect("the terminal said nothing in time")
@@ -4983,11 +4983,14 @@ async fn terminal_next(
 
 /// Reads the terminal's output until it holds `text`, or until something other than output comes
 /// (the caller's assertion on the text then fails and shows what was seen).
-async fn terminal_text_until(link: &mut puddle_api::TerminalLink, text: &str) -> String {
+async fn terminal_text_until(
+    link: &mut puddle_services::terminals::TerminalLink,
+    text: &str,
+) -> String {
     let mut seen = String::new();
     while !seen.contains(text) {
         let item = terminal_next(link, Duration::from_secs(60)).await;
-        let Some(puddle_api::TerminalOutput::Bytes(bytes)) = item else {
+        let Some(puddle_services::terminals::TerminalOutput::Bytes(bytes)) = item else {
             return format!("{seen}[the terminal gave {item:?}]");
         };
         seen.push_str(&String::from_utf8_lossy(&bytes));
@@ -4997,23 +5000,33 @@ async fn terminal_text_until(link: &mut puddle_api::TerminalLink, text: &str) ->
 
 /// Reads the terminal's output until it ends, and says how.
 async fn terminal_end(
-    link: &mut puddle_api::TerminalLink,
+    link: &mut puddle_services::terminals::TerminalLink,
     within: Duration,
-) -> puddle_api::TerminalEnd {
+) -> puddle_services::terminals::TerminalEnd {
     loop {
         match terminal_next(link, within).await {
-            Some(puddle_api::TerminalOutput::Ended(end)) => return end,
-            Some(puddle_api::TerminalOutput::Bytes(_)) => {}
-            None => return puddle_api::TerminalEnd::of(puddle_api::EndReason::Quitting),
+            Some(puddle_services::terminals::TerminalOutput::Ended(end)) => return end,
+            Some(puddle_services::terminals::TerminalOutput::Bytes(_)) => {}
+            None => {
+                return puddle_services::terminals::TerminalEnd::of(
+                    puddle_services::terminals::EndReason::Quitting,
+                );
+            }
         }
     }
 }
 
 /// The prompt reads `user@<name>`, and the workspace id is nowhere in it.
-async fn assert_prompt_shows_name(link: &mut puddle_api::TerminalLink, user: &str, id: &str) {
+async fn assert_prompt_shows_name(
+    link: &mut puddle_services::terminals::TerminalLink,
+    user: &str,
+    id: &str,
+) {
     let typed = "echo \"prompt=<${PS1@P}>\"; echo end=$((20 + 22))\r";
     link.input
-        .send(puddle_api::TerminalInput::Bytes(typed.as_bytes().to_vec()))
+        .send(puddle_services::terminals::TerminalInput::Bytes(
+            typed.as_bytes().to_vec(),
+        ))
         .await
         .unwrap();
     let seen = terminal_text_until(link, "end=42").await;
@@ -5081,12 +5094,12 @@ async fn vm_host_a_terminal_is_a_shell_as_the_session_user_in_the_start_folder()
         .await;
     assert_eq!(renamed.status, 200, "{}", renamed.body);
 
-    let size = puddle_api::TerminalSize::new(100, 30).unwrap();
+    let size = puddle_services::terminals::TerminalSize::new(100, 30).unwrap();
     let service = host.workspaces();
-    puddle_api::TerminalService::check(service, &sandbox)
+    puddle_services::terminals::TerminalService::check(service, &sandbox)
         .await
         .unwrap();
-    let mut link = puddle_api::TerminalService::open(service, &sandbox, size)
+    let mut link = puddle_services::terminals::TerminalService::open(service, &sandbox, size)
         .await
         .unwrap();
     assert_eq!(service.open_terminals(), 1);
@@ -5094,7 +5107,9 @@ async fn vm_host_a_terminal_is_a_shell_as_the_session_user_in_the_start_folder()
     let typed =
         "echo \"who=$(id -un) where=$(pwd) tty=$(test -t 0 && echo yes) size=$(stty size)\"\r";
     link.input
-        .send(puddle_api::TerminalInput::Bytes(typed.as_bytes().to_vec()))
+        .send(puddle_services::terminals::TerminalInput::Bytes(
+            typed.as_bytes().to_vec(),
+        ))
         .await
         .unwrap();
     let seen = terminal_text_until(&mut link, "size=30 100").await;
@@ -5109,19 +5124,21 @@ async fn vm_host_a_terminal_is_a_shell_as_the_session_user_in_the_start_folder()
 
     // The shell's own exit ends the session with its status.
     link.input
-        .send(puddle_api::TerminalInput::Bytes(b"exit 7\r".to_vec()))
+        .send(puddle_services::terminals::TerminalInput::Bytes(
+            b"exit 7\r".to_vec(),
+        ))
         .await
         .unwrap();
     let ended_with = terminal_end(&mut link, Duration::from_secs(60)).await;
     assert_eq!(
         ended_with.reason,
-        puddle_api::EndReason::Exited,
+        puddle_services::terminals::EndReason::Exited,
         "{ended_with:?}"
     );
     assert_eq!(ended_with.status, Some(7), "{ended_with:?}");
 
     // A terminal still open when the workspace stops ends with `stopped`.
-    let mut open = puddle_api::TerminalService::open(service, &sandbox, size)
+    let mut open = puddle_services::terminals::TerminalService::open(service, &sandbox, size)
         .await
         .unwrap();
     let prompt = terminal_text_until(&mut open, "$").await;
@@ -5131,7 +5148,7 @@ async fn vm_host_a_terminal_is_a_shell_as_the_session_user_in_the_start_folder()
     let stopped = terminal_end(&mut open, Duration::from_secs(120)).await;
     assert_eq!(
         stopped.reason,
-        puddle_api::EndReason::Stopped,
+        puddle_services::terminals::EndReason::Stopped,
         "{stopped:?}"
     );
     events

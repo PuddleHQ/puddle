@@ -78,7 +78,7 @@ mod commands {
         WorkspaceRecord::new(
             puddle_types::WorkspaceId::new("0123456789abcdef0123456789abcdef").unwrap(),
             UserId::OWNER,
-            puddle_api::DisplayName::parse("web").unwrap(),
+            puddle_services::workspaces::DisplayName::parse("web").unwrap(),
             Vec::new(),
         )
     }
@@ -179,7 +179,7 @@ mod batch_file {
         WorkspaceRecord::new(
             puddle_types::WorkspaceId::new("0123456789abcdef0123456789abcdef").unwrap(),
             UserId::OWNER,
-            puddle_api::DisplayName::parse("web").unwrap(),
+            puddle_services::workspaces::DisplayName::parse("web").unwrap(),
             Vec::new(),
         )
     }

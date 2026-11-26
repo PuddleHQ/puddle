@@ -30,11 +30,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
-use puddle_api::{
-    BrowserTarget, CONNECTION_TOKEN_COOKIE, DesktopTarget, EditorSignIn, LaunchError, Launcher,
-    WorkspaceRecord,
-};
 use puddle_compute_msb::MsbRuntime;
+use puddle_services::{
+    workspaces::BrowserTarget, workspaces::CONNECTION_TOKEN_COOKIE, workspaces::DesktopTarget,
+    workspaces::EditorSignIn, workspaces::LaunchError, workspaces::Launcher,
+    workspaces::WorkspaceRecord,
+};
 use puddle_store::{Actor, Effect, NewRule, Pattern, Scope};
 use puddle_types::WorkspaceId;
 use puddle_vm_tests::{BrowserClient, BrowserCookie, BrowserSession, PageId, PageRequest};
@@ -1810,7 +1811,19 @@ async fn vm_browser_code_server_a_killed_browser_is_picked_up_within_the_grace_a
     );
 
     // Killed again and nobody comes: the hosts of that window stay for the grace and go after it.
-    let hosts = editor.extension_hosts().await;
+    // The window opened again runs a host of its own: the first window's host is not its host, and its grace
+    // began at the first kill, so it ends about GRACE after that, whatever the second kill does.
+    let first_window = hosts;
+    let hosts: Vec<u32> = editor
+        .extension_hosts()
+        .await
+        .into_iter()
+        .filter(|host| !first_window.contains(host))
+        .collect();
+    assert!(
+        !hosts.is_empty(),
+        "the window opened again has an extension host"
+    );
     shell.crash_newest(name).await;
     let killed = std::time::Instant::now();
     // flake-ok: an absence window: the host must still run a third of the grace after the kill, and

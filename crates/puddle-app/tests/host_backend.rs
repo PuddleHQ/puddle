@@ -79,14 +79,14 @@ impl GuestCertSource for NoDevCert {
     }
 }
 
-impl puddle_api::DevCertService for NoDevCert {
-    fn status(&self) -> puddle_api::wire::DevCertificate {
-        puddle_api::wire::DevCertificate::NotChecked
+impl puddle_services::dev_cert::DevCertService for NoDevCert {
+    fn status(&self) -> puddle_services::wire::DevCertificate {
+        puddle_services::wire::DevCertificate::NotChecked
     }
 
-    fn trust(&self) -> puddle_api::wire::DevCertTrustResult {
-        puddle_api::wire::DevCertTrustResult {
-            dev_certificate: puddle_api::wire::DevCertificate::NotChecked,
+    fn trust(&self) -> puddle_services::wire::DevCertTrustResult {
+        puddle_services::wire::DevCertTrustResult {
+            dev_certificate: puddle_services::wire::DevCertificate::NotChecked,
             detail: None,
             waiting: false,
         }

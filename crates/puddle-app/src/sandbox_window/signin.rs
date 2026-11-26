@@ -48,7 +48,7 @@ impl SessionCookie {
     #[must_use]
     pub fn connection_token(token: impl Into<String>) -> Self {
         Self {
-            name: puddle_api::CONNECTION_TOKEN_COOKIE.to_owned(),
+            name: puddle_services::workspaces::CONNECTION_TOKEN_COOKIE.to_owned(),
             value: token.into(),
             script_reads: true,
         }

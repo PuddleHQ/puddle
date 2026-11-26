@@ -106,10 +106,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use puddle_api::WorkspaceService as _;
-use puddle_api::{
-    BrowserTarget, DesktopTarget, LaunchError, Launcher, UiAssets, UiFile, WorkspaceRecord,
-};
+use puddle_api::{UiAssets, UiFile};
 use puddle_certs::{CorporateRoots, SOURCES, StoreSnapshot};
 use puddle_compute::fake::{ExecContext, FakeRuntime, Fault, Op};
 use puddle_compute::{ExecOutput, ExecRequest, ImageConfig, Runtime};
@@ -121,6 +118,11 @@ use puddle_host::{
 use puddle_netpolicy::EndpointKind;
 use puddle_runtime::{RuntimeLayout, RuntimeVersion};
 use puddle_secrets::{MemoryStore, SecretStore as _};
+use puddle_services::workspaces::WorkspaceService as _;
+use puddle_services::{
+    workspaces::BrowserTarget, workspaces::DesktopTarget, workspaces::LaunchError,
+    workspaces::Launcher, workspaces::WorkspaceRecord,
+};
 use puddle_test_kit::{eventually, next_event_matching, no_event_matching};
 use puddle_types::fixture;
 use puddle_types::{
@@ -1175,7 +1177,7 @@ struct Rig {
     /// Starts the host with SSH host keys for Git over SSH.
     git_ssh: AtomicBool,
     /// Where new ids come from, for a test about them; else random ids, as on a real host.
-    ids: Mutex<Option<Arc<dyn puddle_api::IdSource>>>,
+    ids: Mutex<Option<Arc<dyn puddle_services::workspaces::IdSource>>>,
     /// Whether the managed tools layer is on. Off by default: its background download runs a
     /// command at a moment no test chose, which would move the count of commands that a test
     /// injects a fault after.
@@ -1204,7 +1206,7 @@ impl Rig {
     /// writes those ids into paths and URLs itself.
     fn named_ids() -> Self {
         let rig = Self::new();
-        *rig.ids.lock().unwrap() = Some(Arc::new(puddle_api::NameIds));
+        *rig.ids.lock().unwrap() = Some(Arc::new(puddle_services::workspaces::NameIds));
         rig
     }
 

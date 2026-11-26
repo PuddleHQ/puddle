@@ -10,10 +10,10 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
 use crate::authz::Principal;
-use crate::error::{ApiError, ErrorCode};
 use crate::remote::RemoteServing;
 use crate::signin::SignIn;
 use crate::token::ApiToken;
+use puddle_services::error::{ApiError, ErrorCode};
 
 /// Which listener a guard stands in front of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -147,7 +147,7 @@ export const SETTINGS: readonly SettingEntry[] = [
   entry(
     "workspaces",
     "set-direct-ssh",
-    "Direct SSH for new workspaces",
+    "Direct SSH by default",
     "ssh port trust",
   ),
   entry(

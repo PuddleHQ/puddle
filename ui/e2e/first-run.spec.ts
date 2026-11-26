@@ -177,19 +177,19 @@ test("a fresh install is led through every step and then opens on the workspaces
     page.getByRole("radio", { name: /Built-in VS Code server/ }),
   ).toBeChecked();
   const directSsh = page.getByRole("checkbox", {
-    name: /Allow direct SSH for new workspaces/,
+    name: /Allow direct SSH by default/,
   });
   await expect(directSsh).not.toBeChecked();
   await directSsh.click();
   const trust = page.getByRole("alertdialog", {
-    name: "Allow direct SSH for new workspaces?",
+    name: "Allow direct SSH by default?",
   });
   await expect(trust).toBeVisible();
   await expect(directSsh).not.toBeChecked();
   const saved = page.waitForResponse(
     (r) => r.request().method() === "PUT" && r.url().endsWith("/api/settings"),
   );
-  await trust.getByRole("button", { name: "Allow for new workspaces" }).click();
+  await trust.getByRole("button", { name: "Allow by default" }).click();
   await saved;
   await expect(directSsh).toBeChecked();
   const settings = (await (

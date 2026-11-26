@@ -56,7 +56,11 @@ type Where =
   | "workspaces"
   | "network"
   | "editor"
-  | "this-computer";
+  | "this-computer"
+  | "credentials"
+  | "environment"
+  | "editor-server"
+  | "git";
 
 async function openSettings(
   page: Page,
@@ -89,11 +93,16 @@ async function saveField(page: Page, label: string) {
 const SECTIONS: Record<Where, string[]> = {
   appearance: ["Appearance"],
   notifications: ["Notifications", "Also notify when", "Inbox"],
-  workspaces: ["Workspaces", "Disk space", "Environment"],
+  workspaces: ["New workspaces"],
   network: ["Proxy", "Local destinations", "Decrypting traffic"],
-  editor: ["Editor defaults", "Browser VS Code", "Git and SSH"],
+  editor: ["Editor defaults"],
+  credentials: ["Logins and credentials"],
+  environment: ["Limits", "Environment"],
+  "editor-server": ["Browser VS Code server"],
+  git: ["Git and SSH"],
   "this-computer": [
     "Startup and window",
+    "Disk space",
     "Devices and sign-in",
     "Back up and restore",
     "Activity log",
@@ -101,6 +110,19 @@ const SECTIONS: Record<Where, string[]> = {
     "Privacy and about",
   ],
 };
+
+test("an old link to a setting that moved follows it to its page", async ({
+  page,
+  backend,
+}) => {
+  await backend.signIn(page);
+  await page.goto("/settings/editor#set-server");
+  await expect(page).toHaveURL(/\/settings\/editor-server#set-server$/);
+  await expect(page.getByLabel("Server", { exact: true })).toBeVisible();
+  await page.goto("/settings/workspaces#set-disk-warn");
+  await expect(page).toHaveURL(/\/settings\/this-computer#set-disk-warn$/);
+  await expect(page.getByText("Defaults for new workspaces")).toBeVisible();
+});
 
 test("shows every page with Puddle's defaults, no CSP violations", async ({
   page,
@@ -121,7 +143,7 @@ test("shows every page with Puddle's defaults, no CSP violations", async ({
     page.getByLabel("Start Puddle when I sign in"),
   ).not.toBeChecked();
   await expect(page.getByText(/sends nothing about you/)).toBeVisible();
-  await page.goto("/settings/editor");
+  await page.goto("/settings/editor-server");
   await expect(page.getByLabel("Server", { exact: true })).toHaveValue(
     "code_server",
   );
@@ -184,7 +206,7 @@ for (const scheme of ["light", "dark"] as const) {
     backend,
   }) => {
     await page.emulateMedia({ colorScheme: scheme });
-    await openSettings(page, backend, "editor");
+    await openSettings(page, backend, "editor-server");
     await expectNoAxeViolations(page, "screen");
     await page.getByLabel("Server", { exact: true }).selectOption("microsoft");
     await expect(page.getByRole("dialog")).toBeVisible();
@@ -460,7 +482,7 @@ test("a typed value's Save is big enough and the page has no axe findings with a
   backend,
 }) => {
   await page.setViewportSize({ width: 1280, height: 600 });
-  await openSettings(page, backend, "workspaces");
+  await openSettings(page, backend, "this-computer");
   await page
     .getByLabel("Warn when free space is under (GB)", { exact: true })
     .fill("30");
@@ -638,7 +660,7 @@ test("a reconnection grace outside the range is refused before anything is sent"
   backend,
   request,
 }) => {
-  await openSettings(page, backend, "editor");
+  await openSettings(page, backend, "editor-server");
   const grace = page.getByLabel("Reconnection grace (seconds)", {
     exact: true,
   });
@@ -663,7 +685,7 @@ test.describe("Microsoft's VS Code server", () => {
     backend,
     request,
   }) => {
-    await openSettings(page, backend, "editor");
+    await openSettings(page, backend, "editor-server");
     await page.getByLabel("Server", { exact: true }).selectOption("microsoft");
     const dialog = page.getByRole("dialog");
     await expect(dialog).toContainText(
@@ -689,7 +711,7 @@ test.describe("Microsoft's VS Code server", () => {
     backend,
     request,
   }) => {
-    await openSettings(page, backend, "editor");
+    await openSettings(page, backend, "editor-server");
     await page.getByLabel("Server", { exact: true }).selectOption("microsoft");
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible();
@@ -706,7 +728,7 @@ test.describe("Microsoft's VS Code server", () => {
     backend,
     request,
   }) => {
-    await openSettings(page, backend, "editor");
+    await openSettings(page, backend, "editor-server");
     await page.getByLabel("Server", { exact: true }).selectOption("microsoft");
     const dialog = page.getByRole("dialog");
     await dialog
@@ -750,7 +772,7 @@ test.describe("Microsoft's VS Code server", () => {
     backend,
     request,
   }) => {
-    await openSettings(page, backend, "editor");
+    await openSettings(page, backend, "editor-server");
     await page.getByLabel("Server", { exact: true }).selectOption("microsoft");
     const dialog = page.getByRole("dialog");
     await dialog
@@ -781,7 +803,7 @@ test("the disk space lines start at 20 and 5 GB, are checked before saving and s
   backend,
   request,
 }) => {
-  await openSettings(page, backend, "workspaces");
+  await openSettings(page, backend, "this-computer");
   const warn = page.getByLabel("Warn when free space is under (GB)", {
     exact: true,
   });
@@ -824,7 +846,7 @@ test("the disk space lines start at 20 and 5 GB, are checked before saving and s
   expect(ui.disk_fail_free_gb).toBe(12);
   await page.reload();
   await expect(notice).not.toBeChecked();
-  await page.goto("/settings/workspaces");
+  await page.goto("/settings/this-computer");
   await expect(warn).toHaveValue("60");
   await expect(fail).toHaveValue("12");
 });
@@ -834,7 +856,7 @@ test("the SSH agent pipe is checked before saving, stored trimmed and survives a
   backend,
   request,
 }) => {
-  await openSettings(page, backend, "editor");
+  await openSettings(page, backend, "git");
   const field = page.getByLabel("SSH agent pipe or socket", { exact: true });
   await expect(field).toHaveValue("");
 

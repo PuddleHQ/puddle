@@ -80,6 +80,20 @@ async fn trailers_are_accepted_up_to_64_kib_and_no_further() {
     assert!(decode(&trailers(1), Body::Chunked).await.is_err());
 }
 
+/// One trailer line may be 8 KiB with its line ending, no longer.
+#[tokio::test]
+async fn a_trailer_line_is_accepted_up_to_8_kib_and_no_further() {
+    let trailer = |value_len: usize| {
+        let mut input = b"0\r\nx-a: ".to_vec();
+        input.extend(std::iter::repeat_n(b'a', value_len));
+        input.extend_from_slice(b"\r\n\r\n");
+        input
+    };
+    // "x-a: " is 5 bytes and the line ending 2, so 8185 value bytes make an 8192-byte line.
+    assert!(decode(&trailer(8185), Body::Chunked).await.is_ok());
+    assert!(decode(&trailer(8186), Body::Chunked).await.is_err());
+}
+
 #[tokio::test]
 async fn a_chunk_may_end_in_a_bare_line_feed() {
     let input = b"3\nabc\n2\r\nde\n0\n\n";

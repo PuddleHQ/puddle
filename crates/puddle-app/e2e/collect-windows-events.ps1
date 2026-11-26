@@ -18,9 +18,12 @@ if ($Plant) {
 $crashProviders = @('Application Error', 'Application Hang', 'Windows Error Reporting')
 $names = 'puddle-app|puddle\.exe|msb\.exe'
 $found = @()
+# Get-WinEvent's StartTime filter is coarser than the clock the soak stamps its start with, so an entry written
+# a moment before $start (the workflow's planted crash, one step ahead of the day) can still come back; the
+# comparison here is exact.
 try {
   $found = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = $start } -ErrorAction Stop |
-      Where-Object { $_.Message -match $names })
+      Where-Object { $_.Message -match $names -and $_.TimeCreated.ToUniversalTime() -ge $start })
 } catch {
   # Get-WinEvent says so when nothing matches the filter; any other failure is a real one.
   if ($_.FullyQualifiedErrorId -notlike 'NoMatchingEventsFound*') { throw }

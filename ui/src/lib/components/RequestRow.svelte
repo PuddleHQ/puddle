@@ -67,7 +67,7 @@
   </p>
   <p class="facts">
     <b class="mono">{workspaces.labelOf(request.workspace)}</b
-    >{#if request.program}{" "}<span
+    >{#if request.program}&nbsp;<span
         class="program"
         title="The program that asked, as the guest named it"
         >({request.program})</span

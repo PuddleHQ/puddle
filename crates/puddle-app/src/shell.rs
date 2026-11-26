@@ -220,10 +220,8 @@ fn startup_reason(err: &ShellError) -> String {
 /// ends the loop instead of returning the error because Tauri panics on a setup error inside
 /// `run`, where nothing could report it.
 fn setup_outcome(stored: &Mutex<Option<ShellError>>) -> Result<(), ShellError> {
-    match stored.lock().unwrap_or_else(PoisonError::into_inner).take() {
-        Some(err) => Err(err),
-        None => Ok(()),
-    }
+    let failure = stored.lock().unwrap_or_else(PoisonError::into_inner).take();
+    failure.map_or(Ok(()), Err)
 }
 
 /// What `run` returns when Tauri's `build` failed: the shell's own error when the setup hook

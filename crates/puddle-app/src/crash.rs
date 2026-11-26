@@ -121,6 +121,10 @@ pub fn write_startup_error(dir: &Path, reason: &str) -> io::Result<PathBuf> {
 /// Where a start-up error or crash file goes when the data folder cannot be written (a folder
 /// that cannot be locked or created is the likeliest reason the program did not start).
 #[must_use]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the data folder is unwritable, so the system temp folder is the only place left"
+)]
 pub fn fallback_dir() -> PathBuf {
     std::env::temp_dir().join("puddle-crash")
 }

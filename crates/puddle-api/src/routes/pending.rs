@@ -151,9 +151,12 @@ pub(crate) async fn inbox(
             requests: present(&state, group.rows).await?,
         });
     }
+    let (allowed_today, since) = state.store.allowed_today(principal.user);
     Ok(Json(Inbox {
         groups: out,
         open_limit: state.store.max_open_rows(),
+        allowed_today,
+        since,
     }))
 }
 

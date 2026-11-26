@@ -19563,9 +19563,17 @@
         "description": "The inbox: open requests grouped by registrable domain, most recent group first.",
         "required": [
           "groups",
-          "open_limit"
+          "open_limit",
+          "allowed_today",
+          "since"
         ],
         "properties": {
+          "allowed_today": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Connections a rule allowed in the user's workspaces since `since`. Counted in memory, so\nit starts again at zero when Puddle restarts.",
+            "minimum": 0
+          },
           "groups": {
             "type": "array",
             "items": {
@@ -19577,6 +19585,12 @@
             "type": "integer",
             "format": "int64",
             "description": "The most open requests Puddle lists for one workspace. A workspace with this many has a\nfull list: a new host it asks about is answered as waiting but gets no row until the user\nanswers some (rules spec R-45).",
+            "minimum": 0
+          },
+          "since": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The start of the UTC day `allowed_today` counts, in milliseconds since the epoch.",
             "minimum": 0
           }
         }

@@ -66,6 +66,9 @@ async fn a_pending_request_is_listed_approved_and_then_allowed() {
     assert!(domains.contains(&"example.com") && domains.contains(&"example.org"));
     // The most open requests listed per workspace, so the inbox can say when a list is full.
     assert_eq!(inbox["open_limit"], 1000);
+    // Nothing was allowed by a rule yet, and the count says which day it is for.
+    assert_eq!(inbox["allowed_today"], 0);
+    assert!(inbox["since"].is_u64());
 
     let reply = api
         .send(

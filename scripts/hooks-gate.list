@@ -10,6 +10,7 @@ ci/scope-test.sh
 scripts/mutants-test.sh
 ci/raise-coverage-baseline-test.sh
 scripts/check-tmp-test.sh
+scripts/check-load-wait-test.sh
 ci/fake-host-starved-test.sh
 scripts/gate-sched-test.sh
 scripts/check-test-git-env.sh

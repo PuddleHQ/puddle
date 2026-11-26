@@ -12,6 +12,7 @@
 //! client, so nothing sets `HTTPS_PROXY`.
 
 use std::collections::BTreeMap;
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
 use microsandbox::LocalBackend;
@@ -24,6 +25,7 @@ use microsandbox_image::{
 use oci_client::errors::OciDistributionError;
 use puddle_compute::{ComputeError, ImageConfig, PullPhase, PullProgress, PullReport};
 use puddle_types::ImageRef;
+use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
@@ -42,6 +44,11 @@ pub(crate) async fn pull(
         .as_str()
         .parse()
         .map_err(|e| fail(format!("invalid image reference: {e}")))?;
+    // One pull per image at a time: a second pull of the same image would wait on the cache's
+    // manifest lock behind the first one's whole download, say nothing, and run into the
+    // first-answer deadline without the registry being slow. Behind the first it finds the
+    // image in the cache.
+    let _turn = turn_for(&reference.to_string()).lock_owned().await;
     let cache = GlobalCache::new(&local.cache_dir()).map_err(|e| fail(chain(&e)))?;
     let options = PullOptions::default();
     if let Some((result, _)) = Registry::pull_cached_async(&cache, &reference, &options)
@@ -76,6 +83,16 @@ pub(crate) async fn pull(
         .map_err(|e| fail(format!("the download task ended: {e}")))?
         .map_err(|e| fail(explain_connect(&e, reference.registry())))?;
     Ok(convert(result.config))
+}
+
+/// The turn for pulling `image` (a reference string): the same lock for the same image.
+fn turn_for(image: &str) -> Arc<AsyncMutex<()>> {
+    static TURNS: LazyLock<Mutex<BTreeMap<String, Arc<AsyncMutex<()>>>>> =
+        LazyLock::new(Mutex::default);
+    let mut turns = TURNS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    Arc::clone(turns.entry(image.to_owned()).or_default())
 }
 
 /// How long the registry has to answer the manifest request before the pull gives up. The pull

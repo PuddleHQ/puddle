@@ -269,3 +269,16 @@ async fn a_pull_whose_manifest_came_in_time_runs_to_its_end() {
         "the deadline applies only until the manifest is read"
     );
 }
+
+#[tokio::test]
+async fn a_second_pull_of_an_image_waits_for_the_first_and_another_image_does_not() {
+    let first = turn_for("registry.test/a:1").lock_owned().await;
+    let same = turn_for("registry.test/a:1");
+    assert!(
+        same.try_lock().is_err(),
+        "the same image must wait its turn"
+    );
+    assert!(turn_for("registry.test/b:1").try_lock().is_ok());
+    drop(first);
+    assert!(same.try_lock().is_ok());
+}

@@ -298,7 +298,7 @@ async fn vm_rules_probe_a_guest_tool_sees_every_rule_decide_its_answer() {
     // from the saved package files on a warm cache, from Debian's mirrors on the first run.
     let kit = PackageKit::open(
         Flavour::Apt,
-        puddle_api::DEFAULT_IMAGE,
+        puddle_services::workspaces::DEFAULT_IMAGE,
         "netcat-openbsd",
         "deb.debian.org and security.debian.org",
     );

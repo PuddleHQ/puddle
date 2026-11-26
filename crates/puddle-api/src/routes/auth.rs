@@ -13,14 +13,14 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use puddle_store::DeviceId;
 
-use crate::ApiErrorBody;
 use crate::auth::ReachedPublicly;
 use crate::authz::{Principal, Via};
-use crate::error::{ApiError, ErrorCode};
 use crate::extract::{Path, SecretJson};
 use crate::routes::AppState;
 use crate::signin::{COOKIE_NAME, DEVICE_TTL_MS, Granted, SignIn};
-use crate::wire::{
+use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, ErrorCode};
+use puddle_services::wire::{
     AuthStatus, ChangePasswordRequest, DeviceList, InviteRequest, PasswordSignInRequest,
     SessionGrant, SetupRequest, SignInMethodRequest, SignInMethods,
 };

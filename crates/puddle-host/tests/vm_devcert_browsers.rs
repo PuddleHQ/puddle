@@ -50,14 +50,14 @@ impl GuestCertSource for FixedCert {
     }
 }
 
-impl puddle_api::DevCertService for FixedCert {
-    fn status(&self) -> puddle_api::wire::DevCertificate {
-        puddle_api::wire::DevCertificate::Unsupported
+impl puddle_services::dev_cert::DevCertService for FixedCert {
+    fn status(&self) -> puddle_services::wire::DevCertificate {
+        puddle_services::wire::DevCertificate::Unsupported
     }
 
-    fn trust(&self) -> puddle_api::wire::DevCertTrustResult {
-        puddle_api::wire::DevCertTrustResult {
-            dev_certificate: puddle_api::wire::DevCertificate::Unsupported,
+    fn trust(&self) -> puddle_services::wire::DevCertTrustResult {
+        puddle_services::wire::DevCertTrustResult {
+            dev_certificate: puddle_services::wire::DevCertificate::Unsupported,
             detail: None,
             waiting: false,
         }

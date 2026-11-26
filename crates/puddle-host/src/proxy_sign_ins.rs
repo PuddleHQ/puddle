@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 
-use puddle_api::wire::StoredSignIn;
-use puddle_api::{ProxySignInError, ProxySignInService};
+use puddle_services::wire::StoredSignIn;
+use puddle_services::{proxy_sign_in::ProxySignInError, proxy_sign_in::ProxySignInService};
 use puddle_types::{Problem, Problems};
 use puddle_upstream::{Chain, ProxyAddr};
 

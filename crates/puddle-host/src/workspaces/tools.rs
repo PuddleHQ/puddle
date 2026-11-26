@@ -44,7 +44,7 @@ pub(super) struct ToolRuns {
     listed: Mutex<BTreeMap<WorkspaceId, edit::Listed>>,
     /// The registry each workspace's own mise listed, once its first call has read it: a guest
     /// controls its mise, so one workspace's answer is never shown for another.
-    registry: Mutex<BTreeMap<WorkspaceId, Vec<puddle_api::wire::RegistryTool>>>,
+    registry: Mutex<BTreeMap<WorkspaceId, Vec<puddle_services::wire::RegistryTool>>>,
 }
 
 impl ToolRuns {
@@ -64,12 +64,12 @@ impl ToolRuns {
         listed.remove(name);
     }
 
-    fn registry(&self, name: &WorkspaceId) -> Option<Vec<puddle_api::wire::RegistryTool>> {
+    fn registry(&self, name: &WorkspaceId) -> Option<Vec<puddle_services::wire::RegistryTool>> {
         let registry = self.registry.lock().unwrap_or_else(PoisonError::into_inner);
         registry.get(name).cloned()
     }
 
-    fn keep_registry(&self, name: &WorkspaceId, tools: Vec<puddle_api::wire::RegistryTool>) {
+    fn keep_registry(&self, name: &WorkspaceId, tools: Vec<puddle_services::wire::RegistryTool>) {
         let mut registry = self.registry.lock().unwrap_or_else(PoisonError::into_inner);
         registry.insert(name.clone(), tools);
     }

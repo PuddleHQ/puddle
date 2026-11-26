@@ -7,7 +7,7 @@
 //! the editor, comments), and leaves a file it cannot parse as it is. The file sits inside
 //! `.puddle`, which the delete check skips, so it can always be written again.
 
-use puddle_api::{StartFolder, WorkspaceRecord};
+use puddle_services::{workspaces::StartFolder, workspaces::WorkspaceRecord};
 use puddle_types::{
     CheckoutDir, FileMode, GuestFile, GuestPath, MergeEntry, MergeFormat, MergeSpec, WorkspaceId,
 };

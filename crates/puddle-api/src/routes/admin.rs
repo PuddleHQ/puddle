@@ -12,13 +12,15 @@ use axum::response::{IntoResponse, Response};
 use puddle_store::UserId;
 use serde::Deserialize;
 
-use crate::ApiErrorBody;
 use crate::admin::AdminService;
 use crate::authz::Principal;
-use crate::error::ApiError;
 use crate::extract::{Path, Query};
 use crate::routes::AppState;
-use crate::wire::{AdminAuditList, AdminStats, AdminUserList, CreateUserRequest, InviteIssued};
+use puddle_services::error::ApiError;
+use puddle_services::error::ApiErrorBody;
+use puddle_services::wire::{
+    AdminAuditList, AdminStats, AdminUserList, CreateUserRequest, InviteIssued,
+};
 
 fn service(state: &AppState) -> Result<&Arc<AdminService>, ApiError> {
     state

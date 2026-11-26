@@ -9,9 +9,9 @@ use puddle_types::{Problem, WorkspaceId};
 
 use puddle_settings::resolve;
 
-use crate::error::blocking;
 use crate::routes::AppState;
 use crate::routes::settings::{load_global, load_workspace};
+use puddle_services::error::blocking;
 
 /// What direct SSH gives a workspace: each desktop editor's server download and extension hosts.
 const DIRECT_SSH_REASONS: [SystemReason; 4] = [

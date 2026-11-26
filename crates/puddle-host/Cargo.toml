@@ -46,6 +46,7 @@ puddle-proxy = { workspace = true }
 puddle-repos = { workspace = true }
 puddle-runtime = { workspace = true }
 puddle-secrets = { workspace = true }
+puddle-services = { workspace = true }
 puddle-settings = { workspace = true }
 puddle-ssh = { workspace = true }
 puddle-ssh-agent = { workspace = true }
@@ -68,6 +69,7 @@ zeroize = { workspace = true }
 
 [dev-dependencies]
 # The tests record their workspaces' users through `puddle_store::testing`.
+puddle-services = { workspace = true, features = ["testing"] }
 puddle-store = { workspace = true, features = ["testing"] }
 puddle-test-kit = { workspace = true }
 puddle-types = { workspace = true, features = ["testing"] }

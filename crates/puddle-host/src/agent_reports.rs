@@ -17,7 +17,7 @@ use puddle_agent_proto::control::PROTOCOL_VERSION;
 use puddle_agent_proto::editor::NEEDS_GLIBC;
 use puddle_agent_proto::host::{AgentReport, AgentReports};
 use puddle_agent_proto::{EditorProblemKind, StubDnsTrouble};
-use puddle_api::DisplayName;
+use puddle_services::workspaces::DisplayName;
 use puddle_types::{Problem, Problems, WorkspaceId};
 
 /// Longest entrypoint failure (`<status>: <output>`) put in a problem.

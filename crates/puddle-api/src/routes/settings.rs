@@ -12,12 +12,12 @@ use puddle_settings::{
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 
-use crate::ApiErrorBody;
-use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
 use crate::settings::SettingsRepo;
-use crate::wire::{
+use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, blocking};
+use puddle_services::wire::{
     ConsentKind, ConsentRequest, Consents, GlobalSettingsRequest, GlobalSettingsView,
     SettingsLayer, WorkspaceSettingsRequest, WorkspaceSettingsView,
 };
@@ -83,7 +83,7 @@ pub(crate) fn check_new_workspace_cpus(
         return Ok(());
     }
     check_cpus_within(cpus, &load_global(repo)?.settings.limits, "cpus")
-        .map_err(|e| e.at_field(crate::ErrorField::Cpus))
+        .map_err(|e| e.at_field(puddle_services::error::ErrorField::Cpus))
 }
 
 /// A CPU count above the global maximum is refused where it is set, so the user hears it then

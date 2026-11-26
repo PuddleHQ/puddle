@@ -68,7 +68,7 @@ fn sources(dir: &std::path::Path) -> Vec<(String, String)> {
     out
 }
 
-/// The wire types that hold a [`SecretText`](crate::wire::SecretText), directly or through
+/// The wire types that hold a [`SecretText`](puddle_services::wire::SecretText), directly or through
 /// another such type: a top-level `struct` or `enum` whose body (up to its closing `}` in the
 /// first column) names one.
 fn types_holding_a_secret(files: &[(String, String)]) -> std::collections::BTreeSet<String> {

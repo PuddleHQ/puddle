@@ -17,15 +17,15 @@ use puddle_netpolicy::normalise_host;
 use puddle_store::MAX_SSH_AGENT_KEYS;
 use puddle_types::WorkspaceId;
 
-use crate::ApiErrorBody;
-use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
 use crate::routes::workspaces::named;
+use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, blocking};
 use puddle_store::Actor;
 
 use crate::authz::Principal;
-use crate::wire::{
+use puddle_services::wire::{
     SshAgentAnswerRequest, SshAgentAskList, SshAgentAskView, SshAgentHostRequest, SshAgentHostView,
     SshAgentView,
 };

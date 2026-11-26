@@ -14,9 +14,9 @@ export const MODES: readonly Mode[] = [
 
 /** What the mode is called in a list. */
 export const MODE_NAMES: Record<Mode, string> = {
-  all: "Read all HTTPS traffic",
-  all_except_curated: "Read all except sites known to break",
-  known_only: "Read only where a rule needs it",
+  all: "All HTTPS traffic",
+  all_except_curated: "All except sites known to break",
+  known_only: "Only where a rule needs it",
 };
 
 /** What the mode costs: shown wherever the mode is chosen or in force. */

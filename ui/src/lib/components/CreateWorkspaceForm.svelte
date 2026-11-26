@@ -40,6 +40,7 @@
   import {
     nameProblem,
     parseMemoryGib,
+    formatMib,
     isIncompleteAddress,
     resolveRepoAddress,
     suggestName,
@@ -88,7 +89,7 @@
     /** For tests: the host check. */
     hostCheck?: HostCheck;
     /** What the default image is, read each time the form opens (the host may only know it after the first download). */
-    defaultImage?: Pick<DefaultImage, "description" | "load">;
+    defaultImage?: Pick<DefaultImage, "image" | "description" | "load">;
   } = $props();
   let hostBlocked = $state(false);
 
@@ -146,6 +147,11 @@
     if (!done) saveDraft(draft);
   });
   const limits = $derived(settings.view?.effective_limits ?? null);
+  /** What a new workspace gets when the field is empty, as the field's placeholder. */
+  const defaultMemory = $derived.by(() => {
+    const mib = settings.view?.effective.memory.value;
+    return mib === undefined ? "Use the default" : formatMib(mib);
+  });
   /** What the slider shows: the count it was moved to, else what a new workspace gets by default. */
   const cpusShown = $derived(
     cpusChosen ?? settings.view?.effective.cpus.value ?? 1,
@@ -376,7 +382,6 @@
           ...(local === "" ? {} : { local_path: local }),
           ...(directory === "" ? {} : { directory }),
           ...(identity === "" ? {} : { identity_id: Number(identity) }),
-          ...(row.pull ? {} : { pull: false }),
           ...(row.push ? {} : { push: false }),
         };
       }),
@@ -678,14 +683,6 @@
           <label class="choice">
             <input
               type="checkbox"
-              bind:checked={row.pull}
-              aria-describedby={rowId(row, "boxes-hint")}
-            />
-            Pull
-          </label>
-          <label class="choice">
-            <input
-              type="checkbox"
               bind:checked={row.push}
               aria-describedby={rowId(row, "boxes-hint")}
             />
@@ -693,8 +690,8 @@
           </label>
         </div>
         <p class="hint" id={rowId(row, "boxes-hint")}>
-          Pull and Push say what the workspace may fetch from and send to this
-          repository. You can change them later on its Git tab.
+          The workspace can always fetch from this repository. Push says whether
+          it may also send to it. You can change that later on its Git tab.
         </p>
 
         <div>
@@ -789,7 +786,7 @@
           type="text"
           autocomplete="off"
           spellcheck="false"
-          placeholder="Default development image"
+          placeholder={defaultImage.image ?? "Default development image"}
           bind:value={image}
           aria-invalid={errors.image ? "true" : undefined}
           aria-describedby={errors.image
@@ -815,7 +812,7 @@
           type="text"
           inputmode="decimal"
           autocomplete="off"
-          placeholder="Use the default"
+          placeholder={defaultMemory}
           bind:value={memoryGib}
           aria-invalid={errors.memory_mib ? "true" : undefined}
           aria-describedby="new-ws-memory_mib-hint"

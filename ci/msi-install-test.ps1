@@ -716,7 +716,11 @@ function Test-HardKill {
         @(Get-Process -Id $ids -ErrorAction SilentlyContinue).Count -eq 0
     } -PollMs 100 | Out-Null
     Write-Host "every runtime process was gone $([math]::Round($clock.Elapsed.TotalSeconds, 1)) s after the kill"
-    Expect (@(Get-Process -Name 'puddle-app' -ErrorAction SilentlyContinue).Count -eq 0) 'a puddle-app process is left after the kill'
+    # Windows keeps a killed process in the list until its last handle closes, so the app can still
+    # show up for a moment after TerminateProcess returned; give it a few seconds to leave.
+    Wait-Until 'a puddle-app process is left after the kill' 10 {
+        @(Get-Process -Name 'puddle-app' -ErrorAction SilentlyContinue).Count -eq 0
+    } -PollMs 200 | Out-Null
     $ghosts = @(Get-PuddleTrayIcons -Hover)
     if ($ghosts.Count -gt 0) {
         Write-Host "INFO: $($ghosts.Count) dead tray icon(s) stayed until the pointer passed over them (a Windows habit)"

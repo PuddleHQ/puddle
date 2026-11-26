@@ -12,6 +12,7 @@ describe("DefaultImage", () => {
     }));
     await image.load();
     expect(image.description).toBe("Debian trixie dev container");
+    expect(image.image).toBe("x");
   });
 
   it("keeps what it had when a read fails", async () => {

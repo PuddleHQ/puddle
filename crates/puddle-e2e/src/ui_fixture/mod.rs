@@ -52,7 +52,7 @@ use puddle_store::{
 use puddle_types::{
     BlockReason, CompanySignal, ConnectionDecision, ConnectionEvent, ConnectionReason,
     EgressRequest, Event, EventSink, Host, HttpRequestLine, ImageRef, LocalCategory, MemoryMib,
-    Methods, PathPattern, Problem, Problems, RuleId, SuffixAllows, WorkspaceId, WorkspaceStatus,
+    Methods, PathPattern, Problem, Problems, Program, RuleId, SuffixAllows, WorkspaceId, WorkspaceStatus,
 };
 use tokio::sync::Mutex;
 
@@ -824,6 +824,7 @@ impl State {
                     port: 443,
                     repeat: 1,
                     ago_ms: 0,
+                    program: None,
                 },
                 now,
             )?;
@@ -840,6 +841,7 @@ impl State {
                     port: 443,
                     repeat: 1,
                     ago_ms: 0,
+                    program: None,
                 },
                 now,
             )?;
@@ -1320,7 +1322,13 @@ impl State {
     }
 
     fn request(&self, seed: &RequestSeed, now: u64) -> Result<(), String> {
-        let request = EgressRequest::new(workspace(&seed.workspace)?, host(&seed.host)?, seed.port);
+        let program = seed
+            .program
+            .as_deref()
+            .map(|raw| Program::sanitise(raw).ok_or_else(|| format!("bad program {raw:?}")))
+            .transpose()?;
+        let request = EgressRequest::new(workspace(&seed.workspace)?, host(&seed.host)?, seed.port)
+            .with_program(program);
         self.own(&request.workspace)?;
         self.at(now, seed.ago_ms, || {
             for _ in 0..seed.repeat {

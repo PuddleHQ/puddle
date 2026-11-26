@@ -66,7 +66,12 @@
       >{/if}
   </p>
   <p class="facts">
-    <b class="mono">{workspaces.labelOf(request.workspace)}</b> · {request.attempts}
+    <b class="mono">{workspaces.labelOf(request.workspace)}</b
+    >{#if request.program}{" "}<span
+        class="program"
+        title="The program that asked, as the guest named it"
+        >({request.program})</span
+      >{/if} · {request.attempts}
     {request.attempts === 1 ? "try," : "tries, last"}
     <time
       datetime={new Date(request.last_seen).toISOString()}

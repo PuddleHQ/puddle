@@ -641,6 +641,9 @@ pub struct RequestSeed {
     /// First asked this long before now (ms).
     #[serde(default)]
     pub ago_ms: u64,
+    /// The program in the guest that asked, as the agent would name it; none when left out.
+    #[serde(default)]
+    pub program: Option<String>,
 }
 
 /// One `connection` audit record.

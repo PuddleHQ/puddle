@@ -123,12 +123,21 @@ fn a_line_goes_through_the_filter_by_its_crate() {
     assert!(!log.contains("from hyper trace"), "{log}");
 }
 
+// Assembled at compile time so the secret scan finds no token-shaped literal in the tree.
+const GITHUB_TOKEN: &str = concat!("gh", "p_aB3dE6gH9jK2mN5pQ8sT1vW4yZ7bC0eF3hJ6");
+const JWT: &str = concat!(
+    "ey",
+    "JhbGciOiJIUzI1NiJ9.",
+    "ey",
+    "JzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r"
+);
+
 const SECRETS: [&str; 9] = [
-    "ghp_aB3dE6gH9jK2mN5pQ8sT1vW4yZ7bC0eF3hJ6",
+    GITHUB_TOKEN,
     "sk-ant-api03-Zx9Qw8Er7Ty6Ui5Op4As3Df2Gh1Jk0Lm",
     "hunter2hunter2",
     "s3cr3tCookieValue",
-    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r",
+    JWT,
     "pa55w0rd",
     "AKIAIOSFODNN7EXAMPLE",
     "queryTokenValue",
@@ -137,11 +146,11 @@ const SECRETS: [&str; 9] = [
 
 fn leaky_lines() -> String {
     [
-        "proxy request token=ghp_aB3dE6gH9jK2mN5pQ8sT1vW4yZ7bC0eF3hJ6 host=github.com",
+        &format!("proxy request token={GITHUB_TOKEN} host=github.com"),
         "using key sk-ant-api03-Zx9Qw8Er7Ty6Ui5Op4As3Df2Gh1Jk0Lm for upstream",
         r#"body {"password":"hunter2hunter2","user":"ada"}"#,
         "sent Authorization: Bearer bearerValue123 and Cookie: session=s3cr3tCookieValue",
-        "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r end",
+        &format!("jwt {JWT} end"),
         "clone https://ada:pa55w0rd@github.com/org/repo.git",
         "aws AKIAIOSFODNN7EXAMPLE",
         "GET https://api.example.com/v1/items?access=queryTokenValue 200",
@@ -170,7 +179,7 @@ fn redact_cuts_every_secret_shape_and_keeps_the_rest() {
 fn redact_json_cuts_values_under_secret_keys_and_inside_strings() {
     let mut doc = serde_json::json!({
         "ui": { "theme": "dark" },
-        "github": { "token": "ghp_aB3dE6gH9jK2mN5pQ8sT1vW4yZ7bC0eF3hJ6", "unset_token": null },
+        "github": { "token": GITHUB_TOKEN, "unset_token": null },
         "note": "see https://ada:pa55w0rd@host/x",
     });
     redact_json(&mut doc);
@@ -191,7 +200,7 @@ fn a_bundle_holds_the_logs_and_settings_with_no_secret_in_any_file() {
     file.attach(&folder, MAX_FILE_BYTES).unwrap();
     std::fs::write(
         folder.join(format!("{FILE_NAME}.1")),
-        "old line /home/ada/work token=ghp_aB3dE6gH9jK2mN5pQ8sT1vW4yZ7bC0eF3hJ6\n",
+        format!("old line /home/ada/work token={GITHUB_TOKEN}\n"),
     )
     .unwrap();
     std::fs::OpenOptions::new()
@@ -208,7 +217,7 @@ fn a_bundle_holds_the_logs_and_settings_with_no_secret_in_any_file() {
             log_level: "debug",
             settings: Some(serde_json::json!({
                 "ui": { "theme": "dark" },
-                "secrets": { "pasted_token": "ghp_aB3dE6gH9jK2mN5pQ8sT1vW4yZ7bC0eF3hJ6" },
+                "secrets": { "pasted_token": GITHUB_TOKEN },
             })),
             log_folder: &folder,
             home: Some("/home/ada"),

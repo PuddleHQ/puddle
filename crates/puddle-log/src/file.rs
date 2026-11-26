@@ -41,6 +41,7 @@ impl RollingFile {
         let path = folder.join(FILE_NAME);
         let file = OpenOptions::new().create(true).append(true).open(&path)?;
         let size = file.metadata()?.len();
+        // A second attach keeps the first file: the log file is chosen once per process.
         let _ = self.open.set(Open {
             path,
             max,

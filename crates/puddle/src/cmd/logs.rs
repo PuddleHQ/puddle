@@ -83,8 +83,27 @@ pub fn run(args: &LogsArgs) -> ExitCode {
     }
 }
 
-fn make(args: &LogsArgs) -> Result<PathBuf, String> {
-    let paths = crate::cmd::data_folder_here(&args.flags).map_err(|e| e.to_string())?;
+/// Why the bundle could not be made; it displays as the line `run` prints.
+#[derive(Debug, thiserror::Error)]
+enum BundleError {
+    /// The data folder could not be found.
+    #[error(transparent)]
+    DataFolder(#[from] crate::cmd::CommandError),
+    /// The archive could not be built.
+    #[error(transparent)]
+    Archive(#[from] puddle_log::BundleError),
+    /// The finished archive could not be written.
+    #[error("cannot write {}: {source}", path.display())]
+    Write {
+        /// The output path.
+        path: PathBuf,
+        /// The cause.
+        source: std::io::Error,
+    },
+}
+
+fn make(args: &LogsArgs) -> Result<PathBuf, BundleError> {
+    let paths = crate::cmd::data_folder_here(&args.flags)?;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
@@ -115,9 +134,11 @@ fn make(args: &LogsArgs) -> Result<PathBuf, String> {
     };
     // The file is made only once the whole bundle is in memory, so a failure leaves none behind.
     let mut bytes = Vec::new();
-    write_bundle(&bundle, &mut bytes).map_err(|e| e.to_string())?;
-    std::fs::write(&output, bytes)
-        .map_err(|e| format!("cannot write {}: {e}", output.display()))?;
+    write_bundle(&bundle, &mut bytes)?;
+    std::fs::write(&output, bytes).map_err(|source| BundleError::Write {
+        path: output.clone(),
+        source,
+    })?;
     Ok(output)
 }
 

@@ -166,7 +166,11 @@
           <th scope="col">Covers</th>
           <th scope="col">Last test</th>
           <th scope="col">Used by</th>
-          <th scope="col">Order (first match is the commit author)</th>
+          <th scope="col">
+            Order{" "}<span class="visually-hidden">
+              (first match is the commit author)
+            </span>
+          </th>
           <th scope="col"><span class="visually-hidden">Actions</span></th>
         </tr>
       </thead>

@@ -18,6 +18,10 @@
   line-height: 1.25;
   text-decoration: none;
   cursor: pointer;
+  /* A button is one line: its label never breaks, not even inside a word. */
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 .btn:hover {
   background: var(--color-surface-raised);

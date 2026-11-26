@@ -30,7 +30,7 @@ describe("free space on the drive that holds Puddle's data", () => {
       tone: "warning",
       title: "Disk space is running low.",
       link: {
-        href: "/settings/workspaces#set-disk-warn",
+        href: "/settings/this-computer#set-disk-warn",
         label: "Disk space settings",
       },
     });

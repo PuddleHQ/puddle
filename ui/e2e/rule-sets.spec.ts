@@ -117,7 +117,7 @@ test("the mise tools set ships off, and is gone while the global tools switch is
     await expect(page.locator("main")).not.toContainText(/mise/i);
     await page.goto("/settings/workspaces");
     await expect(
-      page.getByRole("heading", { level: 2, name: "Workspaces" }),
+      page.getByRole("heading", { level: 2, name: "New workspaces" }),
     ).toBeVisible();
     await expect(page.locator("main")).not.toContainText(/mise/i);
     return;

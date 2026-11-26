@@ -12,17 +12,20 @@
 //! client, so nothing sets `HTTPS_PROXY`.
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use microsandbox::LocalBackend;
 use microsandbox::config::RegistryOptions;
 use microsandbox_image::PullProgress as MsbPull;
 use microsandbox_image::{
-    GlobalCache, ImageError, Platform, PullOptions, Reference, Registry, progress_channel,
+    GlobalCache, ImageError, Platform, PullOptions, PullProgressHandle, Reference, Registry,
+    progress_channel,
 };
 use oci_client::errors::OciDistributionError;
 use puddle_compute::{ComputeError, ImageConfig, PullPhase, PullProgress, PullReport};
 use puddle_types::ImageRef;
 use tokio::task::JoinHandle;
+use tokio::time::Instant;
 
 /// Makes sure `image` is in `local`'s cache and returns its config.
 pub(crate) async fn pull(
@@ -59,28 +62,60 @@ pub(crate) async fn pull(
         builder = builder.proxy(proxy);
     }
     let registry = builder.build().map_err(|e| fail(chain(&e)))?;
-    let result = match report {
-        None => Box::pin(registry.pull(&reference, &options))
-            .await
-            .map_err(|e| fail(explain_connect(&e, reference.registry())))?,
-        Some(report) => {
-            // The pull runs on its own task so this one can read its progress; dropping this
-            // future (a cancelled create) ends the task, as it ended the pull before.
-            let (mut events, sender) = progress_channel();
-            let mut task = EndsOnDrop(registry.pull_with_sender(&reference, &options, sender));
-            let mut tally = Tally::default();
-            while let Some(event) = events.recv().await {
-                if let Some(progress) = tally.apply(&event) {
-                    report(progress);
-                }
-            }
-            (&mut task.0)
-                .await
-                .map_err(|e| fail(format!("the download task ended: {e}")))?
-                .map_err(|e| fail(explain_connect(&e, reference.registry())))?
-        }
-    };
+    // The pull runs on its own task so this one can read its progress; dropping this future (a
+    // cancelled create) ends the task, as it ended the pull before.
+    let (mut events, sender) = progress_channel();
+    let mut task = EndsOnDrop(registry.pull_with_sender(&reference, &options, sender));
+    let mut tally = Tally::default();
+    let report = report.unwrap_or(&|_| {});
+    if !drain_progress(&mut events, FIRST_ANSWER_DEADLINE, &mut tally, report).await {
+        return Err(fail(no_answer(reference.registry(), FIRST_ANSWER_DEADLINE)));
+    }
+    let result = (&mut task.0)
+        .await
+        .map_err(|e| fail(format!("the download task ended: {e}")))?
+        .map_err(|e| fail(explain_connect(&e, reference.registry())))?;
     Ok(convert(result.config))
+}
+
+/// How long the registry has to answer the manifest request before the pull gives up. The pull
+/// proxy's connect timeout (10 s) runs once per try of the registry client, which tries five times
+/// with 15 s of pauses between: a route that swallows every packet took 76 s to fail. A registry
+/// that answers at all does so well inside this, even over a lossy 300 ms link; once the manifest
+/// is read the pull has no such limit.
+const FIRST_ANSWER_DEADLINE: Duration = Duration::from_secs(20);
+
+/// Feeds `events` to `tally` and `report` until the pull ends. Returns `false` when the manifest
+/// has not been read within `first_answer` of the start, `true` otherwise.
+async fn drain_progress(
+    events: &mut PullProgressHandle,
+    first_answer: Duration,
+    tally: &mut Tally,
+    report: PullReport<'_>,
+) -> bool {
+    let deadline = Instant::now() + first_answer;
+    loop {
+        let event = if tally.layers > 0 {
+            events.recv().await
+        } else {
+            match tokio::time::timeout_at(deadline, events.recv()).await {
+                Ok(event) => event,
+                Err(_) => return false,
+            }
+        };
+        let Some(event) = event else { return true };
+        if let Some(progress) = tally.apply(&event) {
+            report(progress);
+        }
+    }
+}
+
+/// The reason a pull gives up before the registry answered.
+fn no_answer(registry: &str, waited: Duration) -> String {
+    format!(
+        "could not connect to {registry}: no answer in {} s (the registry client was still retrying)",
+        waited.as_secs()
+    )
 }
 
 /// A task that is aborted when its handle is dropped before it finished.

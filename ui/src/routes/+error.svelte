@@ -34,16 +34,16 @@
   <details>
     <summary>Details</summary>
     <pre>{detail}</pre>
-    <button type="button" class="btn" onclick={() => copyDetail(detail)}
-      >Copy details</button
-    >
-    <span role="status"
-      >{copy === "done"
+    <button type="button" class="btn" onclick={() => copyDetail(detail)}>
+      Copy details
+    </button>
+    <span role="status">
+      {copy === "done"
         ? "Copied."
         : copy === "failed"
           ? "Couldn't copy them. Select the text and copy it by hand."
-          : ""}</span
-    >
+          : ""}
+    </span>
   </details>
 {/if}
 

@@ -92,8 +92,10 @@
               datetime={new Date(rule.created_at).toISOString()}
               title="{absoluteTime(rule.created_at)} by {actorLabel(
                 rule.created_by,
-              )}">{relativeTime(rule.created_at, now)}</time
+              )}"
             >
+              {relativeTime(rule.created_at, now)}
+            </time>
           </td>
           {#if onEnabled}
             <td class="on">

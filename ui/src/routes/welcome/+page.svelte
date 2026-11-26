@@ -31,8 +31,10 @@
     type="button"
     class="btn"
     disabled={leaving}
-    onclick={() => void skip()}>Skip setup</button
+    onclick={() => void skip()}
   >
+    Skip setup
+  </button>
   <a class="btn primary" href={around("welcome").next}>Get started</a>
 </div>
 <p class="import">

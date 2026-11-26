@@ -100,9 +100,9 @@
       desc="Checks virtualization, the hypervisor, the bundled runtime and a test start of a tiny workspace."
       plain
     >
-      <a class="btn" href="/welcome/check?from=settings"
-        >Run the system check again</a
-      >
+      <a class="btn" href="/welcome/check?from=settings">
+        Run the system check again
+      </a>
     </SettingRow>
     <SettingRow
       id="set-app-errors"
@@ -110,9 +110,9 @@
       desc="Errors Puddle's pages hit that no code expected, as Puddle's log has them."
       plain
     >
-      <a class="btn" href="/settings/app-errors"
-        >Details<span class="visually-hidden"> about app errors</span></a
-      >
+      <a class="btn" href="/settings/app-errors">
+        Details<span class="visually-hidden"> about app errors</span>
+      </a>
     </SettingRow>
   </SettingsGroup>
 
@@ -125,8 +125,8 @@
     <p class="line">
       <b>Puddle{version ? ` ${version}` : ""}</b>{#if versionAsked && !version}
         <span class="muted">
-          (version unavailable: Puddle's service didn't say)</span
-        >{/if}
+          (version unavailable: Puddle's service didn't say)
+        </span>{/if}
       <span class="muted"> &middot; AGPL-3.0-or-later</span>
     </p>
     <details ontoggle={() => void loadNotices()}>

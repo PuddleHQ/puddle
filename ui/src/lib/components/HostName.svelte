@@ -24,16 +24,20 @@
   );
 </script>
 
-<span class="host mono"
-  >{#if parts.wildcard}<span
+<span class="host mono">
+  {#if parts.wildcard}<span
       class="wild"
-      title="This host and every subdomain of it">*.</span
-    >{/if}{#if parts.lead}<span class="lead">{parts.lead}</span>{/if}<b
-    class="main">{parts.main}</b
-  >{#if parts.port !== null}<span class="port" class:usual={parts.usualPort}
-      >:{parts.port}</span
-    >{/if}</span
->
+      title="This host and every subdomain of it"
+    >
+      *.
+    </span>{/if}{#if parts.lead}<span class="lead">{parts.lead}</span>{/if}<b
+    class="main"
+  >
+    {parts.main}
+  </b>{#if parts.port !== null}<span class="port" class:usual={parts.usualPort}>
+      :{parts.port}
+    </span>{/if}
+</span>
 
 <style>
   .host {

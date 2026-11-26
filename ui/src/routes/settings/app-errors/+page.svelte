@@ -74,9 +74,9 @@
         <li class="card">
           <p class="meta wrap">
             <b>{KIND_LABEL[error.kind]}</b>
-            <span title={absoluteTime(error.at)}
-              >{relativeTime(error.at, now)}</span
-            >
+            <span title={absoluteTime(error.at)}>
+              {relativeTime(error.at, now)}
+            </span>
             {#if error.route}<span>on <code>{error.route}</code></span>{/if}
             {#if error.build}<span class="muted">build {error.build}</span>{/if}
           </p>
@@ -88,18 +88,18 @@
             </details>
           {/if}
           <div class="actions">
-            <button type="button" class="btn" onclick={() => copy(error)}
-              >Copy<span class="visually-hidden">
-                the error from {absoluteTime(error.at)}</span
-              ></button
-            >
-            <span role="status"
-              >{copied?.at === error.at
+            <button type="button" class="btn" onclick={() => copy(error)}>
+              Copy<span class="visually-hidden">
+                the error from {absoluteTime(error.at)}
+              </span>
+            </button>
+            <span role="status">
+              {copied?.at === error.at
                 ? copied.ok
                   ? "Copied."
                   : "Couldn't copy it. Select the text and copy it by hand."
-                : ""}</span
-            >
+                : ""}
+            </span>
           </div>
         </li>
       {/each}

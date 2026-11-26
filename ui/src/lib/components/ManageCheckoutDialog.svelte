@@ -79,11 +79,11 @@
     <div class="field">
       <label for="{id}-identity">Git identity</label>
       <select id="{id}-identity" bind:value={identity}>
-        <option value="auto"
-          >Let Puddle choose ({chosen
+        <option value="auto">
+          Let Puddle choose ({chosen
             ? chosen.label
-            : "no identity covers this"})</option
-        >
+            : "no identity covers this"})
+        </option>
         {#each identities as option (option.id)}
           <option value={String(option.id)}>{option.label}</option>
         {/each}
@@ -91,12 +91,12 @@
     </div>
     <fieldset>
       <legend>Git requests to this repository</legend>
-      <label class="choice"
-        ><input type="checkbox" bind:checked={pull} /> Pull</label
-      >
-      <label class="choice"
-        ><input type="checkbox" bind:checked={push} /> Push</label
-      >
+      <label class="choice">
+        <input type="checkbox" bind:checked={pull} /> Pull
+      </label>
+      <label class="choice">
+        <input type="checkbox" bind:checked={push} /> Push
+      </label>
       <p class="hint">
         Fetches and pushes are allowed or refused by these boxes when the
         workspace's "only listed" switches are on.
@@ -104,12 +104,12 @@
     </fieldset>
     {#if refusal}<p class="error" role="alert">{refusal}</p>{/if}
     <div class="actions">
-      <button type="button" class="btn" onclick={() => (open = false)}
-        >Cancel</button
-      >
-      <button type="submit" class="btn primary" disabled={busy}
-        >Manage this</button
-      >
+      <button type="button" class="btn" onclick={() => (open = false)}>
+        Cancel
+      </button>
+      <button type="submit" class="btn primary" disabled={busy}>
+        Manage this
+      </button>
     </div>
   </form>
 </FormDialog>

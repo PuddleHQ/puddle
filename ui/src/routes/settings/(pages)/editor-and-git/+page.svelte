@@ -114,8 +114,10 @@
           type="button"
           class="btn"
           disabled={withdrawing}
-          onclick={() => void withdraw()}>Withdraw consent</button
+          onclick={() => void withdraw()}
         >
+          Withdraw consent
+        </button>
       </SettingRow>
     {/if}
     {#if server === "microsoft"}

@@ -251,11 +251,11 @@
         {#if offered.length > 0}
           <optgroup label="Cover this repository">
             {#each offered as option (option.id)}
-              <option value={String(option.id)}
-                >{option.label}{option.id === listedBy
+              <option value={String(option.id)}>
+                {option.label}{option.id === listedBy
                   ? " (listed this repository)"
-                  : ""}</option
-              >
+                  : ""}
+              </option>
             {/each}
           </optgroup>
         {/if}
@@ -294,12 +294,12 @@
 
     {#if refusal}<p class="error" role="alert">{refusal}</p>{/if}
     <div class="actions">
-      <button type="button" class="btn" onclick={() => (open = false)}
-        >Cancel</button
-      >
-      <button type="submit" class="btn primary" disabled={busy || hostBlocked}
-        >Clone</button
-      >
+      <button type="button" class="btn" onclick={() => (open = false)}>
+        Cancel
+      </button>
+      <button type="submit" class="btn primary" disabled={busy || hostBlocked}>
+        Clone
+      </button>
     </div>
 
     <!-- Below the buttons, so its late answer cannot move the button under a press. -->

@@ -151,8 +151,10 @@
         onclick={() => {
           addDialog?.clear();
           addOpen = true;
-        }}><Plus aria-hidden="true" size={16} />Add method and path rule</button
+        }}
       >
+        <Plus aria-hidden="true" size={16} />Add method and path rule
+      </button>
     {:else}
       <a class="btn" href="/rules">All method and path rules</a>
     {/if}

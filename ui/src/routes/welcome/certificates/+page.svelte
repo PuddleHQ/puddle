@@ -58,9 +58,9 @@
           <div class="toggles">
             {#if line.impact}
               <details>
-                <summary
-                  >{line.tone === "ok" ? "Why it matters" : "Impact"}</summary
-                >
+                <summary>
+                  {line.tone === "ok" ? "Why it matters" : "Impact"}
+                </summary>
                 <p>{line.impact}</p>
               </details>
             {/if}

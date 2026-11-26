@@ -110,9 +110,9 @@
     <p class="hint">It will be called {name}.</p>
   {/if}
   <div class="acts">
-    <button type="submit" class="btn primary" disabled={working}
-      >Create workspace</button
-    >
+    <button type="submit" class="btn primary" disabled={working}>
+      Create workspace
+    </button>
     <button type="button" class="btn" onclick={onMore}>More options</button>
   </div>
 </form>

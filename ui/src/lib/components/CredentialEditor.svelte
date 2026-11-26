@@ -394,8 +394,10 @@
         type="button"
         class="btn"
         disabled={azCheck?.state === "checking"}
-        onclick={checkAz}>Check the Azure CLI</button
+        onclick={checkAz}
       >
+        Check the Azure CLI
+      </button>
     </div>
     {#if azCheck && azCheck.state !== "untested"}
       <div class="profile" aria-live="polite" data-testid="az-check">
@@ -471,8 +473,10 @@
           type="button"
           class="btn"
           disabled={busy || lookup.state === "looking"}
-          onclick={lookUpPasted}>Look up this account</button
+          onclick={lookUpPasted}
         >
+          Look up this account
+        </button>
       </div>
     </div>
   {/if}
@@ -514,8 +518,9 @@
                 aria-pressed={hasOwner(ownersText, organisation)}
                 onclick={() =>
                   (ownersText = toggleOwner(ownersText, organisation))}
-                >{organisation}</button
               >
+                {organisation}
+              </button>
             {/each}
           </div>
         {/if}
@@ -524,9 +529,9 @@
   {/if}
 
   <div class="field">
-    <label for="{id}-owners"
-      >Owners or organisations it covers on {coverHost}</label
-    >
+    <label for="{id}-owners">
+      Owners or organisations it covers on {coverHost}
+    </label>
     <input
       id="{id}-owners"
       type="text"
@@ -558,9 +563,9 @@
   {/if}
   <div class="actions">
     <button type="button" class="btn" onclick={onCancel}>Cancel</button>
-    <button type="submit" class="btn primary" disabled={busy}
-      >Add credential</button
-    >
+    <button type="submit" class="btn primary" disabled={busy}>
+      Add credential
+    </button>
   </div>
 </form>
 

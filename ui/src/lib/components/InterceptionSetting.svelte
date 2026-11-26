@@ -81,18 +81,18 @@
         decrypted. It applies at once, no restart.
       </p>
       <p class="from">
-        <span class="meta"
-          >{store.mode === "inherit"
-            ? "Global setting"
-            : "This workspace"}</span
-        >
+        <span class="meta">
+          {store.mode === "inherit" ? "Global setting" : "This workspace"}
+        </span>
         {#if store.mode !== "inherit"}
           <button
             type="button"
             class="reset"
             aria-label="Use the global setting again for Which hosts to decrypt"
-            onclick={() => void useGlobal()}>Use global</button
+            onclick={() => void useGlobal()}
           >
+            Use global
+          </button>
         {/if}
       </p>
     </div>

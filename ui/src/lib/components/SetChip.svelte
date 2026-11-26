@@ -23,9 +23,9 @@
 {:else if variant === "chip"}
   <span class="set-chip" style={fillVars(fill)}>{name}</span>
 {:else}
-  <span class="set-dotted" style={fillVars(fill)}
-    ><span class="dot" aria-hidden="true"></span>{name}</span
-  >
+  <span class="set-dotted" style={fillVars(fill)}>
+    <span class="dot" aria-hidden="true"></span>{name}
+  </span>
 {/if}
 
 <style>

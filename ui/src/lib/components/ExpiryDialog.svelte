@@ -84,9 +84,9 @@
       {/if}
     </div>
     <div class="actions">
-      <button type="button" class="btn" onclick={() => (open = false)}
-        >Cancel</button
-      >
+      <button type="button" class="btn" onclick={() => (open = false)}>
+        Cancel
+      </button>
       <button type="submit" class="btn primary" disabled={busy}>Save</button>
     </div>
   </form>

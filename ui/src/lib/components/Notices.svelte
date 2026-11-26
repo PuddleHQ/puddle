@@ -91,8 +91,10 @@
                 <button
                   type="button"
                   class="btn"
-                  onclick={() => click(notice, action)}>{action.label}</button
+                  onclick={() => click(notice, action)}
                 >
+                  {action.label}
+                </button>
               {/if}
               {#if notice.link}
                 <a href={notice.link.href}>{notice.link.label}</a>
@@ -104,8 +106,10 @@
           type="button"
           class="btn dismiss"
           aria-label="Dismiss notice: {notice.title}"
-          onclick={(e) => dismiss(notice.id, e.currentTarget)}>Dismiss</button
+          onclick={(e) => dismiss(notice.id, e.currentTarget)}
         >
+          Dismiss
+        </button>
       </div>
     {/each}
   </div>
@@ -116,11 +120,12 @@
         class="btn"
         aria-expanded={all}
         onclick={() => (all = !all)}
-        >{all ? "Show fewer" : `Show all ${list.length} notices`}</button
       >
-      <button type="button" class="btn" onclick={() => center.clear()}
-        >Dismiss all</button
-      >
+        {all ? "Show fewer" : `Show all ${list.length} notices`}
+      </button>
+      <button type="button" class="btn" onclick={() => center.clear()}>
+        Dismiss all
+      </button>
     </div>
   {/if}
 </div>

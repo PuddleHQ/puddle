@@ -40,8 +40,10 @@
     type="button"
     class="btn primary"
     disabled={leaving}
-    onclick={() => void finish()}>Open Puddle</button
+    onclick={() => void finish()}
   >
+    Open Puddle
+  </button>
 </div>
 
 <style>

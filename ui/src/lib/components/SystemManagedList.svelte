@@ -31,14 +31,14 @@
         <ul aria-label="Hosts allowed because: {group.text}">
           {#each group.hosts as host (host.pattern)}
             <li>
-              <span class="mono"
-                >{entryPattern({
+              <span class="mono">
+                {entryPattern({
                   pattern: host.pattern,
                   pattern_kind: host.pattern.startsWith("*")
                     ? "suffix"
                     : "exact",
-                })}</span
-              >
+                })}
+              </span>
               <span class="muted">{host.note}</span>
             </li>
           {/each}

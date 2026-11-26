@@ -56,8 +56,10 @@
         <button
           type="button"
           class="signout"
-          onclick={() => void session.signOut()}>Sign out</button
+          onclick={() => void session.signOut()}
         >
+          Sign out
+        </button>
       </p>
     {/if}
   </div>

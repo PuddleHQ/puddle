@@ -133,9 +133,9 @@
             value="global"
             bind:group={who}
           />
-          <span class="text"
-            >Every workspace <span class="hint">(asks to confirm)</span></span
-          >
+          <span class="text">
+            Every workspace <span class="hint">(asks to confirm)</span>
+          </span>
         </label>
         {#each sets as set (set.id)}
           <label>
@@ -145,12 +145,13 @@
               value="set:{set.id}"
               bind:group={who}
             />
-            <span class="text"
-              >Into rule set
+            <span class="text">
+              Into rule set
               <b><SetChip name={set.name} fill={set.fill} /></b>
-              {#if set.everywhere}<span class="hint">(on everywhere; asks)</span
-                >{/if}</span
-            >
+              {#if set.everywhere}<span class="hint">
+                  (on everywhere; asks)
+                </span>{/if}
+            </span>
           </label>
         {/each}
       </fieldset>
@@ -173,10 +174,10 @@
               value="suffix"
               bind:group={match}
             />
-            <span class="text"
-              >Everything under
-              <span class="mono">{suffix.slice(1)}</span></span
-            >
+            <span class="text">
+              Everything under
+              <span class="mono">{suffix.slice(1)}</span>
+            </span>
           </label>
         {/if}
       </fieldset>

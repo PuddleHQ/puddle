@@ -140,17 +140,18 @@
         type="button"
         class="btn"
         onclick={() => onSwitch(set, null, null)}
-        >Back to the default ({set.default_on ? "on" : "off"})</button
       >
+        Back to the default ({set.default_on ? "on" : "off"})
+      </button>
     {/if}
   </div>
 
   <details class="per-workspace">
-    <summary
-      >Per workspace{set.overrides.length > 0
+    <summary>
+      Per workspace{set.overrides.length > 0
         ? ` (${set.overrides.length} differ${set.overrides.length === 1 ? "s" : ""})`
-        : ""}</summary
-    >
+        : ""}
+    </summary>
     {#if rows.length === 0}
       <p class="muted">There are no workspaces yet.</p>
     {:else}
@@ -171,10 +172,10 @@
   </details>
 
   <details>
-    <summary
-      >{set.entry_count}
-      {set.entry_count === 1 ? "entry" : "entries"}</summary
-    >
+    <summary>
+      {set.entry_count}
+      {set.entry_count === 1 ? "entry" : "entries"}
+    </summary>
     {#if paged}
       <form
         class="row"
@@ -208,9 +209,9 @@
       <ul class="entries">
         {#each shown as entry (entry.rule_id ?? entry.pattern)}
           <li>
-            <span class="chip {entry.effect}"
-              >{entry.effect === "allow" ? "Allow" : "Deny"}</span
-            >
+            <span class="chip {entry.effect}">
+              {entry.effect === "allow" ? "Allow" : "Deny"}
+            </span>
             <span class="mono">{entryPattern(entry)}</span>
             {#if entry.note !== ""}<span class="muted">{entry.note}</span>{/if}
             {#if mine}
@@ -218,8 +219,10 @@
                 type="button"
                 class="btn"
                 aria-label="Delete {entryPattern(entry)} from {set.name}"
-                onclick={() => onDeleteEntry(set, entry)}>Delete</button
+                onclick={() => onDeleteEntry(set, entry)}
               >
+                Delete
+              </button>
             {/if}
           </li>
         {/each}
@@ -230,9 +233,9 @@
         Showing {shown.length} of {total}{matches !== null ? " matches" : ""}.
       </p>
       {#if shown.length < total}
-        <button type="button" class="btn" onclick={() => void load(true)}
-          >Show more</button
-        >
+        <button type="button" class="btn" onclick={() => void load(true)}>
+          Show more
+        </button>
       {/if}
       {#if loadProblem}<p class="error" role="alert">{loadProblem}</p>{/if}
     {/if}
@@ -240,15 +243,15 @@
 
   {#if mine}
     <div class="row">
-      <button type="button" class="btn" onclick={() => onAddEntry(set)}
-        >Add entry</button
-      >
-      <button type="button" class="btn" onclick={() => onRename(set)}
-        >Edit</button
-      >
-      <button type="button" class="btn deny" onclick={() => onDelete(set)}
-        >Delete set</button
-      >
+      <button type="button" class="btn" onclick={() => onAddEntry(set)}>
+        Add entry
+      </button>
+      <button type="button" class="btn" onclick={() => onRename(set)}>
+        Edit
+      </button>
+      <button type="button" class="btn deny" onclick={() => onDelete(set)}>
+        Delete set
+      </button>
     </div>
   {/if}
 </article>

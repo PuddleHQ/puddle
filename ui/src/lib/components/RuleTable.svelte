@@ -128,9 +128,9 @@
             {#if !rule.enabled}<span class="meta">off</span>{/if}
           </td>
           <td>
-            <span class="chip {rule.effect}"
-              >{rule.effect === "allow" ? "Allow" : "Deny"}</span
-            >
+            <span class="chip {rule.effect}">
+              {rule.effect === "allow" ? "Allow" : "Deny"}
+            </span>
           </td>
           <td>
             {scopeLabel(rule)}
@@ -142,10 +142,9 @@
               <time
                 datetime={new Date(rule.expires_at).toISOString()}
                 title={absoluteTime(rule.expires_at)}
-                >{expired
-                  ? "Expired"
-                  : relativeTime(rule.expires_at, now)}</time
               >
+                {expired ? "Expired" : relativeTime(rule.expires_at, now)}
+              </time>
             {/if}
           </td>
           <td class="created">
@@ -153,8 +152,10 @@
               datetime={new Date(rule.created_at).toISOString()}
               title="{absoluteTime(rule.created_at)} by {actorLabel(
                 rule.created_by,
-              )}">{relativeTime(rule.created_at, now)}</time
+              )}"
             >
+              {relativeTime(rule.created_at, now)}
+            </time>
           </td>
           {#if onEnabled}
             <td class="on">

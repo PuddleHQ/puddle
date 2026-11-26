@@ -124,9 +124,9 @@
       />
       <span>
         <b>Microsoft's VS Code server (downloaded)</b>
-        <span class="desc"
-          >{MICROSOFT_NOTE} You accept Microsoft's licence terms.</span
-        >
+        <span class="desc">
+          {MICROSOFT_NOTE} You accept Microsoft's licence terms.
+        </span>
       </span>
     </label>
   </fieldset>

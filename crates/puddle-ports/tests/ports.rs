@@ -1066,6 +1066,7 @@ async fn a_forward_the_user_stopped_is_not_opened_again_while_the_port_keeps_lis
     let later = puddle_test_kit::quiet_port();
     rig.guest_listens(&[before, port, later]);
     rig.row(later, |r| r.listening).await;
+    // An absence window: nothing signals a forward that must not open, so wait past a few polls (20 ms).
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert!(!accepts(local(port)));
 }

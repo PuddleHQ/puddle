@@ -258,12 +258,18 @@ fn counter_report(csv: &str) -> String {
     }
 }
 
+/// The services whose state [`machine_state`] reads: Group Policy and the cryptographic services.
+const SERVICES: [&str; 2] = ["gpsvc", "CryptSvc"];
+
+/// How many Group Policy events [`machine_state`] prints.
+const GROUP_POLICY_EVENTS: u32 = 15;
+
 /// What the machine was doing at a PowerShell timeout, so the next stall names its cause: the
 /// PowerShell family, test binaries and likely CPU holders from `tasklist /v` (status, CPU time),
 /// how many `powershell.exe` run at once (other tests and the doctor start them too), and the
 /// counters of the whole machine (CPU, run queue, handles, free memory, processes, disk queue).
 /// Only native tools that do not start PowerShell, each bounded, so the capture adds no stall.
-fn machine_state() -> String {
+fn machine_state(hung_pid: Option<u32>) -> String {
     const TOOL_LIMIT: Duration = Duration::from_secs(10);
     const WATCHED: [&str; 11] = [
         "powershell",
@@ -316,7 +322,122 @@ fn machine_state() -> String {
             let _ = writeln!(out, "counters: typeperf: {}", failure.into_message());
         }
     }
+    out.push_str(&service_state(TOOL_LIMIT));
+    out.push_str(&group_policy_log(TOOL_LIMIT));
+    if let Some(pid) = hung_pid {
+        out.push_str(&wait_reasons(pid, TOOL_LIMIT));
+        out.push_str(&hang_dump(pid, TOOL_LIMIT));
+    }
     out
+}
+
+/// The services a certificate-store or policy write goes through, from `sc query` (no PowerShell):
+/// one `name: STATE` line each, or the tool's failure.
+fn service_state(limit: Duration) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    for service in SERVICES {
+        let mut query = Command::new("sc.exe");
+        query.args(["query", service]);
+        match run_bounded_with(query, "sc query", limit, false) {
+            Ok(text) => {
+                let state = text
+                    .lines()
+                    .find(|l| l.trim_start().starts_with("STATE"))
+                    .map_or("no STATE line", str::trim);
+                let _ = writeln!(out, "service {service}: {state}");
+            }
+            Err(failure) => {
+                let _ = writeln!(out, "service {service}: {}", failure.into_message());
+            }
+        }
+    }
+    out
+}
+
+/// The newest [`GROUP_POLICY_EVENTS`] events of the Group Policy operational log, newest first:
+/// a policy refresh that runs while a test writes `HKLM\SOFTWARE\Policies` shows here.
+fn group_policy_log(limit: Duration) -> String {
+    let mut query = Command::new("wevtutil.exe");
+    query.args([
+        "qe",
+        "Microsoft-Windows-GroupPolicy/Operational",
+        &format!("/c:{GROUP_POLICY_EVENTS}"),
+        "/rd:true",
+        "/f:text",
+    ]);
+    match run_bounded_with(query, "wevtutil GroupPolicy/Operational", limit, false) {
+        Ok(text) => {
+            let brief: Vec<&str> = text
+                .lines()
+                .map(str::trim)
+                .filter(|l| {
+                    ["Date:", "Event ID:", "Description:"]
+                        .iter()
+                        .any(|key| l.starts_with(key))
+                        || l.starts_with("Group Policy")
+                        || l.starts_with("Completed")
+                        || l.starts_with("Starting")
+                })
+                .collect();
+            format!(
+                "GroupPolicy/Operational, newest {GROUP_POLICY_EVENTS}:\n{}\n",
+                brief.join("\n")
+            )
+        }
+        Err(failure) => format!("GroupPolicy/Operational: {}\n", failure.into_message()),
+    }
+}
+
+/// What the threads of the hung call (`pid`) and of the other processes that tests start are
+/// waiting for, one line each (`state/wait reason = threads`), so a call stuck on a lock or on
+/// an answer from a service says so. The probe is a PowerShell of its own: a machine that cannot
+/// start one in [`machine_state`]'s limit says that instead.
+fn wait_reasons(pid: u32, limit: Duration) -> String {
+    let script = format!(
+        "$names = 'powershell','pwsh','certutil','git','reg'; \
+         Get-Process -ErrorAction SilentlyContinue | \
+         Where-Object {{ $_.Id -eq {pid} -or $names -contains $_.ProcessName }} | \
+         ForEach-Object {{ $threads = $_.Threads | Group-Object {{ \"$($_.ThreadState)/$($_.WaitReason)\" }} | \
+         ForEach-Object {{ \"$($_.Name)=$($_.Count)\" }}; \
+         $who = if ($_.Id -eq {pid}) {{ ' (the hung call)' }} elseif ($_.Id -eq $PID) {{ ' (this probe)' }} else {{ '' }}; \
+         \"pid $($_.Id) $($_.ProcessName)$who, started $($_.StartTime.ToString('HH:mm:ss')): $($threads -join ', ')\" }}"
+    );
+    let mut probe = Command::new("powershell.exe");
+    probe
+        .args(["-NoProfile", "-NonInteractive", "-Command"])
+        .arg(script);
+    match run_bounded_with(probe, "thread wait reasons", limit, false) {
+        Ok(text) => format!(
+            "thread wait reasons before the kill:\n{}\n",
+            text.trim_end()
+        ),
+        Err(failure) => format!("thread wait reasons: {}\n", failure.into_message()),
+    }
+}
+
+/// With `PUDDLE_HANG_DUMP_DIR` set, a full minidump of the hung call (`comsvcs.dll` `MiniDump`,
+/// no extra tool) written there before the kill; its path goes in the message. Without it
+/// nothing is written, so a local run leaves no files behind.
+fn hang_dump(pid: u32, limit: Duration) -> String {
+    let Some(dir) = std::env::var_os("PUDDLE_HANG_DUMP_DIR") else {
+        return String::new();
+    };
+    let file = PathBuf::from(dir).join(format!("hung-call-{pid}.dmp"));
+    let mut dump = Command::new("rundll32.exe");
+    dump.arg("C:\\Windows\\System32\\comsvcs.dll,")
+        .arg("MiniDump")
+        .arg(pid.to_string())
+        .arg(&file)
+        .arg("full");
+    match run_bounded_with(dump, "MiniDump", limit, false) {
+        Ok(_) if file.exists() => format!("dump of the hung call: {}\n", file.display()),
+        Ok(_) => format!(
+            "dump of the hung call: none written at {}\n",
+            file.display()
+        ),
+        Err(failure) => format!("dump of the hung call: {}\n", failure.into_message()),
+    }
 }
 
 /// Runs `command` (`call` names it in messages); `Ok(stdout and stderr)` on exit 0. A call over
@@ -353,7 +474,7 @@ fn run_bounded_with(
         if start.elapsed() > limit {
             // Before the kill: the hung call and its siblings are still in the process list.
             let state = if with_state {
-                format!("\n{}", machine_state())
+                format!("\n{}", machine_state(Some(child.id())))
             } else {
                 String::new()
             };
@@ -854,8 +975,13 @@ fn a_hung_call_is_killed_with_its_children_and_named() {
     );
     assert!(held.exists(), "the call never started its child: {message}");
     assert!(
-        message.contains("powershell.exe running at once:")
-            && message.contains("% Processor Time = "),
+        (message.contains("powershell.exe running at once:")
+            || message.contains("tasklist: timed out"))
+            && message.contains("% Processor Time = ")
+            && message.contains("service gpsvc: ")
+            && message.contains("service CryptSvc: ")
+            && message.contains("GroupPolicy/Operational")
+            && message.contains("thread wait reasons before the kill:"),
         "a timeout carries the machine state (process list and counters): {message}"
     );
     // The kill ends the processes a moment after `taskkill` returns, so the file is let go

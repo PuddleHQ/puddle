@@ -55,7 +55,7 @@ type Where =
   | "notifications"
   | "workspaces"
   | "network"
-  | "editor-and-git"
+  | "editor"
   | "this-computer";
 
 async function openSettings(
@@ -91,7 +91,7 @@ const SECTIONS: Record<Where, string[]> = {
   notifications: ["Notifications", "Also notify when", "Inbox"],
   workspaces: ["Workspaces", "Disk space", "Environment"],
   network: ["Proxy", "Local destinations", "Decrypting traffic"],
-  "editor-and-git": ["Browser VS Code", "Git and SSH"],
+  editor: ["Editor defaults", "Browser VS Code", "Git and SSH"],
   "this-computer": [
     "Startup and window",
     "Devices and sign-in",
@@ -121,7 +121,7 @@ test("shows every page with Puddle's defaults, no CSP violations", async ({
     page.getByLabel("Start Puddle when I sign in"),
   ).not.toBeChecked();
   await expect(page.getByText(/sends nothing about you/)).toBeVisible();
-  await page.goto("/settings/editor-and-git");
+  await page.goto("/settings/editor");
   await expect(page.getByLabel("Server", { exact: true })).toHaveValue(
     "code_server",
   );
@@ -184,7 +184,7 @@ for (const scheme of ["light", "dark"] as const) {
     backend,
   }) => {
     await page.emulateMedia({ colorScheme: scheme });
-    await openSettings(page, backend, "editor-and-git");
+    await openSettings(page, backend, "editor");
     await expectNoAxeViolations(page, "screen");
     await page.getByLabel("Server", { exact: true }).selectOption("microsoft");
     await expect(page.getByRole("dialog")).toBeVisible();
@@ -638,7 +638,7 @@ test("a reconnection grace outside the range is refused before anything is sent"
   backend,
   request,
 }) => {
-  await openSettings(page, backend, "editor-and-git");
+  await openSettings(page, backend, "editor");
   const grace = page.getByLabel("Reconnection grace (seconds)", {
     exact: true,
   });
@@ -663,7 +663,7 @@ test.describe("Microsoft's VS Code server", () => {
     backend,
     request,
   }) => {
-    await openSettings(page, backend, "editor-and-git");
+    await openSettings(page, backend, "editor");
     await page.getByLabel("Server", { exact: true }).selectOption("microsoft");
     const dialog = page.getByRole("dialog");
     await expect(dialog).toContainText(
@@ -689,7 +689,7 @@ test.describe("Microsoft's VS Code server", () => {
     backend,
     request,
   }) => {
-    await openSettings(page, backend, "editor-and-git");
+    await openSettings(page, backend, "editor");
     await page.getByLabel("Server", { exact: true }).selectOption("microsoft");
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible();
@@ -706,7 +706,7 @@ test.describe("Microsoft's VS Code server", () => {
     backend,
     request,
   }) => {
-    await openSettings(page, backend, "editor-and-git");
+    await openSettings(page, backend, "editor");
     await page.getByLabel("Server", { exact: true }).selectOption("microsoft");
     const dialog = page.getByRole("dialog");
     await dialog
@@ -750,7 +750,7 @@ test.describe("Microsoft's VS Code server", () => {
     backend,
     request,
   }) => {
-    await openSettings(page, backend, "editor-and-git");
+    await openSettings(page, backend, "editor");
     await page.getByLabel("Server", { exact: true }).selectOption("microsoft");
     const dialog = page.getByRole("dialog");
     await dialog
@@ -834,7 +834,7 @@ test("the SSH agent pipe is checked before saving, stored trimmed and survives a
   backend,
   request,
 }) => {
-  await openSettings(page, backend, "editor-and-git");
+  await openSettings(page, backend, "editor");
   const field = page.getByLabel("SSH agent pipe or socket", { exact: true });
   await expect(field).toHaveValue("");
 

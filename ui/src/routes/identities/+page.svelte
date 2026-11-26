@@ -273,7 +273,7 @@
 
 <p class="muted settings-link">
   Whether new workspaces may push to or pull from any repository is set in <a
-    href="/settings/editor-and-git"
+    href="/settings/editor"
   >
     Settings, Git
   </a>.

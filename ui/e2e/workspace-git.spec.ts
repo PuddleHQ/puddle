@@ -341,7 +341,7 @@ test("the default for the two switches is inherited by new workspaces and overri
 }) => {
   await backend.control.reset("git-identities");
   await backend.signIn(page);
-  await page.goto("/settings/editor-and-git");
+  await page.goto("/settings/editor");
   const pull = page.getByRole("switch", {
     name: "Only pull from allowed repositories",
   });
@@ -379,7 +379,7 @@ test("the default for the two switches is inherited by new workspaces and overri
   await expect(
     page.getByRole("switch", { name: "Only pull from allowed repositories" }),
   ).not.toBeChecked();
-  await page.goto("/settings/editor-and-git");
+  await page.goto("/settings/editor");
   await page
     .getByRole("switch", { name: "Only pull from allowed repositories" })
     .click();
@@ -407,7 +407,7 @@ test("the default for the two switches is inherited by new workspaces and overri
     page.getByRole("button", { name: /Use the default again/ }),
   ).toHaveCount(0);
   await expect(page.getByText(/It follows the default/)).toHaveCount(2);
-  await page.goto("/settings/editor-and-git");
+  await page.goto("/settings/editor");
   await page
     .getByRole("switch", { name: "Only pull from allowed repositories" })
     .click();

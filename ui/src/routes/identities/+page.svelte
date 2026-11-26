@@ -316,7 +316,9 @@
     align-items: flex-start;
     gap: var(--space-2);
   }
+  /* Positioned so a visually-hidden label inside a cell is clipped with the table, not the page. */
   .wrap {
+    position: relative;
     overflow-x: auto;
   }
   .rows {

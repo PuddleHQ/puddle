@@ -6,7 +6,7 @@
 //! puddle-soak sample --out metrics.tsv --api 127.0.0.1:PORT [--token T] [--w4 127.0.0.1:3000]
 //!     [--proc PREFIX]... [--db puddle.db] [--file NAME=PATH]... [--disk PATH]
 //!     [--interval 300] [--count N]
-//! puddle-soak judge metrics.tsv [--start EPOCH_S] [--active-hours 8] [--hour-secs 3600]
+//! puddle-soak judge metrics.tsv [--start EPOCH_S] [--active-hours 8] [--idle-hours 4] [--hour-secs 3600]
 //! puddle-soak run --puddle PATH --out DIR [--profile smoke|hosted|full] [--runtime MSB_DIR]
 //!     [--agent PUDDLE_AGENT] [--scripts ci/soak] [--ui CMD] [--port 18080] [--min-ram-gib 8] [--min-disk-gib 20]
 //! ```
@@ -84,7 +84,7 @@ fn judge_command(args: &[String], out: &mut impl std::io::Write) -> Result<u8, S
     let (pos, flags) = options(args)?;
     let [path] = pos.as_slice() else {
         return Err(
-            "usage: puddle-soak judge metrics.tsv [--start EPOCH_S] [--active-hours N] [--hour-secs S]".to_owned(),
+            "usage: puddle-soak judge metrics.tsv [--start EPOCH_S] [--active-hours N] [--idle-hours N] [--hour-secs S]".to_owned(),
         );
     };
     let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
@@ -93,10 +93,12 @@ fn judge_command(args: &[String], out: &mut impl std::io::Write) -> Result<u8, S
         .or_else(|| series.first_time())
         .ok_or("the file holds no measurement")?;
     let hours = number::<u64>(&flags, "active-hours")?.unwrap_or(8);
+    let idle_hours = number::<u64>(&flags, "idle-hours")?.unwrap_or(4);
     let hour = number::<u64>(&flags, "hour-secs")?.unwrap_or(3600).max(1);
     let schedule = Schedule {
         start,
         active_secs: hours * hour,
+        idle_secs: idle_hours * hour,
         hour,
     };
     let findings = judge(&series, schedule);

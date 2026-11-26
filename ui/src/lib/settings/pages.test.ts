@@ -2,8 +2,12 @@
 import { describe, expect, it } from "vitest";
 import {
   LEGACY_ANCHORS,
+  GROUPS,
   legacyTarget,
+  movedTarget,
   PAGES,
+  pageGroup,
+  pageWhere,
   searchSettings,
   SETTINGS,
   settingHref,
@@ -47,7 +51,9 @@ describe("old links", () => {
     for (const [anchor, target] of Object.entries(LEGACY_ANCHORS)) {
       expect(known.has(target), anchor).toBe(true);
     }
-    expect(legacyTarget("#s-disk")).toBe("/settings/workspaces#set-disk-warn");
+    expect(legacyTarget("#s-disk")).toBe(
+      "/settings/this-computer#set-disk-warn",
+    );
     expect(legacyTarget("#local-destinations")).toBe(
       "/settings/network#set-local-loopback",
     );
@@ -56,5 +62,59 @@ describe("old links", () => {
   it("opens Appearance for no anchor or an unknown one", () => {
     expect(legacyTarget("")).toBe("/settings/appearance");
     expect(legacyTarget("#s-nothing")).toBe("/settings/appearance");
+  });
+});
+
+describe("the three headings", () => {
+  it("puts every page under one heading and names it in a search result", () => {
+    expect(PAGES.map((p) => p.group)).toEqual([
+      "app",
+      "app",
+      "app",
+      "new",
+      "new",
+      "all",
+      "all",
+      "all",
+      "all",
+      "all",
+    ]);
+    expect(Object.values(GROUPS).map((g) => g.heading)).toEqual([
+      "Puddle",
+      "Defaults for new workspaces",
+      "Rules for all workspaces",
+    ]);
+    expect(pageGroup("git")).toBe("all");
+    expect(pageWhere("git")).toBe("Rules for all workspaces: Git and SSH");
+  });
+
+  it("keeps the moved settings findable on their new pages", () => {
+    const where = (id: string) => SETTINGS.find((s) => s.id === id)?.page;
+    expect(where("set-disk-warn")).toBe("this-computer");
+    expect(where("set-zoom")).toBe("this-computer");
+    expect(where("set-clip")).toBe("workspaces");
+    expect(where("set-mise")).toBe("workspaces");
+    expect(where("set-ssh-agent")).toBe("git");
+    expect(where("set-push-listed")).toBe("git");
+    expect(where("set-server")).toBe("editor-server");
+    expect(where("set-capture")).toBe("credentials");
+    expect(where("set-env")).toBe("environment");
+  });
+});
+
+describe("old page links", () => {
+  it("sends an old page path with a moved setting's hash to the new page", () => {
+    expect(movedTarget("/settings/editor", "#set-zoom")).toBe(
+      "/settings/this-computer#set-zoom",
+    );
+    expect(movedTarget("/settings/workspaces/", "#set-env")).toBe(
+      "/settings/environment#set-env",
+    );
+  });
+
+  it("leaves a setting that is on its page, and a hash that is no setting", () => {
+    expect(movedTarget("/settings/editor", "#set-editor-theme")).toBeNull();
+    expect(movedTarget("/settings/network", "#local-destinations")).toBeNull();
+    expect(movedTarget("/settings/network", "")).toBeNull();
   });
 });

@@ -28,7 +28,7 @@ describe("/settings", () => {
     render(Redirect);
     await vi.waitFor(() =>
       expect(nav.goto).toHaveBeenCalledWith(
-        "/settings/workspaces#set-disk-warn",
+        "/settings/this-computer#set-disk-warn",
         { replaceState: true },
       ),
     );

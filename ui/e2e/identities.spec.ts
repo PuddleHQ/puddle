@@ -104,7 +104,7 @@ test("a credential's last read survives a reload, from a push and a repository l
 });
 
 test("Settings points to the Identities section", async ({ page, backend }) => {
-  await open(page, backend, "/settings/editor");
+  await open(page, backend, "/settings/git");
   await page.getByRole("link", { name: "Manage identities" }).click();
   await expect(page).toHaveURL(/\/identities$/);
 });

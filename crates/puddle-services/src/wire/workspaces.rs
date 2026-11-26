@@ -391,7 +391,8 @@ fn list_refusal(error: &domain::RepositoryListError) -> ApiError {
 
 impl NewWorkspaceRequest {
     /// The `local_path` of every repository that has one.
-    pub(crate) fn local_paths(&self) -> Vec<String> {
+    #[must_use]
+    pub fn local_paths(&self) -> Vec<String> {
         self.repositories
             .iter()
             .filter_map(|r| r.local_path.clone())
@@ -401,7 +402,10 @@ impl NewWorkspaceRequest {
     /// The checked request for a workspace of `owner`; `identity_exists` says whether an identity
     /// id names one, and
     /// `locals` holds what the service found at each [`NewWorkspaceRequest::local_paths`].
-    pub(crate) fn into_new(
+    ///
+    /// # Errors
+    /// An invalid-request [`ApiError`] (422) when a value is not valid.
+    pub fn into_new(
         self,
         owner: puddle_store::UserId,
         identity_exists: impl Fn(puddle_store::IdentityId) -> bool,
@@ -593,7 +597,11 @@ pub struct RenameWorkspaceRequest {
 }
 
 impl RenameWorkspaceRequest {
-    pub(crate) fn into_name(self) -> Result<domain::DisplayName, ApiError> {
+    /// Checks the request and converts it to its name.
+    ///
+    /// # Errors
+    /// An invalid-request [`ApiError`] (422) when a value is not valid.
+    pub fn into_name(self) -> Result<domain::DisplayName, ApiError> {
         domain::DisplayName::parse(&self.name)
             .map_err(|e| ApiError::invalid(e).at_field(ErrorField::Name))
     }

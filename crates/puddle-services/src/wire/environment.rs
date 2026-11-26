@@ -58,7 +58,8 @@ pub struct EnvVariable {
 }
 
 impl EnvVariable {
-    pub(crate) fn from_store(entry: store::EnvEntry, overridden: bool) -> Self {
+    /// Builds the wire form from the store.
+    pub fn from_store(entry: store::EnvEntry, overridden: bool) -> Self {
         let (kind, value, hosts, place) = match entry.value {
             store::EnvValue::Plain(value) => (EnvKind::Plain, Some(value), Vec::new(), None),
             store::EnvValue::Secret(secret) => (
@@ -114,7 +115,7 @@ impl SecretPlace {
     ///
     /// # Errors
     /// [`store::StoreError::EnvInvalid`] for a query name that is not one.
-    pub(crate) fn into_store(
+    pub fn into_store(
         place: Option<Self>,
         stored: Option<store::SecretPlace>,
     ) -> Result<store::SecretPlace, store::StoreError> {
@@ -150,7 +151,7 @@ pub struct WorkspaceEnv {
 
 /// A secret's value in a request: written once, kept in the credential store, never shown again.
 /// Only a JSON string is accepted, and the refusal of anything else does not quote it.
-pub struct SecretText(pub(crate) Secret);
+pub struct SecretText(pub Secret);
 
 impl std::fmt::Debug for SecretText {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

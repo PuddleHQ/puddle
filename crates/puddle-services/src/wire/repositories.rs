@@ -176,7 +176,10 @@ pub enum AddRepositoryRequest {
 
 impl AddRepositoryRequest {
     /// The checked request; `identity_exists` says whether an identity id names one.
-    pub(crate) fn into_add(
+    ///
+    /// # Errors
+    /// An invalid-request [`ApiError`] (422) when a value is not valid.
+    pub fn into_add(
         self,
         identity_exists: impl Fn(IdentityId) -> bool,
     ) -> Result<domain::AddRepository, ApiError> {

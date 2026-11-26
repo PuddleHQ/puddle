@@ -58,7 +58,11 @@ pub enum Actor {
 }
 
 impl Actor {
-    pub(crate) fn from_store(actor: store::Actor) -> Result<Self, ApiError> {
+    /// Builds the wire form from the store.
+    ///
+    /// # Errors
+    /// An invalid-request or internal [`ApiError`].
+    pub fn from_store(actor: store::Actor) -> Result<Self, ApiError> {
         Ok(match actor {
             store::Actor::Cli => Self::Cli,
             store::Actor::Ui => Self::Ui,
@@ -147,7 +151,11 @@ pub struct PendingRequest {
 }
 
 impl PendingRequest {
-    pub(crate) fn from_store(row: store::PendingRow) -> Result<Self, ApiError> {
+    /// Builds the wire form from the store.
+    ///
+    /// # Errors
+    /// An invalid-request [`ApiError`] (422) when a value is not valid.
+    pub fn from_store(row: store::PendingRow) -> Result<Self, ApiError> {
         let store::PendingRow {
             id,
             workspace,
@@ -228,7 +236,11 @@ pub enum RuleScope {
 }
 
 impl RuleScope {
-    pub(crate) fn from_store(scope: store::Scope) -> Result<Self, ApiError> {
+    /// Builds the wire form from the store.
+    ///
+    /// # Errors
+    /// An invalid-request or internal [`ApiError`].
+    pub fn from_store(scope: store::Scope) -> Result<Self, ApiError> {
         Ok(match scope {
             store::Scope::Global => Self::Global,
             store::Scope::Workspace(workspace) => Self::Workspace { workspace },
@@ -293,7 +305,11 @@ pub struct Rule {
 }
 
 impl Rule {
-    pub(crate) fn from_store(rule: store::Rule) -> Result<Self, ApiError> {
+    /// Builds the wire form from the store.
+    ///
+    /// # Errors
+    /// An invalid-request [`ApiError`] (422) when a value is not valid.
+    pub fn from_store(rule: store::Rule) -> Result<Self, ApiError> {
         let store::Rule {
             id,
             user: _,
@@ -368,7 +384,11 @@ pub struct DecisionRequest {
 }
 
 impl DecisionRequest {
-    pub(crate) fn into_resolution(self, effect: Effect) -> Result<store::Resolution, ApiError> {
+    /// Checks the request and converts it to its resolution.
+    ///
+    /// # Errors
+    /// An invalid-request [`ApiError`] (422) when a value is not valid.
+    pub fn into_resolution(self, effect: Effect) -> Result<store::Resolution, ApiError> {
         let Self {
             scope,
             rule_set,
@@ -413,7 +433,11 @@ pub struct DecisionOutcome {
 }
 
 impl DecisionOutcome {
-    pub(crate) fn from_store(decided: store::Decided) -> Result<Self, ApiError> {
+    /// Builds the wire form from the store.
+    ///
+    /// # Errors
+    /// An invalid-request [`ApiError`] (422) when a value is not valid.
+    pub fn from_store(decided: store::Decided) -> Result<Self, ApiError> {
         let store::Decided {
             row,
             rule,
@@ -456,7 +480,10 @@ pub struct NewRuleRequest {
 }
 
 /// A precedence a client sent, checked: 1 to 9.
-pub(crate) fn checked_precedence(value: Option<u8>) -> Result<Option<store::Precedence>, ApiError> {
+///
+/// # Errors
+/// An invalid-request [`ApiError`] (422) when a value is not valid.
+pub fn checked_precedence(value: Option<u8>) -> Result<Option<store::Precedence>, ApiError> {
     value
         .map(|value| {
             store::Precedence::new(value)
@@ -467,9 +494,10 @@ pub(crate) fn checked_precedence(value: Option<u8>) -> Result<Option<store::Prec
 
 impl NewRuleRequest {
     /// The rule and the precedence the client named, if it named one.
-    pub(crate) fn into_new_rule(
-        self,
-    ) -> Result<(store::NewRule, Option<store::Precedence>), ApiError> {
+    ///
+    /// # Errors
+    /// An invalid-request [`ApiError`] (422) when a value is not valid.
+    pub fn into_new_rule(self) -> Result<(store::NewRule, Option<store::Precedence>), ApiError> {
         let Self {
             scope,
             pattern,
@@ -515,7 +543,11 @@ pub struct UpdateRuleRequest {
 }
 
 impl UpdateRuleRequest {
-    pub(crate) fn into_edit(self) -> Result<store::RuleEdit, ApiError> {
+    /// Checks the request and converts it to its edit.
+    ///
+    /// # Errors
+    /// An invalid-request [`ApiError`] (422) when a value is not valid.
+    pub fn into_edit(self) -> Result<store::RuleEdit, ApiError> {
         let Self {
             scope,
             pattern,

@@ -65,7 +65,8 @@ pub enum CredentialSource {
 }
 
 impl CredentialSource {
-    pub(crate) fn from_store(spec: &SourceSpec) -> Self {
+    /// Builds the wire form from the store.
+    pub fn from_store(spec: &SourceSpec) -> Self {
         match spec {
             SourceSpec::Gh { host, account } => Self::Gh {
                 host: host.to_string(),
@@ -101,7 +102,11 @@ impl CredentialSource {
         self.into_store().map_err(ApiError::into_body)
     }
 
-    pub(crate) fn into_store(self) -> Result<SourceSpec, ApiError> {
+    /// Checks the request and converts it to its store.
+    ///
+    /// # Errors
+    /// An invalid-request [`ApiError`] (422) when a value is not valid.
+    pub fn into_store(self) -> Result<SourceSpec, ApiError> {
         let host = |h: &str| HostName::new(h).map_err(|_| bad("host"));
         let account = |a: &str| AccountName::new(a).map_err(|_| bad("account name"));
         Ok(match self {
@@ -196,7 +201,8 @@ pub enum CheckedBy {
 }
 
 impl LastCheck {
-    pub(crate) fn from_read(source: &SourceSpec, read: &puddle_secrets::LastRead) -> Self {
+    /// Builds the wire form from the read.
+    pub fn from_read(source: &SourceSpec, read: &puddle_secrets::LastRead) -> Self {
         let result = read
             .problem
             .as_ref()
@@ -331,7 +337,8 @@ pub struct IdentityView {
 }
 
 impl IdentityView {
-    pub(crate) fn from_store(
+    /// Builds the wire form from the store.
+    pub fn from_store(
         identity: store::Identity,
         workspaces: Vec<WorkspaceId>,
         credentials: &dyn crate::CredentialService,
@@ -386,7 +393,11 @@ impl IdentityRequest {
         self.into_draft().map_err(ApiError::into_body)
     }
 
-    pub(crate) fn into_draft(self) -> Result<store::IdentityDraft, ApiError> {
+    /// Checks the request and converts it to its draft.
+    ///
+    /// # Errors
+    /// An invalid-request [`ApiError`] (422) when a value is not valid.
+    pub fn into_draft(self) -> Result<store::IdentityDraft, ApiError> {
         Ok(store::IdentityDraft {
             label: self.label,
             author: store::Author::new(&self.author.name, &self.author.email)?,
@@ -431,7 +442,8 @@ pub struct TokenLeft {
 }
 
 impl TokenLeft {
-    pub(crate) fn new(id: &StoredId, scope: &TokenScope) -> Self {
+    /// Builds the wire form from its source values.
+    pub fn new(id: &StoredId, scope: &TokenScope) -> Self {
         Self {
             id: id.to_string(),
             host: scope.host.to_string(),
@@ -460,7 +472,9 @@ pub struct GitRepoView {
 }
 
 impl GitRepoView {
-    pub(crate) fn from_store(entry: store::RepoEntry) -> Self {
+    /// Builds the wire form from the store.
+    #[must_use]
+    pub fn from_store(entry: store::RepoEntry) -> Self {
         Self {
             id: entry.id,
             host: entry.repo.host.to_string(),
@@ -571,7 +585,10 @@ pub struct WorkspaceSwitchesRequest {
 
 impl WorkspaceSwitchesRequest {
     /// What each switch should become; 422 when a switch is both set and dropped.
-    pub(crate) fn changes(&self) -> Result<(store::SwitchChange, store::SwitchChange), ApiError> {
+    ///
+    /// # Errors
+    /// An invalid-request [`ApiError`] (422) when a value is not valid.
+    pub fn changes(&self) -> Result<(store::SwitchChange, store::SwitchChange), ApiError> {
         let one = |name: &str, set: Option<bool>, drop: bool| match (set, drop) {
             (Some(_), true) => Err(ApiError::invalid(format!(
                 "the {name} switch is both set and sent back to the default"
@@ -604,11 +621,17 @@ pub struct GitRepoRequest {
 }
 
 impl GitRepoRequest {
-    pub(crate) fn repo_ref(&self) -> Result<store::RepoRef, ApiError> {
+    /// The repository reference this request names.
+    ///
+    /// # Errors
+    /// An invalid-request [`ApiError`] (422) when a value is not valid.
+    pub fn repo_ref(&self) -> Result<store::RepoRef, ApiError> {
         Ok(store::RepoRef::new(&self.host, &self.owner, &self.repo)?)
     }
 
-    pub(crate) fn toggles(&self) -> store::RepoToggles {
+    /// The toggles this request sets.
+    #[must_use]
+    pub fn toggles(&self) -> store::RepoToggles {
         store::RepoToggles {
             pull: self.pull,
             push: self.push,
@@ -627,7 +650,9 @@ pub struct GitRepoToggles {
 }
 
 impl GitRepoToggles {
-    pub(crate) fn toggles(&self) -> store::RepoToggles {
+    /// The toggles this request sets.
+    #[must_use]
+    pub fn toggles(&self) -> store::RepoToggles {
         store::RepoToggles {
             pull: self.pull,
             push: self.push,
@@ -684,7 +709,9 @@ pub struct NewWorkspaceIdentity {
 }
 
 impl NewWorkspaceIdentity {
-    pub(crate) fn from_store(start: &store::GitStart, repo: &store::RepoRef) -> Self {
+    /// Builds the wire form from the store.
+    #[must_use]
+    pub fn from_store(start: &store::GitStart, repo: &store::RepoRef) -> Self {
         let place = format!("{}/{}", repo.host, repo.owner);
         let (basis, warning) = match (start.basis, &start.identity) {
             (store::StartBasis::Default, Some((_, label))) => (
@@ -713,7 +740,8 @@ impl NewWorkspaceIdentity {
     }
 
     /// A repository whose Git settings Puddle did not set up, and `why`.
-    pub(crate) fn not_set_up(why: String) -> Self {
+    #[must_use]
+    pub fn not_set_up(why: String) -> Self {
         Self {
             identity: None,
             basis: NewWorkspaceIdentityBasis::None,

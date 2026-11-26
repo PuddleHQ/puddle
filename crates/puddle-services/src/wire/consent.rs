@@ -114,7 +114,11 @@ pub struct ConsentRequest {
 }
 
 impl ConsentRequest {
-    pub(crate) fn into_consent(self, now_ms: u64) -> Result<settings::Consent, ApiError> {
+    /// Checks the request and converts it to its consent.
+    ///
+    /// # Errors
+    /// An invalid-request [`ApiError`] (422) when a value is not valid.
+    pub fn into_consent(self, now_ms: u64) -> Result<settings::Consent, ApiError> {
         let terms_version =
             settings::TermsVersion::new(&self.terms_version).map_err(ApiError::invalid)?;
         let at = settings::UnixMillis(now_ms);

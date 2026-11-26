@@ -125,7 +125,7 @@ pub(crate) async fn forget_token(
     let id =
         StoredId::new(id).map_err(|_| ApiError::invalid("not a valid stored credential id"))?;
     // Another user's entry is left alone and answered as one that is not there.
-    if crate::stored_ids::is_users(principal.user, &id) {
+    if puddle_services::stored_ids::is_users(principal.user, &id) {
         state.credentials.forget_token(id).await?;
     }
     Ok(StatusCode::NO_CONTENT)

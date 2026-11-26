@@ -16,6 +16,13 @@ trap 'rm -rf "$tmp"' EXIT
 # The stub counts its runs in $STUB_DIR/count and fails on run $STUB_FAIL_ON.
 cat >"$tmp/fake_host_stub" <<'STUB'
 #!/usr/bin/env bash
+# The loop's second invocation of a run is the churn tests alone: it is not a run of its own.
+if [ "$1" = "churn::" ]; then
+    echo "stub churn args: $*" >>"$STUB_DIR/churn.args"
+    echo "test result: ok"
+    exit 0
+fi
+[ "$*" = "--skip churn::" ] || { echo "stub: first invocation lacks --skip churn:: ($*)"; exit 3; }
 n=$(($(cat "$STUB_DIR/count" 2>/dev/null || echo 0) + 1))
 echo "$n" >"$STUB_DIR/count"
 echo $$ >>"$STUB_DIR/stub.pids"
@@ -59,6 +66,7 @@ holders=$tmp/out-red/first-failure-holders.txt
 grep -q "^$stub_pid " "$holders" || fail "the stub ($stub_pid) must be a sampled holder: $(cat "$holders")"
 [ "$(wc -l <"$holders")" -ge 2 ] || fail "the child holding a copy must be sampled too: $(cat "$holders")"
 grep -q "^[0-9]* $stub_pid " "$holders" || fail "the copy must show the stub as its parent: $(cat "$holders")"
+grep -q -- '--test-threads=1' "$tmp/state/churn.args" || fail "the churn tests run alone, one thread: $(cat "$tmp/state/churn.args")"
 grep -q '^FAILED=1$' "$tmp/out-red/result.env" || fail "result.env: $(cat "$tmp/out-red/result.env")"
 grep -q '^FIRST_FAILED_RUN=2$' "$tmp/out-red/result.env" || fail "result.env names the first failed run"
 

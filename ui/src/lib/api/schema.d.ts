@@ -4785,7 +4785,7 @@ export interface components {
         };
         /** @description The API's identity, for a client to check it reached Puddle. */
         Health: {
-            /** @description The API contract's version ([`crate::API_VERSION`]). */
+            /** @description The API contract's version (`API_VERSION` in `puddle-api`). */
             api_version: string;
             /**
              * @description The build of the app this server serves, read from the build's own `_app/version.json`: a

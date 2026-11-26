@@ -14,9 +14,8 @@ export type AppIcons = S["AppIcons"];
 /** The built-in icons by the name the screen shows. */
 export const ICON_NAMES: Record<Exclude<AppIconChoice, "custom">, string> = {
   duck: "Duck",
-  duck_pond: "Duck on a pond",
-  duck_night: "Duck at night",
-  duck_sun: "Duck in the sun",
+  rubber_duck: "Rubber duck",
+  duck_front: "Duck, front view",
 };
 
 /** The largest file the service takes (it says so too; this saves the trip). */

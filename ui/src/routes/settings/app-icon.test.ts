@@ -41,7 +41,7 @@ afterEach(cleanup);
 async function open() {
   render(SettingsHost, { props: { pages: [Appearance] } });
   await screen.findAllByText("App icon");
-  await screen.findByRole("radio", { name: "Duck on a pond" });
+  await screen.findByRole("radio", { name: "Rubber duck" });
 }
 
 const radio = (name: string) =>
@@ -65,14 +65,13 @@ describe("the App icon section", () => {
     expect(screen.getAllByText("App icon").length).toBeGreaterThan(0);
   });
 
-  it("offers the four ducks, the duck chosen, and your own image off until there is one", async () => {
+  it("offers the three ducks, the duck chosen, and your own image off until there is one", async () => {
     await open();
-    expect(screen.getAllByRole("radio")).toHaveLength(5);
+    expect(screen.getAllByRole("radio")).toHaveLength(4);
     for (const name of [
       "Duck",
-      "Duck on a pond",
-      "Duck at night",
-      "Duck in the sun",
+      "Rubber duck",
+      "Duck, front view",
       "Your image",
     ]) {
       expect(radio(name)).toBeTruthy();
@@ -89,9 +88,9 @@ describe("the App icon section", () => {
 
   it("stores the choice the moment it is made, says Saved and can be undone", async () => {
     await open();
-    await fireEvent.click(radio("Duck at night"));
+    await fireEvent.click(radio("Duck, front view"));
     await screen.findByText("Saved.");
-    expect(api.ui.app_icon).toBe("duck_night");
+    expect(api.ui.app_icon).toBe("duck_front");
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
     await fireEvent.click(screen.getByRole("button", { name: /Undo/ }));
     await screen.findByText("Undone.");

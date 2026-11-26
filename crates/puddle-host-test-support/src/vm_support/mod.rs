@@ -119,7 +119,7 @@ impl Resolver for FakeNames {
 }
 
 /// `options` with the names in `names` that have a real name (`github.com`) as fake sites (see
-/// [`FakeNames`]): the host never asks the real DNS about them. A name under `.invalid` is left
+/// `FakeNames`): the host never asks the real DNS about them. A name under `.invalid` is left
 /// out, because the proxy never looks it up. [`web_internet`] does this for its names.
 pub fn with_fake_names<'a>(
     mut options: HostOptions,
@@ -202,7 +202,7 @@ async fn github() -> GitHost {
 
 /// Starts the fake website for `names` and the company proxy that holds them. A name that is not
 /// a real service's takes the `.invalid` zone, which the proxy answers "no such name" without a
-/// lookup (RFC 6761); a real service's name (`github.com`) is made unresolvable by [`FakeNames`].
+/// lookup (RFC 6761); a real service's name (`github.com`) is made unresolvable by `FakeNames`.
 pub async fn web_internet(
     names: &[&str],
     web_options: WebOptions,
@@ -662,7 +662,7 @@ pub fn ssh_bridge(endpoint: Option<&str>) -> std::process::ExitCode {
     }
 }
 
-/// [`create_workspace`] with `extra` fields (an image, a memory size) in the request.
+/// `create_workspace` with `extra` fields (an image, a memory size) in the request.
 pub async fn create_workspace_from(
     vm: &VmHost,
     api: &crate::support::Api,

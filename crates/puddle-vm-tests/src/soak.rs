@@ -154,31 +154,69 @@ pub struct Latency {
     pub worst_ms: f64,
 }
 
+/// One answer of the bystander's API: when the request left and how long the answer took, both
+/// in milliseconds (the start on the same clock as the stall witness's ticks).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Sample {
+    /// Milliseconds on the run's clock when the request was sent.
+    pub at_ms: i64,
+    /// Milliseconds until the answer came.
+    pub took_ms: f64,
+}
+
+/// A witness tick later than this after the previous one is a stall of the runner, in ms.
+const WITNESS_STALL_MS: i64 = 2_000;
+
 /// Checks the sampled latencies of a bystander's API against `bound_ms`.
+///
+/// `witness` is the run's clock ticked by a thread that asks nothing of the host (a sleep and a
+/// read of the clock, about every 100 ms). A slow answer is the product's unless the witness also
+/// went silent for over 2 s while the request was out: then the runner did not run the process,
+/// and no API could have answered. An answer the witness does not share is never excused.
 ///
 /// # Errors
 ///
-/// A sentence with the worst value, when fewer than `min_samples` were taken (a probe that did
-/// not run proves nothing) or one was over the bound.
+/// A sentence with the worst unexcused value, when fewer than `min_samples` were taken (a probe
+/// that did not run proves nothing) or one was over the bound without a shared stall.
 pub fn judge_latency(
-    samples_ms: &[f64],
+    samples: &[Sample],
+    witness: &[i64],
     min_samples: usize,
     bound_ms: f64,
 ) -> Result<Latency, String> {
-    if samples_ms.len() < min_samples {
+    if samples.len() < min_samples {
         return Err(format!(
             "{} latency samples, at least {min_samples} expected",
-            samples_ms.len()
+            samples.len()
         ));
     }
-    let worst_ms = samples_ms.iter().copied().fold(0.0, f64::max);
-    if worst_ms > bound_ms {
+    let stalls: Vec<(i64, i64)> = pairs(witness)
+        .filter(|&(from, to)| to.saturating_sub(from) > WITNESS_STALL_MS)
+        .collect();
+    let worst_ms = samples.iter().map(|s| s.took_ms).fold(0.0, f64::max);
+    let own_worst = samples
+        .iter()
+        .filter(|s| s.took_ms > bound_ms)
+        .filter(|s| {
+            // An answer takes seconds, far under i64's range: the cast cannot truncate.
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "milliseconds of one answer"
+            )]
+            let end = s.at_ms + s.took_ms.ceil() as i64;
+            !stalls.iter().any(|&(from, to)| from < end && to > s.at_ms)
+        })
+        .map(|s| s.took_ms)
+        .fold(0.0, f64::max);
+    if own_worst > 0.0 {
         return Err(format!(
-            "the slowest answer took {worst_ms:.0} ms, bound {bound_ms:.0} ms"
+            "the slowest answer took {own_worst:.0} ms, bound {bound_ms:.0} ms, while the runner \
+             kept running (the witness has {} stall(s) over 2 s elsewhere)",
+            stalls.len()
         ));
     }
     Ok(Latency {
-        samples: samples_ms.len(),
+        samples: samples.len(),
         worst_ms,
     })
 }

@@ -25,7 +25,7 @@ use tokio::process::{Child, Command};
 use tokio::task::JoinHandle;
 
 use super::judge::{Schedule, Severity, judge};
-use super::plan::{Event, Profile, Workload, events, rounds};
+use super::plan::{Cuts, Event, Profile, Workload, events, rounds};
 use super::sample::{Config, Sampler, Target, W4_RECOVERY_BOUND, descendants};
 use super::series::Series;
 
@@ -290,6 +290,7 @@ struct Run {
     spaces: Vec<Space>,
     loops: Vec<(Workload, JoinHandle<()>)>,
     loop_failures: Arc<Mutex<Vec<String>>>,
+    cuts: Cuts,
     crashes: u32,
 }
 
@@ -537,16 +538,22 @@ impl Run {
             self.log.clone(),
             self.loop_failures.clone(),
         );
+        let cuts = self.cuts.clone();
         let handle = tokio::spawn(async move {
             let started = Instant::now();
             let (code, out) = guest(&opts, &data, &space, w.script(), &[round.to_string()]).await;
             let took = started.elapsed().as_secs();
-            log.line(&format!("{w:?} round {round}: exit {code} in {took} s"));
+            // A planned restart or kill that began while the round ran ends its exec session: that
+            // is the event working, and the rounds after it show the workspace came back.
+            let cut = cuts.cut(started, w);
+            let note = cut.map_or(String::new(), |e| format!(", cut by {}", e.name()));
+            let line = format!("{w:?} round {round}: exit {code} in {took} s{note}");
+            log.line(&line);
             append(
                 &opts.out.join("rounds.tsv"),
                 &format!("{}\t{w:?}\t{round}\t{code}\t{took}\n", now()),
             );
-            if code != 0 {
+            if code != 0 && cut.is_none() {
                 let tail: String = out.lines().rev().take(20).collect::<Vec<_>>().join(" | ");
                 failures
                     .lock()
@@ -606,6 +613,7 @@ impl Run {
 
     async fn event(&mut self, e: Event) -> Result<(), String> {
         self.log.line(&format!("event {}", e.name()));
+        self.cuts.began(e);
         match e {
             Event::Baseline | Event::StopLoops => {}
             Event::InboxBatch => self.inbox_batch().await,
@@ -1068,6 +1076,7 @@ pub async fn run(opts: Options) -> Result<Outcome, String> {
         spaces: Vec::new(),
         loops: Vec::new(),
         loop_failures: Arc::new(Mutex::new(Vec::new())),
+        cuts: Cuts::default(),
         crashes: 0,
     };
 

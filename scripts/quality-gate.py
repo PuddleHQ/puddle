@@ -27,7 +27,7 @@ Flake rules (`flake-<id>` kinds; `--flakes` lists them with the fix each names) 
 raced in the past: a hand-rolled wait helper (every one outside the shared test kit counts; the row says
 whether it lacks a name or a bound), a hand-rolled wait loop (a `for`, `while` or `loop` in a test that sleeps or yields between looks), `file.lock()`, `try_recv()`, a port picked
 and dropped, a literal port bound or connected in a test (a name's authority and a URL are fakes and stay out), a name built from the clock, a wall-clock bar, records matched by position, an awaited page read
-asserted once, a reserved name (`.test`, `.example`, `example.com`) in a test that reaches the resolver, a script written in-process and then made executable (`flake-e1`, ETXTBSY: use `puddle_test_kit::write_executable`), a child's piped stdin written with the result unwrapped (`flake-s1`, BrokenPipe: use `puddle_test_kit::feed_stdin`), a Unix path literal (`/tmp`, `/home`, `/no...`) used as a host path or a path joined by hand with `format!` (`flake-f1`, it fails on Windows). Six bans have kinds of their own: `ban-untagged` (`#[serde(untagged)]`), `ban-error-capital` and `ban-error-period` (thiserror messages), `ban-allow` (any `#[allow]` or `#![allow]`, which clippy's `allow_attributes` skips in the inner form: write `#[expect(lint, reason = "...")]`; a file in `ALLOW_EXEMPT` (none now) keeps its `allow` until its reason is gone, and the entry fails once the file has no `allow`), `ban-result-string` (`Result<_, String>` in production code: return a typed error, or a `// string-error-ok: <why>` comment on or within three lines above) and `ban-html-sink` (an HTML injection sink in `ui/src`: `{@html`, `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`; no reason comment excuses one). A site is reasoned by `flake-ok: <why>` on the line or within three lines above. A rule is
+asserted once, a reserved name (`.test`, `.example`, `example.com`) in a test that reaches the resolver, a script written in-process and then made executable (`flake-e1`, ETXTBSY: use `puddle_test_kit::write_executable`), a child's piped stdin written with the result unwrapped (`flake-s1`, BrokenPipe: use `puddle_test_kit::feed_stdin`), a Unix path literal (`/tmp`, `/home`, `/no...`) used as a host path or a path joined by hand with `format!` (`flake-f1`, it fails on Windows). Six bans have kinds of their own: `ban-untagged` (`#[serde(untagged)]`), `ban-error-capital` and `ban-error-period` (thiserror messages), `ban-allow` (any `#[allow]` or `#![allow]`, which clippy's `allow_attributes` skips in the inner form: write `#[expect(lint, reason = "...")]`; a file in `ALLOW_EXEMPT` (none now) keeps its `allow` until its reason is gone, and the entry fails once the file has no `allow`), `ban-result-string` (`Result<_, String>` in production code: return a typed error; no reason comment excuses one) and `ban-html-sink` (an HTML injection sink in `ui/src`: `{@html`, `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`; no reason comment excuses one). A site is reasoned by `flake-ok: <why>` on the line or within three lines above. A rule is
 counted (`flake-<id>`, `flake-<id>-unreasoned`) until its sites are fixed or reasoned, then its `scripts/flake-rules/<id>.rule` says
 `status: failing` and an unreasoned site becomes a `noreason` row. Their self-test replays the original code of
 fixed flakes from `scripts/flake-fixtures/`.
@@ -614,9 +614,7 @@ def ban_rows(raw, code, com, ctx, add, path_parts=(), allow_exempt=False):
                 add("noreason", ctx(i), i, "allow attribute: use #[expect(lint, reason = \"...\")] (cfg_attr for a lint that fires under one cfg only); an `allow` hides a lint that stopped firing | " + raw[i])
         if ctx(i) == "prod" and not STRING_ERROR_TEST_DIRS.intersection(path_parts) and result_string_hits(line):
             add("ban-result-string", ctx(i), i, raw[i])
-            if not any("string-error-ok:" in com[k] for k in range(max(0, i - 3), i + 1)):
-                add("ban-result-string-unreasoned", ctx(i), i, raw[i])
-                add("noreason", ctx(i), i, "Result<_, String> in production code: return a typed error (thiserror), or say why a string is the contract in a `// string-error-ok: <why>` comment on or within three lines above (STANDARDS section 6) | " + raw[i])
+            add("noreason", ctx(i), i, "Result<_, String> in production code: return a typed error (thiserror); no comment excuses one (STANDARDS section 6) | " + raw[i])
         if BAN_UNTAGGED.search(line):
             add("ban-untagged", ctx(i), i, raw[i])
             add("noreason", ctx(i), i, "#[serde(untagged)]: a wrong branch is silent, use an internally or adjacently tagged enum (ADR 0002) | " + raw[i])
@@ -1016,7 +1014,6 @@ fn d(tx: Tx, unused: u8) {
 #[allow(clippy::foo)]
 fn b() {}
 fn e() -> Result<(), String> { Ok(()) }
-// string-error-ok: the fixture's reason
 fn h() -> Result<Vec<String>, String> { Ok(vec![]) }
 fn m() -> Result<BTreeMap<String, String>, Error> { todo() }
 fn n() -> io::Result<String> { todo() }
@@ -1515,7 +1512,7 @@ def self_test():
         "unsafe-block.prod": 3, "unwrap.prod": 1, "unwrap.test": 1,
         "allow-attr.prod": 1, "expect-attr.prod": 1,
         "test-no-assert.test": 1, "marker-todo.any": 1, "marker-fixme.any": 1, "marker-hack.any": 1,
-        "noreason.prod": 6, "ban-allow.prod": 1, "ban-result-string.prod": 2, "ban-result-string-unreasoned.prod": 1, "let-underscore.prod": 3, "let-underscore-uncommented.prod": 1,
+        "noreason.prod": 7, "ban-allow.prod": 1, "ban-result-string.prod": 2, "let-underscore.prod": 3, "let-underscore-uncommented.prod": 1,
         "sleep.test": 5, "sleep-fixed.test": 3, "sleep-fixed-uncommented.test": 2, "noreason.test": 3,
         "inline-test-block.test": 1,
         "flake-w3.test": 1,

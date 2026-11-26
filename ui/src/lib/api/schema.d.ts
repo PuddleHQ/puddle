@@ -3006,6 +3006,7 @@ export interface components {
              *     existed, and connections of a workspace that turned the warning off, read as empty.
              */
             foreign_credentials: components["schemas"]["ForeignCredentialKind"][];
+            git_operation: components["schemas"]["GitOperation"] | null;
             /** @description The requested host. */
             host: string | null;
             /** @description Whether a credential was injected. */
@@ -4655,6 +4656,11 @@ export interface components {
             /** @description Refuse a push to a repository not listed with Push on (built in: on). */
             only_push_listed: boolean;
         };
+        /**
+         * @description What a Git smart-HTTP request of a connection record does.
+         * @enum {string}
+         */
+        GitOperation: "push" | "fetch";
         /** @description Adds a repository to the table. */
         GitRepoRequest: {
             /** @description The host (`github.com`). */

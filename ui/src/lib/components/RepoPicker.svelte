@@ -24,6 +24,10 @@
     store?: RepoLists;
   } = $props();
 
+  // The host already holds every list it read from the Git host (100 a page), so asking for a
+  // long page costs a local read, not a request to GitHub: show all, up to what the API allows.
+  const PICKER_LIMIT = 500;
+
   // Several pickers can be open at once (one per row of the create form).
   const uid = $props.id();
   let opened = $state(false);
@@ -32,7 +36,8 @@
 
   function toggled(event: Event) {
     opened = (event.currentTarget as HTMLDetailsElement).open;
-    if (opened && store.status === "idle") void store.load({ limit: 20 });
+    if (opened && store.status === "idle")
+      void store.load({ limit: PICKER_LIMIT });
     if (!opened) {
       clearTimeout(typing);
       store.stop();
@@ -42,7 +47,7 @@
   function onSearch() {
     clearTimeout(typing);
     typing = setTimeout(() => {
-      void store.load({ query: search.trim(), limit: 20 }, true);
+      void store.load({ query: search.trim(), limit: PICKER_LIMIT }, true);
     }, 150);
   }
 
@@ -79,7 +84,7 @@
   );
 </script>
 
-<details class="picker" ontoggle={toggled}>
+<details class="picker" open={opened} ontoggle={toggled}>
   <summary>Choose from your repositories</summary>
   {#if opened}
     <div class="body">

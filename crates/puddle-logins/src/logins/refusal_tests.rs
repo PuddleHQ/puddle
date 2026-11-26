@@ -77,7 +77,7 @@ fn a_field_named_by_a_dotted_path_is_named_at_that_path_only() {
     let mut endpoint = CLAUDE.endpoints[0];
     endpoint.fields = &NESTED;
     let long = FieldKind::Text(MIN_TOKEN_LEN);
-    let holds = |fields: Vec<BodyField>| holds_unnamed_token(&endpoint, &fields);
+    let holds = |fields: Vec<BodyField>| holds_unnamed_token(&endpoint, &fields).is_some();
     assert!(!holds(vec![field("data.token", long)]));
     assert!(holds(vec![
         field("data.token", long),
@@ -93,7 +93,7 @@ fn a_credential_puddle_would_not_replace_is_found_in_the_answers_fields() {
     let endpoint = &CLAUDE.endpoints[0];
     let long = FieldKind::Text(MIN_TOKEN_LEN);
     let short = FieldKind::Text(MIN_TOKEN_LEN - 1);
-    let holds = |fields: Vec<BodyField>| holds_unnamed_token(endpoint, &fields);
+    let holds = |fields: Vec<BodyField>| holds_unnamed_token(endpoint, &fields).is_some();
     assert!(!holds(vec![field("access_token", long)]));
     assert!(holds(vec![
         field("access_token", long),
@@ -109,4 +109,12 @@ fn a_credential_puddle_would_not_replace_is_found_in_the_answers_fields() {
         field("access_token", long),
         field("refresh_token", long)
     ]));
+}
+
+#[test]
+fn a_uuid_is_an_identifier_and_any_other_text_of_that_length_is_not() {
+    assert!(is_uuid("7a1b2c3d-0e4f-4a5b-8c6d-9e0f1a2b3c4d"));
+    assert!(!is_uuid("7a1b2c3d-0e4f-4a5b-8c6d-9e0f1a2b3c4"));
+    assert!(!is_uuid("7a1b2c3d_0e4f_4a5b_8c6d_9e0f1a2b3c4d"));
+    assert!(!is_uuid("sk-ant-oat01-aaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
 }

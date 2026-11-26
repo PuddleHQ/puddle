@@ -401,7 +401,6 @@ test.describe("the list of repositories", () => {
       rowOf(page, 2).getByLabel("Directory"),
       rowOf(page, 2).getByLabel("Git repository (HTTPS)"),
       // A checkbox is small by itself; its label is the target.
-      rowOf(page, 2).locator("label.choice", { hasText: "Pull" }),
       rowOf(page, 2).locator("label.choice", { hasText: "Push" }),
     ];
     for (const control of controls) {

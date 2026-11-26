@@ -323,8 +323,9 @@ test("a blocking finding stops the flow until it is fixed, and the report can be
   await page.getByRole("link", { name: "Leave setup for now" }).click();
   await expect(page).toHaveURL(/\/workspaces$/);
   expect((await firstRun(request, backend)).completed).toBe(false);
+  // Reopening the setup resumes on the step that was left.
   await page.goto("/");
-  await expect(page).toHaveURL(/\/welcome$/);
+  await expect(page).toHaveURL(/\/welcome\/check$/);
 });
 
 test("skipping the setup ends it for good", async ({

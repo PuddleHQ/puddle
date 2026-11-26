@@ -15,7 +15,7 @@
     reason = "test helpers: a failed step fails the test"
 )]
 
-mod support;
+use puddle_compute_msb_test_support as support;
 
 use std::fs::{File, FileTimes};
 use std::path::Path;

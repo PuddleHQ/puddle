@@ -18,7 +18,7 @@
     clippy::expect_used,
     clippy::unwrap_used,
     clippy::panic,
-    reason = "test helpers: a failed step fails the test; each test binary uses a different subset"
+    reason = "test helpers: a failed step fails the test"
 )]
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -29,7 +29,7 @@ use sha2::{Digest, Sha256};
 
 /// Every operation [`ATTACK`] tries, in the order it tries them: the ones that would destroy the
 /// file come last, so that on a writable share (the negative control) the others still ran on it.
-pub(crate) const OPS: [&str; 15] = [
+pub const OPS: [&str; 15] = [
     "read",
     "open_write",
     "append",
@@ -55,7 +55,7 @@ pub(crate) const OPS: [&str; 15] = [
 /// names the outcome, because a write-back cache may only meet the host's refusal at the flush.
 /// `mknod` is coreutils' (perl has no wrapper), so its errno comes back as the C library's message
 /// and is mapped to the name by the same table.
-pub(crate) const ATTACK: &str = r#"
+pub const ATTACK: &str = r#"
 use strict; use warnings; use Fcntl; use IO::Handle;
 my ($f) = @ARGV;
 my %name = (1 => 'EPERM', 2 => 'ENOENT', 13 => 'EACCES', 16 => 'EBUSY', 17 => 'EEXIST', 18 => 'EXDEV',
@@ -131,19 +131,19 @@ unlink "$f.link", "$f.new", "$f.node", "$f.moved";
 
 /// What [`ATTACK`] printed for one file.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Report {
+pub struct Report {
     /// The mount flag the script found for the file (`ro`, `rw` or `none`).
-    pub(crate) state: String,
+    pub state: String,
     /// Whether a process executed the file while the attack ran.
-    pub(crate) running: bool,
+    pub running: bool,
     /// Each operation's outcome.
-    pub(crate) outcomes: BTreeMap<String, String>,
+    pub outcomes: BTreeMap<String, String>,
 }
 
 impl Report {
     /// Reads the script's output; panics on a line it cannot place, so a script that broke is a
     /// failed test and not a quiet pass.
-    pub(crate) fn parse(text: &str) -> Self {
+    pub fn parse(text: &str) -> Self {
         let (mut state, mut running) = (String::new(), false);
         let mut outcomes = BTreeMap::new();
         for line in text.lines() {
@@ -165,7 +165,7 @@ impl Report {
     }
 
     /// A report built from outcomes, for the control tests.
-    pub(crate) fn of(state: &str, running: bool, outcomes: &[(&str, &str)]) -> Self {
+    pub fn of(state: &str, running: bool, outcomes: &[(&str, &str)]) -> Self {
         Self {
             state: state.to_owned(),
             running,
@@ -179,14 +179,14 @@ impl Report {
 
 /// The mount's read-only flag, as a report spells it (`ro` or `rw`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MountFlag {
+pub enum MountFlag {
     ReadOnly,
     ReadWrite,
 }
 
 impl MountFlag {
     /// `ro` is read-only; anything else is read-write.
-    pub(crate) fn of(state: &str) -> Self {
+    pub fn of(state: &str) -> Self {
         if state == "ro" {
             Self::ReadOnly
         } else {
@@ -215,7 +215,7 @@ impl MountFlag {
 ///   `mknod` over it is `EEXIST` (the name is taken, checked before the flag).
 /// - Beside the file, in the guest's own folder, a new name is the guest's own business (`ok`): it
 ///   is not on the share, and the host-side check shows that no new name reached the host's folder.
-pub(crate) fn expected(flag: MountFlag, op: &str, running: bool) -> &'static str {
+pub fn expected(flag: MountFlag, op: &str, running: bool) -> &'static str {
     match op {
         "read" | "create_beside" | "mknod_beside" => "ok",
         "open_write" | "append" | "o_trunc" | "truncate"
@@ -233,17 +233,17 @@ pub(crate) fn expected(flag: MountFlag, op: &str, running: bool) -> &'static str
 
 /// What the host can tell about one file.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct HostFile {
-    pub(crate) sha256: String,
-    pub(crate) len: u64,
-    pub(crate) modified: SystemTime,
+pub struct HostFile {
+    pub sha256: String,
+    pub len: u64,
+    pub modified: SystemTime,
     /// Mode, owner, group, inode, link count and change time (what chmod, chown, link and any
     /// other inode change touch).
     #[cfg(unix)]
-    pub(crate) inode: (u32, u32, u32, u64, u64, i64, i64),
+    pub inode: (u32, u32, u32, u64, u64, i64, i64),
     /// The Windows attribute bits (the read-only bit among them).
     #[cfg(windows)]
-    pub(crate) attributes: u32,
+    pub attributes: u32,
 }
 
 impl HostFile {
@@ -278,20 +278,20 @@ impl HostFile {
 }
 
 /// The SHA-256 of `bytes` in lower-case hex.
-pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
+pub fn sha256_hex(bytes: &[u8]) -> String {
     puddle_types::hex_lower(&Sha256::digest(bytes))
 }
 
 /// The host's folder that holds the mounted files: each named file's state and the names in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct HostDir {
-    pub(crate) files: BTreeMap<String, Option<HostFile>>,
-    pub(crate) entries: BTreeSet<String>,
+pub struct HostDir {
+    pub files: BTreeMap<String, Option<HostFile>>,
+    pub entries: BTreeSet<String>,
 }
 
 impl HostDir {
     /// Reads `names` in `dir` and lists every entry of `dir`.
-    pub(crate) fn take(dir: &Path, names: &[&str]) -> Self {
+    pub fn take(dir: &Path, names: &[&str]) -> Self {
         Self {
             files: names
                 .iter()
@@ -305,7 +305,7 @@ impl HostDir {
     }
 
     /// Each way `after` differs from `self`, named by what changed.
-    pub(crate) fn differences(&self, after: &Self) -> Vec<String> {
+    pub fn differences(&self, after: &Self) -> Vec<String> {
         let mut found = Vec::new();
         for (name, was) in &self.files {
             let (Some(was), Some(now)) = (was, after.files.get(name).and_then(Option::as_ref))
@@ -347,7 +347,7 @@ impl HostDir {
 
 /// Every reason this attack on `target` is not the refusal the mounts promise: an outcome that is
 /// not [`expected`], a missing one, and a flag that is neither `ro` nor `rw`.
-pub(crate) fn judge_outcomes(target: &str, report: &Report) -> Vec<String> {
+pub fn judge_outcomes(target: &str, report: &Report) -> Vec<String> {
     let mut failures = Vec::new();
     if report.state != "ro" && report.state != "rw" {
         failures.push(format!(
@@ -374,12 +374,7 @@ pub(crate) fn judge_outcomes(target: &str, report: &Report) -> Vec<String> {
 
 /// [`judge_outcomes`] plus each difference between the host's files `before` and `after` the
 /// attack: the whole judgement of one attack.
-pub(crate) fn judge(
-    target: &str,
-    report: &Report,
-    before: &HostDir,
-    after: &HostDir,
-) -> Vec<String> {
+pub fn judge(target: &str, report: &Report, before: &HostDir, after: &HostDir) -> Vec<String> {
     let mut failures = judge_outcomes(target, report);
     failures.extend(
         before

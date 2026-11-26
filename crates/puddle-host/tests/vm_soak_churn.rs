@@ -29,8 +29,8 @@
     reason = "VM test: JSON read from the API, a missing key fails the test"
 )]
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

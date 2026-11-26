@@ -309,7 +309,7 @@ export class FakeWorkspaces {
     return {
       clipboard_read:
         o.clipboard_read === null
-          ? resolved("ask" as const, "default")
+          ? resolved("allow" as const, "default")
           : resolved(o.clipboard_read, "workspace"),
       local_toggles: {
         link_local: pick(o.local_toggles.link_local),

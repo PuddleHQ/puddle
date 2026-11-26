@@ -63,7 +63,7 @@ fn nothing_set_gives_the_built_in_defaults() {
     );
     assert_eq!(e.reconnection_grace.value.secs(), 300);
     assert!(e.zoom_hotkeys.value);
-    assert_eq!(e.clipboard_read.value, ClipboardRead::Ask);
+    assert_eq!(e.clipboard_read.value, ClipboardRead::Allow);
     assert_eq!(
         resolve(
             &GlobalSettings::default(),

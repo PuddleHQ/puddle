@@ -30,7 +30,6 @@ import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
 import SettingsHost from "#lib/testing/SettingsHost.svelte";
 import Appearance from "./appearance/+page.svelte";
 import Editor from "./editor/+page.svelte";
-import EditorAndGit from "./editor-and-git/+page.svelte";
 import Network from "./network/+page.svelte";
 import Notifications from "./notifications/+page.svelte";
 import ThisComputer from "./this-computer/+page.svelte";
@@ -42,7 +41,6 @@ const BY_PAGE = {
   workspaces: Workspaces,
   network: Network,
   editor: Editor,
-  "editor-and-git": EditorAndGit,
   "this-computer": ThisComputer,
 } as const;
 
@@ -63,7 +61,7 @@ const open = async (pages: (typeof BY_PAGE)[keyof typeof BY_PAGE][]) => {
 };
 
 describe("the list of pages", () => {
-  it("lists the seven pages and marks the one that is open", async () => {
+  it("lists the six pages and marks the one that is open", async () => {
     await open([Notifications]);
     const nav = screen.getByRole("navigation", { name: "Settings pages" });
     const links = within(nav).getAllByRole("link");
@@ -73,7 +71,6 @@ describe("the list of pages", () => {
       "Workspaces",
       "Network",
       "Editor",
-      "Editor and Git",
       "This computer",
     ]);
     expect(links.map((l) => l.getAttribute("href"))).toEqual(
@@ -108,8 +105,8 @@ describe("the search", () => {
     );
     const results = screen.getByRole("region", { name: "Search results" });
     const link = within(results).getByRole("link", { name: /Zoom shortcuts/ });
-    expect(link).toHaveAttribute("href", "/settings/editor-and-git#set-zoom");
-    expect(link).toHaveTextContent("Editor and Git");
+    expect(link).toHaveAttribute("href", "/settings/editor#set-zoom");
+    expect(link).toHaveTextContent("Editor");
     expect(
       screen.queryByRole("navigation", { name: "Settings pages" }),
     ).toBeNull();

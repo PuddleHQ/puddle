@@ -251,7 +251,7 @@ fn on_a_forwarded_app_s_origin_proxy_paths_are_the_app_s_own() {
 }
 
 #[test]
-fn a_script_s_clipboard_read_follows_the_setting_and_nothing_else_is_decided() {
+fn a_script_s_clipboard_read_follows_the_setting_and_only_local_fonts_are_always_allowed() {
     let with = |clipboard_read| WindowSettings {
         zoom_hotkeys: true,
         clipboard_read,
@@ -275,6 +275,11 @@ fn a_script_s_clipboard_read_follows_the_setting_and_nothing_else_is_decided() {
         ClipboardRead::Deny,
         ClipboardRead::Ask,
     ] {
+        assert_eq!(
+            permission_response(&with(setting), &PermissionKind::LocalFonts),
+            PermissionResponse::Allow,
+            "local fonts with {setting:?}"
+        );
         for other in [PermissionKind::Geolocation, PermissionKind::Notifications] {
             assert_eq!(
                 permission_response(&with(setting), &other),
@@ -303,7 +308,7 @@ fn the_settings_come_from_the_workspace_s_effective_values() {
         WindowSettings::from(&defaults),
         WindowSettings {
             zoom_hotkeys: true,
-            clipboard_read: ClipboardRead::Ask
+            clipboard_read: ClipboardRead::Allow
         }
     );
 }

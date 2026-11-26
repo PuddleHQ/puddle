@@ -267,12 +267,101 @@ fn is_upgrade(headers: &HeaderMap) -> bool {
     wants(&CONNECTION, "upgrade") && wants(&UPGRADE, "websocket")
 }
 
+/// What went wrong on the way to a workspace's editor, as far as the front can tell.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Trouble {
+    /// No connection could be opened: the guest, its agent or the editor server is not up yet.
+    NotUp,
+    /// A connection opened but the server said nothing in [`ANSWER_TIMEOUT`].
+    Silent,
+    /// A connection opened and then failed, or the front could not carry the request.
+    Broken,
+}
+
+/// Whether the request is a window asking for the editor's page, which gets a page back.
+fn wants_page(request: &Request<Incoming>) -> bool {
+    request.method() == Method::GET
+        && !is_upgrade(request.headers())
+        && request
+            .headers()
+            .get_all(header::ACCEPT)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .any(|v| v.to_ascii_lowercase().contains("text/html"))
+}
+
 fn bad_gateway(workspace: &WorkspaceId, guest_port: Option<u16>, why: &str) -> Response<Body> {
     let what = guest_port.map_or_else(|| "The editor".to_owned(), |p| format!("Port {p}"));
     text(
         StatusCode::BAD_GATEWAY,
         format!("{what} of workspace {workspace} is not reachable: {why}"),
     )
+}
+
+fn escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// The page a window shows when the editor cannot be reached: what is wrong, what to do, a retry
+/// link, and a reload every few seconds while the editor may still be starting. No script and no
+/// style: the response keeps the strict policy of [`text`], and `meta refresh` needs neither.
+fn editor_trouble_page(workspace: &WorkspaceId, trouble: Trouble, why: &str) -> Response<Body> {
+    let (title, lead, advice, reload) = match trouble {
+        Trouble::NotUp => (
+            "The editor is starting",
+            "The workspace is up, but its editor server does not accept connections yet.",
+            "Wait: this page tries again every few seconds.",
+            true,
+        ),
+        Trouble::Silent => (
+            "The editor is not answering",
+            "The editor server accepted a connection but sent nothing for a minute.",
+            "Try again. If it keeps happening, restart the workspace from Puddle.",
+            false,
+        ),
+        Trouble::Broken => (
+            "The editor failed",
+            "The editor server broke the connection.",
+            "Try again. If it keeps happening, restart the workspace from Puddle.",
+            false,
+        ),
+    };
+    let refresh = if reload {
+        "<meta http-equiv=\"refresh\" content=\"3\">"
+    } else {
+        ""
+    };
+    let body = format!(
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">{refresh}<title>{title}</title></head>\
+         <body><h1>{title}</h1><p>{lead}</p><p>{advice}</p>\
+         <p><a href=\"\">Try again now</a></p>\
+         <p>Workspace {workspace}. Detail: {why}</p></body></html>",
+        workspace = escape(workspace.as_ref()),
+        why = escape(why),
+    );
+    let mut response = text(StatusCode::BAD_GATEWAY, body);
+    response.headers_mut().insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    response
+}
+
+fn editor_unreachable(
+    page: bool,
+    workspace: &WorkspaceId,
+    guest_port: Option<u16>,
+    trouble: Trouble,
+    why: &str,
+) -> Response<Body> {
+    if page && guest_port.is_none() {
+        editor_trouble_page(workspace, trouble, why)
+    } else {
+        bad_gateway(workspace, guest_port, why)
+    }
 }
 
 async fn forward(
@@ -283,6 +372,9 @@ async fn forward(
     mut request: Request<Incoming>,
 ) -> Response<Body> {
     let upgrade = is_upgrade(request.headers());
+    let page = wants_page(&request);
+    let trouble =
+        |trouble, why: &str| editor_unreachable(page, workspace, guest_port, trouble, why);
     let socket = if upgrade {
         match Arc::clone(&shared.sockets).try_acquire_owned() {
             Ok(permit) => Some(permit),
@@ -297,12 +389,16 @@ async fn forward(
     };
     let io = match connected {
         Ok(io) => io,
-        Err(why) => return bad_gateway(workspace, guest_port, &why.0),
+        Err(why) => {
+            return trouble(Trouble::NotUp, &why.0);
+        }
     };
     let (mut sender, connection) =
         match hyper::client::conn::http1::handshake(TokioIo::new(io)).await {
             Ok(pair) => pair,
-            Err(err) => return bad_gateway(workspace, guest_port, &err.to_string()),
+            Err(err) => {
+                return trouble(Trouble::Broken, &err.to_string());
+            }
         };
     tokio::spawn(async move {
         if let Err(err) = connection.with_upgrades().await {
@@ -326,9 +422,12 @@ async fn forward(
         match tokio::time::timeout(ANSWER_TIMEOUT, sender.send_request(request)).await {
             Ok(Ok(response)) => response,
             Ok(Err(err)) => {
-                return bad_gateway(workspace, guest_port, &format!("it did not answer ({err})"));
+                let why = format!("it did not answer ({err})");
+                return trouble(Trouble::Broken, &why);
             }
-            Err(_) => return bad_gateway(workspace, guest_port, "it did not answer in time"),
+            Err(_) => {
+                return trouble(Trouble::Silent, "it did not answer in time");
+            }
         };
 
     if upgrade && response.status() == StatusCode::SWITCHING_PROTOCOLS {

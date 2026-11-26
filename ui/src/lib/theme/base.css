@@ -33,6 +33,14 @@ h1 {
   font-weight: 600;
   overflow-wrap: anywhere;
 }
+/* A column header is one line and never breaks inside a word. `!important` because a screen's own
+   `th { overflow-wrap: anywhere }` (meant for the cells' user text) would otherwise win. */
+thead th,
+th[scope="col"] {
+  white-space: nowrap !important;
+  overflow-wrap: normal !important;
+  word-break: normal !important;
+}
 h1:focus {
   outline: none;
 }

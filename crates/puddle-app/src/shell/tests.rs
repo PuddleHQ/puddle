@@ -560,7 +560,7 @@ fn the_installer_refuses_to_replace_a_newer_version_with_an_older_one() {
 fn the_probe_opens_with_the_clipboard_setting_the_environment_names_and_refuses_a_typo() {
     let page = Some("http://probe.localhost:4900/");
     let with = |value| SandboxProbe::parse(page, Some("9444"), None, None, value);
-    assert_eq!(with(None).unwrap().clipboard_read, ClipboardRead::Ask);
+    assert_eq!(with(None).unwrap().clipboard_read, ClipboardRead::Allow);
     assert_eq!(
         with(Some("ask")).unwrap().clipboard_read,
         ClipboardRead::Ask

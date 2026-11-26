@@ -491,6 +491,40 @@ fn a_start_up_failure_is_recorded_in_the_data_folder_and_named_in_the_message() 
 }
 
 #[test]
+fn a_start_up_failure_lands_in_the_fallback_folder_when_the_data_folder_cannot_be_written() {
+    let dir = tempfile::tempdir().unwrap();
+    // a file where the data folder should be: it can be neither locked nor created
+    let blocker = dir.path().join("blocker");
+    std::fs::write(&blocker, "").unwrap();
+    let fallback = dir.path().join("fallback");
+    let written = crash::write_startup_error_or_fallback(
+        Some(&blocker.join("data")),
+        &fallback,
+        "the backend didn't start",
+    )
+    .unwrap();
+    assert_eq!(written, fallback.join(crash::STARTUP_ERROR_FILE));
+    assert!(
+        std::fs::read_to_string(written)
+            .unwrap()
+            .contains("the backend didn't start")
+    );
+}
+
+#[test]
+fn a_setup_failure_the_hook_stored_is_what_run_returns_after_the_loop_ends() {
+    let stored = Mutex::new(Some(ShellError::Containment(LifecycleError::Job {
+        op: "assign",
+        source: std::io::Error::other("denied"),
+    })));
+    assert!(matches!(
+        setup_outcome(&stored),
+        Err(ShellError::Containment(_))
+    ));
+    assert!(setup_outcome(&stored).is_ok());
+}
+
+#[test]
 fn a_failure_the_setup_hook_stored_is_what_run_returns_and_tauri_s_own_otherwise() {
     let stored = Mutex::new(Some(ShellError::Containment(LifecycleError::Job {
         op: "assign",

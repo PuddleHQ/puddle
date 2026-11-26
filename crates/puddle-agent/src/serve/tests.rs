@@ -167,3 +167,15 @@ async fn a_request_that_is_not_a_connect_is_not_held_for_its_head() {
         .expect("a GET must not wait for a newline");
     assert_eq!(first, b"GET http://a");
 }
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_container_client_has_no_program_and_a_guest_client_has_one() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let dial = TcpStream::connect(listener.local_addr().unwrap());
+    let (client, accepted) = tokio::join!(dial, listener.accept());
+    let (accepted, _) = accepted.unwrap();
+    let _client = client.unwrap();
+    assert_eq!(named(&accepted, true).await, None);
+    assert!(named(&accepted, false).await.is_some());
+}

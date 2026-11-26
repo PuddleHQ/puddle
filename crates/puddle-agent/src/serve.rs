@@ -170,17 +170,24 @@ where
         .inspect_err(|err| tracing::debug!(error = %err, "writing a client's request failed"))
 }
 
-/// The program of `client` (see [`crate::program`]; only Linux guests resolve one).
-async fn named(client: &TcpStream) -> Option<Program> {
-    #[cfg(target_os = "linux")]
-    {
-        crate::program::of_client(client).await
+/// The program of `client` (see [`crate::program`]; only Linux guests resolve one). A container's
+/// client has a source address that is not the guest's own, so it has none.
+#[cfg(target_os = "linux")]
+async fn named(client: &TcpStream, container: bool) -> Option<Program> {
+    if container {
+        return None;
     }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = client;
-        None
-    }
+    crate::program::of_client(client).await
+}
+
+/// Only Linux guests resolve a program; elsewhere the label is absent.
+#[cfg(not(target_os = "linux"))]
+#[expect(
+    clippy::unused_async,
+    reason = "keeps the signature of the Linux resolver, which awaits"
+)]
+async fn named(_client: &TcpStream, _container: bool) -> Option<Program> {
+    None
 }
 
 async fn connection(mut client: TcpStream, upstream: Arc<Upstream>) {
@@ -198,11 +205,7 @@ async fn connection(mut client: TcpStream, upstream: Arc<Upstream>) {
         }
     };
     let container = in_container(&client);
-    let program = if container {
-        None
-    } else {
-        named(&client).await
-    };
+    let program = named(&client, container).await;
     if send_marked(&mut client, &mut stream, container, program.as_ref())
         .await
         .is_err()

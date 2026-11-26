@@ -170,3 +170,19 @@ async fn a_real_loopback_connection_resolves_to_this_process() {
     assert_eq!(of_client(&accepted).await, ours);
     drop(client);
 }
+
+#[test]
+fn an_address_of_the_wrong_length_is_not_read() {
+    assert_eq!(parse_address("0100:1F90"), None);
+}
+
+#[test]
+fn a_full_name_cache_is_emptied_before_the_next_name_is_kept() {
+    let proc = Proc::new("", "");
+    let resolver = proc.resolver();
+    for pid in 0..=u32::try_from(CACHE_MAX).unwrap() {
+        resolver.name_of(4_000_000 + pid);
+    }
+    let kept = resolver.names.lock().unwrap().len();
+    assert_eq!(kept, 1);
+}

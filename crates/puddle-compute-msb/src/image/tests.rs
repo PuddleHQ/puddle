@@ -215,7 +215,10 @@ async fn refused_connect() -> reqwest::Error {
 async fn a_failed_connect_says_which_registry_could_not_be_reached() {
     let err = ImageError::Registry(OciDistributionError::RequestError(refused_connect().await));
     let text = explain_connect(&err, "registry.test");
-    assert!(text.starts_with("could not connect to registry.test: "), "{text}");
+    assert!(
+        text.starts_with("could not connect to registry.test: "),
+        "{text}"
+    );
 }
 
 #[test]

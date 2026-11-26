@@ -278,7 +278,7 @@ fn global_request_sets_vscode_options() {
             sound: Some(true),
             close_behaviour: Some(CloseBehaviour::Quit),
             minimize_to_tray: Some(true),
-            app_icon: Some(AppIconChoice::DuckSun),
+            app_icon: Some(AppIconChoice::DuckFront),
             notify_only_unfocused: Some(false),
             badge: Some(false),
             notify_oom: Some(false),
@@ -313,7 +313,7 @@ fn global_request_sets_vscode_options() {
     assert!(g.ui.sound());
     assert_eq!(g.ui.close_behaviour(), settings::CloseBehaviour::Quit);
     assert!(g.ui.minimize_to_tray());
-    assert_eq!(g.ui.app_icon(), settings::AppIconChoice::DuckSun);
+    assert_eq!(g.ui.app_icon(), settings::AppIconChoice::DuckFront);
     assert!(!g.ui.notify_only_unfocused());
     assert!(!g.ui.badge());
     assert!(!g.ui.notify_oom());

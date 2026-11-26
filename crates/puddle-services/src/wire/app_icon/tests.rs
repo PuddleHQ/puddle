@@ -5,9 +5,8 @@ use super::*;
 fn every_choice_converts_both_ways_unchanged() {
     for choice in [
         settings::AppIconChoice::Duck,
-        settings::AppIconChoice::DuckPond,
-        settings::AppIconChoice::DuckNight,
-        settings::AppIconChoice::DuckSun,
+        settings::AppIconChoice::RubberDuck,
+        settings::AppIconChoice::DuckFront,
         settings::AppIconChoice::Custom,
     ] {
         assert_eq!(
@@ -16,7 +15,7 @@ fn every_choice_converts_both_ways_unchanged() {
         );
     }
     assert_eq!(
-        serde_json::to_string(&AppIconChoice::DuckSun).unwrap(),
-        r#""duck_sun""#
+        serde_json::to_string(&AppIconChoice::DuckFront).unwrap(),
+        r#""duck_front""#
     );
 }

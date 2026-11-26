@@ -135,7 +135,7 @@ describe("reading and removing", () => {
 
 describe("small helpers", () => {
   it("knows the five choices and makes a data address for a PNG", () => {
-    for (const v of ["duck", "duck_pond", "duck_night", "duck_sun", "custom"]) {
+    for (const v of ["duck", "rubber_duck", "duck_front", "custom"]) {
       expect(isIconChoice(v)).toBe(true);
     }
     expect(isIconChoice("penguin")).toBe(false);

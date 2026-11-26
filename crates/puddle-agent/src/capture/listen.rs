@@ -125,6 +125,11 @@ async fn connection(mut client: TcpStream, table: StandIns, upstream: Arc<Upstre
         return;
     };
     let marked = client.peer_addr().is_ok_and(origin::from_container);
+    let program = if marked {
+        None
+    } else {
+        crate::program::of_client(&client).await
+    };
     let first = peek(&mut client, FIRST_BYTES).await;
     let mut stream = match upstream.open().await {
         Ok(stream) => stream,
@@ -134,7 +139,11 @@ async fn connection(mut client: TcpStream, table: StandIns, upstream: Arc<Upstre
             return;
         }
     };
-    if let Err(err) = stream_write(&mut stream, &connect_request(&authority, &first, marked)).await
+    if let Err(err) = stream_write(
+        &mut stream,
+        &connect_request(&authority, &first, marked, program.as_ref()),
+    )
+    .await
     {
         tracing::debug!(error = %err, "writing the CONNECT failed");
         reset(&client);

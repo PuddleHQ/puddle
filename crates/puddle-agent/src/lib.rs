@@ -61,6 +61,8 @@ pub mod oom;
 #[cfg(target_os = "linux")]
 pub mod origin;
 pub mod ports;
+#[cfg(target_os = "linux")]
+pub mod program;
 pub mod serve;
 #[cfg(unix)]
 pub mod ssh_agent;

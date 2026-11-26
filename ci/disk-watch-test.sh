@@ -24,7 +24,7 @@ mkdir -p "$tmp/rt/vmx" "$tmp/root"
 head -c 60000000 /dev/zero >"$tmp/rt/vmx/big"
 export RUNNER_TEMP="$tmp/rt" DISK_WATCH_ROOT="$tmp/root" DISK_WATCH_FREE_FILE="$tmp/free" GITHUB_STEP_SUMMARY="$tmp/sum"
 # The guard under the floor walks the sizes before it ends: on the real dirs of a loaded runner (/opt, /usr/share/dotnet,
-# /var/log, ...) that took over the 60 s this test waits for the step to end (push ci of b1bea994, T-2323), so walk only ours.
+# /var/log, ...) that took over the 60 s this test waits for the step to end, so walk only ours.
 export DISK_WATCH_PATHS_ONLY=1 DISK_WATCH_PATHS="$tmp/rt:$tmp/rt/vmx"
 export DISK_WATCH_INTERVAL=0.2 DISK_WATCH_WARN_GB=30 DISK_WATCH_FLOOR_GB=5
 

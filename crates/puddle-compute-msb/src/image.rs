@@ -89,7 +89,9 @@ pub(crate) async fn pull(
 fn turn_for(image: &str) -> Arc<AsyncMutex<()>> {
     static TURNS: LazyLock<Mutex<BTreeMap<String, Arc<AsyncMutex<()>>>>> =
         LazyLock::new(Mutex::default);
-    let mut turns = TURNS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut turns = TURNS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     Arc::clone(turns.entry(image.to_owned()).or_default())
 }
 

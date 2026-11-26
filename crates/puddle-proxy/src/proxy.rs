@@ -643,7 +643,8 @@ async fn serve(handler: &WorkspaceHandler, stream: GuestStream) {
         return;
     }
     let mut request =
-        EgressRequest::new(handler.workspace.clone(), target.host.clone(), target.port);
+        EgressRequest::new(handler.workspace.clone(), target.host.clone(), target.port)
+            .with_program(ssh::program(&head));
     if ssh::announced(&head) || ssh::started(reader.buffer()) {
         request = request.with_protocol(ProtocolHint::Ssh);
     }

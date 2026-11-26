@@ -287,3 +287,31 @@ async fn the_bytes_sent_with_the_head_come_out_whole_through_small_reads() {
     }
     assert_eq!(out, b"GET /early and later");
 }
+
+#[test]
+fn the_program_is_the_cleaned_value_of_the_first_program_header() {
+    let name = |headers: &[&str]| program(&head(headers)).map(|p| p.to_string());
+    assert_eq!(name(&["x-puddle-program: pip"]).as_deref(), Some("pip"));
+    assert_eq!(
+        name(&["Host: a", "X-Puddle-Program:  node "]).as_deref(),
+        Some("node")
+    );
+    assert_eq!(
+        name(&["x-puddle-program: curl", "x-puddle-program: sh"]).as_deref(),
+        Some("curl")
+    );
+    assert_eq!(name(&["x-puddle-program: a b/c"]).as_deref(), Some("abc"));
+}
+
+#[test]
+fn no_program_header_or_nothing_usable_in_it_is_no_program() {
+    for headers in [
+        &[][..],
+        &["x-puddle-program: "],
+        &["x-puddle-program: / :"],
+        &["x-puddle-program-extra: pip"],
+        &["host: x-puddle-program: pip"],
+    ] {
+        assert_eq!(program(&head(headers)), None, "{headers:?}");
+    }
+}

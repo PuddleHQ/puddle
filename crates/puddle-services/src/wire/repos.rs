@@ -189,7 +189,8 @@ pub struct RepoSource {
 }
 
 impl RepoSource {
-    pub(crate) fn from_list(list: &SourceList) -> Self {
+    /// Builds the wire form from the list.
+    pub fn from_list(list: &SourceList) -> Self {
         Self {
             identity_id: list.identity.0,
             credential: u32::try_from(list.credential).unwrap_or(u32::MAX),
@@ -292,7 +293,9 @@ pub struct RepoView {
 }
 
 impl RepoView {
-    pub(crate) fn from_found(found: &Found) -> Self {
+    /// Builds the wire form from the found.
+    #[must_use]
+    pub fn from_found(found: &Found) -> Self {
         let Repository {
             host,
             owner,

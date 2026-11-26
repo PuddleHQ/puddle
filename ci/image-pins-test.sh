@@ -22,7 +22,7 @@ ref=mcr.microsoft.com/devcontainers/base:debian
 d1=sha256:$(printf '1%.0s' $(seq 64))
 d2=sha256:$(printf '2%.0s' $(seq 64))
 d3=sha256:$(printf '3%.0s' $(seq 64))
-a=crates/puddle-api/src/workspaces.rs
+a=crates/puddle-services/src/workspaces.rs
 b=crates/puddle-workspace/src/workspaces.rs
 c=crates/puddle-vm-tests/src/lib.rs
 d=crates/puddle-compute/src/fake/mod.rs
@@ -131,7 +131,7 @@ run refresh
 git -C "$tmp/origin.git" rev-parse -q --verify "refs/heads/$branch" >/dev/null || bad "refresh: the branch was not pushed"
 [ "$(git -C "$tmp/origin.git" rev-list --count "develop..$branch")" = 1 ] || bad "refresh: the branch must carry exactly one commit"
 changed=$(git -C "$tmp/origin.git" diff --name-only develop "$branch" | sort | tr '\n' ' ')
-[ "$changed" = "$a $d $c $b " ] || bad "refresh: the commit must touch exactly the four pin files, got $changed"
+[ "$changed" = "$d $a $c $b " ] || bad "refresh: the commit must touch exactly the four pin files, got $changed"
 [ "$(on_branch "$a" | grep -c "$ref@$d2")" = 1 ] || bad "refresh: file a lacks the new digest"
 [ "$(on_branch "$b" | grep -c "$ref@$d2")" = 1 ] || bad "refresh: file b lacks the new digest"
 [ "$(on_branch "$c" | grep -c "$ref@$d2")" = 1 ] || bad "refresh: file c lacks the new digest"

@@ -38,7 +38,8 @@ pub struct RequestRule {
 impl RequestRule {
     /// `rule` on the wire; `never` is every never-decrypt name as (workspace, name), the global
     /// ones with no workspace.
-    pub(crate) fn new(rule: puddle_store::RequestRule, never: &[(Option<String>, String)]) -> Self {
+    #[must_use]
+    pub fn new(rule: puddle_store::RequestRule, never: &[(Option<String>, String)]) -> Self {
         let warning = overridden_warning(&rule, never);
         Self {
             id: rule.id,

@@ -21,7 +21,11 @@ pub struct StartFolderRequest {
 }
 
 impl StartFolderRequest {
-    pub(crate) fn into_start_folder(self) -> Result<Option<domain::StartFolder>, ApiError> {
+    /// Checks the request and converts it to its start folder.
+    ///
+    /// # Errors
+    /// An invalid-request [`ApiError`] (422) when a value is not valid.
+    pub fn into_start_folder(self) -> Result<Option<domain::StartFolder>, ApiError> {
         self.path
             .as_deref()
             .map(domain::StartFolder::parse)

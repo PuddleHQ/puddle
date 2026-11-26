@@ -670,7 +670,8 @@ pub enum AuditType {
 
 impl AuditType {
     /// The record `type` tag.
-    pub(crate) fn tag(self) -> &'static str {
+    #[must_use]
+    pub fn tag(self) -> &'static str {
         match self {
             Self::Connection => "connection",
             Self::PendingCreated => "pending_created",

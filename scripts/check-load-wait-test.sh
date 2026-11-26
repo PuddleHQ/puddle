@@ -9,6 +9,7 @@ trap 'rm -rf "$tmp"' EXIT
 sed -n '/^wait_for_load() {/,/^}/p' "$here/check.sh" >"$tmp/fn.sh"
 [ -s "$tmp/fn.sh" ] || { echo "check-load-wait-test: wait_for_load not found in check.sh" >&2; exit 1; }
 fail() { echo "check-load-wait-test: $*" >&2; exit 1; }
+# shellcheck disable=SC2016 # "$1" is for the inner sh, not this shell
 run() { # run <loadavg line> [env...]: prints stderr, returns the function's status
     echo "$1" >"$tmp/loadavg"
     shift
@@ -24,6 +25,7 @@ out=$(run "40.00 1 1 1/1 1" CHECK_LOAD_WAIT=2 CI=true)
 [ -z "$out" ] || fail "CI must skip, got: $out"
 echo "40.00 1 1 1/1 1" >"$tmp/loadavg"
 (sleep 2; echo "1.00 1 1 1/1 1" >"$tmp/loadavg") &
+# shellcheck disable=SC2016 # "$1" is for the inner sh, not this shell
 out=$(env -u CI CHECK_LOAD_WAIT=30 CHECK_LOADAVG_FILE="$tmp/loadavg" CHECK_LOAD_CORES=4 CHECK_LOAD_POLL=1 sh -c '. "$1"; wait_for_load' _ "$tmp/fn.sh" 2>&1)
 case $out in *"waiting for it to drop"*) ;; *) fail "expected the waiting line, got: $out" ;; esac
 case $out in *"anyway"*) fail "load dropped, must not run on at the cap: $out" ;; esac

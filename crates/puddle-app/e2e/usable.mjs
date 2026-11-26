@@ -464,8 +464,17 @@ async function createFromTheForm() {
   await uia.waitFor("the New workspace screen", { window: MAIN, localized: "heading", name: "New workspace" });
   await uia.fill("the repository address", { window: MAIN, role: "edit", nameRegex: "^Git repository \\(HTTPS" }, httpsUrl);
   await uia.fill("the name", { window: MAIN, role: "edit", name: "Name" }, WORKSPACE);
-  // Enter in the Name field submits the form, which needs no button lookup.
+  // Enter in the Name field submits the form. Real key presses go to the foreground window, so a key
+  // that a passing window or the app's own redraw swallowed leaves the form as it was (the app then
+  // logs no create at all). So the result is read from the list, and the Create button, which
+  // UI Automation presses without any focus, is the fallback.
   await uia.type("the Name field", { window: MAIN, role: "edit", name: "Name" }, "", { enter: true });
+  const listed = () => api("GET", "/api/workspaces").then((r) => r.json?.workspaces?.find((w) => w.name === WORKSPACE));
+  const first = await until("the workspace to be listed after Enter", listed, 10_000, 500).catch(() => undefined);
+  if (first) return first;
+  note(`Enter did not make the workspace in 10 s; the window: ${JSON.stringify(mainWindow()).slice(0, 300)}; pressing Create instead`);
+  await uia.click("Create workspace", inMain("button", "Create workspace"), 15_000).catch((err) => note(`the Create button was not pressable: ${err.message}`));
+  return until("the workspace to be listed after pressing Create", listed, 60_000, 1000);
 }
 
 /**
@@ -859,8 +868,7 @@ try {
 
   // 2. The real create, through the window: the first-run steps, then the New workspace form.
   await step("the first-run steps lead to the first workspace's form", firstRunToCreateForm);
-  await step("the New workspace form is filled and sent", createFromTheForm);
-  const created = await until("the workspace to be listed", async () => (await api("GET", "/api/workspaces")).json?.workspaces?.find((w) => w.name === WORKSPACE), 60_000, 1000);
+  const created = await step("the New workspace form is filled and sent", createFromTheForm);
   const id = created.id;
   note(`workspace ${WORKSPACE} has the id ${id}`);
   let started = false;

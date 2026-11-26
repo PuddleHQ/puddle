@@ -153,7 +153,7 @@ function Find-PlaceholderRows($Rows) {
 # own plain text in the package (crates/puddle-app/wix/main.wxs), or Windows Installer shows its
 # built-in "Folder: [1]" style text for it.
 $ActionsWithText = @('InstallFiles', 'CreateFolders', 'RemoveFolders', 'RemoveFiles', 'CreateShortcuts', 'RemoveShortcuts',
-    'WriteRegistryValues', 'RemoveRegistryValues', 'RegisterProduct', 'PublishProduct', 'PublishFeatures', 'UnpublishFeatures',
+    'WriteRegistryValues', 'RemoveRegistryValues', 'RegisterUser', 'RegisterProduct', 'PublishProduct', 'PublishFeatures', 'UnpublishFeatures',
     'RemoveExistingProducts', 'ProcessComponents', 'FindRelatedProducts', 'AppSearch', 'MigrateFeatureStates', 'RollbackCleanup',
     'InstallAdminPackage')
 

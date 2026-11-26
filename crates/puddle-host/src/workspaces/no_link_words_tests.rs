@@ -3,12 +3,12 @@ use super::*;
 
 #[test]
 fn a_running_workspace_whose_agent_is_late_is_not_called_stopped_and_the_user_is_not_blamed() {
-    let acme = WorkspaceId::new("acme").unwrap();
+    let acme = "acme";
     assert_eq!(
-        no_link_message(&acme, NoLink::NotRunning),
+        no_link_message(acme, NoLink::NotRunning),
         "acme is not running; start it first"
     );
-    let late = no_link_message(&acme, NoLink::NotConnected);
+    let late = no_link_message(acme, NoLink::NotConnected);
     assert!(late.starts_with("acme is running"));
     assert!(late.contains("open the editor again in a moment"));
 }

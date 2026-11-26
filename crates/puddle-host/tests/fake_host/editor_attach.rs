@@ -151,6 +151,27 @@ async fn a_browser_attach_gives_the_window_the_front_the_settings_and_a_way_to_t
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_window_that_cannot_sign_in_names_the_workspace_by_its_name_not_its_id() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create_as(&api, &mut events, "Acme Web", "acme-web").await;
+    let _editor = editor_stand_in(&rig, "acme-web").await;
+    let target = browser_target(&rig, &api, "acme-web").await;
+    let Some(puddle_api::EditorSignIn::Form(login)) = target.login else {
+        panic!("code-server signs in with its login form");
+    };
+    api.post("/api/workspaces/acme-web/stop", "").await;
+    events
+        .until(ended("acme-web"), Duration::from_secs(20))
+        .await;
+    let err = login.password().await.unwrap_err().to_string();
+    assert_eq!(err, "Acme Web is not running; start it first");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_window_that_signs_in_before_the_agents_hello_waits_for_it_and_gets_the_password() {
     let rig = Rig::named_ids();
     let host = rig.start().await;

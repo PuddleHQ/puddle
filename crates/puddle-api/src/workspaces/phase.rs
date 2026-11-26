@@ -257,7 +257,11 @@ pub fn admit(record: &WorkspaceRecord, action: Action) -> Result<(), WorkspaceEr
         },
         None => match record.phase() {
             Phase::Idle(WorkspaceStatus::Running) => Ok(()),
-            _ => Err(WorkspaceError::Conflict(format!(
+            Phase::Busy(running, _) => Err(WorkspaceError::Conflict(format!(
+                "{} is busy ({running}); wait for it to finish",
+                record.name
+            ))),
+            Phase::Idle(_) => Err(WorkspaceError::Conflict(format!(
                 "{} is not running; start it first",
                 record.name
             ))),

@@ -659,10 +659,12 @@ struct GuestLogin {
     guests: Arc<dyn puddle_front::Guests>,
     ports: Ports,
     workspace: WorkspaceId,
+    /// The name the user gave the workspace, for what a window is told.
+    label: String,
 }
 
 /// What the user is told when `workspace` has no agent link to sign in through.
-fn no_link_message(workspace: &WorkspaceId, why: NoLink) -> String {
+fn no_link_message(workspace: &str, why: NoLink) -> String {
     match why {
         NoLink::NotRunning => format!("{workspace} is not running; start it first"),
         NoLink::NotConnected => format!(
@@ -693,7 +695,7 @@ impl EditorLogin for GuestLogin {
                         .ports
                         .guest_link_within(&self.workspace, AGENT_HELLO_WAIT)
                         .await
-                        .map_err(|why| LaunchError::new(no_link_message(&self.workspace, why)))?;
+                        .map_err(|why| LaunchError::new(no_link_message(&self.label, why)))?;
                     Arc::new(link)
                 };
             editor

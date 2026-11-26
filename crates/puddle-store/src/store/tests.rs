@@ -395,6 +395,41 @@ fn a_failed_connection_summary_write_is_written_with_the_next_connection() {
     assert_eq!(summarised_connections(&store), 5);
 }
 
+#[test]
+fn allowed_today_counts_rule_allows_before_the_record_limit_and_resets_at_midnight() {
+    let (clock, store) = fresh_store();
+    store
+        .set_workspace_owner(&WorkspaceId::new("a").unwrap(), UserId::OWNER)
+        .unwrap();
+    let sb = |reason| {
+        ConnectionEvent::new(
+            &request("a", "x.example"),
+            ConnectionDecision::Allow,
+            reason,
+        )
+    };
+    // 205 allowed by rule: the record limit drops 5 records, the count keeps them.
+    for _ in 0..205 {
+        store
+            .record_connection(&sb(ConnectionReason::Rule))
+            .unwrap();
+    }
+    store
+        .record_connection(&sb(ConnectionReason::PuddleRequest))
+        .unwrap();
+    let denied = ConnectionEvent::new(
+        &request("a", "x.example"),
+        ConnectionDecision::Deny,
+        ConnectionReason::Rule,
+    );
+    store.record_connection(&denied).unwrap();
+    store.record_connection(&puddle_event()).unwrap();
+    // 1_000_000 ms is in day 0.
+    assert_eq!(store.allowed_today(UserId::OWNER), (205, 0));
+    clock.advance(86_400_000);
+    assert_eq!(store.allowed_today(UserId::OWNER), (0, 86_400_000));
+}
+
 fn puddle_event() -> ConnectionEvent {
     ConnectionEvent::puddle(
         Host::parse_normalised("api.github.com").unwrap(),

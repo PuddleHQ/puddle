@@ -198,6 +198,37 @@ pub struct WorkspaceDeletion {
 #[derive(Debug, Default)]
 struct WorkspaceState {
     connections: ConnectionWindow,
+    allowed: AllowedToday,
+}
+
+/// Milliseconds in a UTC day, the day [`AllowedToday`] counts in.
+const DAY_MS: u64 = 86_400_000;
+
+/// Connections a rule allowed in one UTC day, for the Inbox's quiet line. In memory like
+/// [`ConnectionWindow`]: a restart starts it again at zero.
+#[derive(Debug, Default)]
+struct AllowedToday {
+    /// Days since the epoch the count is for.
+    day: u64,
+    count: u64,
+}
+
+impl AllowedToday {
+    fn bump(&mut self, now: u64) {
+        let day = now / DAY_MS;
+        if day != self.day {
+            *self = Self { day, count: 0 };
+        }
+        self.count += 1;
+    }
+
+    fn on(&self, now: u64) -> u64 {
+        if self.day == now / DAY_MS {
+            self.count
+        } else {
+            0
+        }
+    }
 }
 
 #[cfg(test)]

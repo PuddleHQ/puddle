@@ -214,6 +214,11 @@ pub struct Inbox {
     /// full list: a new host it asks about is answered as waiting but gets no row until the user
     /// answers some (rules spec R-45).
     pub open_limit: u64,
+    /// Connections a rule allowed in the user's workspaces since `since`. Counted in memory, so
+    /// it starts again at zero when Puddle restarts.
+    pub allowed_today: u64,
+    /// The start of the UTC day `allowed_today` counts, in milliseconds since the epoch.
+    pub since: u64,
 }
 
 /// Which workspaces a rule applies to.

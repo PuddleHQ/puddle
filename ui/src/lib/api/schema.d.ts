@@ -4892,6 +4892,12 @@ export interface components {
         };
         /** @description The inbox: open requests grouped by registrable domain, most recent group first. */
         Inbox: {
+            /**
+             * Format: int64
+             * @description Connections a rule allowed in the user's workspaces since `since`. Counted in memory, so
+             *     it starts again at zero when Puddle restarts.
+             */
+            allowed_today: number;
             /** @description The groups. */
             groups: components["schemas"]["InboxGroup"][];
             /**
@@ -4901,6 +4907,11 @@ export interface components {
              *     answers some (rules spec R-45).
              */
             open_limit: number;
+            /**
+             * Format: int64
+             * @description The start of the UTC day `allowed_today` counts, in milliseconds since the epoch.
+             */
+            since: number;
         };
         /** @description Open requests that share a registrable domain (R-18). Grouping is for display only. */
         InboxGroup: {

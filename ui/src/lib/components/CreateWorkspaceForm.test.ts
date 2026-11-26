@@ -745,6 +745,10 @@ describe("CreateWorkspaceForm", () => {
       expect(field("Git repository (HTTPS)").value).toBe(
         "https://github.com/acme/api.git",
       );
+      // The focus the screen takes on opening stays on the row the repository made.
+      await vi.waitFor(() =>
+        expect(document.activeElement).toBe(field("Git repository (HTTPS)")),
+      );
     });
   });
   it("warns with the identity it got when none covers the repository, and offers the Git tab", async () => {

@@ -99,7 +99,17 @@
   let nextKey = Math.max(0, ...(kept?.rows.map((r) => r.key) ?? [])) + 1;
   const fresh = (url = "") => newRow(nextKey++, url);
 
-  let rows = $state<RowDraft[]>(kept ? structuredClone(kept.rows) : [fresh()]);
+  /** The row a handed-in repository makes, or an empty one. */
+  function firstRow(): RowDraft {
+    const given = untrack(() => prefill);
+    const row = fresh(given?.url ?? "");
+    if (given) row.listedBy = given.identity;
+    return row;
+  }
+
+  let rows = $state<RowDraft[]>(
+    kept ? structuredClone(kept.rows) : [firstRow()],
+  );
   let name = $state(kept?.name ?? "");
   let nameTouched = $state(kept?.nameTouched ?? false);
   let image = $state(kept?.image ?? "");
@@ -111,7 +121,8 @@
   /** What each row was refused for, by the row's key: after a submit, or the service's words. */
   let rowErrors = $state<Record<number, RowProblems>>({});
   let working = $state(false);
-  let taken: typeof prefill = null;
+  // The first repository is already in the rows, so only a later change of it replaces them.
+  let taken: typeof prefill = untrack(() => prefill);
 
   // Reads the identities when the screen opens, so the ones that cover an address can be offered.
   // The CPU limits are read each time the screen opens: the maximum can change in Settings.
@@ -140,7 +151,8 @@
     cpusChosen ?? settings.view?.effective.cpus.value ?? 1,
   );
 
-  // A repository handed in by "Create a workspace for this" becomes the only row, once.
+  // A repository handed in by "Create a workspace for this" becomes the only row, once (the first
+  // one when the screen opens, so the focus the screen takes on mount lands on a row that stays).
   $effect(() => {
     if (prefill && prefill !== taken) {
       taken = prefill;

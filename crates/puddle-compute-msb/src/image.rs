@@ -91,7 +91,7 @@ fn turn_for(image: &str) -> Arc<AsyncMutex<()>> {
         LazyLock::new(Mutex::default);
     let mut turns = TURNS
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     Arc::clone(turns.entry(image.to_owned()).or_default())
 }
 

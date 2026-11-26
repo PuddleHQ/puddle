@@ -69,6 +69,27 @@ async function openOptions(row: Locator, page: Page): Promise<Locator> {
   return dialog;
 }
 
+test.describe("the program that asked", () => {
+  test("a row shows it next to the workspace, from the list and from a live request", async ({
+    page,
+    backend,
+  }) => {
+    await ask(backend, "shop", "listed.example.com", { program: "pip" });
+    await ask(backend, "shop", "plain.example.com");
+    await openInbox(page, backend);
+    await expect(rowFor(page, "listed.example.com")).toContainText(
+      "shop (pip) · 1 try",
+    );
+    await expect(rowFor(page, "plain.example.com")).toContainText(
+      "shop · 1 try",
+    );
+    await ask(backend, "shop", "live.example.com", { program: "node" });
+    await expect(rowFor(page, "live.example.com")).toContainText(
+      "shop (node) · 1 try",
+    );
+  });
+});
+
 test.describe("deciding", () => {
   test("approve here: one click, this workspace, exact host, permanent", async ({
     page,

@@ -159,14 +159,15 @@ impl From<DiskWarningPercent> for u8 {
 
 /// What happens when a page in a workspace window reads the clipboard programmatically.
 ///
-/// The default asks once per workspace; the answer is stored as that workspace's override.
+/// The default allows it: the editor reads the clipboard when the user pastes into its terminal,
+/// and the webview's own prompt for it is noise. A workspace can still ask or refuse.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClipboardRead {
-    /// Show Puddle's prompt.
-    #[default]
+    /// Show the webview's prompt.
     Ask,
     /// Allow without a prompt.
+    #[default]
     Allow,
     /// Refuse without a prompt.
     Deny,

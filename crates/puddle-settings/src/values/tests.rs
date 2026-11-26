@@ -38,8 +38,8 @@ fn grace_validates_when_deserialised() {
 }
 
 #[test]
-fn clipboard_read_is_snake_case_and_defaults_to_ask() {
-    assert_eq!(ClipboardRead::default(), ClipboardRead::Ask);
+fn clipboard_read_is_snake_case_and_defaults_to_allow() {
+    assert_eq!(ClipboardRead::default(), ClipboardRead::Allow);
     assert_eq!(
         serde_json::to_string(&ClipboardRead::Allow).unwrap(),
         r#""allow""#

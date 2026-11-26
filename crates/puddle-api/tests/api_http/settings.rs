@@ -60,7 +60,7 @@ async fn fresh_settings_are_all_defaults_with_every_field_present() {
         json!({"max_cpus": host.min(255), "host_cpus": host, "default_cpus": default_cpus})
     );
     assert_eq!(e["reconnection_grace"]["value"], 300);
-    assert_eq!(e["clipboard_read"]["value"], "ask");
+    assert_eq!(e["clipboard_read"]["value"], "allow");
     assert_eq!(e["local_toggles"]["metadata"]["value"], false);
     assert_eq!(
         e["local_toggles"]["company_network"],

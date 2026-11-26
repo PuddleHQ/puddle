@@ -212,13 +212,15 @@ fn classify(policy: &OriginPolicy, target: &Url, proxy_links: bool) -> NewWindow
     }
 }
 
-/// The answer to a permission request of the page. Only a script's clipboard read is decided here:
-/// the settings say allow or deny. "Ask" leaves it to the webview's own prompt, which keeps the answer in
-/// the workspace's own data folder, so the question is asked once per workspace. Everything else
-/// stays at the webview's default.
+/// The answer to a permission request of the page. The editor's font picker (`LocalFonts`) is
+/// always allowed: it only lists the fonts installed on the user's own computer, and the webview
+/// would otherwise ask after a short while. A script's clipboard read follows the settings (allow
+/// by default; "ask" leaves it to the webview's own prompt, which keeps the answer in the
+/// workspace's own data folder). Everything else stays at the webview's default.
 #[must_use]
 pub fn permission_response(settings: &WindowSettings, kind: &PermissionKind) -> PermissionResponse {
     match (kind, settings.clipboard_read) {
+        (PermissionKind::LocalFonts, _) => PermissionResponse::Allow,
         (PermissionKind::ClipboardRead, ClipboardRead::Allow) => PermissionResponse::Allow,
         (PermissionKind::ClipboardRead, ClipboardRead::Deny) => PermissionResponse::Deny,
         _ => PermissionResponse::Default,

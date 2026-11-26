@@ -507,6 +507,7 @@ fn connection(ts: u64, workspace: &str, host: &str, decision: ConnectionDecision
         protocol: None,
         method: None,
         path: None,
+        git_operation: None,
         path_truncated: false,
         bytes_up: 0,
         bytes_down: 0,

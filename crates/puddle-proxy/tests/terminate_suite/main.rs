@@ -16,6 +16,7 @@ mod everything;
 mod exchange;
 mod foreign_credentials;
 mod git_inject;
+mod git_operation;
 mod git_ssh;
 mod grpc;
 mod guest_proxy_headers;

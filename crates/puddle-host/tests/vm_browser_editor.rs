@@ -206,6 +206,10 @@ async fn explorer(
     }
 }
 
+/// The ids of the workspaces the editor keeps storage for, and of those it has a cached copy of
+/// the multi-root file for: `storage= <ids> cached= <ids>`.
+const WORKSPACE_IDS: &str = "cd /workspace/.puddle/code-server/user-data/User && echo storage= $(ls workspaceStorage 2>/dev/null | grep -v '[.]') cached= $(ls caches/CachedConfigurations/workspaces 2>/dev/null)";
+
 /// Waits until the editor server answers its health check.
 const EDITOR_UP: &str = "for i in $(seq 1 100); do curl -sf -o /dev/null http://127.0.0.1:41337/healthz && exit 0; sleep 1; done; exit 1";
 
@@ -744,6 +748,36 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
     );
     assert!(answer.get("url").is_none_or(Value::is_null), "{answer}");
     let rows = explorer(&shell, &runtime, &sandbox, "first window", EXPLORER_ROWS).await;
+    // The agent puts the editor's cached copy of the multi-root file in place under the id the
+    // workbench gives the window's workspace, which it mirrors from the workbench's internals.
+    // The window's own storage folder carries the workbench's id: an editor release that keys
+    // its cache another way fails here, not later as windows that open with no folders.
+    let (storage, cached) = puddle_test_kit::eventually_async(
+        "the window's storage folder",
+        Duration::from_secs(90),
+        || async {
+            let line = guest(&runtime, &sandbox, WORKSPACE_IDS).await;
+            let words = |part: &str| -> Vec<String> {
+                part.split_whitespace().map(str::to_owned).collect()
+            };
+            match line
+                .trim()
+                .strip_prefix("storage=")
+                .and_then(|rest| rest.split_once("cached="))
+            {
+                Some((storage, cached)) if !storage.trim().is_empty() => {
+                    Ok((words(storage), words(cached)))
+                }
+                _ => Err(format!("the guest shows {line}")),
+            }
+        },
+    )
+    .await;
+    assert!(
+        storage.iter().all(|id| cached.contains(id)),
+        "the window's workspace ids {storage:?} have no cached copy among {cached:?}: the editor \
+         no longer keys its cache the way the agent mirrors it"
+    );
     let place = shell.wait(&name, "true", WHERE, PAGE_BUDGET).await;
     assert_eq!(place["login"], false, "{place}");
     let password = guest(&runtime, &sandbox, "cat /run/puddle/editor-password").await;

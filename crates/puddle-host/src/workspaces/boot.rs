@@ -173,7 +173,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let editor = inner
             .kit
             .editor(name, self.reconnection_grace(name), self.editor_kind())?
-            .map(|server| server.with_user(session_user));
+            .map(|server| {
+                server
+                    .with_user(session_user)
+                    .with_window_authority(window_authority(name, inner.front_addr.port()))
+            });
         let mode = crate::settings_read::mise_or_off(inner.settings.as_ref(), name);
         let mise = MiseLayer::of(mode)?;
         let began = inner.injection.begin(name, capture).await?;
@@ -725,6 +729,13 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             _ => inner.problems.clear(&key),
         }
     }
+}
+
+/// The `host:port` a browser window of workspace `name`'s editor opens at, on a front listening
+/// on `port` ([`puddle_front::origin_of`] without its scheme).
+fn window_authority(name: &WorkspaceId, port: u16) -> String {
+    let origin = puddle_front::origin_of(port, name);
+    origin.strip_prefix("http://").unwrap_or(&origin).to_owned()
 }
 
 /// The multi-root file the editor opens for `found`, `None` when it opens the start folder or the

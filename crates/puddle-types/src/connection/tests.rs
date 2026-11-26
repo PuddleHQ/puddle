@@ -453,3 +453,21 @@ fn git_smart_http_targets_name_their_operation() {
     assert_eq!(op("/git-receive-pack/readme"), None);
     assert_eq!(HttpRequestLine::new("GET", "/").git_operation(), None);
 }
+
+#[test]
+fn a_git_operation_has_the_stored_name() {
+    assert_eq!(GitOperation::Push.as_str(), "push");
+    assert_eq!(GitOperation::Fetch.as_str(), "fetch");
+}
+
+#[test]
+fn a_request_line_reports_the_git_operation_of_its_target() {
+    assert_eq!(
+        HttpRequestLine::new("POST", "/a/b.git/git-receive-pack").git_operation(),
+        Some(GitOperation::Push)
+    );
+    assert_eq!(
+        HttpRequestLine::new("GET", "/a/b.git/info/refs?service=git-upload-pack").git_operation(),
+        Some(GitOperation::Fetch)
+    );
+}

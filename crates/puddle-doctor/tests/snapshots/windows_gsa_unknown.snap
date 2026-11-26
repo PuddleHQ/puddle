@@ -1,24 +1,22 @@
 puddle doctor (puddle 0.1.0, windows x86_64)
 
-ok    CPU virtualization    on (the hypervisor uses it)
-ok    Hypervisor            Windows Hypervisor Platform is on and the hypervisor runs
-ok    Code integrity        memory integrity (HVCI) on; App Control policy for programs off
-ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
-ok    Runtime starts        msb 0.7.7-puddle.2 (0.0 s)
-ok    Test boot             a test VM booted and ran a program in 1.1 s
-ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
-ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
-ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)
-ok    Azure CLI (az)        version 2.64.0
-ok    Credential store      the operating system's credential store: a test write and delete worked
-info  Global Secure Access  could not check whether the client is installed
-      impact: Puddle couldn't tell whether a client is installed that keeps workspaces from
-              company resources.
-      remedy: If company resources fail from a workspace, check whether the Global Secure Access
-              client is installed.
-      note:   Puddle works without it. If company resources reached through Microsoft Entra Global
-              Secure Access don't work from a sandbox, see whether its client is installed on this
-              PC: it doesn't tunnel virtual machines' traffic.
+ok    CPU virtualization          on (the hypervisor uses it)
+ok    Hypervisor                  Windows Hypervisor Platform is on and the hypervisor runs
+ok    Code integrity              memory integrity (HVCI) on; App Control policy for programs off
+ok    Bundled runtime             msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
+ok    Runtime starts              msb 0.7.7-puddle.2 (0.0 s)
+ok    Test boot                   a test VM booted and ran a program in 1.1 s
+ok    Disk space                  120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
+ok    Disk encryption             data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
+ok    SSH agent                   the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)
+ok    Azure CLI (az)              version 2.64.0
+ok    Credential store            the operating system's credential store: a test write and delete worked
+info  Known problematic software  could not check whether known problematic software is installed
+      impact: Puddle couldn't tell whether software is installed that is known to keep workspaces
+              from working as expected.
+      remedy: If workspaces misbehave, open More details to see which programs Puddle looks for.
+      note:   Puddle works without it. If workspaces misbehave, see whether this software is
+              installed on this computer: Microsoft Entra Global Secure Access client.
       from:   OpenSCManagerW: Access is denied. (os error 5)
 
 No problems found. (1.2 s)
@@ -98,14 +96,14 @@ No problems found. (1.2 s)
       "impact": "Puddle keeps your tokens and passwords in a protected store, so you don't type them again."
     },
     {
-      "id": "global_secure_access",
+      "id": "problematic_software",
       "status": "info",
-      "summary": "could not check whether the client is installed",
-      "finding": "global_secure_access_unknown",
-      "fix": "Puddle works without it. If company resources reached through Microsoft Entra Global Secure Access don't work from a sandbox, see whether its client is installed on this PC: it doesn't tunnel virtual machines' traffic.",
+      "summary": "could not check whether known problematic software is installed",
+      "finding": "problematic_software_unknown",
+      "fix": "Puddle works without it. If workspaces misbehave, see whether this software is installed on this computer: Microsoft Entra Global Secure Access client.",
       "detail": "OpenSCManagerW: Access is denied. (os error 5)",
-      "impact": "Puddle couldn't tell whether a client is installed that keeps workspaces from company resources.",
-      "remedy": "If company resources fail from a workspace, check whether the Global Secure Access client is installed."
+      "impact": "Puddle couldn't tell whether software is installed that is known to keep workspaces from working as expected.",
+      "remedy": "If workspaces misbehave, open More details to see which programs Puddle looks for."
     }
   ],
   "elapsed_ms": 1234

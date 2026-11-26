@@ -23,7 +23,6 @@
     )
 )]
 
-use puddle_host_test_support::support;
 use puddle_host_test_support::vm_support;
 
 use std::process::ExitCode;
@@ -77,7 +76,7 @@ mod gateway {
     use puddle_types::WorkspaceId;
     use serde_json::json;
 
-    use crate::support::{Api, ended, named_id_options};
+    use puddle_host_test_support::support::{Api, ended, named_id_options};
     use crate::vm_support::{VmHost, start_vm_host_config};
 
     /// A port in the guest for the probe's own listener, which it reaches through a forward.

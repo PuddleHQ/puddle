@@ -61,8 +61,9 @@
   <div class="line failed" role="alert">
     <TriangleAlert aria-hidden="true" size={16} />
     <span class="text">
-      <b>{operation ? `${operationLabel(operation)} failed` : "That failed"}.</b
-      >
+      <b>
+        {operation ? `${operationLabel(operation)} failed` : "That failed"}.
+      </b>
       {#if progress.detail}<span class="detail">{progress.detail}</span>{/if}
     </span>
     {#if onDismiss}
@@ -73,16 +74,16 @@
   <p class="line" role="status">
     <LoaderCircle class="spin" aria-hidden="true" size={16} />
     <span class="text">
-      <b
-        >{progress
+      <b>
+        {progress
           ? (clone ?? stepLabel(progress.step))
           : busy
             ? operationLabel(busy)
-            : ""}</b
-      >
-      {#if position}<span class="muted"
-          >step {position.index} of {position.of}</span
-        >{/if}
+            : ""}
+      </b>
+      {#if position}<span class="muted">
+          step {position.index} of {position.of}
+        </span>{/if}
       {#if count}<span class="muted">{count}</span>{/if}
       {#if share !== null}<progress
           class="bar"

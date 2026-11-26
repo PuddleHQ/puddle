@@ -154,8 +154,10 @@
         Identity: <a href="/identities/{identity.id}">{identity.label}</a>
       {:else}
         No identity needed for a public repository. For a private one, <a
-          href={tabHref(workspace.id, "git")}>add an identity on the Git tab</a
+          href={tabHref(workspace.id, "git")}
         >
+          add an identity on the Git tab
+        </a>
       {/if}
     </span>
   {/if}
@@ -166,8 +168,10 @@
     type="button"
     class="btn"
     aria-label="Remove from the list: {entry.directory}"
-    onclick={() => askRemove(entry)}>Remove from the list</button
+    onclick={() => askRemove(entry)}
   >
+    Remove from the list
+  </button>
 {/snippet}
 
 <section class="card" id="repositories" aria-labelledby="repos-h">
@@ -178,8 +182,10 @@
       class="btn"
       disabled={addOff !== null}
       aria-describedby={addOff ? "repos-add-reason" : undefined}
-      onclick={() => (addOpen = true)}>Add repository</button
+      onclick={() => (addOpen = true)}
     >
+      Add repository
+    </button>
   </div>
   {#if addOff}
     <p class="hint" id="repos-add-reason">{addOff}</p>
@@ -207,8 +213,9 @@
           <time
             datetime={new Date(listing.checked_at).toISOString()}
             title={absoluteTime(listing.checked_at)}
-            >Listed {relativeTime(listing.checked_at, Date.now())}.</time
           >
+            Listed {relativeTime(listing.checked_at, Date.now())}.
+          </time>
         {/if}
       </p>
     {:else if listing.problem}
@@ -245,9 +252,9 @@
             {/if}
             {#if entry}
               {#if remoteDiffers(checkout)}
-                <span class="meta"
-                  >The list says <span class="mono">{entry.url}</span></span
-                >
+                <span class="meta">
+                  The list says <span class="mono">{entry.url}</span>
+                </span>
               {/if}
               {@render identityLine(entry)}
             {/if}
@@ -261,8 +268,9 @@
                 class="btn"
                 aria-label="Manage this: {checkout.directory}"
                 onclick={() => askManage(checkout.directory, remoteUrl)}
-                >Manage this</button
               >
+                Manage this
+              </button>
             {:else if checkout.manage.reason}
               <span class="meta">{checkout.manage.reason}</span>
             {/if}
@@ -284,8 +292,10 @@
               disabled={cloneOff !== null}
               aria-label="Clone again: {entry.directory}"
               aria-describedby={cloneOff ? "repos-clone-reason" : undefined}
-              onclick={() => void cloneAgain(entry)}>Clone again</button
+              onclick={() => void cloneAgain(entry)}
             >
+              Clone again
+            </button>
             {@render removeButton(entry)}
           </div>
         </li>

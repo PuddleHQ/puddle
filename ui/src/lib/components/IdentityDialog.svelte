@@ -219,9 +219,9 @@
       </div>
       {#if offered && authorDiffers({ name, email }, offered)}
         <div>
-          <button type="button" class="btn" onclick={useAccount}
-            >Use this account's name and address</button
-          >
+          <button type="button" class="btn" onclick={useAccount}>
+            Use this account's name and address
+          </button>
         </div>
       {/if}
     </fieldset>
@@ -261,9 +261,9 @@
       />
     {:else}
       <div>
-        <button type="button" class="btn" onclick={() => (adding = true)}
-          >Add a credential</button
-        >
+        <button type="button" class="btn" onclick={() => (adding = true)}>
+          Add a credential
+        </button>
       </div>
     {/if}
   </section>
@@ -272,12 +272,12 @@
     <p class="error" id="{id}-error" role="alert">{shown.message}</p>
   {/if}
   <div class="actions">
-    <button type="button" class="btn" onclick={() => (open = false)}
-      >Cancel</button
-    >
-    <button type="submit" form="{id}-form" class="btn primary" disabled={busy}
-      >{mode === "create" ? "Add identity" : "Save"}</button
-    >
+    <button type="button" class="btn" onclick={() => (open = false)}>
+      Cancel
+    </button>
+    <button type="submit" form="{id}-form" class="btn primary" disabled={busy}>
+      {mode === "create" ? "Add identity" : "Save"}
+    </button>
   </div>
 </FormDialog>
 

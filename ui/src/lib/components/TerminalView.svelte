@@ -141,26 +141,34 @@
         class="menu-item"
         role="menuitem"
         disabled={!canCopy}
-        onclick={() => choose("copy")}>Copy</button
+        onclick={() => choose("copy")}
       >
+        Copy
+      </button>
       <button
         type="button"
         class="menu-item"
         role="menuitem"
-        onclick={() => choose("paste")}>Paste</button
+        onclick={() => choose("paste")}
       >
+        Paste
+      </button>
       <button
         type="button"
         class="menu-item"
         role="menuitem"
-        onclick={() => choose("all")}>Select all</button
+        onclick={() => choose("all")}
       >
+        Select all
+      </button>
       <button
         type="button"
         class="menu-item"
         role="menuitem"
-        onclick={() => choose("clear")}>Clear</button
+        onclick={() => choose("clear")}
       >
+        Clear
+      </button>
     </div>
   {/if}
   <p class="link" aria-live="off">{hovered ?? ""}</p>

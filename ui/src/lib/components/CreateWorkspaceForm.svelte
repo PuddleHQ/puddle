@@ -515,8 +515,10 @@
                   class="btn"
                   data-testid="choose-folder"
                   disabled={choosing}
-                  onclick={() => chooseFolder(row)}>Choose folder</button
+                  onclick={() => chooseFolder(row)}
                 >
+                  Choose folder
+                </button>
               {/if}
             </div>
             {#if localError}
@@ -534,11 +536,11 @@
         {/if}
 
         <div class="field">
-          <label for={rowId(row, "url")}
-            >{row.source === "folder"
+          <label for={rowId(row, "url")}>
+            {row.source === "folder"
               ? "Git repository (HTTPS, optional)"
-              : "Git repository (HTTPS)"}</label
-          >
+              : "Git repository (HTTPS)"}
+          </label>
           <input
             id={rowId(row, "url")}
             type="text"
@@ -631,11 +633,11 @@
             {#if offered.length > 0}
               <optgroup label="Cover this repository">
                 {#each offered as identity (identity.id)}
-                  <option value={String(identity.id)}
-                    >{identity.label}{identity.id === row.listedBy
+                  <option value={String(identity.id)}>
+                    {identity.label}{identity.id === row.listedBy
                       ? " (listed this repository)"
-                      : ""}</option
-                  >
+                      : ""}
+                  </option>
                 {/each}
               </optgroup>
             {/if}
@@ -688,8 +690,10 @@
             type="button"
             class="btn"
             aria-label="Remove repository {at + 1}"
-            onclick={() => removeRow(at)}>Remove</button
+            onclick={() => removeRow(at)}
           >
+            Remove
+          </button>
         </div>
       </fieldset>
     {/each}
@@ -701,10 +705,9 @@
         id="new-ws-add"
         disabled={rows.length >= MAX_REPOSITORIES}
         onclick={addRow}
-        >{rows.length === 0
-          ? "Add a repository"
-          : "Add another repository"}</button
       >
+        {rows.length === 0 ? "Add a repository" : "Add another repository"}
+      </button>
     </div>
 
     <div class="field">
@@ -860,8 +863,10 @@
         onclick={() => {
           discard();
           onCancel?.();
-        }}>Cancel</button
+        }}
       >
+        Cancel
+      </button>
       <button
         type="submit"
         class="btn primary"

@@ -100,8 +100,10 @@
     type="button"
     class="btn primary"
     disabled={busy || store.status !== "ready"}
-    onclick={() => void carryOn()}>Continue</button
+    onclick={() => void carryOn()}
   >
+    Continue
+  </button>
 </div>
 
 <style>

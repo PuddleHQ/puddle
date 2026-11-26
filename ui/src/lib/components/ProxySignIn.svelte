@@ -66,8 +66,10 @@
             type="button"
             class="btn"
             aria-label="Remove the sign-in for {signIn.proxy}"
-            onclick={() => forget(signIn.proxy)}>Remove</button
+            onclick={() => forget(signIn.proxy)}
           >
+            Remove
+          </button>
         </li>
       {/each}
     </ul>
@@ -124,8 +126,10 @@
         type="submit"
         class="btn primary"
         aria-label="Save proxy sign-in"
-        disabled={working}>Save</button
+        disabled={working}
       >
+        Save
+      </button>
       <span aria-live="polite">
         {#if saved}<span class="saved">Saved.</span>{/if}
         {#if failure}<span class="error" role="alert">{failure}</span>{/if}

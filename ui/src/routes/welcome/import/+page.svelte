@@ -99,16 +99,19 @@
         type="button"
         class="btn"
         disabled={applying}
-        onclick={() => (preview = null)}>Choose another file</button
+        onclick={() => (preview = null)}
       >
+        Choose another file
+      </button>
       <button
         type="button"
         class="btn primary"
         data-testid="import-confirm"
         disabled={applying}
         onclick={() => void importIt(shown)}
-        >{applying ? "Importing…" : "Import and restart"}</button
       >
+        {applying ? "Importing…" : "Import and restart"}
+      </button>
     {:else}
       <button
         type="button"
@@ -116,8 +119,9 @@
         data-testid="import-choose"
         disabled={reading}
         onclick={() => picker?.click()}
-        >{reading ? "Reading the file…" : "Choose a backup file…"}</button
       >
+        {reading ? "Reading the file…" : "Choose a backup file…"}
+      </button>
     {/if}
   </div>
 {/if}

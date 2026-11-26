@@ -69,9 +69,9 @@
 
 <article class="row" aria-labelledby={titleId}>
   <div class="line">
-    <span class="state"
-      ><StatusChip status={workspace.status} busy={workspace.busy} /></span
-    >
+    <span class="state">
+      <StatusChip status={workspace.status} busy={workspace.busy} />
+    </span>
     <h2 id={titleId} class="name">
       <a {href}>{workspace.name}</a>
       {#if workspace.direct_ssh}<TrustedBadge />{/if}
@@ -94,8 +94,10 @@
           class="count"
           href="{href}/network"
           aria-label="{waiting} waiting"
-          title="{waiting} waiting">{waiting}</a
+          title="{waiting} waiting"
         >
+          {waiting}
+        </a>
       {/if}
     </p>
     <div class="acts">
@@ -122,9 +124,11 @@
       {/if}
       <DropdownMenu.Root>
         <DropdownMenu.Trigger class="btn more-trigger">
-          <Ellipsis aria-hidden="true" size={16} /><span class="visually-hidden"
-            >More about {workspace.name}</span
+          <Ellipsis aria-hidden="true" size={16} /><span
+            class="visually-hidden"
           >
+            More about {workspace.name}
+          </span>
         </DropdownMenu.Trigger>
         <DropdownMenu.Portal>
           <DropdownMenu.Content class="row-menu" align="end" sideOffset={4}>
@@ -171,15 +175,15 @@
       {#if workspace.disk_warnings.length > 0 || oom}
         <p class="flags">
           {#each workspace.disk_warnings as kind (kind)}
-            <span class="flag warn"
-              >{kind === "root" ? "Root disk" : "Volume"}
-              {diskPercent(workspace, kind)} % full</span
-            >
+            <span class="flag warn">
+              {kind === "root" ? "Root disk" : "Volume"}
+              {diskPercent(workspace, kind)} % full
+            </span>
           {/each}
           {#if oom}
-            <span class="flag warn"
-              >Out of memory {relativeTime(oom.at, now)}</span
-            >
+            <span class="flag warn">
+              Out of memory {relativeTime(oom.at, now)}
+            </span>
           {/if}
         </p>
       {/if}
@@ -203,9 +207,9 @@
           {:else}
             failed to install <span class="what">{tools.tools.join(", ")}</span>
             {#if tools.waiting_on.length > 0}
-              <a class="flag" href="{href}/network"
-                >Waiting for you to allow {tools.waiting_on.join(", ")}</a
-              >
+              <a class="flag" href="{href}/network">
+                Waiting for you to allow {tools.waiting_on.join(", ")}
+              </a>
             {/if}
           {/if}
         </p>

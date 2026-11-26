@@ -96,8 +96,10 @@
         class="btn"
         onclick={() => {
           dismissedOom = oom.at;
-        }}>Dismiss</button
+        }}
       >
+        Dismiss
+      </button>
     </div>
   {/if}
 
@@ -109,8 +111,9 @@
         <time
           datetime={new Date(workspace.created_at).toISOString()}
           title={absoluteTime(workspace.created_at)}
-          >{relativeTime(workspace.created_at, now)}</time
-        >.
+        >
+          {relativeTime(workspace.created_at, now)}
+        </time>.
         {#if workspace.status === "running"}
           Open a terminal here, or use Connect for the editor and SSH.
         {:else if allows(workspace, "start")}
@@ -119,9 +122,9 @@
       </p>
       {#if workspace.status === "running"}
         <p>
-          <a class="btn primary" href={tabHref(workspace.id, "terminal")}
-            >Open a terminal</a
-          >
+          <a class="btn primary" href={tabHref(workspace.id, "terminal")}>
+            Open a terminal
+          </a>
         </p>
       {/if}
       {#if workspace.status === "volume_missing" && workspace.busy === null}
@@ -163,9 +166,9 @@
           {/each}
         </ul>
         <p>
-          <a class="link-block" href={tabHref(workspace.id, "ports")}
-            >Forward a port</a
-          >
+          <a class="link-block" href={tabHref(workspace.id, "ports")}>
+            Forward a port
+          </a>
         </p>
       </section>
     {/if}

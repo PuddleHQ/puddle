@@ -137,8 +137,10 @@
         dialogMode = "create";
         renaming = null;
         dialogOpen = true;
-      }}><Plus aria-hidden="true" size={16} />New rule set</button
+      }}
     >
+      <Plus aria-hidden="true" size={16} />New rule set
+    </button>
   </div>
   {#if store.status === "ready" && store.loadError}
     <LoadNotice what="the rule sets" message={store.loadError} stale />

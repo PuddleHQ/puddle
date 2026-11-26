@@ -143,9 +143,9 @@
     </thead>
     <tbody>
       {#if range.padTop > 0}
-        <tr class="pad" aria-hidden="true" style:height="{range.padTop}px"
-          ><td colspan="6"></td></tr
-        >
+        <tr class="pad" aria-hidden="true" style:height="{range.padTop}px">
+          <td colspan="6"></td>
+        </tr>
       {/if}
       {#each drawn as entry, i (entry.id)}
         {@const row = describe(entry.record)}
@@ -185,41 +185,47 @@
                 />{:else}<ChevronRight aria-hidden="true" size={14} />{/if}
               <time
                 datetime={new Date(row.ts).toISOString()}
-                title={absoluteTime(row.ts)}>{clockTime(row.ts, dayStart)}</time
+                title={absoluteTime(row.ts)}
               >
+                {clockTime(row.ts, dayStart)}
+              </time>
             </button>
           </td>
           <td class="mono" title={row.workspace ?? undefined}>
-            {#if row.workspace === null}<span class="muted">Puddle</span
-              >{:else}{workspaces.labelOf(row.workspace)}{/if}
+            {#if row.workspace === null}<span class="muted">
+                Puddle
+              </span>{:else}{workspaces.labelOf(row.workspace)}{/if}
           </td>
           <td>{row.type}</td>
-          <td title={row.destination ?? undefined}
-            >{#if row.destination}<HostName host={row.destination} />{/if}</td
-          >
+          <td title={row.destination ?? undefined}>
+            {#if row.destination}<HostName host={row.destination} />{/if}
+          </td>
           <td>
             {#if row.outcome}
               <span class="chip {row.outcome.tone}">{row.outcome.label}</span>
             {/if}
             {#if row.company}
-              <span class="meta" title={row.company.title}
-                >{row.company.label}</span
-              >
+              <span class="meta" title={row.company.title}>
+                {row.company.label}
+              </span>
             {/if}
           </td>
           <td class="muted" title={row.detail}>
             {#if row.requestRule === undefined}{row.detail}{:else}
               {@const cut = splitDetail(row.detail, row.requestRule)}
-              <span class="split"
-                ><span class="cut">{cut.before}</span
-                >{#if ruleGone(row.requestRule)}<span class="keep"
-                    >{cut.name} (deleted)</span
-                  >{:else}<a
+              <span class="split">
+                <span class="cut">
+                  {cut.before}
+                </span>{#if ruleGone(row.requestRule)}<span class="keep">
+                    {cut.name} (deleted)
+                  </span>{:else}<a
                     class="keep"
                     href="/rules?request-rule={row.requestRule}"
-                    onclick={(e) => e.stopPropagation()}>{cut.name}</a
-                  >{/if}<span class="cut">{cut.after}</span></span
-              >
+                    onclick={(e) => e.stopPropagation()}
+                  >
+                    {cut.name}
+                  </a>{/if}<span class="cut">{cut.after}</span>
+              </span>
             {/if}
           </td>
         </tr>
@@ -229,15 +235,17 @@
               <div class="raw" id="raw-{entry.id}">
                 <p class="said">{sentence(row)}</p>
                 <p class="acts">
-                  {#if link !== null}<a href={link}>Make a rule from this</a
-                    >{/if}
+                  {#if link !== null}<a href={link}>
+                      Make a rule from this
+                    </a>{/if}
                   <button
                     type="button"
                     class="linkish"
                     aria-expanded={rawOpen}
                     onclick={() => (rawOpen = !rawOpen)}
-                    >{rawOpen ? "Hide" : "Show"} raw record</button
                   >
+                    {rawOpen ? "Hide" : "Show"} raw record
+                  </button>
                 </p>
                 {#if rawOpen}
                   <pre tabindex="0" aria-label="Raw record {entry.id}">{rawJson(
@@ -250,9 +258,9 @@
         {/if}
       {/each}
       {#if range.padBottom > 0}
-        <tr class="pad" aria-hidden="true" style:height="{range.padBottom}px"
-          ><td colspan="6"></td></tr
-        >
+        <tr class="pad" aria-hidden="true" style:height="{range.padBottom}px">
+          <td colspan="6"></td>
+        </tr>
       {/if}
     </tbody>
   </table>

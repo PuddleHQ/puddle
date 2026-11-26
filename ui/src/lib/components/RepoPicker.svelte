@@ -119,10 +119,10 @@
                     .join(" · ")}
                 </span>
                 {#if tableCannotHold(repo.url)}
-                  <span class="meta warn wrap"
-                    >Its project name has a space: you can still make a
-                    workspace, but its repository table can't hold it.</span
-                  >
+                  <span class="meta warn wrap">
+                    Its project name has a space: you can still make a
+                    workspace, but its repository table can't hold it.
+                  </span>
                 {/if}
               </button>
             </li>

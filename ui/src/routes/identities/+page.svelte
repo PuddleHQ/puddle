@@ -130,9 +130,9 @@
   </div>
   <div class="acts">
     {#if store.identities.length > 0}
-      <button type="button" class="btn" disabled={testing} onclick={testAll}
-        >{testing ? "Testing…" : "Test all"}</button
-      >
+      <button type="button" class="btn" disabled={testing} onclick={testAll}>
+        {testing ? "Testing…" : "Test all"}
+      </button>
     {/if}
     <button type="button" class="btn primary" onclick={() => (addOpen = true)}>
       <Plus aria-hidden="true" size={16} />Add identity
@@ -204,9 +204,9 @@
                         credential.covers,
                         credential.host,
                       )}
-                      <span class="muted"
-                        >({sourceLabel(credential.source)})</span
-                      >
+                      <span class="muted">
+                        ({sourceLabel(credential.source)})
+                      </span>
                     </li>
                   {/each}
                 </ul>
@@ -247,15 +247,18 @@
                   type="button"
                   class="btn"
                   onclick={() => makeDefault(identity)}
-                  >Set {identity.label} as default</button
                 >
+                  Set {identity.label} as default
+                </button>
               {/if}
               <button
                 type="button"
                 class="btn deny"
                 aria-label="Delete {identity.label}"
-                onclick={() => askDelete(identity)}>Delete</button
+                onclick={() => askDelete(identity)}
               >
+                Delete
+              </button>
             </td>
           </tr>
         {/each}
@@ -266,8 +269,10 @@
 
 <p class="muted settings-link">
   Whether new workspaces may push to or pull from any repository is set in <a
-    href="/settings/editor-and-git">Settings, Git</a
-  >.
+    href="/settings/editor-and-git"
+  >
+    Settings, Git
+  </a>.
 </p>
 
 <IdentityDialog

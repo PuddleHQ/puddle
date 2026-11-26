@@ -244,8 +244,9 @@
             bind:group={scope}
           />
           In rule set <b><SetChip name={set.name} fill={set.fill} /></b>
-          {#if set.everywhere}<span class="hint">(on everywhere; asks)</span
-            >{/if}
+          {#if set.everywhere}<span class="hint">
+              (on everywhere; asks)
+            </span>{/if}
         </label>
       {/each}
       {#if scope === "workspace"}
@@ -270,11 +271,11 @@
       <label for="{id}-duration">Expires</label>
       <select id="{id}-duration" bind:value={duration}>
         {#if editing}
-          <option value="keep"
-            >Unchanged ({editing.expires_at === null
+          <option value="keep">
+            Unchanged ({editing.expires_at === null
               ? "never"
-              : absoluteTime(editing.expires_at)})</option
-          >
+              : absoluteTime(editing.expires_at)})
+          </option>
         {/if}
         {#each EXPIRY_OPTIONS as option (option.secs)}
           <option value={String(option.secs ?? 0)}>{option.label}</option>
@@ -306,11 +307,13 @@
         onclick={() => {
           open = false;
           reset();
-        }}>Cancel</button
+        }}
       >
-      <button type="submit" class="btn primary" disabled={busy}
-        >{editing ? "Save rule" : "Add rule"}</button
-      >
+        Cancel
+      </button>
+      <button type="submit" class="btn primary" disabled={busy}>
+        {editing ? "Save rule" : "Add rule"}
+      </button>
     </div>
   </form>
 </FormDialog>

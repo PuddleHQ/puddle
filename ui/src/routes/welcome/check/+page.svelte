@@ -131,27 +131,27 @@
   {/if}
   <span class="grow"></span>
   {#if notStarted}
-    <button type="button" class="btn primary" onclick={again}
-      >Start system check</button
-    >
+    <button type="button" class="btn primary" onclick={again}>
+      Start system check
+    </button>
   {:else}
-    <button type="button" class="btn" disabled={running} onclick={again}
-      >Check again</button
-    >
+    <button type="button" class="btn" disabled={running} onclick={again}>
+      Check again
+    </button>
   {/if}
   {#if report}
-    <button type="button" class="btn" onclick={() => void copy()}
-      >Copy report</button
-    >
+    <button type="button" class="btn" onclick={() => void copy()}>
+      Copy report
+    </button>
   {/if}
   {#if fromSettings}
     <a class="btn primary" href="/settings/this-computer">Back to Settings</a>
   {:else if blocked}
     <a class="btn" href="/workspaces">Leave setup for now</a>
   {:else if running || notStarted}
-    <button type="button" class="btn" class:primary={running} disabled
-      >Continue</button
-    >
+    <button type="button" class="btn" class:primary={running} disabled>
+      Continue
+    </button>
   {:else}
     <a class="btn primary" href={around("check").next}>Continue</a>
   {/if}

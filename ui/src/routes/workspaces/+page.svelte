@@ -71,8 +71,9 @@
   <FirstWorkspaceForm onMore={() => actions.openCreate()} />
 {:else}
   <div class="columns" aria-hidden="true">
-    <span>State</span><span>Name</span><span>Repository</span><span>Disk</span
-    ><span class="waiting">Waiting</span><span></span>
+    <span>State</span><span>Name</span><span>Repository</span><span>
+      Disk
+    </span><span class="waiting">Waiting</span><span></span>
   </div>
   <ul class="rows" aria-label="Workspaces">
     {#each workspaces.list as workspace (workspace.id)}

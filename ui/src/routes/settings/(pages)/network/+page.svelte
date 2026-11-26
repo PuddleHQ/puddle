@@ -42,9 +42,9 @@
       desc="The proxy Puddle found and the company certificates it uses."
       plain
     >
-      <a class="btn" href="/settings/network-health"
-        >Details<span class="visually-hidden"> about network health</span></a
-      >
+      <a class="btn" href="/settings/network-health">
+        Details<span class="visually-hidden"> about network health</span>
+      </a>
     </SettingRow>
     <div id="set-proxy-sign-in"><ProxySignIn /></div>
   </SettingsGroup>

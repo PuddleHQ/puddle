@@ -100,8 +100,10 @@
           class="btn"
           aria-label="Reset {LABELS[key][0].toLowerCase()}"
           disabled={custom[key] === null}
-          onclick={() => onpick(key, null)}>Reset</button
+          onclick={() => onpick(key, null)}
         >
+          Reset
+        </button>
       </div>
     </SettingRow>
   {/each}

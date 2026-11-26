@@ -119,8 +119,10 @@
           type="button"
           class="btn primary"
           disabled={!allows(workspace, "start")}
-          onclick={startAndOpen}>Start and open a terminal</button
+          onclick={startAndOpen}
         >
+          Start and open a terminal
+        </button>
         {#if !allows(workspace, "start")}
           <p class="why">{workspace.name} cannot start right now.</p>
         {/if}
@@ -150,11 +152,11 @@
             >
               <span aria-hidden="true">{session.label}</span>
               {#if session.bell}<Bell aria-hidden="true" size={14} />{/if}
-              <span class="visually-hidden" id="{fid}-state-{session.number}"
-                >{session.bell ? "Bell rang. " : ""}{session.state === "ended"
+              <span class="visually-hidden" id="{fid}-state-{session.number}">
+                {session.bell ? "Bell rang. " : ""}{session.state === "ended"
                   ? "Ended."
-                  : ""}</span
-              >
+                  : ""}
+              </span>
             </button>
           {/each}
         </div>
@@ -214,16 +216,22 @@
               <p>{shown.end.line}</p>
               {#if shown.end.detail}<p class="muted">{shown.end.detail}</p>{/if}
               {#if shown.end.action === "restart"}
-                <button type="button" class="btn" onclick={() => restart(shown)}
-                  >Restart</button
+                <button
+                  type="button"
+                  class="btn"
+                  onclick={() => restart(shown)}
                 >
+                  Restart
+                </button>
               {:else if shown.end.action === "start" && !usable}
                 <button
                   type="button"
                   class="btn"
                   disabled={!allows(workspace, "start")}
-                  onclick={() => actions.start(workspace)}>Start</button
+                  onclick={() => actions.start(workspace)}
                 >
+                  Start
+                </button>
               {:else if shown.end.action === "overview"}
                 <a class="btn" href={tabHref(workspace.id, "")}>Overview</a>
               {:else}
@@ -231,8 +239,10 @@
                   type="button"
                   class="btn"
                   disabled={!usable || limit !== null}
-                  onclick={add}>New terminal</button
+                  onclick={add}
                 >
+                  New terminal
+                </button>
               {/if}
             </div>
           {/if}

@@ -93,12 +93,12 @@
     </div>
     <FillPicker bind:value={fill} {name} />
     <div class="actions">
-      <button type="button" class="btn" onclick={() => (open = false)}
-        >Cancel</button
-      >
-      <button type="submit" class="btn primary" disabled={busy}
-        >{mode === "create" ? "Make rule set" : "Save"}</button
-      >
+      <button type="button" class="btn" onclick={() => (open = false)}>
+        Cancel
+      </button>
+      <button type="submit" class="btn primary" disabled={busy}>
+        {mode === "create" ? "Make rule set" : "Save"}
+      </button>
     </div>
   </form>
 </FormDialog>

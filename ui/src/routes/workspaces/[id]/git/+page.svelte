@@ -216,9 +216,9 @@
           <li data-identity-id={identity.id}>
             <div class="what">
               <b><a href="/identities/{identity.id}">{identity.label}</a></b>
-              <span class="muted"
-                >{identity.author.name} &lt;{identity.author.email}&gt;</span
-              >
+              <span class="muted">
+                {identity.author.name} &lt;{identity.author.email}&gt;
+              </span>
               <span class="muted">
                 {#if identity.credentials.length === 0}No credentials{:else}
                   {identity.credentials
@@ -234,8 +234,9 @@
                 aria-label="Move {identity.label} up"
                 disabled={index === 0}
                 onclick={() => move(identity, -1)}
-                ><ArrowUp aria-hidden="true" size={16} /></button
               >
+                <ArrowUp aria-hidden="true" size={16} />
+              </button>
               <button
                 type="button"
                 class="btn"
@@ -243,14 +244,17 @@
                 aria-label="Move {identity.label} down"
                 disabled={index === git.identities.length - 1}
                 onclick={() => move(identity, 1)}
-                ><ArrowDown aria-hidden="true" size={16} /></button
               >
+                <ArrowDown aria-hidden="true" size={16} />
+              </button>
               <button
                 type="button"
                 class="btn"
                 aria-label="Remove {identity.label} from {workspace.name}"
-                onclick={() => detach(identity)}>Remove</button
+                onclick={() => detach(identity)}
               >
+                Remove
+              </button>
             </div>
           </li>
         {/each}
@@ -277,14 +281,15 @@
               <option
                 value={String(identity.id)}
                 selected={attachChoice === String(identity.id)}
-                >{identity.label}</option
               >
+                {identity.label}
+              </option>
             {/each}
           </select>
         </div>
-        <button type="submit" class="btn" disabled={available.length === 0}
-          >Add identity</button
-        >
+        <button type="submit" class="btn" disabled={available.length === 0}>
+          Add identity
+        </button>
       </form>
     {/if}
     {#if identityProblem}
@@ -321,8 +326,9 @@
               class="btn"
               aria-label="Use the default again for Only push to allowed repositories"
               onclick={() => void useDefault("use_default_push")}
-              >Use the default again</button
             >
+              Use the default again
+            </button>
           {/if}
         </p>
       </div>
@@ -352,8 +358,9 @@
               class="btn"
               aria-label="Use the default again for Only pull from allowed repositories"
               onclick={() => void useDefault("use_default_pull")}
-              >Use the default again</button
             >
+              Use the default again
+            </button>
           {/if}
         </p>
       </div>
@@ -412,8 +419,10 @@
                     type="button"
                     class="btn"
                     aria-label="Remove {repoName(row)} from the list"
-                    onclick={() => removeRow(row)}>Remove</button
+                    onclick={() => removeRow(row)}
                   >
+                    Remove
+                  </button>
                 </td>
               </tr>
             {/each}
@@ -443,12 +452,12 @@
             : `${fid}-url-hint`}
         />
       </div>
-      <label class="choice"
-        ><input type="checkbox" bind:checked={newPull} />Pull</label
-      >
-      <label class="choice"
-        ><input type="checkbox" bind:checked={newPush} />Push</label
-      >
+      <label class="choice">
+        <input type="checkbox" bind:checked={newPull} />Pull
+      </label>
+      <label class="choice">
+        <input type="checkbox" bind:checked={newPush} />Push
+      </label>
       <button type="submit" class="btn">Add repository</button>
     </form>
     {#if repoProblem}

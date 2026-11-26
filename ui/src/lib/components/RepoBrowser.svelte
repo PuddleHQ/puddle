@@ -160,14 +160,14 @@
             <td>
               <span class="name mono">{repo.full_name}</span>
               <span class="traits">
-                {#each traits(repo) as trait (trait)}<span class="trait"
-                    >{trait}</span
-                  >{/each}
+                {#each traits(repo) as trait (trait)}<span class="trait">
+                    {trait}
+                  </span>{/each}
               </span>
               {#if tableCannotHold(repo.url)}
-                <span class="warn" data-testid="repo-table-warning"
-                  >{TABLE_CANNOT_HOLD}</span
-                >
+                <span class="warn" data-testid="repo-table-warning">
+                  {TABLE_CANNOT_HOLD}
+                </span>
               {/if}
             </td>
             <td class="muted">{roleWord(repo.role)}</td>
@@ -177,8 +177,9 @@
                 class="btn primary"
                 aria-label="Create a workspace for this: {repo.full_name}"
                 onclick={() => onCreate(repo)}
-                >Create a workspace for this</button
               >
+                Create a workspace for this
+              </button>
             </td>
           </tr>
         {/each}
@@ -190,8 +191,9 @@
         class="btn more"
         disabled={store.loadingMore}
         onclick={() => store.more()}
-        >Show more ({listing.total - listing.repos.length} left)</button
       >
+        Show more ({listing.total - listing.repos.length} left)
+      </button>
     {/if}
   {/if}
 {/if}

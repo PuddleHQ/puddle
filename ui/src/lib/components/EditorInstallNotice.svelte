@@ -11,9 +11,9 @@
 
 <p class="notice" role="alert">
   <TriangleAlert aria-hidden="true" size={16} />
-  <span
-    ><b>{title}.</b>{#if detail}<span class="detail">{detail}</span>{/if}</span
-  >
+  <span>
+    <b>{title}.</b>{#if detail}<span class="detail">{detail}</span>{/if}
+  </span>
 </p>
 
 <style>

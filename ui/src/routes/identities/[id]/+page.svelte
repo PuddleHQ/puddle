@@ -119,16 +119,20 @@
     </div>
     <div class="acts">
       {#if !identity.is_default}
-        <button type="button" class="btn" onclick={makeDefault}
-          >Set as default</button
-        >
+        <button type="button" class="btn" onclick={makeDefault}>
+          Set as default
+        </button>
       {/if}
-      <button type="button" class="btn" onclick={() => (editOpen = true)}
-        >Edit</button
+      <button type="button" class="btn" onclick={() => (editOpen = true)}>
+        Edit
+      </button>
+      <button
+        type="button"
+        class="btn deny"
+        onclick={() => (deleteOpen = true)}
       >
-      <button type="button" class="btn deny" onclick={() => (deleteOpen = true)}
-        >Delete</button
-      >
+        Delete
+      </button>
     </div>
   </div>
 
@@ -190,8 +194,10 @@
                 aria-label="Test {sourceLabel(
                   credential.source,
                 )} on {credential.host}"
-                onclick={() => test(credential)}>Test</button
+                onclick={() => test(credential)}
               >
+                Test
+              </button>
               {#if canSignIn(credential.source) && check.state === "problem" && check.needsSignIn}
                 <button
                   type="button"
@@ -199,8 +205,10 @@
                   aria-label="Sign in to {sourceLabel(
                     credential.source,
                   )} on {credential.host}"
-                  onclick={() => signIn(credential)}>Sign in&hellip;</button
+                  onclick={() => signIn(credential)}
                 >
+                  Sign in&hellip;
+                </button>
               {/if}
             </div>
           </li>
@@ -231,9 +239,9 @@
       <ul class="plain">
         {#each identity.workspaces as wid (wid)}
           <li>
-            <a href="/workspaces/{encodeURIComponent(wid)}/git"
-              >{workspaces.labelOf(wid)}</a
-            >
+            <a href="/workspaces/{encodeURIComponent(wid)}/git">
+              {workspaces.labelOf(wid)}
+            </a>
           </li>
         {/each}
       </ul>
@@ -271,9 +279,9 @@
 {:else if store.status === "ready"}
   <h1>No such identity</h1>
   <p class="muted">
-    There is no identity with that number. <a href="/identities"
-      >Back to the identities</a
-    >.
+    There is no identity with that number. <a href="/identities">
+      Back to the identities
+    </a>.
   </p>
 {:else if store.status === "failed"}
   <p class="muted">Couldn't read the identity yet. Trying again.</p>

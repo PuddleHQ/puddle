@@ -95,8 +95,10 @@
           type="submit"
           class="btn primary"
           aria-label="Save limits for hosts left alone"
-          disabled={working}>Save</button
+          disabled={working}
         >
+          Save
+        </button>
       {/if}
       <span aria-live="polite">
         {#if saved}<span class="saved">Saved.</span>{/if}

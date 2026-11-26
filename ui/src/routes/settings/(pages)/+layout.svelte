@@ -64,10 +64,9 @@
             <ul class="results">
               {#each results as hit (hit.id)}
                 <li>
-                  <a href={settingHref(hit)} onclick={() => (query = "")}
-                    >{hit.label}<span class="where">{pageLabel(hit.page)}</span
-                    ></a
-                  >
+                  <a href={settingHref(hit)} onclick={() => (query = "")}>
+                    {hit.label}<span class="where">{pageLabel(hit.page)}</span>
+                  </a>
                 </li>
               {/each}
             </ul>
@@ -79,8 +78,9 @@
             <a
               href={entry.href}
               aria-current={here === entry.href ? "page" : undefined}
-              >{entry.label}</a
             >
+              {entry.label}
+            </a>
           {/each}
         </nav>
       {/if}

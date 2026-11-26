@@ -336,6 +336,10 @@ test("skipping the setup ends it for good", async ({
   await freshInstall(page, backend);
   await page.goto("/");
   await page.getByRole("button", { name: "Skip setup" }).click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Skip setup" })
+    .click();
   await expect(page).toHaveURL(/\/workspaces$/);
   expect((await firstRun(request, backend)).completed).toBe(true);
   await page.goto("/");

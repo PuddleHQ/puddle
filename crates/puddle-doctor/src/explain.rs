@@ -45,8 +45,8 @@ fn ok_impact(id: CheckId) -> &'static str {
             "Shows that a workspace can start here: a test machine booted and ran a program."
         }
         CheckId::JobObject => "Puddle may start its virtual machines as processes of their own.",
-        CheckId::GlobalSecureAccess => {
-            "Rules out a known reason for company sites to fail from a workspace: the Global Secure Access client."
+        CheckId::ProblematicSoftware => {
+            "Rules out programs known to keep workspaces from working as expected, such as company network clients."
         }
         CheckId::DiskSpace => {
             "Leaves room for workspaces to install packages and build without stopping on a full drive."
@@ -119,8 +119,8 @@ fn finding_text(os: Os, finding: Finding) -> (&'static str, &'static str) {
         | F::JobWithoutBreakaway
         | F::JobUnreadable
         | F::CodeIntegrityUnreadable => runtime(finding),
-        F::GlobalSecureAccessInstalled
-        | F::GlobalSecureAccessUnknown
+        F::ProblematicSoftwareInstalled
+        | F::ProblematicSoftwareUnknown
         | F::DiskSpaceLow
         | F::DiskSpaceCritical
         | F::DiskSpaceUnreadable
@@ -301,13 +301,13 @@ fn runtime(finding: Finding) -> (&'static str, &'static str) {
 fn storage(os: Os, finding: Finding) -> (&'static str, &'static str) {
     use Finding as F;
     match finding {
-        F::GlobalSecureAccessInstalled => (
-            "Company resources you reach through Global Secure Access may not work from a workspace.",
-            "If one fails from a workspace, ask your IT team for another way to reach it.",
+        F::ProblematicSoftwareInstalled => (
+            "Software on this computer is known to keep workspaces from working as expected, for example from reaching company resources.",
+            "Open More details: it names each program, why it matters and what to do.",
         ),
-        F::GlobalSecureAccessUnknown => (
-            "Puddle couldn't tell whether a client is installed that keeps workspaces from company resources.",
-            "If company resources fail from a workspace, check whether the Global Secure Access client is installed.",
+        F::ProblematicSoftwareUnknown => (
+            "Puddle couldn't tell whether software is installed that is known to keep workspaces from working as expected.",
+            "If workspaces misbehave, open More details to see which programs Puddle looks for.",
         ),
         F::DiskSpaceLow => (
             "Workspaces may stop with unclear errors when the drive fills up.",

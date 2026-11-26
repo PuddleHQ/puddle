@@ -557,6 +557,7 @@ impl Drop for VsCodeWindow {
 /// also hands the new window's arguments to it and exits.
 async fn port_free(port: u16, within: Duration) -> Result<(), HarnessError> {
     let until = tokio::time::Instant::now() + within;
+    // flake-ok: returns a named error instead of panicking, and this crate may not depend on the dev-only test kit
     loop {
         // A port this user may not bind at all (below 1024 on Linux) is not taken: the window reports that itself.
         let taken = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port))

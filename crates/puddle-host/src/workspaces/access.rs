@@ -235,7 +235,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     guests: Arc::clone(&self.inner.front_guests),
                     ports: self.inner.ports.clone(),
                     workspace: name.clone(),
-                    label: record.label().to_string(),
+                    label: record.label().to_owned(),
                 });
                 // Microsoft's server takes the password file as its connection token;
                 // code-server takes it in its login form.

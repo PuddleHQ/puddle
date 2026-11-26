@@ -603,9 +603,6 @@
     display: grid;
     gap: var(--space-1);
   }
-  .field.grow {
-    flex: 1 1 20rem;
-  }
   .field label {
     font-size: var(--text-sm);
     color: var(--color-text-muted);

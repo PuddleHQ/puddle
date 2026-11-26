@@ -3,7 +3,7 @@
 //!
 //! It follows the trait's contract the way the real service does: a call checks the request,
 //! marks the workspace busy, returns it, and a background task walks the operation's steps,
-//! emitting [`Move::StatusChanged`] and [`Move::WorkspaceProgress`] as it goes. Tests wait for
+//! emitting [`Event::StatusChanged`] and [`Event::WorkspaceProgress`] as it goes. Tests wait for
 //! the end with [`FakeWorkspaces::idle`], and can make the next operation fail.
 
 use std::collections::BTreeMap;

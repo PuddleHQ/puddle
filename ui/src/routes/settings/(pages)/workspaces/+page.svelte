@@ -27,7 +27,7 @@
   import { EnvironmentStore } from "#lib/stores/environment.svelte.ts";
   import {
     DIRECT_SSH_HINT,
-    DIRECT_SSH_LABEL,
+    DIRECT_SSH_DEFAULT_LABEL,
     TRUST_WORDS_GLOBAL,
   } from "#lib/workspaces/direct-ssh.ts";
 
@@ -129,7 +129,7 @@
     {/if}
     <SwitchRow
       id="set-direct-ssh"
-      label="{DIRECT_SSH_LABEL} for new workspaces"
+      label={DIRECT_SSH_DEFAULT_LABEL}
       desc="Off by default. A workspace can set its own switch."
       how={DIRECT_SSH_HINT}
       checked={eff.direct_ssh.value}

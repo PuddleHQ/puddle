@@ -9,7 +9,6 @@ export type PageId =
   | "workspaces"
   | "network"
   | "editor"
-  | "editor-and-git"
   | "this-computer";
 
 export interface SettingsPage {
@@ -31,7 +30,6 @@ export const PAGES: readonly SettingsPage[] = [
   page("workspaces", "Workspaces"),
   page("network", "Network"),
   page("editor", "Editor"),
-  page("editor-and-git", "Editor and Git"),
   page("this-computer", "This computer"),
 ];
 
@@ -147,7 +145,7 @@ export const SETTINGS: readonly SettingEntry[] = [
   entry(
     "workspaces",
     "set-direct-ssh",
-    "Direct SSH for new workspaces",
+    "Direct SSH by default",
     "ssh port trust",
   ),
   entry(
@@ -286,61 +284,46 @@ export const SETTINGS: readonly SettingEntry[] = [
   ),
 
   entry(
-    "editor-and-git",
+    "editor",
     "set-server",
     "Server",
     "code-server microsoft vs code browser",
   ),
+  entry("editor", "set-ms-telemetry", "Send Microsoft telemetry", "microsoft"),
   entry(
-    "editor-and-git",
-    "set-ms-telemetry",
-    "Send Microsoft telemetry",
-    "microsoft",
-  ),
-  entry(
-    "editor-and-git",
+    "editor",
     "set-update",
     "Update the server automatically",
     "auto update",
   ),
   entry(
-    "editor-and-git",
+    "editor",
     "set-grace",
     "Reconnection grace (seconds)",
     "session reconnect",
   ),
+  entry("editor", "set-zoom", "Zoom shortcuts", "ctrl plus minus hotkeys"),
+  entry("editor", "set-clip", "Clipboard reads by pages", "paste clipboard"),
   entry(
-    "editor-and-git",
-    "set-zoom",
-    "Zoom shortcuts",
-    "ctrl plus minus hotkeys",
-  ),
-  entry(
-    "editor-and-git",
-    "set-clip",
-    "Clipboard reads by pages",
-    "paste clipboard",
-  ),
-  entry(
-    "editor-and-git",
+    "editor",
     "set-ssh-agent",
     "SSH agent pipe or socket",
     "pageant 1password openssh keys",
   ),
   entry(
-    "editor-and-git",
+    "editor",
     "set-identities",
     "Git and credentials",
     "identities name email commit",
   ),
   entry(
-    "editor-and-git",
+    "editor",
     "set-push-listed",
     "Only push to allowed repositories",
     "git push default new workspaces repositories",
   ),
   entry(
-    "editor-and-git",
+    "editor",
     "set-pull-listed",
     "Only pull from allowed repositories",
     "git fetch pull default new workspaces repositories",
@@ -413,11 +396,11 @@ export const LEGACY_ANCHORS: Readonly<Record<string, string>> = {
   "s-ws": "workspaces#set-memory",
   "s-disk": "workspaces#set-disk-warn",
   "s-audit": "this-computer#set-audit",
-  "s-ssh": "editor-and-git#set-ssh-agent",
+  "s-ssh": "editor#set-ssh-agent",
   "s-net": "network#set-net-health",
   "local-destinations": "network#set-local-loopback",
-  "s-vsc": "editor-and-git#set-server",
-  "s-git": "editor-and-git#set-identities",
+  "s-vsc": "editor#set-server",
+  "s-git": "editor#set-identities",
   "s-env": "workspaces#set-env",
   "s-dev": "this-computer#set-devices",
   "s-backup": "this-computer#set-backup",

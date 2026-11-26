@@ -33,7 +33,7 @@ const microsoft = () =>
   screen.getByRole("radio", { name: /Microsoft's VS Code server/ });
 const directSsh = () =>
   screen.getByRole("checkbox", {
-    name: /Allow direct SSH for new workspaces/,
+    name: /Allow direct SSH by default/,
   });
 const puts = () => api.calls.filter((c) => c === "PUT /api/settings").length;
 
@@ -201,17 +201,26 @@ describe("connect step", () => {
     expect(microsoft()).not.toBeChecked();
   });
 
+  it("frames direct SSH as attaching with any SSH client, not only desktop VS Code", async () => {
+    await open();
+    const card = screen.getByRole("group", { name: "Direct SSH attach" });
+    expect(screen.queryByRole("group", { name: "Desktop VS Code" })).toBeNull();
+    expect(card).toHaveTextContent("JetBrains and any other SSH client");
+    expect(card).toHaveTextContent("each workspace can set its own switch");
+    expect(card).not.toHaveTextContent("for new workspaces");
+  });
+
   it("turns the direct-SSH default on only after the trust text", async () => {
     await open();
     await fireEvent.click(directSsh());
     const dialog = await screen.findByRole("alertdialog", {
-      name: "Allow direct SSH for new workspaces?",
+      name: "Allow direct SSH by default?",
     });
     expect(dialog).toHaveTextContent("signed-in GitHub token");
     expect(directSsh()).not.toBeChecked();
     expect(puts()).toBe(0);
     await fireEvent.click(
-      within(dialog).getByRole("button", { name: "Allow for new workspaces" }),
+      within(dialog).getByRole("button", { name: "Allow by default" }),
     );
     expect(await screen.findByText("Allow direct SSH saved.")).toBeVisible();
     expect(api.layer.direct_ssh).toBe(true);

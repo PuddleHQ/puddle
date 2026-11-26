@@ -659,6 +659,72 @@ async fn an_editor_that_cannot_be_reached_is_a_502_that_says_why_and_cannot_run_
     );
 }
 
+const WANTS_PAGE: &str = "Accept: text/html,application/xhtml+xml\r\n";
+
+#[tokio::test]
+async fn a_window_whose_editor_is_not_up_gets_a_page_that_says_so_and_reloads() {
+    let rig = rig();
+    rig.running.start("a", None, Flavour::CodeServer);
+    let h = host(&rig, "a");
+    let answer = ask(&rig.front, &get(&rig, &h, "/", WANTS_PAGE)).await;
+    assert_eq!(answer.status, 502);
+    assert_eq!(
+        answer.header("content-type"),
+        vec!["text/html; charset=utf-8"]
+    );
+    assert_eq!(
+        answer.header("content-security-policy"),
+        vec!["default-src 'none'; sandbox"]
+    );
+    let page = answer.text();
+    assert!(page.contains("The editor is starting"), "{page}");
+    assert!(page.contains("http-equiv=\"refresh\""), "{page}");
+    assert!(page.contains("Try again now"), "{page}");
+    assert!(page.contains("nothing listens in the workspace"), "{page}");
+}
+
+#[tokio::test]
+async fn a_window_whose_editor_fails_gets_a_page_that_names_the_failure_and_does_not_reload() {
+    let rig = rig();
+    start_editor(&rig, "a", Refuses);
+    let h = host(&rig, "a");
+    let answer = ask(&rig.front, &get(&rig, &h, "/", WANTS_PAGE)).await;
+    assert_eq!(answer.status, 502);
+    let page = answer.text();
+    assert!(page.contains("The editor failed"), "{page}");
+    assert!(!page.contains("refresh"), "{page}");
+    assert!(page.contains("it did not answer"), "{page}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_window_whose_editor_is_silent_gets_a_page_that_says_so_and_does_not_reload() {
+    let rig = rig();
+    start_editor(&rig, "a", Silent);
+    let h = host(&rig, "a");
+    let answer = ask_within(
+        &rig.front,
+        &get(&rig, &h, "/", WANTS_PAGE),
+        Duration::from_secs(300),
+    )
+    .await;
+    assert_eq!(answer.status, 502);
+    let page = answer.text();
+    assert!(page.contains("The editor is not answering"), "{page}");
+    assert!(!page.contains("refresh"), "{page}");
+}
+
+#[tokio::test]
+async fn a_forwarded_port_that_cannot_be_reached_stays_plain_text_even_for_a_window() {
+    let rig = rig();
+    let editor = Server::start("editor").await;
+    rig.running
+        .start("a", Some(editor.addr), Flavour::CodeServer);
+    let h = forward_host(&rig, 9999, "a");
+    let answer = ask(&rig.front, &get(&rig, &h, "/", WANTS_PAGE)).await;
+    assert_eq!(answer.status, 502);
+    assert!(!answer.text().contains("<html"), "{}", answer.text());
+}
+
 /// Opens a WebSocket-style upgrade and returns the stream after the 101.
 async fn upgrade(rig: &Rig, host: &str, extra: &str) -> (TcpStream, String) {
     upgrade_at(rig, "/ws", host, extra).await

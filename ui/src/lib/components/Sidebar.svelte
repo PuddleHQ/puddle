@@ -72,6 +72,13 @@
     gap: var(--space-4);
     width: var(--sidebar-width);
     flex: none;
+    /* The bar stays in the window while the page scrolls; a tall menu scrolls inside it. */
+    position: sticky;
+    top: 0;
+    align-self: flex-start;
+    height: 100vh;
+    height: 100dvh;
+    overflow-y: auto;
     padding: var(--space-4);
     background: var(--color-surface);
     border-inline-end: 1px solid var(--color-border-subtle);
@@ -148,6 +155,9 @@
   /* A phone-width window has no room for a column beside the page: the bar goes on top. */
   @media (max-width: 760px) {
     .sidebar {
+      z-index: 5;
+      height: auto;
+      align-self: stretch;
       width: auto;
       flex-flow: row wrap;
       align-items: center;

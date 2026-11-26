@@ -90,8 +90,8 @@ impl SandboxProbe {
         clipboard: Option<&str>,
     ) -> Option<Self> {
         let clipboard_read = match clipboard {
-            None | Some("ask") => ClipboardRead::Ask,
-            Some("allow") => ClipboardRead::Allow,
+            None | Some("allow") => ClipboardRead::Allow,
+            Some("ask") => ClipboardRead::Ask,
             Some("deny") => ClipboardRead::Deny,
             // A typo must not quietly test the default.
             Some(_) => return None,

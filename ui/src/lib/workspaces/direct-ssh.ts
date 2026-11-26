@@ -5,9 +5,12 @@
 /** What the switch is called wherever it appears. */
 export const DIRECT_SSH_LABEL = "Allow direct SSH";
 
+/** The global default's name: the first-run step and the Workspaces settings page both use it. */
+export const DIRECT_SSH_DEFAULT_LABEL = `${DIRECT_SSH_LABEL} by default`;
+
 /** What the switch opens up, in the words of someone who has not met SSH. */
 export const DIRECT_SSH_HINT =
-  "Lets desktop VS Code and other SSH tools on this computer connect to the workspace.";
+  "Lets desktop VS Code, JetBrains and any other SSH client on this computer connect to the workspace.";
 
 /** The trust text: said once, when the switch is turned on. */
 export const TRUST_DETAIL =
@@ -30,11 +33,11 @@ export const trustWordsFor = (name: string): TrustWords => ({
 
 /** The confirmation for the global default: it reaches every workspace that sets no switch of its own. */
 export const TRUST_WORDS_GLOBAL: TrustWords = {
-  title: "Allow direct SSH for new workspaces?",
+  title: `${DIRECT_SSH_DEFAULT_LABEL}?`,
   summary:
-    "Every workspace that does not set its own switch becomes trusted, including the ones you already have.",
+    "Turns direct SSH on for every workspace that has no switch of its own, new and existing. This effectively gives the sandbox remote code execution on the host device, breaking every security boundary.",
   detail: TRUST_DETAIL,
-  confirmLabel: "Allow for new workspaces",
+  confirmLabel: "Allow by default",
 };
 
 /** The badge text on a workspace that has direct SSH on. */

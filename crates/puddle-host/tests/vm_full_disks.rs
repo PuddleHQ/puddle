@@ -103,18 +103,20 @@ fn vm_root_var() -> &'static str {
     puddle_vm_tests::ROOT_VAR
 }
 
-/// The free space of the file system that holds `dir`, in MiB, read the way an operator would.
+/// The free space of the file system that holds `dir`, in whole MiB (rounded down, as the host's
+/// own figure is), read the way an operator would.
 fn free_mib(dir: &Path) -> u64 {
     let out = Command::new("df")
-        .args(["--output=avail", "-B1M"])
+        .args(["--output=avail", "-B1"])
         .arg(dir)
         .output()
         .unwrap();
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .nth(1)
-        .and_then(|l| l.trim().parse().ok())
-        .expect("df prints the free MiB")
+        .and_then(|l| l.trim().parse::<u64>().ok())
+        .map(|bytes| bytes / (1024 * 1024))
+        .expect("df prints the free bytes")
 }
 
 /// Takes space with a file of its own until `leave_mib` are left. Returns the file.

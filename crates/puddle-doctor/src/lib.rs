@@ -18,7 +18,7 @@
 //! | SSH agent | one key-list request to the agent's pipe or socket ([`puddle_ssh_agent`]), 2 s limit; on Windows also the OpenSSH Authentication Agent service | no agent, locked, no keys, slow to answer (info or warning, never a failure) |
 //! | Azure CLI | `az --version` found on the path, 10 s limit | not found or its version unreadable: a warning, since only Azure DevOps sources through `az` need it |
 //! | Credential store | a write and delete of a throwaway value, through [`puddle_secrets::probe_os_store`] | no Secret Service provider or a locked keyring (a headless Linux host): saving secrets and sign-ins fails; names the fix and says to choose Retry in Puddle or restart it |
-//! | Global Secure Access | its client's services | installed: explains the VM limitation; service manager unreadable: an info line with the OS error |
+//! | Known problematic software | the services of each program in [`PROBLEMATIC_SOFTWARE`] | installed: a warning that names the program, why it matters and what to do; service manager unreadable: an info line with the OS error |
 //!
 //! [`diagnose`] runs the checks against a [`Probe`]: [`SystemProbe`] for the real machine, a fake
 //! in tests. The [`Report`] renders as text or as JSON with a [`SCHEMA_VERSION`] (it may be
@@ -44,6 +44,7 @@ mod explain;
 mod facts;
 mod launch;
 mod report;
+mod software;
 mod sys;
 mod system;
 
@@ -54,14 +55,16 @@ pub use diagnose::{
 pub use facts::{
     AccessDenied, AgentService, AzCliFacts, BlockedBy, BlockedFolder, BootFacts, CodeIntegrity,
     CodeIntegrityFacts, CredentialStoreFacts, DataEncryption, DataPathFacts, DiskEncryptionFacts,
-    DiskFacts, GsaFacts, HypervisorApi, HypervisorFacts, JobFacts, KeptLogs, Os, ProcessOutcome,
-    Protection, RuntimeFacts, RuntimeState, SealedKeyFacts, ServiceStart, ServiceState,
-    SshAgentFacts, SwapArea, SwapFacts, TpmFacts, VaultFacts, WritableFolder,
+    DiskFacts, HypervisorApi, HypervisorFacts, InstallState, JobFacts, KeptLogs, Os,
+    ProcessOutcome, Protection, RuntimeFacts, RuntimeState, SealedKeyFacts, ServiceStart,
+    ServiceState, SoftwareFacts, SshAgentFacts, SwapArea, SwapFacts, TpmFacts, VaultFacts,
+    WritableFolder,
 };
 pub use launch::TAIL_LINES;
 pub use puddle_runtime::RuntimeError;
 pub use puddle_secrets::{KeySourceTag, LoginSession, StoreHealth};
 pub use report::{Check, CheckId, Finding, Report, SCHEMA_VERSION, Status};
+pub use software::{PROBLEMATIC_SOFTWARE, ProblematicSoftware};
 pub use system::SystemProbe;
 
 /// Whether this build has the `puddle serve` command. Advice that names the command is worded

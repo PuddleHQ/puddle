@@ -56,8 +56,8 @@ pub enum CheckId {
     TestBoot,
     /// The job object Puddle runs in.
     JobObject,
-    /// Microsoft Entra Global Secure Access.
-    GlobalSecureAccess,
+    /// Software known to keep workspaces from working as expected.
+    ProblematicSoftware,
     /// Free space on the drive that holds Puddle's data.
     DiskSpace,
     /// The folders above Puddle's data: can other accounts write in them.
@@ -84,7 +84,7 @@ impl CheckId {
             Self::Launch => "Runtime starts",
             Self::TestBoot => "Test boot",
             Self::JobObject => "Job object",
-            Self::GlobalSecureAccess => "Global Secure Access",
+            Self::ProblematicSoftware => "Known problematic software",
             Self::DiskSpace => "Disk space",
             Self::DataPath => "Data folder path",
             Self::DiskEncryption => "Disk encryption",
@@ -162,10 +162,10 @@ pub enum Finding {
     JobUnreadable,
     /// The code integrity state couldn't be read.
     CodeIntegrityUnreadable,
-    /// The Global Secure Access client is installed.
-    GlobalSecureAccessInstalled,
-    /// Whether the Global Secure Access client is installed couldn't be read.
-    GlobalSecureAccessUnknown,
+    /// A program from the known-problematic list is installed.
+    ProblematicSoftwareInstalled,
+    /// Whether the known-problematic programs are installed couldn't be read.
+    ProblematicSoftwareUnknown,
     /// Free space is under the warning line.
     DiskSpaceLow,
     /// Free space is under the failure line.

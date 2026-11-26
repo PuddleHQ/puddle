@@ -631,9 +631,16 @@ fn quit_warnings(shutdown: &HostShutdown) -> Vec<String> {
     lines
 }
 
-/// What a second start of the program does in the running one: bring the window forward, unless
-/// the sign-in entry made that start (a copy is already running), which shows nothing.
+/// What a second start of the program does in the running one: quit when it carries
+/// [`autostart::QUIT_FLAG`] (the exit hook, [`stop`], then stops the workspaces), otherwise bring
+/// the window forward, unless the sign-in entry made that start (a copy is already running),
+/// which shows nothing.
 fn on_second_start<R: Runtime>(app: &AppHandle<R>, args: &[String]) {
+    if autostart::asks_to_quit(args) {
+        tracing::info!("another start asked this running app to quit");
+        app.exit(0);
+        return;
+    }
     bring_forward_unless_sign_in(args, || focus_main(app));
 }
 
@@ -734,6 +741,13 @@ pub fn run(options: &Options) -> Result<(), ShellError> {
         }));
     let app = with_plugins(builder)
         .setup(move |app| {
+            // Only the first start gets here (a second one ended inside the single-instance
+            // plugin). A quit request with nothing running has nothing to quit: it must not start
+            // Puddle.
+            if autostart::asks_to_quit(std::env::args_os()) {
+                app.handle().exit(0);
+                return Ok(());
+            }
             if let Err(err) = start(app.handle(), &options, source) {
                 *kept.lock().unwrap_or_else(PoisonError::into_inner) = Some(err);
                 // Returning the error would make Tauri panic inside `run`; end the loop and let

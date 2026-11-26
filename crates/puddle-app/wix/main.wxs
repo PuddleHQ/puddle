@@ -17,7 +17,9 @@
     task): a missing WebView2 runtime stops the install with a message naming it.
   - No desktop shortcut, file associations, deep links or merge modules: the program has none.
   - The program asks for no PATH change.
-  - The install refuses while the shell or a workspace runtime runs (see PuddleRunning below).
+  - The install refuses while the shell or a workspace runtime runs (see PuddleRunning below); an
+    uninstall instead offers to quit Puddle and go on (PuddleStop), and to remove everything Puddle
+    keeps on the computer (PuddleRemoveAll), both off unless the person chooses them.
 -->
 <?if $(sys.BUILDARCH)="x64"?>
     <?define Win64 = "yes" ?>
@@ -76,11 +78,41 @@
         <util:CloseApplication Id="PuddleShellRunning" Target="puddle-app.exe" Property="PUDDLE_SHELL_RUNNING" RebootPrompt="no" />
         <util:CloseApplication Id="PuddleRuntimeRunning" Target="msb.exe" Property="PUDDLE_RUNTIME_RUNNING" RebootPrompt="no" />
         <CustomAction Id="PuddleDetect" BinaryKey="WixCA" DllEntry="WixCloseApplications" Execute="immediate" Return="check" SuppressModularization="yes" />
+        <CustomAction Id="PuddleDetectAgain" BinaryKey="WixCA" DllEntry="WixCloseApplications" Execute="immediate" Return="check" SuppressModularization="yes" />
         <CustomAction Id="PuddleRunning" Error="Puddle is running. Quit Puddle from its tray icon (this stops your workspaces), then run this installer again." />
+        <!-- The detection only ever sets its two properties, never clears them, so each run starts
+             from "0" (a value from the dialog's own run must not outlive a Puddle quit meanwhile). -->
+        <CustomAction Id="PuddleForgetShell" Property="PUDDLE_SHELL_RUNNING" Value="0" />
+        <CustomAction Id="PuddleForgetRuntime" Property="PUDDLE_RUNTIME_RUNNING" Value="0" />
+        <CustomAction Id="PuddleForgetShellAgain" Property="PUDDLE_SHELL_RUNNING" Value="0" />
+        <CustomAction Id="PuddleForgetRuntimeAgain" Property="PUDDLE_RUNTIME_RUNNING" Value="0" />
+        <!-- The uninstall's two choices, both off unless set: in the dialog (checkbox, and Remove when
+             Puddle runs), or on the command line of a silent run (PUDDLE_STOP_RUNNING=1,
+             PUDDLE_REMOVE_ALL=1). puddle-uninstall.ps1 (installed beside the program) does the work. -->
+        <Property Id="PUDDLE_STOP_RUNNING" Secure="yes" />
+        <Property Id="PUDDLE_REMOVE_ALL" Secure="yes" />
+        <CustomAction Id="PuddleStop" Directory="INSTALLDIR" Execute="immediate" Impersonate="yes" Return="ignore"
+            ExeCommand="&quot;[SystemFolder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;[INSTALLDIR]uninstall\puddle-uninstall.ps1&quot; -Stop" />
+        <CustomAction Id="PuddleRemoveAll" Directory="INSTALLDIR" Execute="deferred" Impersonate="yes" Return="ignore"
+            ExeCommand="&quot;[SystemFolder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;[INSTALLDIR]uninstall\puddle-uninstall.ps1&quot; -RemoveAll" />
         <InstallExecuteSequence>
+            <Custom Action="PuddleForgetShell" Before="PuddleDetect" />
+            <Custom Action="PuddleForgetRuntime" After="PuddleForgetShell" />
             <Custom Action="PuddleDetect" Before="InstallValidate" />
-            <Custom Action="PuddleRunning" After="PuddleDetect"><![CDATA[(PUDDLE_SHELL_RUNNING <> "" AND PUDDLE_SHELL_RUNNING <> "0") OR (PUDDLE_RUNTIME_RUNNING <> "" AND PUDDLE_RUNTIME_RUNNING <> "0")]]></Custom>
+            <Custom Action="PuddleStop" After="PuddleDetect"><![CDATA[REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND PUDDLE_STOP_RUNNING="1" AND ((PUDDLE_SHELL_RUNNING <> "" AND PUDDLE_SHELL_RUNNING <> "0") OR (PUDDLE_RUNTIME_RUNNING <> "" AND PUDDLE_RUNTIME_RUNNING <> "0"))]]></Custom>
+            <Custom Action="PuddleForgetShellAgain" After="PuddleStop"><![CDATA[REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND PUDDLE_STOP_RUNNING="1"]]></Custom>
+            <Custom Action="PuddleForgetRuntimeAgain" After="PuddleForgetShellAgain"><![CDATA[REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND PUDDLE_STOP_RUNNING="1"]]></Custom>
+            <Custom Action="PuddleDetectAgain" After="PuddleForgetRuntimeAgain"><![CDATA[REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND PUDDLE_STOP_RUNNING="1"]]></Custom>
+            <Custom Action="PuddleRunning" After="PuddleDetectAgain"><![CDATA[(PUDDLE_SHELL_RUNNING <> "" AND PUDDLE_SHELL_RUNNING <> "0") OR (PUDDLE_RUNTIME_RUNNING <> "" AND PUDDLE_RUNTIME_RUNNING <> "0")]]></Custom>
+            <Custom Action="PuddleRemoveAll" Before="RemoveFiles"><![CDATA[REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND PUDDLE_REMOVE_ALL="1"]]></Custom>
         </InstallExecuteSequence>
+        <!-- The dialog below needs to know whether Puddle runs, before the install starts. -->
+        <InstallUISequence>
+            <Custom Action="PuddleForgetShell" Sequence="1205">REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE</Custom>
+            <Custom Action="PuddleForgetRuntime" Sequence="1206">REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE</Custom>
+            <Custom Action="PuddleDetect" Sequence="1210">REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE</Custom>
+            <Show Dialog="PuddleRemoveDlg" Sequence="1220">REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE</Show>
+        </InstallUISequence>
 
         <Media Id="1" Cabinet="app.cab" EmbedCab="yes" />
 
@@ -150,6 +182,30 @@
             <ProgressText Action="MigrateFeatureStates">Checking earlier install choices</ProgressText>
             <ProgressText Action="RollbackCleanup">Cleaning up temporary files</ProgressText>
             <ProgressText Action="InstallAdminPackage">Copying Puddle's files to the chosen folder</ProgressText>
+
+
+            <!-- The uninstall's own page (the program's own list, not WixUI's): what goes, what stays,
+                 the offer to quit a running Puddle, and the removal of everything Puddle keeps. -->
+            <Dialog Id="PuddleRemoveDlg" Width="370" Height="270" Title="[ProductName] Setup">
+                <Control Id="Title" Type="Text" X="20" Y="12" Width="330" Height="20" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Remove Puddle" />
+                <Control Id="Kept" Type="Text" X="20" Y="40" Width="330" Height="34" Transparent="yes" NoPrefix="yes"
+                    Text="Puddle's program files and its Start menu entry are removed. Your workspaces, their disks and your settings stay on this computer unless you tick the box below." />
+                <Control Id="RunningNotice" Type="Text" X="20" Y="80" Width="330" Height="34" Transparent="yes" NoPrefix="yes"
+                    Text="Puddle is running. Choosing Remove quits it first, and stops your workspaces cleanly.">
+                    <Condition Action="hide"><![CDATA[NOT ((PUDDLE_SHELL_RUNNING <> "" AND PUDDLE_SHELL_RUNNING <> "0") OR (PUDDLE_RUNTIME_RUNNING <> "" AND PUDDLE_RUNTIME_RUNNING <> "0"))]]></Condition>
+                </Control>
+                <Control Id="RemoveAllBox" Type="CheckBox" X="20" Y="122" Width="330" Height="18" Property="PUDDLE_REMOVE_ALL" CheckBoxValue="1"
+                    Text="Also remove all of Puddle's files from this computer" />
+                <Control Id="RemoveAllList" Type="Text" X="38" Y="142" Width="312" Height="80" Transparent="yes" NoPrefix="yes"
+                    Text="This deletes, for good: every workspace and its disk, your Puddle settings and the activity log, the workspaces' repositories that Puddle keeps, its logs, the saved window state, the development certificate Puddle added to your trusted certificates, and the Include line Puddle added to your ssh config. Leave it unticked to keep them." />
+                <Control Id="Remove" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="&amp;Remove">
+                    <Publish Property="PUDDLE_STOP_RUNNING" Value="1" Order="1"><![CDATA[(PUDDLE_SHELL_RUNNING <> "" AND PUDDLE_SHELL_RUNNING <> "0") OR (PUDDLE_RUNTIME_RUNNING <> "" AND PUDDLE_RUNTIME_RUNNING <> "0")]]></Publish>
+                    <Publish Event="EndDialog" Value="Return" Order="2">1</Publish>
+                </Control>
+                <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="Cancel">
+                    <Publish Event="EndDialog" Value="Exit">1</Publish>
+                </Control>
+            </Dialog>
 
             <!-- No licence dialog: the licences ship in the licenses folder. -->
             <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="2">1</Publish>

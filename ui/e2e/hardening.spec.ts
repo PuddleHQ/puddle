@@ -449,13 +449,13 @@ test.describe("with the keyboard alone", () => {
     // Connect: the radios take the arrow keys, and the direct SSH switch asks first and gives the
     // focus back when it is dismissed.
     const directSsh = page.getByRole("checkbox", {
-      name: /Allow direct SSH for new workspaces/,
+      name: /Allow direct SSH by default/,
     });
     await tabTo(page, page.getByRole("radio", { checked: true }).first());
     await tabTo(page, directSsh);
     await page.keyboard.press("Space");
     const trust = page.getByRole("alertdialog", {
-      name: "Allow direct SSH for new workspaces?",
+      name: "Allow direct SSH by default?",
     });
     await expect(trust).toBeVisible();
     // The dialog takes the focus when it opens; only then does Tab have a trap to be tested against.

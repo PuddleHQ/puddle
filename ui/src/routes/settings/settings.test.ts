@@ -832,25 +832,21 @@ describe("workspace defaults and the network", () => {
 
   it("turns the global direct SSH default on only after the trust text, then saves it at once", async () => {
     await open();
-    const box = screen.getByLabelText("Allow direct SSH for new workspaces");
+    const box = screen.getByLabelText("Allow direct SSH by default");
     expect(box).not.toBeChecked();
     await fireEvent.click(box);
     const dialog = await screen.findByRole("alertdialog", {
-      name: "Allow direct SSH for new workspaces?",
+      name: "Allow direct SSH by default?",
     });
     expect(dialog).toHaveTextContent("signed-in GitHub token");
     expect(putBodies()).toHaveLength(0);
     await fireEvent.click(
-      within(dialog).getByRole("button", { name: "Allow for new workspaces" }),
+      within(dialog).getByRole("button", { name: "Allow by default" }),
     );
     await save();
     expect(api.layer.direct_ssh).toBe(true);
-    expect(
-      screen.getByLabelText("Allow direct SSH for new workspaces"),
-    ).toBeChecked();
-    await fireEvent.click(
-      screen.getByLabelText("Allow direct SSH for new workspaces"),
-    );
+    expect(screen.getByLabelText("Allow direct SSH by default")).toBeChecked();
+    await fireEvent.click(screen.getByLabelText("Allow direct SSH by default"));
     await save();
     expect(api.layer.direct_ssh).toBe(false);
   });
@@ -893,9 +889,7 @@ describe("workspace defaults and the network", () => {
 
   it("cancelling the global trust text changes nothing", async () => {
     await open();
-    await fireEvent.click(
-      screen.getByLabelText("Allow direct SSH for new workspaces"),
-    );
+    await fireEvent.click(screen.getByLabelText("Allow direct SSH by default"));
     await fireEvent.click(
       await screen.findByRole("button", { name: "Cancel" }),
     );

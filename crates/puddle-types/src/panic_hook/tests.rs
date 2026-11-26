@@ -26,4 +26,17 @@ fn a_chained_hook_runs_and_survives_a_silenced_call() {
     let _ = std::thread::spawn(|| panic!("loud")).join();
     assert!(RAN.load(Ordering::SeqCst), "the chained hook came back");
     drop(std::panic::take_hook());
+
+    // `replace` drops the earlier hook for the new one; `reset` drops that one for the default.
+    static OLD: AtomicBool = AtomicBool::new(false);
+    static NEW: AtomicBool = AtomicBool::new(false);
+    chain(|_| OLD.store(true, Ordering::SeqCst));
+    replace(|_| NEW.store(true, Ordering::SeqCst));
+    let _ = std::thread::spawn(|| panic!("after replace")).join();
+    assert!(NEW.load(Ordering::SeqCst), "replace installs the new hook");
+    assert!(!OLD.load(Ordering::SeqCst), "replace drops the earlier hook");
+    NEW.store(false, Ordering::SeqCst);
+    reset();
+    let _ = std::thread::spawn(|| panic!("after reset")).join();
+    assert!(!NEW.load(Ordering::SeqCst), "reset drops the replaced hook");
 }

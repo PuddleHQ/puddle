@@ -61,6 +61,9 @@ pub struct Schedule {
     pub start: u64,
     /// How long the loops run; the idle night follows.
     pub active_secs: u64,
+    /// How long the idle night lasts. The morning round after it loads the program again, so
+    /// the trend is read over the night only.
+    pub idle_secs: u64,
     /// Seconds of one playbook hour: 3600 for the real day, less for a compressed run. Every
     /// window the playbook names in hours ("hour 1", "after hour 4", "in any hour") is read in
     /// these; the 10 minutes of the SSE line stay real minutes (the page's silence is real time).
@@ -74,12 +77,17 @@ impl Schedule {
         Self {
             start,
             active_secs: 8 * HOUR,
+            idle_secs: 4 * HOUR,
             hour: HOUR,
         }
     }
 
     const fn active_end(self) -> u64 {
         self.start + self.active_secs
+    }
+
+    const fn night_end(self) -> u64 {
+        self.active_end() + self.idle_secs
     }
 
     /// Width of the windows "hour 1" and "hour 8" are read from: a quarter of an hour.
@@ -274,7 +282,7 @@ fn idle_growth(series: &Series, sched: Schedule, out: &mut Vec<Finding>) {
                 .points(metric)
                 .iter()
                 .copied()
-                .filter(|&(t, _)| t >= sched.active_end())
+                .filter(|&(t, _)| (sched.active_end()..=sched.night_end()).contains(&t))
                 .collect();
             if idle.len() < MIN_IDLE_SAMPLES {
                 continue;

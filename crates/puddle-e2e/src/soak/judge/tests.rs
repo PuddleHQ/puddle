@@ -175,6 +175,21 @@ fn idle_noise_without_a_trend_is_quiet() {
 }
 
 #[test]
+fn the_morning_round_after_the_night_is_not_idle_growth() {
+    // Flat through the night, then the morning round loads the program: a step after hour 12.
+    let s = with_rss(|h| if h <= 12.0 { 100_000.0 } else { 118_000.0 });
+    let late = Schedule {
+        idle_secs: 4 * HOUR - 1800,
+        ..sched()
+    };
+    assert!(
+        judge(&s, late).iter().all(|f| f.check != Check::IdleGrowth),
+        "{:?}",
+        judge(&s, late)
+    );
+}
+
+#[test]
 fn a_600_ms_p95_after_hour_4_against_80_ms_at_hour_0_is_major() {
     let s = run(|s, t, h| {
         s.push(t, "api.workspaces.ms", if h < 4.0 { 80.0 } else { 600.0 });
@@ -411,6 +426,7 @@ fn a_compressed_run_is_judged_in_its_own_hours() {
     let compressed = Schedule {
         start: START,
         active_secs: 8 * hour,
+        idle_secs: 4 * hour,
         hour,
     };
     let found = judge(&s, compressed);

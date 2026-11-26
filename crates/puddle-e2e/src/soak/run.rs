@@ -1130,6 +1130,7 @@ pub async fn run(opts: Options) -> Result<Outcome, String> {
     let schedule = Schedule {
         start,
         active_secs: opts.profile.active().as_secs(),
+        idle_secs: opts.profile.idle().as_secs(),
         hour: opts.profile.hour_secs,
     };
     verdict(&opts.out, &metrics, schedule, &run.notes)

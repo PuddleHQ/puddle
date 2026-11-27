@@ -9,6 +9,7 @@
 use puddle_types::{Event, WorkspaceId};
 use rusqlite::{OptionalExtension, Transaction, params};
 
+use super::users::owner_in;
 use super::{Store, lock};
 use crate::error::StoreError;
 
@@ -94,6 +95,7 @@ impl Store {
     ) -> Result<SshAgentHost, StoreError> {
         let keys = joined(keys);
         self.change(|tx, now, fx| {
+            owner_in(tx, workspace)?;
             let before: Option<Option<String>> = tx
                 .query_row(
                     "SELECT keys FROM ssh_agent_hosts WHERE workspace_id = ?1 AND host = ?2",

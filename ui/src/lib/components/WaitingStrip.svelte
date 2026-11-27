@@ -142,9 +142,11 @@
   .by b {
     color: var(--color-text);
   }
+  /* The host never shrinks below its own width: it wraps to a line of its own instead of being cut
+     inside a word. */
   .ask {
-    flex: 1;
-    min-width: 0;
+    flex: 1 0 auto;
+    max-width: 100%;
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-2);

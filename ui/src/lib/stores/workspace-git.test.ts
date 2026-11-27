@@ -12,7 +12,8 @@ import { WorkspaceGitStore } from "./workspace-git.svelte.ts";
 let api: FakeIdentities;
 let source: FakeSource;
 
-const make = () => new WorkspaceGitStore(api as never, source);
+const refresh = vi.fn(async () => {});
+const make = () => new WorkspaceGitStore(api as never, source, refresh);
 
 beforeEach(() => {
   api = new FakeIdentities();
@@ -186,6 +187,13 @@ describe("identities of a workspace", () => {
         push: true,
       }),
     ).toEqual(down);
+    expect(
+      await store.cloneRepo({
+        url: "https://github.com/a/b",
+        pull: true,
+        push: true,
+      }),
+    ).toEqual(down);
   });
 });
 
@@ -220,6 +228,24 @@ describe("switches and the table", () => {
     expect(await store.addRepo(row)).toEqual({
       ok: false,
       message: "That repository is already listed.",
+    });
+  });
+
+  it("clones a repository into the workspace, then reads the workspace and the table again", async () => {
+    const store = make();
+    await store.load("web");
+    const repo = {
+      url: "https://github.com/acme/billing",
+      pull: true,
+      push: true,
+    };
+    expect((await store.cloneRepo(repo)).ok).toBe(true);
+    expect(api.bodies.at(-1)).toEqual({ kind: "clone", ...repo });
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(store.git?.repos.map((r) => r.repo)).toEqual(["repo-7", "billing"]);
+    expect(await store.cloneRepo(repo)).toEqual({
+      ok: false,
+      message: "That repository is already on the list.",
     });
   });
 

@@ -146,6 +146,12 @@ try {
   // The app's own window runs only Puddle's bundle, so it keeps the prototype frozen against pollution.
   check("the app window's Object.prototype is frozen", await run(`return Object.isFrozen(Object.prototype);`) === true);
   await run(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === "Skip setup")?.click(); return true;`);
+  // Skipping asks first: the confirmation's own Skip setup button ends the setup.
+  for (let i = 0; i < 75; i++) {
+    const confirmed = await run(`const b = [...document.querySelectorAll('[role="alertdialog"] button')].find((b) => b.textContent.trim() === "Skip setup"); b?.click(); return !!b;`).catch(() => false);
+    if (confirmed) break;
+    await sleep(400);
+  }
 
   // The sections the sidebar has today (ui/src/lib/nav.ts). A new section must not turn this test
   // red; losing one must. The Playwright shell tests count the sections, on the same engine.

@@ -96,6 +96,73 @@ fn a_damaged_database_is_refused() {
     );
 }
 
+/// A database at schema 20, as an older Puddle left it.
+fn old_puddle(path: &Path) {
+    let mut conn = Connection::open(path).unwrap();
+    schema::migrate_up_to(&mut conn, 20).unwrap();
+}
+
+#[test]
+fn a_staged_file_with_rules_as_a_view_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    old_puddle(&path);
+    sql(
+        &path,
+        "PRAGMA foreign_keys = OFF; DROP TABLE rules; \
+         CREATE VIEW rules AS SELECT 1 AS id;",
+    );
+    let refusal = check_staged_database(&path).unwrap().unwrap_err();
+    assert!(
+        matches!(refusal, DatabaseRefusal::NotPuddle(_)),
+        "{refusal}"
+    );
+}
+
+#[test]
+fn a_staged_file_with_a_view_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    old_puddle(&path);
+    sql(&path, "CREATE VIEW extra AS SELECT 1 AS id;");
+    let refusal = check_staged_database(&path).unwrap().unwrap_err();
+    assert!(
+        matches!(refusal, DatabaseRefusal::NotPuddle(_)),
+        "{refusal}"
+    );
+}
+
+#[test]
+fn a_staged_file_with_a_trigger_puddle_never_made_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    old_puddle(&path);
+    sql(
+        &path,
+        "CREATE TRIGGER sneaky AFTER INSERT ON rules BEGIN SELECT 1; END;",
+    );
+    let refusal = check_staged_database(&path).unwrap().unwrap_err();
+    assert!(
+        matches!(refusal, DatabaseRefusal::NotPuddle(_)),
+        "{refusal}"
+    );
+}
+
+#[test]
+fn a_foreign_database_with_a_puddle_sized_version_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    sql(
+        &path,
+        "CREATE TABLE other (x INTEGER); PRAGMA user_version = 5;",
+    );
+    let refusal = check_staged_database(&path).unwrap().unwrap_err();
+    assert!(
+        matches!(refusal, DatabaseRefusal::NotPuddle(_)),
+        "{refusal}"
+    );
+}
+
 #[test]
 fn an_older_schema_is_accepted_and_migrated_forward() {
     let dir = tempfile::tempdir().unwrap();

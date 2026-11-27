@@ -104,12 +104,12 @@ describe("ProgressLine", () => {
     expect(screen.queryByRole("progressbar")).toBeNull();
   });
 
-  it("says why a start takes a while", () => {
+  it("names the agent wait of a start and says it takes a while", () => {
     render(ProgressLine, {
       props: {
         busy: "starting",
         progress: {
-          step: "starting",
+          step: "waiting_for_agent",
           detail: null,
           repository: null,
           operation: "starting",
@@ -117,9 +117,10 @@ describe("ProgressLine", () => {
         },
       },
     });
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "takes a minute or two, every time it starts",
-    );
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("Waiting for the workspace agent");
+    expect(status).toHaveTextContent("step 2 of 3");
+    expect(status).toHaveTextContent("takes up to a minute or two");
   });
 
   it("names the checkout a cloning step is on, and its place in a list of several", () => {

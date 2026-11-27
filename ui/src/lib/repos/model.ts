@@ -104,6 +104,30 @@ export function roleWord(role: RepoView["role"]): string {
   return role === "unknown" ? "" : role;
 }
 
+/** Why a push to a repository cannot succeed: archived on its host, or the account only reads it. */
+export type PushBlock = "archived" | "read";
+
+/** The block on pushing to `repo`, or `null` when nothing in its listing says a push fails. */
+export function pushBlock(
+  repo: Pick<RepoView, "archived" | "role">,
+): PushBlock | null {
+  if (repo.archived) return "archived";
+  if (repo.role === "read" || repo.role === "triage") return "read";
+  return null;
+}
+
+/** The explanation shown beside a Push box that a block greys out. */
+export function pushBlockText(block: PushBlock): string {
+  return block === "archived"
+    ? "This repository is archived on its Git host, so it is read-only and a push cannot succeed."
+    : "Your account can only read this repository, so a push cannot succeed.";
+}
+
+/** Reads a block back from a link's text; anything else is no block. */
+export function parsePushBlock(text: string | null): PushBlock | null {
+  return text === "archived" || text === "read" ? text : null;
+}
+
 /** The traits of a repository worth a chip, in words. */
 export function traits(repo: RepoView): string[] {
   const out: string[] = [];

@@ -115,7 +115,8 @@ pub fn count_in(body: &[u8], field: &str) -> Result<f64, String> {
     }
 }
 
-/// How the event stream has behaved: seconds since its last event, and reconnects.
+/// How the event stream has behaved: seconds since it last showed a sign of life (an event or a
+/// keep-alive comment), and reconnects.
 #[derive(Debug)]
 pub struct SseState {
     inner: Mutex<(Instant, u64)>,
@@ -130,14 +131,14 @@ impl SseState {
         })
     }
 
-    /// Seconds since the last event, and how many times the reader had to reconnect.
+    /// Seconds since the last line of the stream, and how many times the reader had to reconnect.
     #[must_use]
     pub fn read(&self) -> (f64, u64) {
         let g = self.inner.lock().unwrap();
         (g.0.elapsed().as_secs_f64(), g.1)
     }
 
-    fn event(&self) {
+    fn alive(&self) {
         self.inner.lock().unwrap().0 = Instant::now();
     }
 
@@ -158,8 +159,9 @@ async fn open_stream(target: &Target) -> io::Result<TcpStream> {
 /// its sampler there with [`Sampler::retarget`].
 pub type ApiSlot = Arc<Mutex<Target>>;
 
-/// Reads `GET /api/events` for ever, counting each `data:` or `event:` line as an event (a comment
-/// line, the keep-alive, is not one) and reconnecting after a second when the stream ends. Ends
+/// Reads `GET /api/events` for ever, counting each line of the body as a sign of life (an event, or
+/// the keep-alive comment an idle stream gets every 15 s: a quiet system sends no events, so only
+/// a stream with neither is silent) and reconnecting after a second when the stream ends. Ends
 /// only when the task is dropped.
 pub async fn read_events(target: Target, state: Arc<SseState>) {
     read_events_at(Arc::new(Mutex::new(target)), state).await;
@@ -184,8 +186,8 @@ pub async fn read_events_at(slot: ApiSlot, state: Arc<SseState>) {
         while let Ok(Some(line)) = lines.next_line().await {
             if !in_body {
                 in_body = line.is_empty();
-            } else if line.starts_with("data:") || line.starts_with("event:") {
-                state.event();
+            } else if !line.is_empty() {
+                state.alive();
             }
         }
     }

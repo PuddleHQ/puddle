@@ -39,22 +39,34 @@ const ENTRY_FILE: &str = "workspace.json";
 /// the server opens one at a known window address and the copy there differs. Never fails: a copy
 /// that cannot be written leaves the window as exposed as it was without this module.
 pub(super) fn fill(server: &EditorServer, user_data: &Path) {
-    if let Err(err) = try_fill(server, user_data) {
+    if let Err(err) = try_fill(server, user_data, |file| std::fs::read_to_string(file)) {
         tracing::debug!(error = %err, "the editor's cached copy of the multi-root file was not written");
     }
 }
 
-fn try_fill(server: &EditorServer, user_data: &Path) -> io::Result<()> {
+/// `read` reads the multi-root file; tests pass their own because the guest path the server names
+/// does not exist on the host running them.
+fn try_fill(
+    server: &EditorServer,
+    user_data: &Path,
+    read: impl FnOnce(&str) -> io::Result<String>,
+) -> io::Result<()> {
     let (Some(file), Some(authority)) = (&server.workspace_file, &server.window_authority) else {
         return Ok(());
     };
-    let Some(entry) = entry_path(user_data, authority, file) else {
-        return Ok(());
-    };
-    let text = match std::fs::read_to_string(file) {
+    let text = match read(file) {
         Ok(text) => text,
         Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(err) => return Err(err),
+    };
+    store(user_data, authority, file, &text)
+}
+
+/// Writes `text` as the cached copy of the multi-root file at the guest path `file`, unless the
+/// copy there already holds it.
+fn store(user_data: &Path, authority: &str, file: &str, text: &str) -> io::Result<()> {
+    let Some(entry) = entry_path(user_data, authority, file) else {
+        return Ok(());
     };
     let content = serde_json::json!({ "content": text }).to_string();
     if std::fs::read_to_string(&entry).is_ok_and(|old| old == content) {

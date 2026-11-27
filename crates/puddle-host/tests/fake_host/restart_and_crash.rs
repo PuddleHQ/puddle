@@ -157,16 +157,24 @@ async fn a_restart_that_cannot_serve_the_sandboxes_route_makes_it_again_and_says
     third.shutdown().await;
 }
 
-/// A sandbox an earlier version made mounts the workspace's volume at a folder named by the id
-/// (`/workspaces/<id>`). A start makes it again on the same volume at `/workspace`, which every
-/// guest path now uses, says why, and keeps the new one at the next start.
+/// A sandbox an older Puddle made mounts the workspace's volume at a folder named by the id
+/// (`/workspaces/<id>`; QA 11 F1, an upgrade). A start keeps that sandbox, and with it the root
+/// disk (the home folder, installed packages): no sandbox is made or removed, and every boot of it
+/// runs the step that binds the volume at `/workspace`, first among the steps.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_sandbox_with_the_volume_at_the_old_folder_is_made_again_at_the_workspace_folder() {
+async fn a_sandbox_with_the_volume_at_the_old_folder_is_kept_and_the_volume_bound_at_the_workspace_folder()
+ {
     let rig = Rig::named_ids();
     let host = rig.start().await;
     let api1 = api(&host);
     let mut events = api1.events().await;
     create(&api1, &mut events, "acme").await;
+    assert!(
+        !String::from_utf8(rig.guest.plan_bytes(rig.guest.boots() - 1))
+            .unwrap()
+            .contains(OLDER_MOUNT_STEP_GUEST),
+        "a sandbox with the volume at /workspace got the older-mount step"
+    );
     api1.post("/api/workspaces/acme/stop", "").await;
     events.until(ended("acme"), Duration::from_secs(20)).await;
     host.shutdown().await;
@@ -178,40 +186,55 @@ async fn a_sandbox_with_the_volume_at_the_old_folder_is_made_again_at_the_worksp
             .move_volume_mounts(&sandbox, &GuestPath::new("/workspaces/acme").unwrap())
     );
 
-    let again = rig.start().await;
-    let api2 = api(&again);
-    let mut events = api2.events().await;
-    api2.post("/api/workspaces/acme/start", "").await;
-    let end = events.until(ended("acme"), Duration::from_secs(20)).await;
-    assert_eq!(end["step"], "done", "{end}");
-    assert_eq!(calls_of(&rig, "Create"), 2);
-    assert_eq!(calls_of(&rig, "Remove"), 1);
+    for run in 0..2 {
+        let again = rig.start().await;
+        let api2 = api(&again);
+        let mut events = api2.events().await;
+        let boots = rig.guest.boots();
+        api2.post("/api/workspaces/acme/start", "").await;
+        let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+        assert_eq!(end["step"], "done", "run {run}: {end}");
+        assert_eq!(calls_of(&rig, "Create"), 1, "run {run}: a sandbox was made");
+        assert_eq!(
+            calls_of(&rig, "Remove"),
+            0,
+            "run {run}: the sandbox was removed"
+        );
+        let made_again = events.seen.iter().any(|e| {
+            e["type"] == "workspace_progress"
+                && e["detail"]
+                    .as_str()
+                    .is_some_and(|d| d.contains("made again"))
+        });
+        assert!(
+            !made_again,
+            "run {run}: a notice says the sandbox is made again"
+        );
+        assert_eq!(rig.guest.boots(), boots + 1, "run {run}");
+        let plan = String::from_utf8(rig.guest.plan_bytes(boots)).unwrap();
+        let first_step = plan.lines().find(|l| l.starts_with("puddle_step "));
+        assert_eq!(
+            first_step,
+            Some(format!("puddle_step '{OLDER_MOUNT_STEP_GUEST}'").as_str()),
+            "run {run}: {plan}"
+        );
+        let step = pem_of(&rig.guest.plan_files(boots), OLDER_MOUNT_STEP_GUEST);
+        assert!(
+            step.starts_with("PUDDLE_OLDER_MOUNT='/workspaces/acme'\n"),
+            "run {run}: {step}"
+        );
+        assert!(step.ends_with(OLDER_MOUNT_SH), "run {run}");
+        again.shutdown().await;
+        drop(again);
+        drop(events);
+    }
     let mounts: Vec<String> = rig
         .runtime
         .volume_mounts(&sandbox)
         .iter()
         .map(|m| m.guest.to_string())
         .collect();
-    assert_eq!(mounts, ["/workspace"]);
-    let said = events.seen.iter().any(|e| {
-        e["type"] == "workspace_progress"
-            && e["detail"].as_str().is_some_and(|d| {
-                d.contains("made again") && d.contains("/workspace") && d.contains("volume")
-            })
-    });
-    assert!(said, "no notice that the sandbox was made again");
-    again.shutdown().await;
-    drop(again);
-    drop(events);
-
-    let third = rig.start().await;
-    let api3 = api(&third);
-    let mut events = api3.events().await;
-    api3.post("/api/workspaces/acme/start", "").await;
-    events.until(ended("acme"), Duration::from_secs(20)).await;
-    assert_eq!(calls_of(&rig, "Create"), 2);
-    assert_eq!(calls_of(&rig, "Remove"), 1);
-    third.shutdown().await;
+    assert_eq!(mounts, ["/workspaces/acme"]);
 }
 
 /// Docker's data folder is a disk of the sandbox itself: every sandbox the host makes has one,

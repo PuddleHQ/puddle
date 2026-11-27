@@ -121,7 +121,11 @@ describe("words", () => {
 
   it("places a step in its operation", () => {
     expect(stepPosition("creating", "cloning")).toEqual({ index: 3, of: 3 });
-    expect(stepPosition("starting", "starting")).toEqual({ index: 1, of: 2 });
+    expect(stepPosition("starting", "starting")).toEqual({ index: 1, of: 3 });
+    expect(stepPosition("starting", "waiting_for_agent")).toEqual({
+      index: 2,
+      of: 3,
+    });
     expect(stepPosition("deleting", "removing")).toEqual({ index: 2, of: 2 });
     expect(stepPosition("reclaiming", "reclaiming")).toEqual({
       index: 1,

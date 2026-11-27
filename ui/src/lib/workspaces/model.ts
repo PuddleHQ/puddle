@@ -106,7 +106,8 @@ const STEP_WORDS: Record<Step, string> = {
   pulling_image: "Downloading the image",
   unpacking_image: "Preparing the image",
   cloning: "Cloning the repository",
-  starting: "Starting the workspace",
+  starting: "Booting the workspace",
+  waiting_for_agent: "Waiting for the workspace agent",
   syncing: "Syncing your settings",
   checking: "Checking for unsaved work",
   reclaiming: "Reclaiming free space",
@@ -145,14 +146,15 @@ export const STEP_HINTS: Partial<Record<Step, string>> = {
     "The first workspace downloads its image once; later ones reuse it.",
   unpacking_image:
     "Turning the download into the disk the workspace boots from.",
-  starting:
-    "Booting the workspace's virtual machine and waiting for its agent takes a minute or two, every time it starts.",
+  starting: "Booting the workspace's virtual machine, every time it starts.",
+  waiting_for_agent:
+    "The agent inside the workspace has to answer before it is ready; this takes up to a minute or two.",
 };
 
 /** The ordered steps each operation goes through, to show "step 2 of 3". */
 const SCRIPTS: Record<Operation, readonly Step[]> = {
   creating: ["preparing_volume", "pulling_image", "cloning"],
-  starting: ["starting", "syncing"],
+  starting: ["starting", "waiting_for_agent", "syncing"],
   stopping: ["stopping", "reclaiming"],
   reclaiming: ["reclaiming"],
   resetting_root_disk: ["resetting_root_disk"],

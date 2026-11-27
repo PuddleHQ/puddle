@@ -279,7 +279,9 @@ describe("certificates step", () => {
     expect(items[0]).toHaveTextContent(
       "Development certificate: not checked yet",
     );
-    expect(items[1]).toHaveTextContent("1 company root certificate found");
+    expect(items[1]).toHaveTextContent(
+      "1 root certificate copied from this computer",
+    );
     // Where the details are is named, not linked: a link would leave the flow.
     expect(screen.getByText(/Settings › Network health/)).toBeVisible();
     expect(screen.queryByRole("link", { name: /Network health/ })).toBeNull();
@@ -460,7 +462,7 @@ describe("interception step", () => {
     render(Interception);
     await screen.findByRole("group", { name: "Interception" });
     expect(
-      screen.getByText(/reads \(MITMs\) HTTPS traffic to monitor it/),
+      screen.getByText(/decrypts HTTPS traffic from your workspaces/),
     ).toBeVisible();
     expect(screen.getByText(/change this later in Settings/)).toBeVisible();
     const more = screen.getByText("More details");

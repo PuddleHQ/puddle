@@ -14,7 +14,7 @@
 use std::time::Duration;
 
 use puddle_compute::ExecRequest;
-use puddle_types::{CheckoutDir, GuestPath, SessionUser};
+use puddle_types::{CheckoutDir, GuestFile, GuestPath, SessionUser};
 
 use crate::WorkspaceError;
 
@@ -41,6 +41,13 @@ pub const PREPARE_SH: &str = include_str!("../guest/prepare.sh");
 /// The guest script that clones into a stage and moves the finished clone into place
 /// (`guest/clone.sh`).
 pub const CLONE_SH: &str = include_str!("../guest/clone.sh");
+
+/// The boot step that shows the volume of a sandbox an older Puddle made at [`WORKSPACE_DIR`] too
+/// (`guest/older-mount.sh`).
+pub const OLDER_MOUNT_SH: &str = include_str!("../guest/older-mount.sh");
+
+/// Where [`Layout::older_mount_step`] puts its boot step in the guest.
+pub const OLDER_MOUNT_STEP_GUEST: &str = "/usr/local/lib/puddle/older-mount.sh";
 
 /// The folder below [`PUDDLE_DIR`] that clones are written in until git ends.
 const CLONING_DIR: &str = "cloning";
@@ -171,6 +178,29 @@ impl Layout {
         ExecRequest::new("sync", Vec::<String>::new())
             .as_user("root")
             .with_timeout(SYNC_TIMEOUT)
+    }
+
+    /// The boot step for a sandbox an older Puddle made with the volume at `older`
+    /// (`/workspaces/<id>`, before 2026-11-25): [`OLDER_MOUNT_SH`] at
+    /// [`OLDER_MOUNT_STEP_GUEST`], which binds `older` at the mount point, so the sandbox keeps its
+    /// root disk and every path below the mount point still reaches the volume. `None` when
+    /// `older` is the mount point itself, or holds a character other than letters, digits, `/`,
+    /// `.`, `_` and `-` (no older Puddle made such a folder).
+    #[must_use]
+    pub fn older_mount_step(&self, older: &GuestPath) -> Option<GuestFile> {
+        let plain = older
+            .as_str()
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'.' | b'_' | b'-'));
+        if !plain || older == &self.mount {
+            return None;
+        }
+        let script =
+            format!("PUDDLE_OLDER_MOUNT='{older}'\nexport PUDDLE_OLDER_MOUNT\n{OLDER_MOUNT_SH}");
+        Some(GuestFile::new(
+            guest(OLDER_MOUNT_STEP_GUEST).ok()?,
+            script.into_bytes(),
+        ))
     }
 
     fn child(&self, name: &str) -> Result<GuestPath, WorkspaceError> {

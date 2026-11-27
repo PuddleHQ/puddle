@@ -126,8 +126,9 @@ fn reseed(conn: &rusqlite::Connection, records: &[AuditRecord]) {
     {
         let mut insert = tx
             .prepare(
-                "INSERT INTO audit (ts, type, workspace_id, host, outcome, line, search, user_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)",
+                "INSERT INTO audit (ts, type, workspace_id, host, outcome, line, search, category,
+                                    user_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1)",
             )
             .unwrap();
         for record in records {
@@ -140,6 +141,7 @@ fn reseed(conn: &rusqlite::Connection, records: &[AuditRecord]) {
                     record.outcome().map(AuditOutcome::as_str),
                     record.to_line().unwrap(),
                     record.search_text(),
+                    record.category(),
                 ])
                 .unwrap();
         }
@@ -417,6 +419,12 @@ fn the_category_filter_matches_company_network_connections_only() {
         refused,
         lookalike,
         connection(T0 + 3, "a", "api.example.com", ConnectionDecision::Allow),
+        // A guest chooses its request method: one named like the category is not in it.
+        with_request(
+            connection(T0 + 4, "a", "api.example.com", ConnectionDecision::Allow),
+            "COMPANY_NETWORK",
+            "/",
+        ),
     ];
     let (_dir, store) = seeded(&records);
     let found = |category: Option<&'static str>| {
@@ -433,7 +441,7 @@ fn the_category_filter_matches_company_network_connections_only() {
             .unwrap())
     };
     assert_eq!(found(Some("company_network")), [1, 2]);
-    assert_eq!(found(None), [1, 2, 3, 4]);
+    assert_eq!(found(None), [1, 2, 3, 4, 5]);
 }
 
 #[test]
@@ -727,7 +735,10 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
                 ..AuditFilter::default()
             },
             AuditCursor::Before(None),
-            "USING INDEX audit_outcome (outcome=?)",
+            // Several filters have an index to search by, and with no statistics SQLite's pick
+            // among them follows the width of the table, which a column added to it moved. Any
+            // of them bounds the work; the plan must not be a scan.
+            "SEARCH audit USING INDEX audit_",
         ),
         (
             "last hour (all of it)",
@@ -837,7 +848,10 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
                 to: Some(last),
             },
             AuditCursor::Before(None),
-            "USING INDEX audit_outcome (outcome=?)",
+            // Several filters have an index to search by, and with no statistics SQLite's pick
+            // among them follows the width of the table, which a column added to it moved. Any
+            // of them bounds the work; the plan must not be a scan.
+            "SEARCH audit USING INDEX audit_",
         ),
         (
             "tail",

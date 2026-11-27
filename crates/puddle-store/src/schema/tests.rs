@@ -1341,3 +1341,54 @@ fn write_golden_database() {
     assert_eq!(violations(&conn).unwrap(), []);
     assert_eq!(version(&conn), 23);
 }
+
+#[test]
+fn v35_backfills_the_category_and_counts_the_search_text_in_the_audit_size() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    migrate_up_to(&mut conn, 34).unwrap();
+    conn.execute_batch(
+        r#"INSERT INTO audit (ts, type, line, search, user_id) VALUES
+               (1, 'connection', '{"category":"company_network"}', 'a.example', 1),
+               (2, 'connection', '{"category":null}', 'b.example', 1),
+               (3, 'connection', '{"category":""}', NULL, 1),
+               (4, 'rule_created', '{"category":"company_network"}', NULL, 1);
+           UPDATE audit_size SET bytes = 999 WHERE id = 1;"#,
+    )
+    .unwrap();
+    assert_eq!(migrate(&mut conn).unwrap(), 34);
+    let categories: Vec<Option<String>> = conn
+        .prepare("SELECT category FROM audit ORDER BY id")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(
+        categories,
+        [Some("company_network".to_owned()), None, None, None],
+        "only a connection line has one, and an empty one is none"
+    );
+    let size = |conn: &Connection| -> i64 {
+        conn.query_row("SELECT bytes FROM audit_size WHERE id = 1", [], |r| {
+            r.get(0)
+        })
+        .unwrap()
+    };
+    let (line, search, category) = (30 + 17 + 15 + 30, 9 + 9, 15);
+    assert_eq!(
+        size(&conn),
+        line + search + category,
+        "recomputed, search and category counted"
+    );
+    conn.execute(
+        "INSERT INTO audit (ts, type, line, search, category, user_id)
+         VALUES (5, 'connection', 'abcd', 'xyz', 'c', 1)",
+        [],
+    )
+    .unwrap();
+    assert_eq!(size(&conn), line + search + category + 4 + 3 + 1);
+    conn.execute("DELETE FROM audit WHERE ts = 5", []).unwrap();
+    assert_eq!(size(&conn), line + search + category);
+    conn.execute("DELETE FROM audit WHERE ts = 3", []).unwrap();
+    assert_eq!(size(&conn), line + search + category - 15);
+}

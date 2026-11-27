@@ -114,3 +114,10 @@ fn no_second_request_goes_to_an_endpoint_that_has_a_parked_one() {
     assert!(third.is_ok(), "{third:?}");
     assert_eq!(sent.load(Ordering::SeqCst), 3);
 }
+
+/// The agent pipe is opened for identification only: a process that squats the pipe name must not
+/// be able to act as the user (`SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION`).
+#[test]
+fn the_agent_pipe_is_opened_with_identification_only_impersonation() {
+    assert_eq!(PIPE_SECURITY_QOS_FLAGS, 0x0010_0000 | 0x0001_0000);
+}

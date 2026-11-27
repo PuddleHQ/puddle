@@ -16,6 +16,9 @@
     registrable?: string | undefined;
   } = $props();
 
+  // A line may break after a dot, never inside a label: `<wbr>` is the break opportunity.
+  const labels = (value: string) => value.split(/(?<=\.)/);
+
   const parts = $derived(
     hostParts(host, {
       port,
@@ -30,10 +33,11 @@
       title="This host and every subdomain of it"
     >
       *.
-    </span>{/if}{#if parts.lead}<span class="lead">{parts.lead}</span>{/if}<b
-    class="main"
-  >
-    {parts.main}
+    </span>{/if}{#if parts.lead}<span class="lead">
+      {#each labels(parts.lead) as label, i (i)}{label}<wbr />{/each}
+    </span>{/if}<b class="main">
+    {#each labels(parts.main) as label, i (i)}{label}{#if i < labels(parts.main).length - 1}<wbr
+        />{/if}{/each}
   </b>{#if parts.port !== null}<span class="port" class:usual={parts.usualPort}>
       :{parts.port}
     </span>{/if}

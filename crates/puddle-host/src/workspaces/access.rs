@@ -433,10 +433,15 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     }
 
     /// The keeper a boot hands its sandbox to: the lifecycle.
-    pub(super) fn keeper(&self) -> super::settle::LifecycleKeeper<'_, R> {
+    pub(super) fn keeper<'a>(
+        &'a self,
+        name: &'a WorkspaceId,
+    ) -> super::settle::LifecycleKeeper<'a, R> {
         super::settle::LifecycleKeeper {
             runtime: &self.inner.runtime,
             lifecycle: &self.inner.lifecycle,
+            events: self.inner.events.as_ref(),
+            workspace: name,
         }
     }
 

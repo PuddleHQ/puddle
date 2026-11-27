@@ -20,9 +20,14 @@
   } = $props();
 
   const down = $derived(isDown(workspace.status));
+  // A workspace being created reads "created" (no VM yet), but it cannot be started: its disk and
+  // first clone are still being made. Offer nothing until that ends.
+  const creating = $derived(workspace.busy === "creating");
 </script>
 
-{#if down}
+{#if creating}
+  <!-- no buttons while the workspace is created -->
+{:else if down}
   <button
     type="button"
     class="btn primary"

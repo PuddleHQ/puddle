@@ -95,6 +95,7 @@ fn workspace_progress_is_per_workspace_and_always_carries_detail() {
         (WorkspaceStep::UnpackingImage, "unpacking_image"),
         (WorkspaceStep::Cloning, "cloning"),
         (WorkspaceStep::Starting, "starting"),
+        (WorkspaceStep::WaitingForAgent, "waiting_for_agent"),
         (WorkspaceStep::Syncing, "syncing"),
         (WorkspaceStep::Checking, "checking"),
         (WorkspaceStep::Reclaiming, "reclaiming"),

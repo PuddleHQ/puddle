@@ -1041,6 +1041,14 @@ fn the_first_open_follows_the_colour_scheme_and_a_later_start_keeps_the_users_se
         "{text}"
     );
     assert!(text.contains("Default Dark Modern") && text.contains("Default Light Modern"));
+    assert!(
+        text.contains(r#""telemetry.telemetryLevel": "off""#),
+        "{text}"
+    );
+    assert!(
+        text.contains(r#""workbench.enableExperiments": false"#),
+        "{text}"
+    );
 
     std::fs::write(&file, r#"{"workbench.colorTheme": "Solarized Dark"}"#).unwrap();
     assert_eq!(seed_first_settings(&server).unwrap(), Vec::<PathBuf>::new());

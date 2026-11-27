@@ -187,7 +187,7 @@ describe("RepoPicker", () => {
     expect(screen.getByRole("status").textContent?.trim()).toBe("");
   });
 
-  it("warns about a project with a space but still lists it", async () => {
+  it("lists a project with a space without a warning", async () => {
     api.repos = [
       repoView("contoso", "scanner", {
         host: "dev.azure.com",
@@ -197,7 +197,10 @@ describe("RepoPicker", () => {
     ];
     show();
     await open();
-    expect(await screen.findByText(/project name has a space/)).toBeVisible();
+    expect(
+      await screen.findByRole("button", { name: /Shop Floor\/scanner/ }),
+    ).toBeVisible();
+    expect(screen.queryByText(/project name has a space/)).toBeNull();
   });
 
   it("stops asking when closed again", async () => {

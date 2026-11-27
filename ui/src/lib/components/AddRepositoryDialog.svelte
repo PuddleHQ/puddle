@@ -2,11 +2,7 @@
 <script lang="ts">
   import { covering, type Identity } from "#lib/identities/model.ts";
   import { parseRepoUrl } from "#lib/identities/repo.ts";
-  import {
-    matchingUrl,
-    tableCannotHold,
-    TABLE_CANNOT_HOLD,
-  } from "#lib/repos/model.ts";
+  import { matchingUrl } from "#lib/repos/model.ts";
   import {
     identities as identityStore,
     type IdentitiesStore,
@@ -182,12 +178,6 @@
       onPick={(repo, by) => picked(repo, by)}
     />
 
-    {#if tableCannotHold(address)}
-      <p class="hint warn" data-testid="table-cannot-hold">
-        {TABLE_CANNOT_HOLD}
-      </p>
-    {/if}
-
     <div class="field">
       <label for="{id}-directory">Directory</label>
       <input
@@ -296,8 +286,5 @@
   }
   .boxes .choice {
     min-height: var(--control-size);
-  }
-  .warn {
-    color: var(--color-warning);
   }
 </style>

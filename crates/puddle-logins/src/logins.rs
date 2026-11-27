@@ -127,7 +127,7 @@ struct Inner {
     /// One change of the kept logins at a time (a capture, a forget, the start's load), so two
     /// refreshes at once do not interleave their writes and a login forgotten during a capture
     /// does not come back when the capture ends.
-    capture: tokio::sync::Mutex<()>,
+    capture: Arc<tokio::sync::Mutex<()>>,
     /// How long a call on the credential store may take, in milliseconds.
     store_timeout_ms: AtomicU64,
     /// Held by the blocking thread of each store call until the call returns, so a call that was
@@ -281,7 +281,7 @@ impl Logins {
                 registry,
                 notices,
                 marker,
-                capture: tokio::sync::Mutex::new(()),
+                capture: Arc::new(tokio::sync::Mutex::new(())),
                 store_timeout_ms: AtomicU64::new(
                     u64::try_from(STORE_TIMEOUT.as_millis()).unwrap_or(u64::MAX),
                 ),
@@ -739,10 +739,11 @@ impl Logins {
         {
             return Err(Problem::UnusableToken);
         }
-        let _one_at_a_time = self.inner.capture.lock().await;
+        let mut one_at_a_time = Some(Arc::clone(&self.inner.capture).lock_owned().await);
         let planned = self.plan(profile, found)?;
         // The credential store first: a token that was not kept is not replaced in the answer.
-        self.keep_stored(profile, &planned).await?;
+        self.keep_stored(profile, &planned, &mut one_at_a_time)
+            .await?;
         for (field, real, stand_in, is_new) in &planned {
             let slot = (field.slot(), field.scope);
             // A refresh gives the stand-in a new token without a moment in which it has none; a
@@ -775,11 +776,13 @@ impl Logins {
     }
 
     /// Writes the tokens of `planned` that are kept in the credential store, with their
-    /// stand-ins, and notes the login in the marker.
+    /// stand-ins, and notes the login in the marker. `lock` holds the capture lock; a put back that
+    /// has to wait for a write that timed out takes it into a task, so the tool is answered first.
     async fn keep_stored(
         &self,
         profile: &'static Profile,
         planned: &[Planned],
+        lock: &mut Option<tokio::sync::OwnedMutexGuard<()>>,
     ) -> Result<(), Problem> {
         // One write per slot, with its last field's token, as the registry gets the last one too.
         let mut writes: Vec<(Slot, &Zeroizing<String>, &String)> = Vec::new();
@@ -811,12 +814,24 @@ impl Logins {
                 .await
                 .is_err()
             {
-                let mut back = written;
-                if self.inner.store_timeouts.load(Ordering::Relaxed) != timeouts {
-                    self.settle_store().await;
-                    back += 1;
+                if self.inner.store_timeouts.load(Ordering::Relaxed) == timeouts {
+                    self.put_back(profile, before.into_iter().take(written))
+                        .await;
+                    return Err(Problem::StoreUnavailable);
                 }
-                self.put_back(profile, before.into_iter().take(back)).await;
+                // The write timed out and may still land. With nothing to put back there is
+                // nothing to wait for; otherwise the put back waits for it in a task that keeps
+                // the capture lock, and the tool gets its answer now.
+                let back: Vec<_> = before.into_iter().take(written + 1).collect();
+                let held = lock.take();
+                if let (false, Some(held)) = (back.is_empty(), held) {
+                    let this = self.clone();
+                    tokio::spawn(async move {
+                        this.settle_store().await;
+                        this.put_back(profile, back).await;
+                        drop(held);
+                    });
+                }
                 return Err(Problem::StoreUnavailable);
             }
         }

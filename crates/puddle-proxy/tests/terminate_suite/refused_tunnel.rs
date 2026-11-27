@@ -30,6 +30,30 @@ async fn a_refused_host_is_told_to_a_tool_inside_the_tunnel() {
 }
 
 #[tokio::test]
+async fn a_refusal_is_not_told_to_a_client_with_another_name_or_only_h2() {
+    let pki = Pki::new();
+    let rig = RigBuilder::new(&pki).build();
+    for (sni, alpn) in [
+        (Some("other.test"), &[&b"http/1.1"[..]][..]),
+        (None, &[&b"h2"[..]][..]),
+    ] {
+        let mut guest = rig.guest();
+        let err = guest
+            .tls_with("stranger.test:443", sni, alpn, true)
+            .await
+            .err()
+            .unwrap_or_else(|| panic!("sni {sni:?} alpn {alpn:?} was answered"));
+        assert!(
+            matches!(
+                err.kind(),
+                std::io::ErrorKind::UnexpectedEof | std::io::ErrorKind::ConnectionReset
+            ),
+            "the connection is closed without an alert or a certificate: {err:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn a_client_in_a_container_gets_the_plain_refusal() {
     let pki = Pki::new();
     let rig = RigBuilder::new(&pki).build();

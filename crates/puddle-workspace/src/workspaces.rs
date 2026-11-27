@@ -783,20 +783,21 @@ impl Workspaces {
                 holder: holder.to_string(),
             });
         }
-        let owner = self.existing_owner(rt, id).await?;
         let checked_in = maintenance_name(id)?;
         self.borrow(id, &checked_in)?;
         let loan = Loan {
             registry: &self.registry,
             id,
         };
+        // Read under the loan: a create that starts while this awaits is refused, not missed.
+        let owner = self.existing_owner(rt, id).await?;
         let result = self
             .delete_borrowed(rt, id, &info, confirmed, owner, checked_in)
             .await;
-        drop(loan);
         if result.is_ok() {
             self.registry.forget(id);
         }
+        drop(loan);
         result
     }
 
@@ -986,38 +987,53 @@ impl Workspaces {
     ) -> Result<ImportReport, WorkspaceError> {
         let name = maintenance_name(id)?;
         self.borrow(id, &name)?;
-        let volume = id.volume_name();
-        let existing = match rt.volume(&volume).await {
-            Ok(found) => found,
-            Err(e) => {
-                self.registry.give_back(id);
-                return Err(WorkspaceError::runtime("look up the volume", id, e));
-            }
+        // Held to the end, cleanup included, and given back when the request is dropped too.
+        let _loan = Loan {
+            registry: &self.registry,
+            id,
         };
+        let volume = id.volume_name();
+        let existing = rt
+            .volume(&volume)
+            .await
+            .map_err(|e| WorkspaceError::runtime("look up the volume", id, e))?;
         let existed = existing.is_some();
         let result = self
             .run_import(rt, id, image, existing.as_ref(), size, imports)
             .await;
-        self.registry.give_back(id);
         // The create makes the volume; whether it got that far is read, not assumed.
-        let made = !existed && matches!(rt.volume(&volume).await, Ok(Some(_)));
+        let made = if existed {
+            Ok(false)
+        } else {
+            rt.volume(&volume).await.map(|found| found.is_some())
+        };
         match result {
+            // A lookup that fails after a good import: the import ran on the volume it made.
             Ok(failed) => Ok(ImportReport {
-                created_volume: made,
+                created_volume: made.unwrap_or(true),
                 failed,
             }),
             // The sandbox is still there and holds the volume: removing it now would fail or
             // pull it from under a running guest. The error names the sandbox left behind.
             Err(e @ WorkspaceError::Leftover { .. }) => Err(e),
-            Err(e) if made => match rt.remove_volume(&volume).await {
-                Ok(()) => Err(e),
-                Err(left) => Err(WorkspaceError::Leftover {
+            Err(e) => match made {
+                Ok(true) => match rt.remove_volume(&volume).await {
+                    Ok(()) => Err(e),
+                    Err(left) => Err(WorkspaceError::Leftover {
+                        workspace: id.to_string(),
+                        job: e.to_string(),
+                        leftover: format!("the new volume {volume} was not removed ({left})"),
+                    }),
+                },
+                Ok(false) => Err(e),
+                Err(lookup) => Err(WorkspaceError::Leftover {
                     workspace: id.to_string(),
                     job: e.to_string(),
-                    leftover: format!("the new volume {volume} was not removed ({left})"),
+                    leftover: format!(
+                        "the new volume {volume} may not have been removed (looking it up failed: {lookup})"
+                    ),
                 }),
             },
-            Err(e) => Err(e),
         }
     }
 

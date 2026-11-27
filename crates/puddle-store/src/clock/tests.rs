@@ -15,3 +15,57 @@ fn manual_clock_moves_only_when_told() {
     clock.set(2);
     assert_eq!(clock.now_ms(), 2);
 }
+
+#[test]
+fn manual_clock_monotonic_follows_forward_moves_and_ignores_a_step_back() {
+    let clock = ManualClock::new(1_000);
+    assert_eq!(clock.monotonic_ms(), 1_000);
+    clock.advance(500);
+    assert_eq!(clock.monotonic_ms(), 1_500);
+    clock.set(10_000);
+    assert_eq!(clock.monotonic_ms(), 10_000);
+    clock.set(2_000);
+    assert_eq!(clock.now_ms(), 2_000);
+    assert_eq!(
+        clock.monotonic_ms(),
+        10_000,
+        "a step back is not elapsed time"
+    );
+    clock.advance(7);
+    assert_eq!(clock.monotonic_ms(), 10_007);
+    clock.set(5_000);
+    assert_eq!(
+        clock.monotonic_ms(),
+        13_000,
+        "a step forward after one back counts only the gap"
+    );
+}
+
+#[test]
+fn system_clock_monotonic_counts_real_elapsed_time() {
+    let first = SystemClock.monotonic_ms();
+    let started = Instant::now();
+    let mut second = first;
+    // flake-ok: reads the clock under test until it has moved 30 ms; it is bounded by the assert inside
+    while second < first + 30 {
+        std::thread::yield_now();
+        second = SystemClock.monotonic_ms();
+        assert!(started.elapsed().as_secs() < 30, "the clock stopped");
+    }
+    let real = u64::try_from(started.elapsed().as_millis()).unwrap();
+    assert!(
+        second - first >= 30 && second - first <= real + 1,
+        "{first} {second} {real}"
+    );
+}
+
+#[test]
+fn a_clock_with_no_monotonic_source_reads_its_wall_time() {
+    struct Wall;
+    impl Clock for Wall {
+        fn now_ms(&self) -> u64 {
+            42
+        }
+    }
+    assert_eq!(Wall.monotonic_ms(), 42);
+}

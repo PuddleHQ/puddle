@@ -84,6 +84,16 @@ pub struct AuditStats {
     pub free_bytes: u64,
 }
 
+/// Frees up to `pages` pages from the end of the file. `incremental_vacuum` frees one page per
+/// step of its statement, so the statement is stepped until it is done: a single step, as
+/// `Connection::execute_batch` takes, frees one page.
+fn free_pages(conn: &Connection, pages: u32) -> Result<(), StoreError> {
+    let mut statement = conn.prepare(&format!("PRAGMA incremental_vacuum({pages})"))?;
+    let mut rows = statement.query([])?;
+    while rows.next()?.is_some() {}
+    Ok(())
+}
+
 fn pragma_u64(conn: &Connection, name: &str) -> Result<u64, StoreError> {
     let value: i64 = conn.pragma_query_value(None, name, |row| row.get(0))?;
     Ok(u64::try_from(value).unwrap_or(0))
@@ -270,7 +280,7 @@ impl Store {
         };
         for _ in 0..SHRINK_STEPS_PER_SWEEP {
             let conn = lock(&self.conn);
-            conn.execute_batch(&format!("PRAGMA incremental_vacuum({SHRINK_STEP_PAGES})"))?;
+            free_pages(&conn, SHRINK_STEP_PAGES)?;
             if pragma_u64(&conn, "freelist_count")? == 0 {
                 break;
             }

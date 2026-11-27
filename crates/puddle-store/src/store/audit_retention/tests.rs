@@ -83,17 +83,27 @@ fn an_older_file_with_little_free_space_is_not_rebuilt_on_open() {
 
 /// A file store, incremental as every new file is, with most of its file free after a prune.
 fn store_with_much_free(path: &std::path::Path, limits: Limits, tag: &str) -> Store {
+    store_with_records_pruned(path, limits, tag, 3000)
+}
+
+/// [`store_with_much_free`] with `records` decisions written, then all pruned.
+fn store_with_records_pruned(
+    path: &std::path::Path,
+    limits: Limits,
+    tag: &str,
+    records: u32,
+) -> Store {
     let clock = Arc::new(ManualClock::new(1_800_000_000_000));
     let store = Store::open(path, clock.clone(), limits).unwrap();
     let workspace = WorkspaceId::new("a").unwrap();
     crate::testing::own(&store, &workspace);
-    for n in 0..3000 {
+    for n in 0..records {
         let host = Host::parse_normalised(&format!("{tag}{n}.example")).unwrap();
         let request = EgressRequest::new(workspace.clone(), host, 443);
         store.decide(&request, SuffixAllows::Count).unwrap();
     }
     clock.advance(10 * DAY);
-    assert!(store.prune_audit(5).unwrap().deleted >= 3000);
+    assert!(store.prune_audit(5).unwrap().deleted >= u64::from(records));
     let stats = store.audit_stats().unwrap();
     assert!(stats.free_bytes * 4 > stats.file_bytes, "{stats:?}");
     store
@@ -234,4 +244,35 @@ fn a_sweep_empties_a_write_ahead_log_that_a_long_reader_let_grow() {
         "the sweep left the log at {after}, its peak was {peak}"
     );
     assert!(after < WAL_LIMIT_BYTES as u64, "{after}");
+}
+
+#[test]
+fn a_shrink_frees_all_its_pages_and_reports_the_bytes_it_freed() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    let limits = Limits {
+        max_open_rows: 100_000,
+        ..Limits::default()
+    };
+    let store = store_with_records_pruned(&path, limits, "h", 9000);
+    let page_size = pragma_u64(&lock(&store.conn), "page_size").unwrap();
+    let free_pages = pragma_u64(&lock(&store.conn), "freelist_count").unwrap();
+    assert!(
+        free_pages > u64::from(SHRINK_STEPS_PER_SWEEP),
+        "{free_pages} free pages: the test needs more than one page per step could free"
+    );
+    assert!(
+        free_pages < u64::from(SHRINK_STEP_PAGES),
+        "{free_pages} free pages"
+    );
+    let pages_before = pragma_u64(&lock(&store.conn), "page_count").unwrap();
+    let shrunk = store.shrink_file(0).unwrap();
+    let pages_after = pragma_u64(&lock(&store.conn), "page_count").unwrap();
+    assert_eq!(shrunk, (pages_before - pages_after) * page_size);
+    // Every free page went, and the pointer-map pages that covered them with it.
+    assert!(
+        shrunk >= free_pages * page_size,
+        "{shrunk} bytes, {free_pages} free pages"
+    );
+    assert_eq!(pragma_u64(&lock(&store.conn), "freelist_count").unwrap(), 0);
 }

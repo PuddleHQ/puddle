@@ -6,6 +6,7 @@ fn restored() -> RestoredDatabase {
     RestoredDatabase {
         user_map: vec![(1, 7), (2, 9)],
         owner_id: 7,
+        dropped_rows: 0,
     }
 }
 

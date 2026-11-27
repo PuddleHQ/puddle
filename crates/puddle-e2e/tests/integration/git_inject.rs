@@ -792,3 +792,93 @@ async fn an_upstream_certificate_that_has_expired_is_a_502_and_no_credential_is_
         rig.host.seen()
     );
 }
+
+/// What the Activity page's "Export JSON lines" writes: one line per record, oldest first, each
+/// the entry the API answers with.
+fn exported_activity(rig: &GitRig) -> String {
+    rig.world
+        .store
+        .audit_lines(0, 100_000)
+        .unwrap()
+        .into_iter()
+        .map(|(id, line)| {
+            let record: puddle_store::AuditRecord = serde_json::from_str(&line).unwrap();
+            let entry = puddle_services::wire::AuditEntry {
+                id,
+                workspace_name: None,
+                record: record.into(),
+            };
+            serde_json::to_string(&entry).unwrap()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[tokio::test]
+async fn an_exported_activity_file_after_a_day_of_injected_and_refused_git_holds_no_token() {
+    if !git_available() {
+        return;
+    }
+    let rig = GitRig::new(Versions::Http1).await;
+    let dir = rig.work("w");
+    // A day: clones for both identities, a push that goes through, a push that is refused.
+    for repo in ["acme/web", "someone/else"] {
+        let ran = rig
+            .run(
+                &dir,
+                &[
+                    "clone",
+                    "-q",
+                    &format!("https://{NAME}/{repo}.git"),
+                    repo.rsplit('/').next().unwrap(),
+                ],
+            )
+            .await;
+        assert!(ran.ok, "{repo}: {}", ran.stderr);
+    }
+    let clone = dir.join("web");
+    commit(&rig, &clone, "pushed.txt").await;
+    let ran = rig.run(&clone, &["push", "-q", "origin", "main"]).await;
+    assert!(ran.ok, "{}", ran.stderr);
+    let ran = rig
+        .run(
+            &dir,
+            &[
+                "clone",
+                "-q",
+                &format!("https://{NAME}/acme/unlisted.git"),
+                "u",
+            ],
+        )
+        .await;
+    assert!(ran.ok, "{}", ran.stderr);
+    commit(&rig, &dir.join("u"), "x.txt").await;
+    assert!(
+        !rig.run(&dir.join("u"), &["push", "origin", "main"])
+            .await
+            .ok
+    );
+    rig.records_where(|r| {
+        r.iter().any(|r| r["injected"] == true) && r.iter().any(|r| r["reason"] == "push_denied")
+    })
+    .await;
+
+    let file = exported_activity(&rig);
+    // Positive control: the file holds the day's injected and refused connections, so the greps
+    // below look at a file that had something to leak.
+    assert!(file.contains(r#""injected":true"#), "{file}");
+    assert!(file.contains("push_denied"), "{file}");
+    assert!(file.lines().count() >= 4, "{file}");
+
+    for token in [WORK, PERSONAL] {
+        let forms = [
+            token.to_owned(),
+            token[..8].to_owned(),
+            basic(token),
+            basic(token).trim_start_matches("Basic ").to_owned(),
+        ];
+        for form in forms {
+            assert!(!file.contains(&form), "{form} is in the exported file");
+        }
+    }
+}

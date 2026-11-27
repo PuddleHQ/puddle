@@ -56,7 +56,7 @@ mod url_target;
 
 pub(crate) use answer::{
     ANSWER_WITHHELD, NotScrubbed, ScrubBody, ScrubNotes, answer_encoding_refusal,
-    answer_failed_refusal, limit_accept_encoding, scrub_answer,
+    answer_failed_refusal, limit_accept_encoding, scrub_answer, withhold_ranges,
 };
 #[cfg(feature = "fuzzing")]
 pub(crate) use scan::read_both_ways;
@@ -159,9 +159,15 @@ pub struct StandIn {
     /// Finds `text` in a header value.
     finder: Finder<'static>,
     real: SecretValue,
+    /// Values `real` had before a refresh, the newest last (at most [`MAX_RETIRED`]). A request
+    /// sent before the refresh may carry one, so its answer is scrubbed for them too.
+    retired: Vec<SecretValue>,
     hosts: TerminationSet,
     placement: Placement,
 }
+
+/// How many old real values of a refreshed stand-in are still scrubbed from answers.
+const MAX_RETIRED: usize = 8;
 
 impl std::fmt::Debug for StandIn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -228,6 +234,7 @@ impl StandIn {
             text: stand_in.to_owned(),
             finder: Finder::new(stand_in).into_owned(),
             real,
+            retired: Vec::new(),
             hosts,
             placement: Placement::Header,
         })
@@ -426,12 +433,18 @@ impl StandIns {
             return Ok(false);
         };
         let old = &**slot;
+        let mut retired = old.retired.clone();
+        retired.push(old.real.clone());
+        if retired.len() > MAX_RETIRED {
+            retired.remove(0);
+        }
         *slot = Arc::new(StandIn {
             origin: old.origin,
             name: old.name.clone(),
             text: old.text.clone(),
             finder: old.finder.clone(),
             real,
+            retired,
             hosts: old.hosts.clone(),
             placement: old.placement.clone(),
         });

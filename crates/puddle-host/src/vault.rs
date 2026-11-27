@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The credential store Puddle keeps its values in, and the clean-up of what nothing names.
 
+use std::path::Path;
 use std::sync::Arc;
+
+use sha2::{Digest, Sha256};
 
 use puddle_secrets::{
     ChunkedStore, IndexedStore, KeyringStore, LoginSession, SecretStore, StoreHealth, StoreKind,
@@ -25,9 +28,53 @@ pub(crate) use choose::{Chosen, open};
 use choose::{Probe, WriteWhenWorking};
 
 /// The operating system's credential store, with long values split over entries and an index of
-/// the ids kept, so [`sweep_in_background`] can find a value its row never named.
-pub(crate) fn os_vault() -> Arc<dyn SecretStore> {
-    Arc::new(IndexedStore::new(ChunkedStore::new(KeyringStore::new())))
+/// the ids kept, so [`sweep_in_background`] can find a value its row never named. The index is
+/// this data folder's own: the store is one per OS user, and a host started with another
+/// `--data-dir` must not sweep these values.
+pub(crate) fn os_vault(data: &Path) -> Arc<dyn SecretStore> {
+    scoped_vault(ChunkedStore::new(KeyringStore::new()), data)
+}
+
+fn scoped_vault(inner: impl SecretStore + 'static, data: &Path) -> Arc<dyn SecretStore> {
+    Arc::new(IndexedStore::scoped(inner, &credential_scope(data)))
+}
+
+/// The file in a data folder that holds the name its credential-store index goes by.
+const SCOPE_FILE: &str = "credential-scope";
+
+/// The name that tells this data folder's credential-store entries from another folder's: a random
+/// one kept in the folder, so it follows the folder when it is moved. A folder that cannot keep
+/// one (read-only) falls back to a name made from its path, which is stable until the folder
+/// moves; either way two folders never share a name.
+fn credential_scope(data: &Path) -> String {
+    let file = data.join(SCOPE_FILE);
+    if let Ok(text) = std::fs::read_to_string(&file) {
+        let text = text.trim();
+        if text.len() == SCOPE_LEN && text.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return text.to_owned();
+        }
+    }
+    let mut bytes = [0u8; SCOPE_LEN / 2];
+    let fresh = getrandom::fill(&mut bytes).is_ok().then(|| hex(&bytes));
+    if let Some(fresh) = fresh
+        && puddle_fs::private::write_atomic(&file, fresh.as_bytes()).is_ok()
+    {
+        return fresh;
+    }
+    tracing::warn!("could not keep a credential store name in the data folder; using its path");
+    let path = std::fs::canonicalize(data).unwrap_or_else(|_| data.to_path_buf());
+    let digest = Sha256::digest(path.to_string_lossy().as_bytes());
+    hex(&digest[..SCOPE_LEN / 2])
+}
+
+const SCOPE_LEN: usize = 16;
+
+fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    bytes.iter().fold(String::new(), |mut out, b| {
+        let _ = write!(out, "{b:02x}");
+        out
+    })
 }
 
 /// The problem that stands while the clean-up cannot finish; the next sweep that does ends it.

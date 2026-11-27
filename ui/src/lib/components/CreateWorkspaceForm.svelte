@@ -67,6 +67,7 @@
     prefill = null,
     onCreated,
     onCancel,
+    embedded = false,
     settings = globalSettingsStore,
     hostCheck = undefined,
     defaultImage = defaultImageStore,
@@ -84,6 +85,8 @@
     onCreated?: (workspace: Workspace) => void;
     /** Called when Cancel is pressed, after the draft was dropped. */
     onCancel?: () => void;
+    /** Shown under another screen's h1 (the empty Workspaces page): the title is an h2, so the page keeps one h1. */
+    embedded?: boolean;
     /** The global settings, which say how many CPUs a workspace may have and gets by default. */
     settings?: Pick<GlobalSettings, "view" | "load">;
     /** For tests: the host check. */
@@ -453,7 +456,13 @@
 </script>
 
 <section class="screen" aria-labelledby="new-ws-title">
-  <h1 id="new-ws-title">New workspace</h1>
+  <svelte:element
+    this={embedded ? "h2" : "h1"}
+    id="new-ws-title"
+    class:embedded
+  >
+    New workspace
+  </svelte:element>
   <p class="lead">
     Puddle clones your repositories into a fresh workspace with its own disk.
   </p>
@@ -898,6 +907,10 @@
 <style>
   .screen {
     max-width: 44rem;
+  }
+  .embedded {
+    font-size: var(--text-lg);
+    font-weight: 600;
   }
   .lead {
     margin: 0 0 var(--space-4);

@@ -202,33 +202,31 @@ async fn scripted(
 }
 
 #[tokio::test]
-async fn keep_alive_comments_are_not_events_and_data_lines_are() {
-    let (addr, _) = scripted(
-        "HTTP/1.0 200 OK\r\n\r\n: keep-alive\n\n",
-        Duration::from_secs(30),
-    )
-    .await;
+async fn a_keep_alive_comment_and_a_data_line_each_show_the_stream_is_alive() {
+    let (addr, _) = scripted("HTTP/1.0 200 OK\r\n\r\n", Duration::from_secs(30)).await;
     let state = SseState::new();
     let task = tokio::spawn(read_events(target(addr), state.clone()));
-    // an absence window: a comment line must not reset the age over 400 ms
+    // an absence window: a stream that sends nothing must not reset the age over 400 ms
     tokio::time::sleep(Duration::from_millis(400)).await;
     let (age, reconnects) = state.read();
-    assert!(age >= 0.4, "a comment must not reset the age: {age}");
+    assert!(age >= 0.4, "a silent stream must not reset the age: {age}");
     assert_eq!(reconnects, 0);
     task.abort();
 
-    let (addr, _) = scripted(
-        "HTTP/1.0 200 OK\r\n\r\n: keep-alive\n\n<pause>data: {}\n\n",
-        Duration::from_secs(30),
-    )
-    .await;
-    let state = SseState::new();
-    let task = tokio::spawn(read_events(target(addr), state.clone()));
-    // the data line arrives at 300 ms; the age is read 150 ms after it
-    tokio::time::sleep(Duration::from_millis(450)).await;
-    let age = state.read().0;
-    assert!(age < 0.3, "the data line at 300 ms resets the age: {age}");
-    task.abort();
+    // flake-ok: one fixed sleep per scripted stream, an absence/age window; no condition is polled
+    for script in [
+        "HTTP/1.0 200 OK\r\n\r\n<pause>: keep-alive\n\n",
+        "HTTP/1.0 200 OK\r\n\r\n<pause>data: {}\n\n",
+    ] {
+        let (addr, _) = scripted(script, Duration::from_secs(30)).await;
+        let state = SseState::new();
+        let task = tokio::spawn(read_events(target(addr), state.clone()));
+        // the line arrives at 300 ms; the age is read 150 ms after it
+        tokio::time::sleep(Duration::from_millis(450)).await;
+        let age = state.read().0;
+        assert!(age < 0.3, "{script:?} at 300 ms resets the age: {age}");
+        task.abort();
+    }
 }
 
 #[tokio::test]

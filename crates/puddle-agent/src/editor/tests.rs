@@ -4,7 +4,7 @@ use puddle_agent_proto::editor::MicrosoftOptions;
 use super::*;
 
 fn server() -> EditorServer {
-    EditorServer::new("/workspaces/a/.puddle/code-server", "/workspaces/a", 300)
+    EditorServer::new("/workspace/.puddle/code-server", "/workspace", 300)
 }
 
 #[test]
@@ -22,7 +22,7 @@ fn the_command_line_binds_loopback_keeps_data_on_the_volume_and_never_holds_the_
     // Built with `Path::join` like the code: the agent runs in the guest, but its unit tests
     // also run on a Windows host, where the separator differs.
     let under = |base: &str, leaf: &str| Path::new(base).join(leaf).to_string_lossy().into_owned();
-    let data = "/workspaces/a/.puddle/code-server";
+    let data = "/workspace/.puddle/code-server";
     assert_eq!(after("--user-data-dir"), under(data, "user-data"));
     assert_eq!(after("--extensions-dir"), under(data, "extensions"));
     assert_eq!(after("--config"), under(data, "config.yaml"));
@@ -31,7 +31,7 @@ fn the_command_line_binds_loopback_keeps_data_on_the_volume_and_never_holds_the_
     assert!(args.iter().any(|a| a == "--disable-update-check"));
     assert!(args.iter().any(|a| a == "--ignore-last-opened"));
     assert!(args.iter().any(|a| a == "--disable-workspace-trust"));
-    assert_eq!(args.last().map(String::as_str), Some("/workspaces/a"));
+    assert_eq!(args.last().map(String::as_str), Some("/workspace"));
     assert!(
         !args
             .iter()
@@ -44,10 +44,10 @@ fn the_server_opens_the_multi_root_file_only_while_it_lists_a_folder() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("a.code-workspace");
     let server =
-        EditorServer::new("/d", "/workspaces/a", 300).with_workspace_file(file.to_string_lossy());
+        EditorServer::new("/d", "/workspace", 300).with_workspace_file(file.to_string_lossy());
     let opens = || target(&server).to_string_lossy().into_owned();
     // No file yet, a file of settings alone, a list with no folder in it: the folder.
-    assert_eq!(opens(), "/workspaces/a");
+    assert_eq!(opens(), "/workspace");
     for text in [
         r#"{"settings": {"path": 1}}"#,
         "",
@@ -55,12 +55,12 @@ fn the_server_opens_the_multi_root_file_only_while_it_lists_a_folder() {
         "not json at all",
     ] {
         std::fs::write(&file, text).unwrap();
-        assert_eq!(opens(), "/workspaces/a", "{text:?}");
+        assert_eq!(opens(), "/workspace", "{text:?}");
     }
     // A list with a folder, comments and all: the file, which is the last argument.
     std::fs::write(
         &file,
-        "// kept\n{\"folders\": [{\"path\": \"/workspaces/a/api\"}], \"settings\": {}}",
+        "// kept\n{\"folders\": [{\"path\": \"/workspace/api\"}], \"settings\": {}}",
     )
     .unwrap();
     assert_eq!(opens(), file.to_string_lossy());
@@ -71,8 +71,8 @@ fn the_server_opens_the_multi_root_file_only_while_it_lists_a_folder() {
         Some(file.to_string_lossy().into_owned())
     );
     // A server told of no file never looks.
-    let plain = EditorServer::new("/d", "/workspaces/a", 300);
-    assert_eq!(target(&plain), OsString::from("/workspaces/a"));
+    let plain = EditorServer::new("/d", "/workspace", 300);
+    assert_eq!(target(&plain), OsString::from("/workspace"));
 }
 
 /// A probe that says "taken" until `free` is set, counting how often it was asked.
@@ -1041,6 +1041,14 @@ fn the_first_open_follows_the_colour_scheme_and_a_later_start_keeps_the_users_se
         "{text}"
     );
     assert!(text.contains("Default Dark Modern") && text.contains("Default Light Modern"));
+    assert!(
+        text.contains(r#""telemetry.telemetryLevel": "off""#),
+        "{text}"
+    );
+    assert!(
+        text.contains(r#""workbench.enableExperiments": false"#),
+        "{text}"
+    );
 
     std::fs::write(&file, r#"{"workbench.colorTheme": "Solarized Dark"}"#).unwrap();
     assert_eq!(seed_first_settings(&server).unwrap(), Vec::<PathBuf>::new());

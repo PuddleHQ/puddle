@@ -11,10 +11,8 @@ set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/coverage-cargo-test.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
-fail() {
-    echo "coverage-cargo-test: $*" >&2
-    exit 1
-}
+# shellcheck disable=SC1091 # the helper sits in scripts/
+. "$(dirname "$0")/../scripts/test-fail.sh"
 # shellcheck disable=SC2046 # the list is words by design
 unset $(git rev-parse --local-env-vars)
 
@@ -37,6 +35,13 @@ STUB
     chmod +x "$tmp/bin/$name"
 done
 chmod +x "$ws/scripts/coverage-run.sh"
+# The crate-selection check needs a real `cargo metadata`; the stub prints the ignore regex it would and passes its self-test.
+cat >"$ws/scripts/coverage-crates.py" <<'STUB'
+import sys
+
+if sys.argv[1:] != ["--self-test"]:
+    print("^$")
+STUB
 git -C "$ws" init -q -b develop
 git -C "$ws" add -A
 git -C "$ws" -c user.email=t@t -c user.name=t commit -q -m base

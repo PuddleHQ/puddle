@@ -219,10 +219,13 @@
         onclick={() => {
           open = false;
           reset();
-        }}>Cancel</button
+        }}
       >
-      <button type="submit" class="btn primary" disabled={busy}>Add rule</button
-      >
+        Cancel
+      </button>
+      <button type="submit" class="btn primary" disabled={busy}>
+        Add rule
+      </button>
     </div>
   </form>
 </FormDialog>

@@ -121,41 +121,84 @@ impl FileMount {
 /// # Errors
 ///
 /// What is wrong, worded to follow `the checkout <path>`.
-pub fn check_checkout_dir(git_dir: &Path) -> Result<(), String> {
+pub fn check_checkout_dir(git_dir: &Path) -> Result<(), CheckoutDirRefusal> {
     if git_dir.file_name().is_none_or(|n| n != ".git") {
-        return Err("is not a `.git` directory".into());
+        return Err(CheckoutDirRefusal::NotDotGit);
     }
-    let meta = std::fs::symlink_metadata(git_dir).map_err(|e| format!("can't be read: {e}"))?;
+    let meta = std::fs::symlink_metadata(git_dir).map_err(|e| CheckoutDirRefusal::Unreadable {
+        cause: e.to_string(),
+    })?;
     if meta.is_file() {
-        return Err(
-            "is a file that points elsewhere, as in a linked worktree or a submodule; \
-             start from the main checkout"
-                .into(),
-        );
+        return Err(CheckoutDirRefusal::PointerFile);
     }
     if meta.file_type().is_symlink() {
-        return Err("is a link".into());
+        return Err(CheckoutDirRefusal::Link);
     }
     if !meta.is_dir() {
-        return Err("is not a directory".into());
+        return Err(CheckoutDirRefusal::NotDirectory);
     }
     for (entry, dir) in [("HEAD", false), ("objects", true), ("refs", true)] {
-        let kind = if dir { "directory" } else { "file" };
         match std::fs::symlink_metadata(git_dir.join(entry)) {
             Ok(m) if m.file_type().is_symlink() => {
-                return Err(format!("is not a git directory: its {entry} is a link"));
+                return Err(CheckoutDirRefusal::EntryIsLink { entry });
             }
             Ok(m) if (dir && m.is_dir()) || (!dir && m.is_file()) => {}
-            _ => return Err(format!("is not a git directory: it has no {entry} {kind}")),
+            _ => {
+                return Err(CheckoutDirRefusal::EntryMissing {
+                    entry,
+                    kind: if dir { "directory" } else { "file" },
+                });
+            }
         }
     }
     if std::fs::symlink_metadata(git_dir.join("commondir")).is_ok() {
-        return Err(
-            "belongs to a linked worktree (it has a commondir file); start from the main checkout"
-                .into(),
-        );
+        return Err(CheckoutDirRefusal::LinkedWorktree);
     }
     Ok(())
+}
+
+/// Why a folder is no checkout's git directory. It displays worded to follow `the checkout <path>`.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum CheckoutDirRefusal {
+    /// The folder is not named `.git`.
+    #[error("is not a `.git` directory")]
+    NotDotGit,
+    /// The folder could not be looked at.
+    #[error("can't be read: {cause}")]
+    Unreadable {
+        /// The operating system's words.
+        cause: String,
+    },
+    /// `.git` is a file, as in a linked worktree or a submodule.
+    #[error(
+        "is a file that points elsewhere, as in a linked worktree or a submodule; \
+         start from the main checkout"
+    )]
+    PointerFile,
+    /// `.git` is a link.
+    #[error("is a link")]
+    Link,
+    /// `.git` is neither a directory nor a file.
+    #[error("is not a directory")]
+    NotDirectory,
+    /// `HEAD`, `objects` or `refs` is a link.
+    #[error("is not a git directory: its {entry} is a link")]
+    EntryIsLink {
+        /// The entry's name.
+        entry: &'static str,
+    },
+    /// `HEAD`, `objects` or `refs` is missing or has the wrong type.
+    #[error("is not a git directory: it has no {entry} {kind}")]
+    EntryMissing {
+        /// The entry's name.
+        entry: &'static str,
+        /// `file` or `directory`.
+        kind: &'static str,
+    },
+    /// The folder has a `commondir` file, which only a linked worktree's has.
+    #[error("belongs to a linked worktree (it has a commondir file); start from the main checkout")]
+    LinkedWorktree,
 }
 
 /// A disk size in MiB (what msb's `.disk().size(n)` takes).
@@ -256,7 +299,7 @@ pub struct OwnedDisk {
 /// .with_route(VsockRoute::new(5000, r"\\.\pipe\puddle-acme-proxy"))
 /// .with_file_mount(FileMount::read_only("/opt/puddle/boot.sh", GuestPath::new("/puddle/boot.sh").unwrap()))
 /// .with_volume(
-///     VolumeMount::named(ws.volume_name(), GuestPath::new("/workspaces/acme").unwrap())
+///     VolumeMount::named(ws.volume_name(), GuestPath::new("/workspace").unwrap())
 ///         .ensure_size(DiskSize::gib(20)),
 /// );
 /// spec.validate().unwrap();

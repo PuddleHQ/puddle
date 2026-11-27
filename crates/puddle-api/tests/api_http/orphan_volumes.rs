@@ -2,7 +2,7 @@
 //! Workspace disks the workspace list does not name: listing them and restoring one over real
 //! HTTP.
 
-use puddle_api::RepoUrl;
+use puddle_services::workspaces::RepoUrl;
 use puddle_types::WorkspaceId;
 use serde_json::json;
 

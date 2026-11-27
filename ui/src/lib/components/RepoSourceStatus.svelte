@@ -59,8 +59,10 @@
           type="button"
           class="btn"
           aria-label="Sign in to {title}"
-          onclick={() => onSignIn?.(source.credential)}>Sign in&hellip;</button
+          onclick={() => onSignIn?.(source.credential)}
         >
+          Sign in&hellip;
+        </button>
       {/if}
     </p>
   {/if}

@@ -12,10 +12,12 @@
 # A source that cannot be read (the default `GITHUB_TOKEN` has no Dependabot alerts permission; set the repository
 # secret QUALITY_ALERTS_TOKEN to a token that has it) is reported as unavailable and keeps its previous list, so the
 # next day's delta is not a flood. When the scanner fails without naming a site, or the issue cannot be read or
-# written, the script exits 1 and touches nothing.
+# written, the script exits 1 and touches nothing. Each `gh issue` call is tried up to three times with a pause
+# (QUALITY_RETRY_SLEEP seconds times the attempt number, default 20), because GitHub's GraphQL API answers a transient
+# "Something went wrong while executing your query" now and then (run 45650486436 failed on that one edit).
 #
 # Environment: GH_TOKEN, QUALITY_ALERTS_TOKEN (optional, used for the two alert reads only), GITHUB_REPOSITORY, GITHUB_SERVER_URL and GITHUB_RUN_ID (for the link);
-# QUALITY_CHECK and QUALITY_GH replace the scanner command and `gh` in the self-test (ci/quality-issue-test.sh).
+# QUALITY_CHECK, QUALITY_GH and QUALITY_RETRY_SLEEP replace the scanner command, `gh` and the pause in the self-test (ci/quality-issue-test.sh).
 set -uo pipefail
 
 gh=${QUALITY_GH:-gh}
@@ -24,6 +26,14 @@ repo=${GITHUB_REPOSITORY:-unknown/unknown}
 title="Code quality: open alerts and sites without a reason"
 run_url="${GITHUB_SERVER_URL:-https://github.com}/$repo/actions/runs/${GITHUB_RUN_ID:-0}"
 today=$(date -u +%F)
+retry() { # <command...>: the command up to three times, pausing a little longer after each failure
+    local attempt
+    for attempt in 1 2 3; do
+        "$@" && return 0
+        [ "$attempt" = 3 ] || sleep $((${QUALITY_RETRY_SLEEP:-20} * attempt))
+    done
+    return 1
+}
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/quality-issue.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 
@@ -56,7 +66,7 @@ awk -F'\t' '{ f=$1; sub(/:[0-9]+$/, "", f); print f " " $3 "\t" $1 ": " $3 }' "$
 echo ok >"$tmp/missing.state"
 
 find_issue() {
-    "$gh" issue list --state open --search "in:title \"$title\"" --json number,title,body --limit 20 |
+    retry "$gh" issue list --state open --search "in:title \"$title\"" --json number,title,body --limit 20 |
         jq -c --arg t "$title" 'map(select(.title == $t)) | first // empty'
 }
 issue=$(find_issue) || {
@@ -134,12 +144,12 @@ section() { # <key> <heading>
 } >"$tmp/body.md"
 
 if [ -n "$number" ]; then
-    "$gh" issue edit "$number" --body-file "$tmp/body.md" || exit 1
+    retry "$gh" issue edit "$number" --body-file "$tmp/body.md" || exit 1
     if [ "$new_total" -gt 0 ]; then
-        "$gh" issue comment "$number" --body "$new_total new since the last report: see the issue body. Run: $run_url" || exit 1
+        retry "$gh" issue comment "$number" --body "$new_total new since the last report: see the issue body. Run: $run_url" || exit 1
     fi
     echo "quality-issue: updated #$number ($new_total new)"
 else
-    "$gh" issue create --title "$title" --body-file "$tmp/body.md" || exit 1
+    retry "$gh" issue create --title "$title" --body-file "$tmp/body.md" || exit 1
     echo "quality-issue: opened a new issue"
 fi

@@ -64,12 +64,13 @@ impl<S: Sandbox> ReportingTarget<S> {
 
 impl<S: Sandbox> SshTarget for ReportingTarget<S> {
     type Error = GatedError;
+    type Refusal = GatedError;
 
     fn label(&self) -> String {
         self.gated.label()
     }
 
-    fn admit(&self) -> impl Future<Output = Result<(), String>> + Send {
+    fn admit(&self) -> impl Future<Output = Result<(), GatedError>> + Send {
         self.gated.admit()
     }
 

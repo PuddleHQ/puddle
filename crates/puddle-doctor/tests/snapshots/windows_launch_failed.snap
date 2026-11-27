@@ -1,19 +1,23 @@
 puddle doctor (puddle 0.1.0, windows x86_64)
 
-ok    CPU virtualization    on (the hypervisor uses it)
-ok    Hypervisor            Windows Hypervisor Platform is on and the hypervisor runs
-ok    Code integrity        memory integrity (HVCI) on; App Control policy for programs off
-ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
-FAIL  Runtime starts        msb could not be started
-      fix:  Reinstall Puddle. If this stays, include the line below when you report it.
-      from: %1 is not a valid Win32 application. (os error 193)
-skip  Test boot             not checked: the runtime doesn't start
-ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
-ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
-ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)
-ok    Azure CLI (az)        version 2.64.0
-ok    Credential store      the operating system's credential store: a test write and delete worked
-ok    Global Secure Access  client not installed
+ok    CPU virtualization          on (the hypervisor uses it)
+ok    Hypervisor                  Windows Hypervisor Platform is on and the hypervisor runs
+ok    Code integrity              memory integrity on; policy limiting which programs may run off
+ok    Bundled runtime             msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
+FAIL  Runtime starts              msb could not be started
+      impact: Puddle can't start any workspace: its runtime does not start.
+      remedy: Reinstall Puddle. If it stays, copy the report and send it with a bug report.
+      fix:    Reinstall Puddle. If this stays, include the line below when you report it.
+      from:   %1 is not a valid Win32 application. (os error 193)
+skip  Test boot                   not checked: the runtime doesn't start
+      impact: Not checked, so Puddle can't tell yet whether a workspace can start here.
+      remedy: Fix any problem above, then check again.
+ok    Disk space                  120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
+ok    Disk encryption             data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
+ok    SSH agent                   the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)
+ok    Azure CLI (az)              version 2.64.0
+ok    Credential store            the operating system's credential store: a test write and delete worked
+ok    Known problematic software  none found
 
 1 problem to fix before Puddle can run sandboxes. (1.2 s)
 
@@ -40,7 +44,7 @@ ok    Global Secure Access  client not installed
     {
       "id": "code_integrity",
       "status": "ok",
-      "summary": "memory integrity (HVCI) on; App Control policy for programs off",
+      "summary": "memory integrity on; policy limiting which programs may run off",
       "impact": "Windows' code integrity rules guard the system against untrusted code, and Puddle runs alongside them."
     },
     {
@@ -97,10 +101,10 @@ ok    Global Secure Access  client not installed
       "impact": "Puddle keeps your tokens and passwords in a protected store, so you don't type them again."
     },
     {
-      "id": "global_secure_access",
+      "id": "problematic_software",
       "status": "ok",
-      "summary": "client not installed",
-      "impact": "Rules out a known reason for company sites to fail from a workspace: the Global Secure Access client."
+      "summary": "none found",
+      "impact": "Rules out programs known to keep workspaces from working as expected, such as company network clients."
     }
   ],
   "elapsed_ms": 1234

@@ -38,8 +38,8 @@ fn grace_validates_when_deserialised() {
 }
 
 #[test]
-fn clipboard_read_is_snake_case_and_defaults_to_ask() {
-    assert_eq!(ClipboardRead::default(), ClipboardRead::Ask);
+fn clipboard_read_is_snake_case_and_defaults_to_allow() {
+    assert_eq!(ClipboardRead::default(), ClipboardRead::Allow);
     assert_eq!(
         serde_json::to_string(&ClipboardRead::Allow).unwrap(),
         r#""allow""#
@@ -59,13 +59,24 @@ fn choices_are_snake_case_and_default_to_the_safe_option() {
     assert_eq!(DensityChoice::default(), DensityChoice::Comfortable);
     assert_eq!(AppIconChoice::default(), AppIconChoice::Duck);
     assert_eq!(
-        serde_json::to_string(&AppIconChoice::DuckPond).unwrap(),
-        r#""duck_pond""#
+        serde_json::to_string(&AppIconChoice::RubberDuck).unwrap(),
+        r#""rubber_duck""#
     );
     assert_eq!(
         serde_json::from_str::<AppIconChoice>(r#""custom""#).unwrap(),
         AppIconChoice::Custom
     );
+    for (old, now) in [
+        ("duck_pond", AppIconChoice::RubberDuck),
+        ("duck_sun", AppIconChoice::RubberDuck),
+        ("duck_night", AppIconChoice::DuckFront),
+    ] {
+        assert_eq!(
+            serde_json::from_str::<AppIconChoice>(&format!("\"{old}\"")).unwrap(),
+            now,
+            "{old} was a choice before the icons changed"
+        );
+    }
     assert!(serde_json::from_str::<AppIconChoice>(r#""penguin""#).is_err());
     assert_eq!(
         serde_json::from_str::<DensityChoice>(r#""compact""#).unwrap(),

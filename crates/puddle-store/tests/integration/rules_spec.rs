@@ -404,6 +404,45 @@ fn r10_unmatched_request_is_recorded_with_first_and_last_seen() {
 }
 
 #[test]
+fn the_first_program_to_ask_stays_on_the_row_and_in_its_audit_record() {
+    let (_, store) = fixture();
+    let by = |program: Option<&str>| {
+        let request = req("a", "example.com", 443)
+            .with_program(program.and_then(puddle_types::Program::sanitise));
+        store.decide(&request, SuffixAllows::Count).unwrap()
+    };
+    let id = new_pending(by(None));
+    assert_eq!(store.pending(id).unwrap().program, None);
+    // A later attempt fills a missing name, and then nothing replaces it.
+    by(Some("pip"));
+    by(Some("curl"));
+    by(None);
+    let row = store.pending(id).unwrap();
+    assert_eq!(row.attempts, 4);
+    assert_eq!(row.program.map(|p| p.to_string()).as_deref(), Some("pip"));
+
+    // A new row names its first program in the audit record; one with none omits the key.
+    let named = new_pending(
+        store
+            .decide(
+                &req("a", "named.example", 443)
+                    .with_program(puddle_types::Program::sanitise("node")),
+                SuffixAllows::Count,
+            )
+            .unwrap(),
+    );
+    let created = audit_of(&store, "pending_created");
+    let program_of = |id: PendingId| {
+        created
+            .iter()
+            .find(|r| r["pending"]["id"] == id.0)
+            .map(|r| r["pending"]["program"].clone())
+    };
+    assert_eq!(program_of(named), Some(json!("node")));
+    assert_eq!(program_of(id), Some(Value::Null));
+}
+
+#[test]
 fn r11_repeats_dedupe_onto_the_open_row() {
     let (_, store) = fixture();
     let id = new_pending(decide(&store, "a", "example.com"));
@@ -472,8 +511,8 @@ fn r11_undoing_a_decision_deletes_its_rule_and_reopens_the_requests_it_closed() 
     assert_eq!(
         back,
         vec![
-            ("one.example.com".to_string(), T0, 2, true),
-            ("two.example.com".to_string(), T0 + 1_000, 1, true),
+            ("one.example.com".to_owned(), T0, 2, true),
+            ("two.example.com".to_owned(), T0 + 1_000, 1, true),
         ]
     );
     assert!(reopened.iter().all(|r| r.id > second));
@@ -753,6 +792,61 @@ fn r14_a_row_that_needs_an_exact_allow_is_never_closed_by_a_suffix_allow() {
         (closed.state, closed.rule_id),
         (PendingState::Allowed, Some(exact))
     );
+}
+
+#[test]
+fn r16_approving_a_row_that_needs_an_exact_allow_with_a_suffix_or_a_set_is_refused() {
+    let (_, store) = fixture();
+    let local = req("a", "db.corp.example", 5432);
+    let id = new_pending(store.decide(&local, SuffixAllows::Ignore).unwrap());
+    assert!(store.pending(id).unwrap().exact_only);
+    let suffix = Resolution {
+        pattern: PatternChoice::Suffix(".corp.example".into()),
+        ..Resolution::allow()
+    };
+    assert!(matches!(
+        store.resolve_pending(id, &suffix, Actor::Ui),
+        Err(StoreError::ExactAllowOnly(refused)) if refused == id
+    ));
+    let into_set = Resolution {
+        scope: ScopeChoice::Set(1),
+        ..Resolution::allow()
+    };
+    assert!(matches!(
+        store.resolve_pending(id, &into_set, Actor::Ui),
+        Err(StoreError::ExactAllowOnly(_))
+    ));
+    // Nothing changed: the row is open and no rule exists.
+    assert_eq!(store.pending(id).unwrap().state, PendingState::Requested);
+    assert_eq!(store.rules(puddle_store::UserId::OWNER).len(), 0);
+    // A suffix deny and an exact allow still work.
+    let deny = Resolution {
+        pattern: PatternChoice::Suffix(".corp.example".into()),
+        ..Resolution::deny()
+    };
+    store.resolve_pending(id, &deny, Actor::Ui).unwrap();
+    let other = new_pending(
+        store
+            .decide(&req("a", "x.third.example", 22), SuffixAllows::Ignore)
+            .unwrap(),
+    );
+    store
+        .resolve_pending(other, &Resolution::allow(), Actor::Ui)
+        .unwrap();
+    assert_eq!(store.pending(other).unwrap().state, PendingState::Allowed);
+    // A row first seen as public is not exact-only and takes a suffix.
+    let public = new_pending(decide(&store, "a", "web.other.example"));
+    assert!(!store.pending(public).unwrap().exact_only);
+    store
+        .resolve_pending(
+            public,
+            &Resolution {
+                pattern: PatternChoice::Suffix(".other.example".into()),
+                ..Resolution::allow()
+            },
+            Actor::Ui,
+        )
+        .unwrap();
 }
 
 #[test]

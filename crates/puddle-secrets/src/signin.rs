@@ -18,10 +18,10 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::error::{SourceError, Tool};
-use crate::name::{AccountName, HostName, UrlPath};
 use crate::run::{Prompts, ToolPaths, command, run_with, spawn_error};
 use crate::sources::GitQuery;
-use crate::spec::SourceSpec;
+use puddle_types::SourceSpec;
+use puddle_types::{AccountName, HostName, UrlPath};
 
 /// How long a sign-in may stay open before Puddle ends it.
 const SIGN_IN_WINDOW: Duration = Duration::from_mins(5);
@@ -241,7 +241,7 @@ impl SignIns {
         let (host, path, username) = (host.clone(), path.clone(), username.cloned());
         let window = self.window;
         let start = SignInStart::default();
-        let (tell, told) = tokio::sync::oneshot::channel::<Result<(), String>>();
+        let (tell, told) = tokio::sync::oneshot::channel::<Result<(), WindowEnded>>();
         self.open_while(spec, &start, async move {
             let query = GitQuery::new(&host, &path, username.as_ref());
             let answer = run_with(
@@ -254,15 +254,15 @@ impl SignIns {
             )
             .await;
             let outcome = match &answer {
-                Err(err) => Err(err.to_string()),
-                Ok(answer) if !answer.success => Err(String::new()),
+                Err(err) => Err(WindowEnded::Tool(err.to_string())),
+                Ok(answer) if !answer.success => Err(WindowEnded::NoAnswer),
                 Ok(answer) => {
                     let right_target = std::str::from_utf8(&answer.stdout)
                         .is_ok_and(|text| query.answer(text).is_ok());
                     if right_target {
                         Ok(())
                     } else {
-                        Err("the helper answered for another host or path".to_owned())
+                        Err(WindowEnded::WrongTarget)
                     }
                 }
             };
@@ -285,10 +285,25 @@ impl SignIns {
             }
         });
         if let Ok(Ok(Err(why))) = tokio::time::timeout(self.early_wait, told).await {
-            return Err(SignInError::Ended(Tool::Git, why));
+            return Err(SignInError::Ended(Tool::Git, why.to_string()));
         }
         Ok(start)
     }
+}
+
+/// Why the credential window ended without a sign-in. It displays as the failure message shown as
+/// is; the empty message is for a tool that said nothing.
+#[derive(Debug, thiserror::Error)]
+enum WindowEnded {
+    /// The tool could not run, or failed.
+    #[error("{0}")]
+    Tool(String),
+    /// The tool ended without an answer.
+    #[error("")]
+    NoAnswer,
+    /// The helper answered for another host or path.
+    #[error("the helper answered for another host or path")]
+    WrongTarget,
 }
 
 /// The one-time code, when it is the shape `gh` prints (`ABCD-1234`).

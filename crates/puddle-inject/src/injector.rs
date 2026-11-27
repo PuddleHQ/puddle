@@ -36,6 +36,7 @@ use tokio::time::Instant;
 use crate::git_path::{Access, Classified, GitPath, classify};
 use crate::header::authorization;
 use crate::source::{CredentialSource, GitSettings};
+use crate::wording;
 
 /// The most request body read to tell an LFS download from an upload. A batch of a hundred
 /// objects is about 10 KiB.
@@ -122,6 +123,7 @@ impl GitInjector {
             }
             Classified::Git(path) => path,
         };
+        tracing::debug!(workspace = %self.workspace, host = %path.host, owner = %path.owner, method = %request.method(), "git request: looking for the identity that covers it");
         let git = match self.settings.current().await {
             Ok(git) => git,
             Err(err) => {
@@ -200,19 +202,9 @@ impl GitInjector {
         if allowed {
             return None;
         }
-        let (code, verb, list, switch) = match access {
-            GitAccess::Push => (
-                ReasonCode::PushDenied,
-                "push to",
-                "push",
-                "Only push to listed repos",
-            ),
-            GitAccess::Pull => (
-                ReasonCode::PullDenied,
-                "pull from",
-                "pull",
-                "Only pull from listed repos",
-            ),
+        let code = match access {
+            GitAccess::Push => ReasonCode::PushDenied,
+            GitAccess::Pull => ReasonCode::PullDenied,
         };
         let what = path.describe();
         let message = match &repo {
@@ -226,14 +218,9 @@ impl GitInjector {
                         access,
                     });
                 }
-                let name = &repo.repo;
-                format!(
-                    "{verb} {what} is not on this workspace's {list} list yet, as with a repository the workspace just created or forked; click \"Allow {list} for {name}\" in the notice (it works at once, no restart), or turn off \"{switch}\" on the workspace's Git tab, then try again"
-                )
+                wording::not_allowed(access, &what, Some(&repo.repo))
             }
-            None => format!(
-                "{verb} {what} is not allowed: the repository list cannot hold this name, so turn off \"{switch}\" on the workspace's Git tab"
-            ),
+            None => wording::not_allowed(access, &what, None),
         };
         tracing::info!(workspace = %self.workspace, %code, repo = %what, "refused by the repository list");
         Some(InjectRefusal::new(403, code, message))
@@ -295,6 +282,8 @@ impl GitInjector {
                 );
             }
         };
+        // Which identity and which source, never the value.
+        tracing::debug!(workspace = %self.workspace, identity = %identity.label, host = %path.host, owner = %path.owner, "credential read; adding it to the request");
         let value = authorization(&path.credential_host, credential.secret.expose());
         let rejected = self.rejected(identity, source, path);
         let binding_id = format!("identity:{}:{}", identity.id, binding.host);

@@ -11,6 +11,12 @@
     type Identity,
   } from "#lib/identities/model.ts";
   import { parseRepoUrl, repoName } from "#lib/identities/repo.ts";
+  import RepositoryAddress from "#lib/components/RepositoryAddress.svelte";
+  import {
+    pushBlock,
+    pushBlockText,
+    type PushBlock,
+  } from "#lib/repos/model.ts";
   import { identities } from "#lib/stores/identities.svelte.ts";
   import { toasts } from "#lib/stores/toasts.svelte.ts";
   import {
@@ -18,6 +24,7 @@
     type RepoRow,
   } from "#lib/stores/workspace-git.svelte.ts";
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
+  import { resolveRepoAddress } from "#lib/workspaces/model.ts";
   import "#lib/theme/controls.css";
 
   const id = $derived(page.params["id"] ?? "");
@@ -31,6 +38,10 @@
   let repoUrl = $state("");
   let newPull = $state(true);
   let newPush = $state(true);
+  // What the picked repository's listing says stops a push to it; the Push box is off and greyed.
+  let newPushBlock = $state<PushBlock | null>(null);
+  let cloneNow = $state(true);
+  let adding = $state(false);
   let repoProblem = $state<string | null>(null);
   let switchProblem = $state<string | null>(null);
   let rowProblem = $state<string | null>(null);
@@ -40,6 +51,13 @@
   $effect(() => {
     if (wid) return store.start(wid);
   });
+
+  /** The picked repository no longer stands: its block goes, and Push is back to ticked. */
+  function clearPushBlock() {
+    if (newPushBlock === null) return;
+    newPushBlock = null;
+    newPush = true;
+  }
 
   const git = $derived(store.git);
   const attachedIds = $derived(git?.identities.map((i) => i.id) ?? []);
@@ -153,26 +171,51 @@
   async function addRepo(event: SubmitEvent) {
     event.preventDefault();
     repoProblem = null;
-    const parsed = parseRepoUrl(repoUrl);
+    // The create form's rules: `owner/repo` means GitHub, an SSH address means its HTTPS twin.
+    const resolved = resolveRepoAddress(repoUrl);
+    if ("message" in resolved) {
+      repoProblem = resolved.message;
+      document.getElementById(`${fid}-url`)?.focus();
+      return;
+    }
+    const parsed = parseRepoUrl(resolved.url);
     if (!parsed.ok) {
       repoProblem = parsed.message;
       document.getElementById(`${fid}-url`)?.focus();
       return;
     }
-    const result = await store.addRepo({
-      host: parsed.host,
-      owner: parsed.owner,
-      repo: parsed.repo,
-      pull: newPull,
-      push: newPush,
-    });
-    if (!result.ok) {
-      repoProblem = result.message;
-      document.getElementById(`${fid}-url`)?.focus();
-      return;
+    adding = true;
+    try {
+      const result = cloneNow
+        ? await store.cloneRepo({
+            url: resolved.url,
+            pull: newPull,
+            push: newPush,
+            ...(newPushBlock ? { push_block: newPushBlock } : {}),
+          })
+        : await store.addRepo({
+            host: parsed.host,
+            owner: parsed.owner,
+            repo: parsed.repo,
+            pull: newPull,
+            push: newPush,
+            ...(newPushBlock ? { push_block: newPushBlock } : {}),
+          });
+      if (!result.ok) {
+        repoProblem = result.message;
+        document.getElementById(`${fid}-url`)?.focus();
+        return;
+      }
+      toasts.push(
+        cloneNow
+          ? `Cloning ${repoName(parsed)}.`
+          : `Listed ${repoName(parsed)}.`,
+      );
+      repoUrl = "";
+      clearPushBlock();
+    } finally {
+      adding = false;
     }
-    toasts.push(`Listed ${repoName(parsed)}.`);
-    repoUrl = "";
   }
 </script>
 
@@ -216,9 +259,9 @@
           <li data-identity-id={identity.id}>
             <div class="what">
               <b><a href="/identities/{identity.id}">{identity.label}</a></b>
-              <span class="muted"
-                >{identity.author.name} &lt;{identity.author.email}&gt;</span
-              >
+              <span class="muted">
+                {identity.author.name} &lt;{identity.author.email}&gt;
+              </span>
               <span class="muted">
                 {#if identity.credentials.length === 0}No credentials{:else}
                   {identity.credentials
@@ -234,8 +277,9 @@
                 aria-label="Move {identity.label} up"
                 disabled={index === 0}
                 onclick={() => move(identity, -1)}
-                ><ArrowUp aria-hidden="true" size={16} /></button
               >
+                <ArrowUp aria-hidden="true" size={16} />
+              </button>
               <button
                 type="button"
                 class="btn"
@@ -243,14 +287,17 @@
                 aria-label="Move {identity.label} down"
                 disabled={index === git.identities.length - 1}
                 onclick={() => move(identity, 1)}
-                ><ArrowDown aria-hidden="true" size={16} /></button
               >
+                <ArrowDown aria-hidden="true" size={16} />
+              </button>
               <button
                 type="button"
                 class="btn"
                 aria-label="Remove {identity.label} from {workspace.name}"
-                onclick={() => detach(identity)}>Remove</button
+                onclick={() => detach(identity)}
               >
+                Remove
+              </button>
             </div>
           </li>
         {/each}
@@ -277,14 +324,15 @@
               <option
                 value={String(identity.id)}
                 selected={attachChoice === String(identity.id)}
-                >{identity.label}</option
               >
+                {identity.label}
+              </option>
             {/each}
           </select>
         </div>
-        <button type="submit" class="btn" disabled={available.length === 0}
-          >Add identity</button
-        >
+        <button type="submit" class="btn" disabled={available.length === 0}>
+          Add identity
+        </button>
       </form>
     {/if}
     {#if identityProblem}
@@ -307,11 +355,11 @@
               void setSwitch("only_push_listed", next);
             }}
           />
-          Only push to listed repos
+          Only push to allowed repositories
         </label>
         <p class="muted">
           {git.only_push_listed
-            ? "A push is allowed only to a repository whose Push box is ticked. This checks Git pushes only: a token in the workspace can still change a repository through the GitHub API."
+            ? "A push is allowed only to a repository whose Push box is ticked. This checks Git pushes only: a token in the workspace can still change a repository through the GitHub API. Turning this off lets the workspace push to any repository its credential can write to, which is less safe."
             : "Off: a push may go to any repository the credential can write to, and the Push boxes change nothing."}
           {#if git.push_from === "default"}
             It follows the default for new workspaces.
@@ -319,10 +367,11 @@
             <button
               type="button"
               class="btn"
-              aria-label="Use the default again for Only push to listed repos"
+              aria-label="Use the default again for Only push to allowed repositories"
               onclick={() => void useDefault("use_default_push")}
-              >Use the default again</button
             >
+              Use the default again
+            </button>
           {/if}
         </p>
       </div>
@@ -338,7 +387,7 @@
               void setSwitch("only_pull_listed", next);
             }}
           />
-          Only pull from listed repos
+          Only pull from allowed repositories
         </label>
         <p class="muted">
           {git.only_pull_listed
@@ -350,10 +399,11 @@
             <button
               type="button"
               class="btn"
-              aria-label="Use the default again for Only pull from listed repos"
+              aria-label="Use the default again for Only pull from allowed repositories"
               onclick={() => void useDefault("use_default_pull")}
-              >Use the default again</button
             >
+              Use the default again
+            </button>
           {/if}
         </p>
       </div>
@@ -365,7 +415,7 @@
     {#if git.repos.length === 0}
       <p class="muted">
         No repository is listed.{git.only_push_listed
-          ? " With Only push to listed repos on, nothing can be pushed."
+          ? " With Only push to allowed repositories on, nothing can be pushed."
           : ""}
       </p>
     {:else}
@@ -400,20 +450,31 @@
                     type="checkbox"
                     aria-label="Push {repoName(row)}"
                     checked={row.push}
+                    disabled={!!row.push_block}
+                    aria-describedby={row.push_block
+                      ? `${fid}-push-block-${row.id}`
+                      : undefined}
                     onchange={(e) => {
                       const next = e.currentTarget.checked;
                       e.currentTarget.checked = row.push;
                       void toggle(row, row.pull, next);
                     }}
                   />
+                  {#if row.push_block}
+                    <span class="muted note" id="{fid}-push-block-{row.id}">
+                      {pushBlockText(row.push_block)}
+                    </span>
+                  {/if}
                 </td>
                 <td class="actions">
                   <button
                     type="button"
                     class="btn"
                     aria-label="Remove {repoName(row)} from the list"
-                    onclick={() => removeRow(row)}>Remove</button
+                    onclick={() => removeRow(row)}
                   >
+                    Remove
+                  </button>
                 </td>
               </tr>
             {/each}
@@ -426,39 +487,53 @@
     {/if}
 
     <form class="add" onsubmit={addRepo} novalidate>
-      <div class="field grow">
-        <label for="{fid}-url">Add a repository</label>
-        <input
-          id="{fid}-url"
-          type="text"
-          inputmode="url"
-          autocomplete="off"
-          autocapitalize="off"
-          spellcheck="false"
-          placeholder="https://github.com/owner/repo"
-          bind:value={repoUrl}
-          aria-invalid={repoProblem ? "true" : undefined}
-          aria-describedby={repoProblem
-            ? `${fid}-url-error`
-            : `${fid}-url-hint`}
-        />
+      <RepositoryAddress
+        id="{fid}-url"
+        bind:value={repoUrl}
+        label="Add a repository"
+        identities={identities.identities}
+        error={repoProblem}
+        hint="The list holds for Git over HTTPS and over SSH to GitHub, GitLab, Bitbucket and Azure DevOps. An address like git@github.com:owner/repo.git is listed as the same repository as its HTTPS address; owner/repo means GitHub."
+        oninput={() => {
+          repoProblem = null;
+          clearPushBlock();
+        }}
+        onPick={(repo) => {
+          repoUrl = repo.url;
+          repoProblem = null;
+          newPushBlock = pushBlock(repo);
+          if (newPushBlock) newPush = false;
+        }}
+      />
+      <div class="add-row">
+        <label class="choice">
+          <input type="checkbox" bind:checked={newPull} />Pull
+        </label>
+        <label class="choice">
+          <input
+            type="checkbox"
+            bind:checked={newPush}
+            disabled={newPushBlock !== null}
+            aria-describedby={newPushBlock ? `${fid}-push-block` : undefined}
+          />Push
+        </label>
+        <label class="choice">
+          <input type="checkbox" bind:checked={cloneNow} />Clone immediately
+        </label>
+        <button type="submit" class="btn" disabled={adding}>
+          Add repository
+        </button>
       </div>
-      <label class="choice"
-        ><input type="checkbox" bind:checked={newPull} />Pull</label
-      >
-      <label class="choice"
-        ><input type="checkbox" bind:checked={newPush} />Push</label
-      >
-      <button type="submit" class="btn">Add repository</button>
     </form>
-    {#if repoProblem}
-      <p class="error" id="{fid}-url-error" role="alert">{repoProblem}</p>
+    {#if newPushBlock}
+      <p class="muted note" id="{fid}-push-block">
+        {pushBlockText(newPushBlock)}
+      </p>
     {/if}
-    <p class="muted note" id="{fid}-url-hint">
-      The list holds for Git over HTTPS and over SSH to GitHub, GitLab,
-      Bitbucket and Azure DevOps. An address like
-      <span class="mono">git@github.com:owner/repo.git</span> is listed as the same
-      repository as its HTTPS address.
+    <p class="muted note">
+      With Clone immediately on, Puddle clones the repository into the running
+      workspace now and lists it. Off, it only lists the repository, so Git may
+      use it; the code is not fetched.
     </p>
   </section>
 
@@ -478,10 +553,10 @@
 
 <style>
   section {
+    max-width: var(--page-reading-width);
     display: grid;
     gap: var(--space-3);
     margin-bottom: var(--space-6);
-    max-width: 60rem;
   }
   h2 {
     font-size: var(--text-lg);
@@ -496,7 +571,7 @@
     color: var(--color-text-muted);
   }
   .note {
-    max-width: 60rem;
+    max-width: var(--page-reading-width);
     font-size: var(--text-sm);
   }
   .none {
@@ -545,19 +620,29 @@
     align-items: flex-start;
     gap: var(--space-2);
   }
-  .attach,
-  .add {
+  .attach {
     display: flex;
     flex-wrap: wrap;
     align-items: flex-end;
     gap: var(--space-3);
   }
+  .add {
+    display: grid;
+    gap: var(--space-3);
+  }
+  .add-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+  }
+  .add :global(.field > label) {
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+  }
   .field {
     display: grid;
     gap: var(--space-1);
-  }
-  .field.grow {
-    flex: 1 1 20rem;
   }
   .field label {
     font-size: var(--text-sm);

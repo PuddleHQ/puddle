@@ -40,18 +40,16 @@
 
 <div class="row" class:stacked id={plain ? id : undefined}>
   <div class="text">
-    {#if plain}<span class="name">{label}</span>{:else}<label for={id}
-        >{label}</label
-      >{/if}
+    {#if plain}<span class="name">{label}</span>{:else}<label for={id}>
+        {label}
+      </label>{/if}
     {#if desc}<p class="desc" id="{id}-desc">{desc}</p>{/if}
     {#if restart}<p class="desc restart">{RESTART_NOTE}</p>{/if}
     {#if how}
       <details class="how">
-        <summary
-          >How this works<span class="visually-hidden">
-            for {label}</span
-          ></summary
-        >
+        <summary>
+          How this works<span class="visually-hidden"> for {label}</span>
+        </summary>
         <p>{how}</p>
       </details>
     {/if}
@@ -69,8 +67,9 @@
             type="button"
             class="undo"
             onclick={() => void saver?.undo(id)}
-            >Undo<span class="visually-hidden"> {label}</span></button
           >
+            Undo<span class="visually-hidden"> {label}</span>
+          </button>
         {/if}
       {/if}
     </div>

@@ -7,13 +7,17 @@ ok    Runtime starts      msb 0.7.7-puddle.2 (0.0 s)
 ok    Test boot           a test VM booted and ran a program in 1.1 s
 ok    Disk space          120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 FAIL  Data folder path    /Users/dev/Library/Application Support has an ACL entry that lets another account change it (group:everyone allow add_file,delete_child), so msb will not open Puddle's data below it
-      fix:  msb refuses a folder where another account holds an ACL entry that can add, delete
-            or change things. If you added the entry, remove it with `chmod -a# 1
-            '/Users/dev/Library/Application Support'` (`sudo` in front when you do not own the
-            folder); otherwise keep Puddle's data under a folder only you can enter, or ask
-            whoever manages this Mac.
-      from: /Users/dev/Library/Application Support ACL entry 1: group:everyone allow
-            add_file,delete_child
+      impact: Puddle can't start any workspace: another account may change a folder above its
+              data.
+      remedy: Remove that account's access entry, or keep Puddle's data under a folder only you
+              can enter.
+      fix:    msb refuses a folder where another account holds an ACL entry that can add, delete
+              or change things. If you added the entry, remove it with `chmod -a# 1
+              '/Users/dev/Library/Application Support'` (`sudo` in front when you do not own the
+              folder); otherwise keep Puddle's data under a folder only you can enter, or ask
+              whoever manages this Mac.
+      from:   /Users/dev/Library/Application Support ACL entry 1: group:everyone allow
+              add_file,delete_child
 ok    Disk encryption     data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent           the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)
 ok    Azure CLI (az)      version 2.64.0

@@ -6,7 +6,7 @@
 
 use std::fmt;
 
-use crate::{CompanySignal, Host, LocalCategory, WorkspaceId};
+use crate::{CompanySignal, Host, LocalCategory, Program, WorkspaceId};
 
 /// A rule's row id. Never reused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -250,6 +250,9 @@ pub struct EgressRequest {
     pub port: u16,
     /// What the guest said it will speak, if anything. Rules ignore it.
     pub protocol: Option<ProtocolHint>,
+    /// The program in the guest that opened the connection, as the agent named it. A display
+    /// hint the guest can fake: rules and decisions ignore it ([`Program`]).
+    pub program: Option<Program>,
 }
 
 impl EgressRequest {
@@ -261,6 +264,7 @@ impl EgressRequest {
             host,
             port,
             protocol: None,
+            program: None,
         }
     }
 
@@ -268,6 +272,13 @@ impl EgressRequest {
     #[must_use]
     pub fn with_protocol(mut self, protocol: ProtocolHint) -> Self {
         self.protocol = Some(protocol);
+        self
+    }
+
+    /// The same request with the program that opened it.
+    #[must_use]
+    pub fn with_program(mut self, program: Option<Program>) -> Self {
+        self.program = program;
         self
     }
 }
@@ -321,6 +332,13 @@ pub trait Policy: Send + Sync {
         // this implementation has no opinion, so it reads neither argument
         let _ = (request, suffix_allows);
         Ok(None)
+    }
+
+    /// The workspace's current name, for text shown to the user. The default knows none, and the
+    /// caller then shows the id. It may read the database, like [`Self::decide`].
+    fn workspace_name(&self, workspace: &WorkspaceId) -> Option<String> {
+        let _ = workspace;
+        None
     }
 }
 

@@ -13,13 +13,12 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
-use puddle_api::{
-    ConnectionFileError, ConnectionInfo, EventHub, ServeError, SettingsRepo, WorkspaceService,
-};
+use puddle_api::{ConnectionFileError, ConnectionInfo, EventHub, ServeError, SettingsRepo};
 use puddle_host::{
     Host, HostConfig, HostError, HostOptions, HostShutdown, MsbFactory, Platform, Prepared,
     RuntimeFactory, prepare,
 };
+use puddle_services::workspaces::WorkspaceService;
 use puddle_store::Store;
 use puddle_types::{Problems, WorkspaceId};
 use tokio::sync::Mutex;
@@ -144,8 +143,23 @@ type Stop = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = HostShutdown> + Send
 
 /// Asks a workspace's guest to end its editor's extension hosts (the editor window closed). The
 /// error says why it did not reach the guest, for a log: a stopped workspace has none to end.
-pub type EndExtensionHosts =
-    Arc<dyn Fn(WorkspaceId) -> BoxFuture<'static, Result<(), String>> + Send + Sync>;
+pub type EndExtensionHosts = Arc<
+    dyn Fn(WorkspaceId) -> BoxFuture<'static, Result<(), EndExtensionHostsFailed>> + Send + Sync,
+>;
+
+/// Why an [`EndExtensionHosts`] call did not reach the guest.
+#[derive(Debug, thiserror::Error)]
+pub enum EndExtensionHostsFailed {
+    /// This backend runs no workspaces, so there is no guest to reach.
+    #[error("this backend runs no workspaces")]
+    NoWorkspaces,
+    /// The host the call goes through has already stopped.
+    #[error("the host has stopped")]
+    HostStopped,
+    /// The host could not reach the workspace's agent.
+    #[error(transparent)]
+    Guest(#[from] puddle_host::EndExtensionHostsError),
+}
 
 /// What the user calls a workspace (its display name, else its name), for a notice; `None` when
 /// this backend has no such workspace.
@@ -196,7 +210,7 @@ impl Backend {
             store,
             settings,
             extension_hosts: Arc::new(|_| {
-                Box::pin(async { Err("this backend runs no workspaces".to_owned()) })
+                Box::pin(async { Err(EndExtensionHostsFailed::NoWorkspaces) })
             }),
             label: Arc::new(|_| Box::pin(async { None })),
             open_terminals: Arc::new(|| 0),
@@ -267,14 +281,12 @@ impl Backend {
         let ends: EndExtensionHosts = Arc::new(move |workspace| {
             let weak = weak.clone();
             Box::pin(async move {
-                let host = weak
-                    .upgrade()
-                    .ok_or_else(|| "the host has stopped".to_owned())?;
+                let host = weak.upgrade().ok_or(EndExtensionHostsFailed::HostStopped)?;
                 host.workspaces()
                     .end_extension_hosts(&workspace)
                     .await
                     .map(drop)
-                    .map_err(|e| e.to_string())
+                    .map_err(EndExtensionHostsFailed::from)
             })
         });
         let named = Arc::downgrade(&host);

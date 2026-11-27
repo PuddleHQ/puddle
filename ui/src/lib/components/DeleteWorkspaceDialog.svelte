@@ -54,8 +54,9 @@
         cancelButton?.focus();
       }}
     >
-      <AlertDialog.Title class="confirm-title">Delete {name}?</AlertDialog.Title
-      >
+      <AlertDialog.Title class="confirm-title">
+        Delete {name}?
+      </AlertDialog.Title>
       <AlertDialog.Description class="confirm-detail">
         {#if check.volume_missing}
           This removes the workspace from Puddle. Its disk is already gone, so
@@ -142,9 +143,9 @@
       </label>
 
       <div class="confirm-actions">
-        <AlertDialog.Cancel class="btn" bind:ref={cancelButton}
-          >Cancel</AlertDialog.Cancel
-        >
+        <AlertDialog.Cancel class="btn" bind:ref={cancelButton}>
+          Cancel
+        </AlertDialog.Cancel>
         <button
           type="button"
           class="btn deny"

@@ -130,6 +130,12 @@ fn a_policy_without_ip_rules_finds_no_rule_on_lookup() {
 }
 
 #[test]
+fn a_policy_that_knows_no_names_has_none_for_a_workspace() {
+    let id = WorkspaceId::new("box").unwrap();
+    assert_eq!(AlwaysBlocked.workspace_name(&id), None);
+}
+
+#[test]
 fn ids_and_errors_display() {
     assert_eq!(RuleId(7).to_string(), "7");
     assert_eq!(PendingId(8).to_string(), "8");

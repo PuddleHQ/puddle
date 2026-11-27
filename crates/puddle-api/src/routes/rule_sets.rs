@@ -7,12 +7,12 @@ use axum::http::StatusCode;
 use puddle_store::{Actor, parse_rule_set};
 use puddle_types::RuleSetId;
 
-use crate::ApiErrorBody;
 use crate::authz::Principal;
-use crate::error::{ApiError, blocking};
 use crate::extract::{Path, Query};
 use crate::routes::AppState;
-use crate::wire::{
+use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, blocking};
+use puddle_services::wire::{
     NewRuleSetRequest, RuleSetEntryPage, RuleSetEntrySwitchRequest, RuleSetList,
     RuleSetSwitchRequest, RuleSetSwitched, RuleSetUpdateRequest, RuleSetView, SystemManagedHost,
     checked_precedence,

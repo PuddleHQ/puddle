@@ -20,7 +20,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use sha2::{Digest, Sha256};
 
-use crate::error::ApiError;
+use puddle_services::error::ApiError;
 
 /// One file of the app.
 #[derive(Debug, Clone)]

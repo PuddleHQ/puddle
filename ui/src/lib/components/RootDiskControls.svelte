@@ -3,12 +3,7 @@
   import ConfirmDialog from "#lib/components/ConfirmDialog.svelte";
   import GrowRootDiskDialog from "#lib/components/GrowRootDiskDialog.svelte";
   import { workspaceActions as actions } from "#lib/stores/workspace-actions.svelte.ts";
-  import {
-    canGrowRootDisk,
-    canReclaim,
-    canResetRootDisk,
-    type Workspace,
-  } from "#lib/workspaces/model.ts";
+  import { allows, type Workspace } from "#lib/workspaces/model.ts";
   import "#lib/theme/controls.css";
 
   // The buttons that change a workspace's disk, with their two dialogs. A button that cannot work
@@ -20,12 +15,13 @@
     reset = true,
   }: { workspace: Workspace; reclaim?: boolean; reset?: boolean } = $props();
 
+  // The grow form starts from the current size, so it waits until the runtime reports one.
   let growOpen = $state(false);
   let resetOpen = $state(false);
 
   const why = $derived.by(() => {
     if (workspace.busy !== null) return "Wait for what the workspace is doing.";
-    if (reset && !canResetRootDisk(workspace)) {
+    if (reset && !allows(workspace, "reset_root_disk")) {
       return "Stop the workspace to reset its root disk.";
     }
     return null;
@@ -36,24 +32,31 @@
   <button
     type="button"
     class="btn"
-    disabled={!canGrowRootDisk(workspace)}
-    onclick={() => (growOpen = true)}>Make root disk bigger…</button
+    disabled={!allows(workspace, "grow_root_disk") ||
+      workspace.root_disk_size_mib === null}
+    onclick={() => (growOpen = true)}
   >
+    Make root disk bigger…
+  </button>
   {#if reclaim}
     <button
       type="button"
       class="btn"
-      disabled={!canReclaim(workspace)}
-      onclick={() => void actions.reclaim(workspace)}>Reclaim space</button
+      disabled={!allows(workspace, "reclaim")}
+      onclick={() => void actions.reclaim(workspace)}
     >
+      Reclaim space
+    </button>
   {/if}
   {#if reset}
     <button
       type="button"
       class="btn"
-      disabled={!canResetRootDisk(workspace)}
-      onclick={() => (resetOpen = true)}>Reset root disk…</button
+      disabled={!allows(workspace, "reset_root_disk")}
+      onclick={() => (resetOpen = true)}
     >
+      Reset root disk…
+    </button>
   {/if}
 </div>
 {#if why}<p class="why">{why}</p>{/if}

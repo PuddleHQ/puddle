@@ -4,6 +4,7 @@ use puddle_types::SandboxName;
 use std::sync::Mutex;
 
 use super::*;
+use crate::backend::EndExtensionHostsFailed;
 use tracing::Level;
 
 #[test]
@@ -115,7 +116,9 @@ fn recording_ends() -> (EndExtensionHosts, Arc<Mutex<Vec<String>>>) {
         sink.lock().unwrap().push(workspace.to_string());
         Box::pin(async move {
             if workspace.as_str() == "stopped" {
-                Err("the workspace is not running".to_owned())
+                Err(EndExtensionHostsFailed::Guest(
+                    puddle_host::EndExtensionHostsError::NotRunning,
+                ))
             } else {
                 Ok(())
             }
@@ -195,7 +198,7 @@ fn closing_a_popup_asks_nothing_and_the_last_window_asks_once() {
     // A second window of the same workspace (the editor's "New Window"), counted as the
     // window system does.
     windows.opened(&demo);
-    let ended = windows.on_event(demo.clone());
+    let ended = windows.on_event(demo);
     ended(&tauri::WindowEvent::Destroyed);
     // An absence window: a call for the first window's end would have arrived by now.
     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -488,6 +491,40 @@ fn a_start_up_failure_is_recorded_in_the_data_folder_and_named_in_the_message() 
 }
 
 #[test]
+fn a_start_up_failure_lands_in_the_fallback_folder_when_the_data_folder_cannot_be_written() {
+    let dir = tempfile::tempdir().unwrap();
+    // a file where the data folder should be: it can be neither locked nor created
+    let blocker = dir.path().join("blocker");
+    std::fs::write(&blocker, "").unwrap();
+    let fallback = dir.path().join("fallback");
+    let written = crash::write_startup_error_or_fallback(
+        Some(&blocker.join("data")),
+        &fallback,
+        "the backend didn't start",
+    )
+    .unwrap();
+    assert_eq!(written, fallback.join(crash::STARTUP_ERROR_FILE));
+    assert!(
+        std::fs::read_to_string(written)
+            .unwrap()
+            .contains("the backend didn't start")
+    );
+}
+
+#[test]
+fn a_setup_failure_the_hook_stored_is_what_run_returns_after_the_loop_ends() {
+    let stored = Mutex::new(Some(ShellError::Containment(LifecycleError::Job {
+        op: "assign",
+        source: std::io::Error::other("denied"),
+    })));
+    assert!(matches!(
+        setup_outcome(&stored),
+        Err(ShellError::Containment(_))
+    ));
+    assert!(setup_outcome(&stored).is_ok());
+}
+
+#[test]
 fn a_failure_the_setup_hook_stored_is_what_run_returns_and_tauri_s_own_otherwise() {
     let stored = Mutex::new(Some(ShellError::Containment(LifecycleError::Job {
         op: "assign",
@@ -523,7 +560,7 @@ fn the_installer_refuses_to_replace_a_newer_version_with_an_older_one() {
 fn the_probe_opens_with_the_clipboard_setting_the_environment_names_and_refuses_a_typo() {
     let page = Some("http://probe.localhost:4900/");
     let with = |value| SandboxProbe::parse(page, Some("9444"), None, None, value);
-    assert_eq!(with(None).unwrap().clipboard_read, ClipboardRead::Ask);
+    assert_eq!(with(None).unwrap().clipboard_read, ClipboardRead::Allow);
     assert_eq!(
         with(Some("ask")).unwrap().clipboard_read,
         ClipboardRead::Ask

@@ -30,6 +30,8 @@ use puddle_upstream::{Adapter, AdapterKind, NetworkOs, NetworkSnapshot, OsProxy}
 
 pub use pac::{PacReader, PacTiming};
 
+use pac::Spawn;
+
 /// How long a read of the network is reused.
 const SNAPSHOT_TTL: Duration = Duration::from_secs(10);
 
@@ -64,7 +66,49 @@ pub struct HostSignals {
     network: Arc<dyn NetworkOs>,
     pac: Option<PacReader>,
     ttl: Duration,
-    cached: Mutex<Option<(Instant, Arc<Reading>)>>,
+    spawn: Spawn,
+    cache: Arc<Mutex<Cache>>,
+}
+
+/// The last read of the network and whether a newer one is being taken.
+#[derive(Default)]
+struct Cache {
+    latest: Option<(Instant, Arc<Reading>)>,
+    refreshing: bool,
+}
+
+/// One read of the network, away from the thread that asked. Dropping it, run or not, ends the
+/// refresh, so a thread that could not start does not stop later ones.
+struct Refresh {
+    network: Arc<dyn NetworkOs>,
+    cache: Arc<Mutex<Cache>>,
+}
+
+impl Refresh {
+    fn run(self) {
+        let reading = read_network(&*self.network);
+        let mut cache = self.cache.lock().unwrap_or_else(PoisonError::into_inner);
+        cache.latest = Some((Instant::now(), reading));
+    }
+}
+
+impl Drop for Refresh {
+    fn drop(&mut self) {
+        self.cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .refreshing = false;
+    }
+}
+
+fn read_network(network: &dyn NetworkOs) -> Arc<Reading> {
+    Arc::new(match network.read() {
+        Ok(snapshot) => Reading::of(&snapshot),
+        Err(err) => {
+            tracing::debug!(error = %err, "the company-network signals could not read the network");
+            Reading::Unread
+        }
+    })
 }
 
 impl std::fmt::Debug for HostSignals {
@@ -79,10 +123,12 @@ impl HostSignals {
     #[must_use]
     pub fn system() -> Arc<dyn CompanySignals> {
         if cfg!(windows) {
-            Arc::new(Self::new(
+            let signals = Self::new(
                 puddle_upstream::system_network(),
                 Some(puddle_upstream::system_os()),
-            ))
+            );
+            signals.refresh_in_background();
+            Arc::new(signals)
         } else {
             Arc::new(NoSignals)
         }
@@ -95,7 +141,13 @@ impl HostSignals {
             network,
             pac: proxy.map(|os| PacReader::new(os, PacTiming::default())),
             ttl: SNAPSHOT_TTL,
-            cached: Mutex::new(None),
+            spawn: Arc::new(|job| {
+                // A thread that cannot start drops the job, which ends its refresh.
+                let _ = std::thread::Builder::new()
+                    .name("puddle-network-signal".to_owned())
+                    .spawn(job);
+            }),
+            cache: Arc::default(),
         }
     }
 
@@ -103,6 +155,13 @@ impl HostSignals {
     #[must_use]
     pub fn with_snapshot_ttl(mut self, ttl: Duration) -> Self {
         self.ttl = ttl;
+        self
+    }
+
+    /// Runs the background reads of the network through `spawn` (tests run them in place).
+    #[cfg(test)]
+    fn with_network_spawn(mut self, spawn: Spawn) -> Self {
+        self.spawn = spawn;
         self
     }
 
@@ -114,21 +173,40 @@ impl HostSignals {
         self
     }
 
-    fn reading(&self) -> Arc<Reading> {
-        let mut cached = self.cached.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some((read_at, reading)) = cached.as_ref()
-            && read_at.elapsed() < self.ttl
-        {
-            return reading.clone();
+    /// Takes a newer read of the network on a thread of its own, unless one is being taken.
+    fn refresh_in_background(&self) {
+        let mut cache = self.cache.lock().unwrap_or_else(PoisonError::into_inner);
+        if cache.refreshing {
+            return;
         }
-        let reading = Arc::new(match self.network.read() {
-            Ok(snapshot) => Reading::of(&snapshot),
-            Err(err) => {
-                tracing::debug!(error = %err, "the company-network signals could not read the network");
-                Reading::Unread
-            }
-        });
-        *cached = Some((Instant::now(), reading.clone()));
+        cache.refreshing = true;
+        drop(cache);
+        let refresh = Refresh {
+            network: self.network.clone(),
+            cache: self.cache.clone(),
+        };
+        (self.spawn)(Box::new(move || refresh.run()));
+    }
+
+    /// The last read of the network. One that is older than the lifetime is still served, and a
+    /// newer one is taken in the background, so no asker waits on the operating system; only the
+    /// very first read, with nothing to serve yet, is taken in place.
+    fn reading(&self) -> Arc<Reading> {
+        let cache = self.cache.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some((read_at, reading)) = cache.latest.as_ref() else {
+            drop(cache);
+            let reading = read_network(&*self.network);
+            self.cache
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .latest = Some((Instant::now(), reading.clone()));
+            return reading;
+        };
+        let (stale, reading) = (read_at.elapsed() >= self.ttl, reading.clone());
+        drop(cache);
+        if stale {
+            self.refresh_in_background();
+        }
         reading
     }
 }

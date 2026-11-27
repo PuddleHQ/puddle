@@ -4,6 +4,7 @@
 // not count as a loss.
 import { describe, expect, it } from "vitest";
 import {
+  buildIsNewer,
   buildIsNotOlder,
   compareDump,
   compareDumps,
@@ -229,5 +230,26 @@ describe("the build after the upgrade", () => {
     expect(
       buildIsNotOlder(old, { version: "", api_version: "0.31.0" }),
     ).toEqual(["health.version went from 0.2.0 to "]);
+  });
+});
+
+describe("buildIsNewer", () => {
+  it("accepts a stamped build after an older one", () => {
+    expect(buildIsNewer({ version: "0.0.0" }, { version: "0.0.7" })).toEqual(
+      [],
+    );
+    expect(buildIsNewer({ version: "0.0.9" }, { version: "0.0.10" })).toEqual(
+      [],
+    );
+  });
+
+  it("names the same build, a step back and a version that is no version", () => {
+    expect(buildIsNewer({ version: "0.0.0" }, { version: "0.0.0" })).toEqual([
+      "health.version is 0.0.0 after 0.0.0, not newer",
+    ]);
+    expect(
+      buildIsNewer({ version: "0.0.8" }, { version: "0.0.7" }),
+    ).toHaveLength(1);
+    expect(buildIsNewer({ version: "0.0.8" }, { version: "" })).toHaveLength(1);
   });
 });

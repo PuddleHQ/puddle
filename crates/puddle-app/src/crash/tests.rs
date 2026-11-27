@@ -122,3 +122,14 @@ fn the_message_names_the_reason_and_the_file() {
         "{without}"
     );
 }
+
+#[test]
+fn a_crash_file_goes_to_the_fallback_when_the_folder_cannot_be_written() {
+    let dir = tempfile::tempdir().unwrap();
+    let blocker = dir.path().join("blocker");
+    fs::write(&blocker, "").unwrap();
+    let fallback = dir.path().join("fallback");
+    let now = SystemTime::now();
+    let path = write_with_fallback(&blocker.join("data"), &fallback, &report("boom"), now).unwrap();
+    assert!(path.starts_with(&fallback), "{}", path.display());
+}

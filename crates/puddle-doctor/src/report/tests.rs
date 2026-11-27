@@ -27,7 +27,7 @@ fn json_carries_the_schema_version_and_omits_empty_fields() {
 #[test]
 fn verdict_counts_problems_and_warnings() {
     let fail = Check::new(CheckId::Runtime, Status::Fail, "x");
-    let warn = Check::new(CheckId::GlobalSecureAccess, Status::Warn, "y");
+    let warn = Check::new(CheckId::ProblematicSoftware, Status::Warn, "y");
     assert!(
         report(vec![])
             .to_text()
@@ -75,4 +75,29 @@ fn lookups() {
     assert_eq!(r.failures().count(), 1);
     assert!(r.check(CheckId::Runtime).is_some());
     assert!(r.check(CheckId::TestBoot).is_none());
+}
+
+#[test]
+fn every_line_that_is_not_ok_prints_its_impact_and_remedy() {
+    for status in [Status::Warn, Status::Fail, Status::Skipped] {
+        let mut c = Check::new(CheckId::DiskSpace, status, "x");
+        c.impact = "It costs you something.".into();
+        c.remedy = Some("Do this first.".into());
+        let text = report(vec![c]).to_text();
+        assert!(
+            text.contains("impact: It costs you something."),
+            "{status:?}: {text}"
+        );
+        assert!(
+            text.contains("remedy: Do this first."),
+            "{status:?}: {text}"
+        );
+    }
+    let mut ok = Check::new(CheckId::DiskSpace, Status::Ok, "x");
+    ok.impact = "Fine.".into();
+    let text = report(vec![ok]).to_text();
+    assert!(
+        !text.contains("impact:") && !text.contains("remedy:"),
+        "{text}"
+    );
 }

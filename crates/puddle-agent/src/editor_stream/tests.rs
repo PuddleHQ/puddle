@@ -20,6 +20,7 @@ fn access(port: u16, password_file: PathBuf) -> EditorAccess {
         port,
         password_file,
         unsupported: None,
+        server: None,
     }
 }
 

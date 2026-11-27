@@ -4,11 +4,13 @@
 use std::sync::Arc;
 
 use puddle_agent_proto::editor::{EDITOR_DEFAULTS_GUEST, EditorDefaults, ServerKind};
-use puddle_api::{
-    Attached, BrowserTarget, DesktopTarget, EditorLogin, EditorSignIn, OpenTarget, WorkspaceRecord,
-};
 use puddle_boot::GatedSandbox;
 use puddle_compute::{ComputeError, Runtime};
+use puddle_services::{
+    workspaces::Attached, workspaces::BrowserTarget, workspaces::DesktopTarget,
+    workspaces::EditorLogin, workspaces::EditorSignIn, workspaces::OpenTarget,
+    workspaces::WorkspaceRecord,
+};
 use puddle_settings::{Effective, ReconnectionGrace, ServerChoice, resolve};
 use puddle_ssh::SshEndpoint;
 use puddle_types::{GuestFile, Problem, SessionUser, WorkspaceId, guest_path};
@@ -235,6 +237,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     guests: Arc::clone(&self.inner.front_guests),
                     ports: self.inner.ports.clone(),
                     workspace: name.clone(),
+                    label: record.label().to_owned(),
                 });
                 // Microsoft's server takes the password file as its connection token;
                 // code-server takes it in its login form.
@@ -429,6 +432,39 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
     }
 
+    /// The keeper a boot hands its sandbox to: the lifecycle.
+    pub(super) fn keeper<'a>(
+        &'a self,
+        name: &'a WorkspaceId,
+    ) -> super::settle::LifecycleKeeper<'a, R> {
+        super::settle::LifecycleKeeper {
+            runtime: &self.inner.runtime,
+            lifecycle: &self.inner.lifecycle,
+            events: self.inner.events.as_ref(),
+            workspace: name,
+        }
+    }
+
+    /// Waits for the change that runs in `name`'s guest (an author or variable rewrite) to end,
+    /// and keeps the next one waiting until the guard is dropped. An operation that takes the guest
+    /// down holds it until the guest is gone from `live`, so no change runs the boot hook in a
+    /// guest that is stopping; the changes that waited then find no guest and leave it to the next
+    /// start. The wait is bounded by the boot hook's own time limit, which a rewrite runs under.
+    /// `None` when no sandbox was served.
+    pub(super) async fn hold_guest(
+        &self,
+        name: &WorkspaceId,
+    ) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+        let rewrite = self
+            .inner
+            .live
+            .lock()
+            .await
+            .get(name)
+            .map(|entry| Arc::clone(&entry.rewrite))?;
+        Some(rewrite.lock_owned().await)
+    }
+
     /// Stops what a failed boot or a finished stop leaves: the SSH endpoint and the lifecycle's
     /// handle. The route stays (the sandbox may start again); `drop_route` ends it too.
     pub(super) async fn quiesce(&self, name: &WorkspaceId, drop_route: bool) {
@@ -485,6 +521,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let inner = &self.inner;
         let mut leftovers = Vec::new();
         let name = &record.id;
+        let _guest = self.hold_guest(name).await;
         let gated = inner
             .live
             .lock()

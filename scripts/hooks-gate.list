@@ -1,0 +1,77 @@
+# The commands of the `hooks` gate (scripts/hooks-gate.sh runs them, a few at a time): one command per line, run from the repository
+# root, each independent of the others. Slowest first, so the longest finish last-but-not-alone. Blank lines and `#` lines are ignored.
+# A new script self-test goes here. Measured serially on a 16-core WSL at load 18 133 s for the lines below the first,
+# 25 s for the slowest; the first line reruns this whole gate twice under long TMPDIRs, so it is the longest and starts first.
+scripts/check-hooks-tmpdir-test.sh
+scripts/hooks-gate-test.sh
+ci/disk-watch-test.sh
+ci/apt-setup-test.sh
+ci/scope-test.sh
+scripts/mutants-test.sh
+ci/raise-coverage-baseline-test.sh
+scripts/check-tmp-test.sh
+scripts/check-load-wait-test.sh
+ci/fake-host-starved-test.sh
+scripts/gate-sched-test.sh
+scripts/check-test-git-env.sh
+ci/dependabot-notices-test.sh
+scripts/coverage-run-test.sh
+ci/nightly-issue-test.sh
+ci/stress-test.sh
+ci/vm-partition-test.sh
+scripts/check-spdx-test.sh
+ci/quality-issue-test.sh
+ci/lab-override-check-test.sh
+ci/cache-drop-test.sh
+ci/cancel-group-test.sh
+scripts/rustdoc-gate-test.sh
+ci/fetch-wix-test.sh
+ci/cache-gc-test.sh
+ci/dependabot-auto-merge-test.sh
+ci/merge-queue-sweep-test.sh
+ci/cancel-dissolved-groups-test.sh
+scripts/coverage-cargo-test.sh
+ci/fetch-forgejo-test.sh
+ci/free-disk-test.sh
+ci/vm-tests-report-test.sh
+scripts/check-socket-guard-test.sh
+scripts/check-enclosing-repo-test.sh
+scripts/target-names-test.sh
+scripts/no-target-dirs-test.sh
+ci/fetch-gitleaks-test.sh
+ci/fetch-code-server-test.sh
+ci/fetch-vscode-test.sh
+ci/fetch-tauri-cli-test.sh
+ci/advisories-issue-test.sh
+ci/fork-upkeep.py self-test
+scripts/pre-push-test.sh
+scripts/diff-coverage-crates-test.sh
+scripts/check-sets-test.sh
+scripts/flake-lints-test.sh
+ci/fetch-msb-test.sh
+ci/check-az-contract-test.sh
+ci/fetch-gateway-test.sh
+ci/fetch-real-tools-test.sh
+ci/github-rest/check-test.sh
+ci/should-run-test.sh
+ci/bisect-red-test.sh
+scripts/check-test-git-env.sh --self-test
+scripts/diff-base-test.sh
+scripts/cap-test-memory-test.sh
+scripts/flake-rules-test.sh
+ci/check-mise-pin-test.sh
+ci/fetch-baseline-msi-test.sh
+ci/cargo-fetch-test.sh
+ci/deny-fresh-test.sh
+ci/tools-cache-heal-test.sh
+ci/fork-upkeep.py lint
+ci/fork-upkeep-issue-test.sh
+scripts/check-gate-exit.sh --self-test
+scripts/check-gate-exit.sh
+scripts/target-names-test.sh --self-test
+scripts/no-target-dirs-test.sh --self-test
+scripts/dead-resolver-test.sh
+scripts/coverage-determinism.sh --self-test
+ci/check-runtime-layout-test.sh
+ci/check-dormant-release-test.sh
+ci/test-vm-skip-policy.sh

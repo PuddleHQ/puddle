@@ -106,7 +106,7 @@ fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), RestoreError> 
 
 /// The UTC time as `20261115T225500Z`, the name of a safety copy.
 fn utc_name(ms: u64) -> String {
-    puddle_api::archive_file_name(ms)
+    puddle_services::backup::archive_file_name(ms)
         .trim_start_matches("puddle-backup-")
         .trim_end_matches(".tar.gz")
         .to_owned()
@@ -172,7 +172,7 @@ pub(crate) fn request_with(
     if pending.join(MARKER).exists() {
         return Err(RequestError::AlreadyPending);
     }
-    book_versions_agree(paths, &staged).map_err(RequestError::Refused)?;
+    book_versions_agree(paths, &staged).map_err(|why| RequestError::Refused(why.to_string()))?;
 
     let requested_at_ms = now_ms();
     let name = utc_name(requested_at_ms);
@@ -338,7 +338,10 @@ fn refresh_safety_copy(paths: &HostPaths, name: &str) -> Result<(), RestoreError
     // A leftover of a crash is ours: it ends in `.refresh`, which no safety copy's name does.
     drop(fs::remove_dir_all(&fresh));
     make_backup(paths, &fresh).map_err(|e| fail("cannot make it", &e))?;
-    fs::remove_dir_all(&copy).map_err(|e| fail("cannot replace the earlier copy", &e))?;
+    // The user may have deleted the confirm-time copy since: then the fresh one takes its name.
+    let gone = fs::remove_dir_all(&copy)
+        .or_else(|e| (e.kind() == io::ErrorKind::NotFound).then_some(()).ok_or(e));
+    gone.map_err(|e| fail("cannot replace the earlier copy", &e))?;
     fs::rename(&fresh, &copy).map_err(|e| fail("cannot put it in place", &e))
 }
 
@@ -445,7 +448,7 @@ fn restored_database(
 }
 
 /// Whether the two workspace lists can be merged, for the request to refuse early.
-fn book_versions_agree(paths: &HostPaths, staged: &Path) -> Result<(), String> {
+fn book_versions_agree(paths: &HostPaths, staged: &Path) -> Result<(), merge::BookRefusal> {
     merge::check_book_versions(&paths.workspace_book(), &staged.join(BACKUP_WORKSPACES))
 }
 

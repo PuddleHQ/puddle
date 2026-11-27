@@ -755,7 +755,7 @@ fn swap_in_release(src: &Path, dir: &str, asset: &str, bytes: &[u8]) {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    std::fs::write(dir.join(CHECKSUMS_ASSET), new + "\n").unwrap();
+    std::fs::write(dir.join(CHECKSUMS_ASSET), format!("{new}\n")).unwrap();
 }
 
 /// Asserts the build stopped on the pin list, naming the file, both hashes and the pin file.
@@ -842,7 +842,7 @@ fn a_download_with_no_line_in_the_pin_list_is_refused_naming_it() {
         let src = fixture(&dir.0, VERSION);
         let pins = read(&src.join("pins.sha256"));
         let kept: Vec<_> = pins.lines().filter(|l| !l.contains(asset)).collect();
-        std::fs::write(src.join("pins.sha256"), kept.join("\n") + "\n").unwrap();
+        std::fs::write(src.join("pins.sha256"), format!("{}\n", kept.join("\n"))).unwrap();
         let out = dir.0.join("runtime");
         let err = run_with(&src, &out, &["--os", os]).unwrap_err().to_string();
         assert!(

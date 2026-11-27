@@ -119,9 +119,9 @@ export const PALETTES: Record<Preset, Record<Scheme, Tokens>> = {
       accent: "#2e1579",
       "accent-contrast": "#ffffff",
       "accent-subtle": "#e2ddf4",
-      danger: "#b42330",
-      success: "#1c7a4b",
-      warning: "#8a5a00",
+      danger: "#a8234f",
+      success: "#17785c",
+      warning: "#855010",
       focus: "#2e1579",
     },
     dark: {
@@ -135,9 +135,9 @@ export const PALETTES: Record<Preset, Record<Scheme, Tokens>> = {
       accent: "#a490e0",
       "accent-contrast": "#0c0425",
       "accent-subtle": "#221745",
-      danger: "#ff8088",
-      success: "#52c78f",
-      warning: "#f2c063",
+      danger: "#ff8fa6",
+      success: "#5fd0a8",
+      warning: "#f0bd72",
       focus: "#a490e0",
     },
   },
@@ -153,9 +153,9 @@ export const PALETTES: Record<Preset, Record<Scheme, Tokens>> = {
       accent: "#127d3e",
       "accent-contrast": "#ffffff",
       "accent-subtle": "#ddf4e6",
-      danger: "#b42330",
-      success: "#1c7a4b",
-      warning: "#8a5a00",
+      danger: "#b0302a",
+      success: "#3b7a14",
+      warning: "#8a5400",
       focus: "#127d3e",
     },
     dark: {
@@ -169,9 +169,9 @@ export const PALETTES: Record<Preset, Record<Scheme, Tokens>> = {
       accent: "#64d894",
       "accent-contrast": "#042512",
       "accent-subtle": "#17452a",
-      danger: "#ff8088",
-      success: "#52c78f",
-      warning: "#f2c063",
+      danger: "#ff8a80",
+      success: "#9ad65a",
+      warning: "#f0c050",
       focus: "#64d894",
     },
   },
@@ -187,9 +187,9 @@ export const PALETTES: Record<Preset, Record<Scheme, Tokens>> = {
       accent: "#842f0b",
       "accent-contrast": "#ffffff",
       "accent-subtle": "#f4e3dd",
-      danger: "#b42330",
-      success: "#1c7a4b",
-      warning: "#8a5a00",
+      danger: "#a8201f",
+      success: "#2f7a2a",
+      warning: "#7d5200",
       focus: "#842f0b",
     },
     dark: {
@@ -203,9 +203,9 @@ export const PALETTES: Record<Preset, Record<Scheme, Tokens>> = {
       accent: "#e0845c",
       "accent-contrast": "#250e04",
       "accent-subtle": "#452517",
-      danger: "#ff8088",
-      success: "#52c78f",
-      warning: "#f2c063",
+      danger: "#ff917a",
+      success: "#8fd070",
+      warning: "#f5c36a",
       focus: "#e0845c",
     },
   },
@@ -221,9 +221,9 @@ export const PALETTES: Record<Preset, Record<Scheme, Tokens>> = {
       accent: "#154479",
       "accent-contrast": "#ffffff",
       "accent-subtle": "#e5e8eb",
-      danger: "#b42330",
-      success: "#1c7a4b",
-      warning: "#8a5a00",
+      danger: "#b02a37",
+      success: "#1a7552",
+      warning: "#7f5a0c",
       focus: "#154479",
     },
     dark: {
@@ -237,9 +237,9 @@ export const PALETTES: Record<Preset, Record<Scheme, Tokens>> = {
       accent: "#689ad4",
       "accent-contrast": "#041325",
       "accent-subtle": "#272d35",
-      danger: "#ff8088",
-      success: "#52c78f",
-      warning: "#f2c063",
+      danger: "#ff8590",
+      success: "#5cc99a",
+      warning: "#e8c26e",
       focus: "#689ad4",
     },
   },
@@ -287,6 +287,19 @@ export function mix(a: string, b: string, share: number): string {
 const WHITE = "#ffffff";
 const BLACK = "#000000";
 
+/**
+ * The accent's tint over `bg`: 14 % of the way to the accent, or less where the accent and the text
+ * would no longer read on it (a mid-tone accent such as Meadow's passes on the page but not on a
+ * tint that is already close to it). Never below the page itself.
+ */
+function tint(bg: string, accent: string, text: string): string {
+  for (let share = 0.14; share > 0; share -= 0.02) {
+    const t = mix(bg, accent, share);
+    if (contrast(accent, t) >= 4.5 && contrast(text, t) >= 4.5) return t;
+  }
+  return bg;
+}
+
 // --- what a palette resolves to ----------------------------------------------------------------
 
 /** The tokens of a palette in one scheme; a custom set is Pond with the user's colours laid over it. */
@@ -308,7 +321,7 @@ export function resolve(
     t["accent-contrast"] =
       contrast(accent, WHITE) >= contrast(accent, BLACK) ? WHITE : BLACK;
   }
-  if (accent || background) t["accent-subtle"] = mix(t.bg, t.accent, 0.14);
+  if (accent || background) t["accent-subtle"] = tint(t.bg, t.accent, t.text);
   if (background || surface || text) {
     t["surface-raised"] = mix(t.surface, t.text, 0.05);
     t["border-subtle"] = mix(t.bg, t.text, 0.16);

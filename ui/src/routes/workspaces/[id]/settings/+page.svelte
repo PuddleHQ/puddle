@@ -34,7 +34,7 @@
     DIRECT_SSH_LABEL,
   } from "#lib/workspaces/direct-ssh.ts";
   import {
-    canDelete,
+    allows,
     diskLabel,
     diskWarned,
     rootDiskLabel,
@@ -413,8 +413,9 @@
       {#each groups as group (group.title)}
         <tbody>
           <tr class="group">
-            <th scope="colgroup" colspan="3" id={group.anchor}>{group.title}</th
-            >
+            <th scope="colgroup" colspan="3" id={group.anchor}>
+              {group.title}
+            </th>
           </tr>
           {#each group.rows as row (row.key)}
             <tr data-setting={row.key}>
@@ -440,7 +441,9 @@
                 </select>
               </td>
               <td class="from">
-                <span class="chip">{sourceLabel(row.source)}</span>
+                {#if row.source !== "default"}<span class="meta wrap">
+                    {sourceLabel(row.source)}
+                  </span>{/if}
                 {#if row.source === "workspace"}
                   <button
                     type="button"
@@ -448,8 +451,9 @@
                     aria-label="{row.resetLabel ??
                       'Use the global setting'} again for {row.label}"
                     onclick={() => void row.reset()}
-                    >{row.resetLabel ?? "Use global"}</button
                   >
+                    {row.resetLabel ?? "Use global"}
+                  </button>
                 {/if}
               </td>
             </tr>
@@ -517,37 +521,37 @@
         </tr>
         <tr>
           <th scope="row">Image</th>
-          <td colspan="2" class="mono wide" title={workspace.image}
-            >{workspace.image.split("@")[0]}</td
-          >
+          <td colspan="2" class="mono wide" title={workspace.image}>
+            {workspace.image.split("@")[0]}
+          </td>
         </tr>
         {#if rootDiskLabel(workspace) !== null}
           <tr>
             <th scope="row">Root disk</th>
-            <td colspan="2" class:full={diskWarned(workspace, "root")}
-              >{rootDiskLabel(workspace)}{diskWarned(workspace, "root")
+            <td colspan="2" class:full={diskWarned(workspace, "root")}>
+              {rootDiskLabel(workspace)}{diskWarned(workspace, "root")
                 ? " (nearly full)"
-                : ""}</td
-            >
+                : ""}
+            </td>
           </tr>
         {/if}
         <tr>
           <th scope="row">Disk</th>
-          <td colspan="2" class:full={diskWarned(workspace, "volume")}
-            >{diskLabel(workspace)}{diskWarned(workspace, "volume")
+          <td colspan="2" class:full={diskWarned(workspace, "volume")}>
+            {diskLabel(workspace)}{diskWarned(workspace, "volume")
               ? " (nearly full)"
-              : ""}</td
-          >
+              : ""}
+          </td>
         </tr>
         <tr>
           <th scope="row">
             Disk space
-            <span class="hint"
-              >Reclaiming gives disk the workspace no longer uses back to your
+            <span class="hint">
+              Reclaiming gives disk the workspace no longer uses back to your
               computer. Resetting the root disk (a stopped workspace) removes
               what was installed outside the volume. Making it bigger works for
-              a running or a stopped workspace and is kept when it is reset.</span
-            >
+              a running or a stopped workspace and is kept when it is reset.
+            </span>
           </th>
           <td colspan="2"><RootDiskControls {workspace} /></td>
         </tr>
@@ -592,7 +596,7 @@
             <button
               type="button"
               class="btn deny"
-              disabled={!canDelete(workspace)}
+              disabled={!allows(workspace, "delete")}
               onclick={() => void actions.askDelete(workspace)}
             >
               <Trash2 aria-hidden="true" size={16} />{actions.checking ===
@@ -600,7 +604,7 @@
                 ? "Checking…"
                 : "Delete workspace…"}
             </button>
-            {#if !canDelete(workspace) && workspace.busy === null}
+            {#if !allows(workspace, "delete") && workspace.busy === null}
               <p class="why">Stop the workspace before deleting it.</p>
             {/if}
           </td>
@@ -630,7 +634,6 @@
   }
   table {
     width: 100%;
-    max-width: 64rem;
     border-collapse: collapse;
   }
   thead th {
@@ -668,12 +671,6 @@
   .from {
     white-space: nowrap;
   }
-  .chip {
-    padding: 0 var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-pill);
-    font-size: var(--text-sm);
-  }
   .reset {
     margin-inline-start: var(--space-2);
     padding: 0;
@@ -708,6 +705,10 @@
     }
     .from {
       white-space: normal;
+    }
+    .pick {
+      width: 100%;
+      min-width: 0;
     }
   }
 </style>

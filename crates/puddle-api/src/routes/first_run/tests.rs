@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use super::*;
-use crate::FakeDevCert;
+use puddle_services::dev_cert::FakeDevCert;
 
 /// Answers a trust request only when `gate` is released (its sender sends or is dropped), and
 /// panics then when `panic` is set. A test holds the sender to keep the answer pending for as

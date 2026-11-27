@@ -15,32 +15,25 @@ use puddle_types::{
 };
 use puddle_upstream::{TlsClient, TlsConnectError};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
-use zeroize::Zeroizing;
 
 use super::body::{Abort, BodyReader, ChannelBody, pump};
-use super::exchange::{
-    AnswerBody, AnswerError, Exchange, MAX_EXCHANGE_BODY, read_answer, swap_request_body,
-};
+use super::exchange::AnswerBody;
 use super::guest::{
     ALPN_HTTP11, FirstBytes, Hello, Prefixed, Proto, Scan, capture_first_record, parse_hello,
     read_hello, scan_hello, server_config,
 };
-use super::inject::{
-    Forwarding, InjectContext, InjectRefusal, RequestView, Unauthorized, body_too_large,
-};
+use super::inject::body_too_large;
 use super::leg::{self, BoxError, ConnectError, Connected, H1Conn, Made, UpBody};
-use super::request::{self, Parsed};
-use super::request_rules::{self, Refused};
-use super::stand_in::{
-    ANSWER_WITHHELD, AnswerReport, NotScrubbed, ScrubNotes, Swapped, answer_encoding_refusal,
-    answer_failed_refusal, limit_accept_encoding, scan_answer, scrub_answer,
-};
+use super::pipeline::{self, GuestHeaders, GuestRequest, Prepared, RequestAudit, Wire};
+use super::request::{self, Parsed, UpstreamVersion};
+use super::request_rules::Refused;
+use super::stand_in::{ANSWER_WITHHELD, AnswerReport, ScrubNotes, Swapped};
 use super::streams::Activity;
 use super::{Mode, Termination, h2, response, ws};
 use crate::http::{self, HeadError};
 use crate::opened::Opened;
 use crate::proxy::{Proxy, ProxyConfig, Refusal, refuse};
-use crate::target::Target;
+use crate::request_target::Target;
 use crate::upstream::{Admitted, connect_out};
 
 /// The upstream client's read buffer cap, which bounds a response head: heads up to this size are
@@ -520,7 +513,8 @@ async fn pass_through<S>(
     // SSH to a Git host's name is refused here as in any tunnel: what is not TLS on port 443 of
     // such a name (`ssh.github.com`) is passed through only when it is not SSH.
     let request = EgressRequest::new(cx.workspace.clone(), cx.target.host.clone(), cx.target.port);
-    let ssh_for = Some(&request).filter(|request| cx.proxy.is_git_ssh_name(request));
+    let ssh_for = Some(&request)
+        .filter(|request| crate::proxy::is_git_ssh_name(Some(&cx.termination), &request.host));
     let guest = Opened {
         stream: guest,
         early: replay,
@@ -648,222 +642,40 @@ where
                 return self.refuse(&refusal).await;
             }
         };
-        self.note_request(&parsed);
-        if let Some(flow) = self.refuse_by_rule(&parsed, &head).await {
-            return flow;
+        let req = GuestRequest {
+            method: &parsed.method,
+            target: &parsed.target,
+            lines: &head.headers,
+            headers: GuestHeaders::Head(&head),
+            extended_connect: false,
+        };
+        let mut audit = RequestAudit::default();
+        let prepared = self.prepare(&parsed, &req, &mut audit).await;
+        self.outcome.absorb(self.cx, audit);
+        match prepared {
+            Ok(prepared) => self.exchange(&parsed, prepared).await,
+            Err(Stop::Refuse(refusal)) => self.refuse(&refusal).await,
+            Err(Stop::Abort) => Flow::Abort,
         }
-        if let Err(refusal) = self.ensure_upstream().await {
-            return self.refuse(&refusal).await;
-        }
-        let (forwarding, prefetched) = match self.consult_injector(&parsed, &head).await {
-            Ok(decided) => decided,
-            Err(flow) => return flow,
-        };
-        let headers = match request::upstream_headers(
-            &head,
-            &self.cx.target,
-            forwarding.injection.as_ref(),
-        ) {
-            Ok(headers) => headers,
-            Err(refusal) => return self.refuse(&refusal).await,
-        };
-        let (headers, target) = self.add_credentials(headers, &parsed.target, &forwarding);
-        let view = RequestView::new(&parsed.method, &parsed.target, &head.headers);
-        let (headers, prefetched, mut exchange) = match self
-            .begin_exchange(&parsed, &view, headers, prefetched)
-            .await
-        {
-            Ok(begun) => begun,
-            Err(flow) => return flow,
-        };
-        self.exchange(
-            &parsed,
-            target
-                .as_ref()
-                .map_or(parsed.target.as_str(), |target| target.as_str()),
-            headers,
-            forwarding.unauthorized.as_ref(),
-            prefetched,
-            exchange.as_mut(),
-        )
-        .await
     }
 
-    /// Notes the connection's first request line for the audit, with its stand-ins as labels.
-    fn note_request(&mut self, parsed: &Parsed) {
-        let shown = self
-            .cx
-            .termination
-            .stand_ins()
-            .redact_target(&parsed.target);
-        if self.outcome.http.is_none() {
-            self.outcome.http = Some(HttpRequestLine::new(parsed.method.as_str(), &shown));
-        }
-        tracing::debug!(host = %self.cx.target.host, method = %parsed.method, path = %puddle_types::request_path(&shown), "terminated request");
-    }
-
-    /// Refuses the request when a rule on method and path names it, before anything is sent
-    /// upstream. `None`: no rule does.
-    async fn refuse_by_rule(&mut self, parsed: &Parsed, head: &http::Head) -> Option<Flow> {
-        let host = &self.cx.target.host;
-        let view = RequestView::new(&parsed.method, &parsed.target, &head.headers);
-        let rule = self.cx.termination.request_rules().refusing(host, &view)?;
-        tracing::info!(%host, %rule, "request refused by a rule on method and path");
-        self.outcome.refused_by_rule.get_or_insert_with(|| Refused {
-            rule,
-            line: HttpRequestLine::new(
-                &parsed.method,
-                &self
-                    .cx
-                    .termination
-                    .stand_ins()
-                    .redact_target(&parsed.target),
-            ),
-        });
-        let refusal = request_rules::refusal(rule, &parsed.method, host);
-        Some(self.refuse(&refusal).await)
-    }
-
-    /// Asks the injector about the request, after reading the body it wants to see (if any):
-    /// what it adds, or why the request is refused (`Err`: the guest has been told).
-    async fn consult_injector(
+    /// The request side of the pipeline, with the upstream connection made between the rules
+    /// and the injector.
+    async fn prepare(
         &mut self,
         parsed: &Parsed,
-        head: &http::Head,
-    ) -> Result<(Forwarding, Option<Bytes>), Flow> {
-        let context = InjectContext {
-            workspace: &self.cx.workspace,
-            host: &self.cx.target.host,
+        req: &GuestRequest<'_>,
+        audit: &mut RequestAudit,
+    ) -> Result<Prepared, Stop> {
+        pipeline::admit(self.cx, req, audit)?;
+        self.ensure_upstream().await?;
+        let mut wire = H1Wire {
+            cx: self.cx,
+            reader: &mut self.reader,
+            writer: &mut self.writer,
+            parsed,
         };
-        let injector = self.cx.termination.injector();
-        let view = RequestView::new(&parsed.method, &parsed.target, &head.headers);
-        let prefetched = match injector.body_wanted(&context, &view) {
-            Some(limit) => Some(self.read_whole_body(parsed, limit).await?),
-            None => None,
-        };
-        let decision = match &prefetched {
-            Some(body) => injector.decide(&context, &view.with_body(body)).await,
-            None => injector.decide(&context, &view).await,
-        };
-        match decision.into_forwarding() {
-            Ok(forwarding) => Ok((forwarding, prefetched)),
-            Err(refusal) => {
-                tracing::info!(host = %self.cx.target.host, code = %refusal.code(), "request refused by the credential rules");
-                Err(self.refuse(&refusal.to_refusal()).await)
-            }
-        }
-    }
-
-    /// Asks the workspace's exchange rewriter about the request. If it is a token exchange, gets
-    /// it ready: the answer will be read, so the upstream is asked for it unencoded; and the
-    /// body is read in full and has its stand-ins swapped for the real values when the exchange
-    /// asks for that.
-    async fn begin_exchange(
-        &mut self,
-        parsed: &Parsed,
-        view: &RequestView<'_>,
-        mut headers: ::http::HeaderMap,
-        prefetched: Option<Bytes>,
-    ) -> Result<(::http::HeaderMap, Option<Bytes>, Option<Exchange>), Flow> {
-        let host = &self.cx.target.host;
-        let began = self.cx.termination.exchanges().and_then(|rewriter| {
-            rewriter.begin(
-                host,
-                &parsed.method,
-                puddle_types::request_path(&parsed.target),
-            )
-        });
-        let Some(mut exchange) = began else {
-            return Ok((headers, prefetched, None));
-        };
-        if exchange.answer_mut().is_some() {
-            headers.remove(::http::header::ACCEPT_ENCODING);
-        }
-        if !exchange.wants_request_body() {
-            return Ok((headers, prefetched, Some(exchange)));
-        }
-        let body = match prefetched {
-            Some(body) => body,
-            None => self.read_whole_body(parsed, MAX_EXCHANGE_BODY).await?,
-        };
-        let (swapped_body, report) = swap_request_body(
-            self.cx.termination.stand_ins(),
-            &exchange,
-            view.header("content-type"),
-            &body,
-            host,
-        );
-        self.outcome.record_stand_ins(host, &report);
-        Ok((headers, Some(swapped_body.unwrap_or(body)), Some(exchange)))
-    }
-
-    /// Lets the exchange's rewriter read the answer, when it has one to read. `Err`: the answer
-    /// could not be read and the guest has been told.
-    async fn read_exchange_answer(
-        &mut self,
-        exchange: Option<&mut Exchange>,
-        response: ::http::Response<hyper::body::Incoming>,
-    ) -> Result<::http::Response<AnswerBody>, Flow> {
-        let Some(answer) = exchange.and_then(Exchange::answer_mut) else {
-            return Ok(response.map(AnswerBody::Streaming));
-        };
-        match read_answer(answer, response, self.cx.proxy.config.body_idle_timeout).await {
-            Ok(read) => Ok(read),
-            Err(AnswerError::Refused(refusal)) => {
-                tracing::info!(host = %self.cx.target.host, code = %refusal.code(), "the answer was refused");
-                self.upstream = None;
-                Err(self.refuse(&refusal.to_refusal()).await)
-            }
-            Err(AnswerError::Upstream(err)) => {
-                tracing::info!(host = %self.cx.target.host, error = %err, "the answer could not be read");
-                self.upstream = None;
-                Err(self
-                    .refuse(&Refusal::new(
-                        "502 Bad Gateway",
-                        format!("{} did not finish its answer", self.cx.target.host),
-                    ))
-                    .await)
-            }
-        }
-    }
-
-    /// Notes the injected credential for the audit, then swaps the workspace's stand-ins in
-    /// `headers` (the injected headers are left alone) and in the request `target` for their real
-    /// values. The target to send when one was swapped in it.
-    fn add_credentials(
-        &mut self,
-        mut headers: ::http::HeaderMap,
-        target: &str,
-        forwarding: &Forwarding,
-    ) -> (::http::HeaderMap, Option<Zeroizing<String>>) {
-        let injection = forwarding.injection.as_ref();
-        let own_git_credential = forwarding.own_git_credential;
-        if let Some(injection) = injection {
-            self.outcome.injected = true;
-            self.outcome
-                .binding_id
-                .get_or_insert_with(|| injection.binding_id().to_owned());
-        }
-        let host = &self.cx.target.host;
-        let mut foreign = self.cx.termination.stand_ins().foreign_credentials(
-            &headers,
-            injection,
-            own_git_credential,
-        );
-        let swapped = self
-            .cx
-            .termination
-            .stand_ins()
-            .swap(&mut headers, host, injection);
-        self.outcome.record_stand_ins(host, &swapped);
-        let (target, in_target) = self.cx.termination.stand_ins().swap_target(target, host);
-        self.outcome.record_stand_ins(host, &in_target);
-        foreign.extend(stale_kind(&[&swapped, &in_target]));
-        self.outcome.record_foreign(self.cx, &foreign);
-        if self.cx.termination.stand_ins().scrubs_answers_from(host) {
-            limit_accept_encoding(&mut headers);
-        }
-        (headers, target)
+        pipeline::prepare(self.cx, &mut wire, req, UpstreamVersion::H1, audit).await
     }
 
     /// Makes sure a verified upstream connection exists.
@@ -886,59 +698,6 @@ where
                 .into_h1()?,
         );
         Ok(())
-    }
-
-    /// Answers a body over `limit` with `413` and records it.
-    async fn refuse_too_large(&mut self, limit: usize) -> Flow {
-        self.refuse(&body_too_large(limit)).await
-    }
-
-    /// Reads the guest's whole request body (at most `limit` bytes) for an injector that decides
-    /// on it. `Err` is how the connection goes on: the refusal has been sent.
-    async fn read_whole_body(&mut self, parsed: &Parsed, limit: usize) -> Result<Bytes, Flow> {
-        if matches!(parsed.body, http::Body::None | http::Body::Length(0)) {
-            return Ok(Bytes::new());
-        }
-        if matches!(parsed.body, http::Body::Length(n) if n > limit as u64) {
-            return Err(self.refuse_too_large(limit).await);
-        }
-        if parsed.expect_continue
-            && let Err(err) = self
-                .writer
-                .write_all(b"HTTP/1.1 100 Continue\r\n\r\n")
-                .await
-        {
-            tracing::debug!(error = %err, "guest went away before its body");
-            return Err(Flow::Abort);
-        }
-        let idle = self.cx.proxy.config.body_idle_timeout;
-        let mut decoder = BodyReader::new(parsed.body);
-        let mut whole = Vec::new();
-        loop {
-            match tokio::time::timeout(idle, decoder.next(&mut self.reader)).await {
-                Ok(Ok(Some(piece))) => {
-                    whole.extend_from_slice(&piece);
-                    if whole.len() > limit {
-                        return Err(self.refuse_too_large(limit).await);
-                    }
-                }
-                Ok(Ok(None)) => return Ok(Bytes::from(whole)),
-                Ok(Err(err)) => {
-                    tracing::info!(host = %self.cx.target.host, error = %err, "request body failed");
-                    return Err(self
-                        .refuse(&request::bad("the request body could not be read"))
-                        .await);
-                }
-                Err(_) => {
-                    return Err(self
-                        .refuse(
-                            &Refusal::new("408 Request Timeout", "the request body did not arrive")
-                                .coded(ReasonCode::RequestTimeout),
-                        )
-                        .await);
-                }
-            }
-        }
     }
 
     /// Writes `response` to the guest while the guest's read side is polled (see [`keep_reading`]).
@@ -1008,15 +767,6 @@ where
         piped.map_or(Flow::Abort, |()| Flow::Close)
     }
 
-    /// Answers the guest with `refusal` in place of the server's `401`. The server's answer is
-    /// left unread, so the upstream connection is not used again.
-    async fn replace_unauthorized(&mut self, refusal: InjectRefusal) -> Flow {
-        tracing::info!(host = %self.cx.target.host, code = %refusal.code(), "401 replaced: the credential for this request was Puddle's to choose");
-        self.upstream = None;
-        self.outcome.refused.get_or_insert(refusal.code());
-        self.refuse(&refusal.to_refusal()).await
-    }
-
     /// The upstream's answer to a request that was sent, or, when there is none, the refusal the
     /// guest gets (`Err`: it has been sent).
     async fn upstream_answer(
@@ -1058,18 +808,21 @@ where
         Err(self.refuse(&refusal).await)
     }
 
-    /// Sends `parsed` with `headers` upstream and its response to the guest. A `401` from the
-    /// server is replaced by `unauthorized`'s answer when there is one.
-    async fn exchange(
-        &mut self,
-        parsed: &Parsed,
-        target: &str,
-        headers: ::http::HeaderMap,
-        unauthorized: Option<&Unauthorized>,
-        prefetched: Option<Bytes>,
-        exchange: Option<&mut Exchange>,
-    ) -> Flow {
+    /// Sends the `prepared` request upstream and its response to the guest. A `401` from the
+    /// server is replaced by the injector's answer when there is one.
+    async fn exchange(&mut self, parsed: &Parsed, prepared: Prepared) -> Flow {
         let config = self.cx.proxy.config;
+        let Prepared {
+            headers,
+            target,
+            body: prefetched,
+            mut exchange,
+            unauthorized,
+            ..
+        } = prepared;
+        let target = target
+            .as_ref()
+            .map_or(parsed.target.as_str(), |target| target.as_str());
         let Some(upstream) = self.upstream.as_mut() else {
             return Flow::Abort;
         };
@@ -1103,49 +856,35 @@ where
         )
         .await;
         let body_complete = matches!(pumped, Some(Ok(())));
-        let response = match self.upstream_answer(sent, pumped).await {
+        let mut response = match self.upstream_answer(sent, pumped).await {
             Ok(response) => response,
             Err(flow) => return flow,
         };
-        if response.status() == ::http::StatusCode::UNAUTHORIZED
-            && let Some(refusal) = unauthorized.and_then(Unauthorized::refusal)
+        if let Some(refusal) =
+            pipeline::replaced_401(self.cx, response.status(), unauthorized.as_ref())
         {
-            return self.replace_unauthorized(refusal).await;
+            // The server's answer is left unread, so the upstream connection is not used again.
+            self.upstream = None;
+            return self.refuse(&refusal).await;
         }
-        let mut response = response;
         if parsed.upgrade && response.status() == ::http::StatusCode::SWITCHING_PROTOCOLS {
             return self.splice_websocket(&mut response).await;
         }
-        let response = match self.read_exchange_answer(exchange, response).await {
-            Ok(response) => response,
-            Err(flow) => return flow,
-        };
+        let head_only = parsed.method.eq_ignore_ascii_case("HEAD");
         let notes = Arc::new(ScrubNotes::default());
-        let scrubbed = scrub_answer(
-            self.cx.termination.stand_ins(),
+        let answered = pipeline::answer(
+            self.cx,
+            exchange.as_mut(),
             response,
-            &self.cx.target.host,
-            parsed.method.eq_ignore_ascii_case("HEAD"),
+            head_only,
             &notes,
-            config.body_idle_timeout,
+            &self.unknown_tokens,
         )
         .await;
-        let written = match scrubbed {
-            Ok(response) => {
-                let response = scan_answer(
-                    self.cx.termination.stand_ins(),
-                    response,
-                    parsed.method.eq_ignore_ascii_case("HEAD"),
-                    &self.unknown_tokens,
-                );
-                self.write_response(response, parsed, &config).await
-            }
-            Err(why) => {
+        let written = match answered {
+            Ok(response) => self.write_response(response, parsed, &config).await,
+            Err(refusal) => {
                 self.upstream = None;
-                let refusal = match why {
-                    NotScrubbed::Encoding => answer_encoding_refusal(&self.cx.target.host),
-                    NotScrubbed::Failed => answer_failed_refusal(&self.cx.target.host),
-                };
                 return self.refuse(&refusal).await;
             }
         };
@@ -1162,6 +901,83 @@ where
                 tracing::info!(host = %self.cx.target.host, error = %err, "response aborted");
                 self.upstream = None;
                 Flow::Abort
+            }
+        }
+    }
+}
+
+/// Why an HTTP/1.1 request stopped before it was sent.
+#[derive(Debug)]
+pub(crate) enum Stop {
+    /// The guest gets this refusal.
+    Refuse(Refusal),
+    /// The guest went away: nothing more is written.
+    Abort,
+}
+
+impl From<Refusal> for Stop {
+    fn from(refusal: Refusal) -> Self {
+        Self::Refuse(refusal)
+    }
+}
+
+/// The guest's HTTP/1.1 connection, as the pipeline reads a request body from it.
+struct H1Wire<'a, R, W> {
+    cx: &'a Context,
+    reader: &'a mut BufReader<R>,
+    writer: &'a mut W,
+    parsed: &'a Parsed,
+}
+
+impl<R, W> Wire for H1Wire<'_, R, W>
+where
+    R: AsyncRead + Unpin + Send,
+    W: AsyncWrite + Unpin + Send,
+{
+    type Stop = Stop;
+
+    /// Reads the body with its framing, after a `100 Continue` when the guest waits for one.
+    async fn read_body(&mut self, limit: usize) -> Result<Bytes, Stop> {
+        let body = self.parsed.body;
+        if matches!(body, http::Body::None | http::Body::Length(0)) {
+            return Ok(Bytes::new());
+        }
+        if matches!(body, http::Body::Length(n) if n > limit as u64) {
+            return Err(body_too_large(limit).into());
+        }
+        if self.parsed.expect_continue
+            && let Err(err) = self
+                .writer
+                .write_all(b"HTTP/1.1 100 Continue\r\n\r\n")
+                .await
+        {
+            tracing::debug!(error = %err, "guest went away before its body");
+            return Err(Stop::Abort);
+        }
+        let idle = self.cx.proxy.config.body_idle_timeout;
+        let mut decoder = BodyReader::new(body);
+        let mut whole = Vec::new();
+        loop {
+            match tokio::time::timeout(idle, decoder.next(&mut *self.reader)).await {
+                Ok(Ok(Some(piece))) => {
+                    whole.extend_from_slice(&piece);
+                    if whole.len() > limit {
+                        return Err(body_too_large(limit).into());
+                    }
+                }
+                Ok(Ok(None)) => return Ok(Bytes::from(whole)),
+                Ok(Err(err)) => {
+                    tracing::info!(host = %self.cx.target.host, error = %err, "request body failed");
+                    return Err(request::bad("the request body could not be read").into());
+                }
+                Err(_) => {
+                    return Err(Refusal::new(
+                        "408 Request Timeout",
+                        "the request body did not arrive",
+                    )
+                    .coded(ReasonCode::RequestTimeout)
+                    .into());
+                }
             }
         }
     }

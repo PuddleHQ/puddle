@@ -27,14 +27,14 @@ Flake rules (`flake-<id>` kinds; `--flakes` lists them with the fix each names) 
 raced in the past: a hand-rolled wait helper (every one outside the shared test kit counts; the row says
 whether it lacks a name or a bound), a hand-rolled wait loop (a `for`, `while` or `loop` in a test that sleeps or yields between looks), `file.lock()`, `try_recv()`, a port picked
 and dropped, a literal port bound or connected in a test (a name's authority and a URL are fakes and stay out), a name built from the clock, a wall-clock bar, records matched by position, an awaited page read
-asserted once, a reserved name (`.test`, `.example`, `example.com`) in a test that reaches the resolver, a script written in-process and then made executable (`flake-e1`, ETXTBSY: use `puddle_test_kit::write_executable`), a child's piped stdin written with the result unwrapped (`flake-s1`, BrokenPipe: use `puddle_test_kit::feed_stdin`), a Unix path literal (`/tmp`, `/home`, `/no...`) used as a host path or a path joined by hand with `format!` (`flake-f1`, it fails on Windows). Four bans have kinds of their own: `ban-untagged` (`#[serde(untagged)]`), `ban-error-capital` and `ban-error-period` (thiserror messages), and `ban-html-sink` (an HTML injection sink in `ui/src`: `{@html`, `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`; no reason comment excuses one). A site is reasoned by `flake-ok: <why>` on the line or within three lines above. A rule is
+asserted once, a reserved name (`.test`, `.example`, `example.com`) in a test that reaches the resolver, a script written in-process and then made executable (`flake-e1`, ETXTBSY: use `puddle_test_kit::write_executable`), a child's piped stdin written with the result unwrapped (`flake-s1`, BrokenPipe: use `puddle_test_kit::feed_stdin`), a Unix path literal (`/tmp`, `/home`, `/no...`) used as a host path or a path joined by hand with `format!` (`flake-f1`, it fails on Windows). Six bans have kinds of their own: `ban-untagged` (`#[serde(untagged)]`), `ban-error-capital` and `ban-error-period` (thiserror messages), `ban-allow` (any `#[allow]` or `#![allow]`, which clippy's `allow_attributes` skips in the inner form: write `#[expect(lint, reason = "...")]`; a file in `ALLOW_EXEMPT` (none now) keeps its `allow` until its reason is gone, and the entry fails once the file has no `allow`), `ban-result-string` (`Result<_, String>` in production code: return a typed error; no reason comment excuses one) and `ban-html-sink` (an HTML injection sink in `ui/src`: `{@html`, `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`; no reason comment excuses one). A site is reasoned by `flake-ok: <why>` on the line or within three lines above. A rule is
 counted (`flake-<id>`, `flake-<id>-unreasoned`) until its sites are fixed or reasoned, then its `scripts/flake-rules/<id>.rule` says
 `status: failing` and an unreasoned site becomes a `noreason` row. Their self-test replays the original code of
 fixed flakes from `scripts/flake-fixtures/`.
 
 Context per Rust line: `test` (under tests/, benches/, examples/; in a `#[cfg(test)]` or
-`#[cfg(any(test, feature = "testing"))]` item or a file module so declared; or in the test-only
-crates puddle-e2e, puddle-vm-tests, puddle-test-kit and puddle-proxy-test-support), else `prod`. Rows: kind, context, file:line, detail.
+`#[cfg(any(test, feature = "testing"))]` item (never `any(windows, test)`: it builds outside tests) or a file module so declared; or in the test-only
+crates puddle-e2e, puddle-vm-tests, puddle-test-kit, puddle-proxy-test-support, puddle-host-test-support and puddle-compute-msb-test-support), else `prod`. Rows: kind, context, file:line, detail.
 
 It is a lexer-free scanner (strings and comments are blanked by a small state machine), so it
 can miss or misplace a hit in macro-generated or very unusual code: a count is a safety net, the
@@ -54,8 +54,12 @@ from collections import Counter
 SKIP_DIRS = {"target", "node_modules", ".git", ".svelte-kit", "build", "corpus", "dist", "test-results",
              "playwright-report", ".scratch", "coverage"}  # coverage: vitest's lcov-report (ui/coverage, gitignored) ships istanbul's own eslint-disable lines
 TEST_CRATES = ("crates/puddle-e2e/", "crates/puddle-vm-tests/", "crates/puddle-test-kit/",
-              "crates/puddle-proxy-test-support/")
-TEST_CFG = re.compile(r"#\[cfg\((?:test|all\(test\b[^\]]*|any\(test\b[^\]]*|any\([^\]]*feature\s*=\s*\"testing\"[^\]]*|feature\s*=\s*\"testing\")\)\]")
+              "crates/puddle-proxy-test-support/", "crates/puddle-host-test-support/",
+              "crates/puddle-compute-msb-test-support/")
+_TEST_ONLY = r"(?:test|feature\s*=\s*\"testing\")"
+# Test code is `cfg(test)`, `all(test, ..)` and `any(..)` whose every member is `test` or `feature = "testing"`.
+# `any(windows, test)` and `any(test, windows)` also build outside tests, so they stay production code.
+TEST_CFG = re.compile(r"#\[cfg\((?:test|all\(test\b[^\]]*|any\(\s*" + _TEST_ONLY + r"(?:\s*,\s*" + _TEST_ONLY + r")*\s*,?\s*\)|feature\s*=\s*\"testing\")\)\]")
 TEST_ATTR = re.compile(r"#\[(?:tokio::|rstest|test_case|test_log::)?test\b[^\]]*\]|#\[tokio::test\b")
 TEXT_EXT = {".rs", ".ts", ".js", ".svelte", ".sh", ".ps1", ".py", ".toml", ".yml", ".yaml", ".mjs", ".cjs"}
 
@@ -400,7 +404,13 @@ def scan(root):
             flake_pickers = flake_rust(f, raw, code, com, test_lines, lambda kind, i, detail: add(kind, ctx(i), f, i, detail))
             port_pickers.update({n: f for n in flake_pickers})
             flake_fixed_port(raw, code, com, test_lines, lambda kind, i, detail: add(kind, ctx(i), f, i, detail))
-            ban_rows(raw, code, ctx, lambda kind, c, i, detail: add(kind, c, f, i, detail))
+            ban_rows(raw, code, com, ctx, lambda kind, c, i, detail: add(kind, c, f, i, detail), f.split("/"), f in ALLOW_EXEMPT)
+
+    # A `ban-allow` exemption whose file no longer has an `allow` is stale: delete the entry.
+    held = {r[2].rsplit(":", 1)[0] for r in rows if r[0] == "ban-allow-exempt"}
+    for exempt, why in ALLOW_EXEMPT.items():
+        if exempt not in held and os.path.exists(os.path.join(root, exempt)):
+            add("noreason", "any", exempt, 0, f"stale ban-allow exemption ({why}): the file has no `allow` any more; delete the entry from ALLOW_EXEMPT in scripts/quality-gate.py")
 
     # Rule p1: the callers of the port-picking functions found above, in any file.
     for f, (code, com) in stripped.items():
@@ -547,7 +557,8 @@ def crate_root_rows(texts, stripped, add):
 # The shared test kit (crates/puddle-test-kit) is a dev-dependency only: a product crate that lists it under
 # [dependencies] or [build-dependencies] (also per target, or renamed) would ship test helpers. The test-only
 # crates (TEST_CRATES) may list it as a normal dependency, since they are not product code.
-TEST_KIT = ("puddle-test-kit", "puddle-proxy-test-support")
+TEST_KIT = ("puddle-test-kit", "puddle-proxy-test-support", "puddle-host-test-support",
+            "puddle-compute-msb-test-support")
 
 
 # Bans in the standards' own words (docs/adr/0002 "never `#[serde(untagged)]`", docs/STANDARDS.md section 5 "error messages
@@ -556,9 +567,54 @@ BAN_UNTAGGED = re.compile(r"#!?\[\s*serde\s*\([^\]]*\buntagged\b")
 BAN_ERROR_MESSAGE = re.compile(r'#\[\s*error\(\s*"((?:[^"\\]|\\.)*)"')
 
 
-def ban_rows(raw, code, ctx, add):
-    """Rows `ban-untagged`, `ban-error-capital`, `ban-error-period` for one Rust file; `add(kind, ctx, i, detail)`."""
+# `#[allow]` and `#![allow]` are banned: `#[expect(lint, reason = "...")]` says the same and fails when the lint stops
+# firing. clippy's own `allow_attributes` skips the inner `#![allow]` form, so this rule covers it. A file listed here
+# keeps its `allow` until the reason names is gone; the entry fails once the file has none (stale). Empty since the
+# last three test-support modules moved into library crates.
+ALLOW_EXEMPT: dict[str, str] = {}
+# Modules behind `feature = "contract"` or `"fake"` are test support the scanner reads as prod; their string errors are
+# the contract tests' own verdicts, not an error type a caller matches on.
+STRING_ERROR_TEST_DIRS = {"contract", "fake"}
+BAN_ALLOW = re.compile(r"#!?\[\s*(?:cfg_attr\([^\]]*?\ballow\b|allow\s*\()")
+
+
+def result_string_hits(line):
+    """Count `Result<_, String>` (two type arguments, the second exactly `String`) in one code line."""
+    hits = 0
+    for m in re.finditer(r"(?<![\w:])(?:std::)?Result\s*<", line):
+        depth, args, cur = 1, [], ""
+        for ch in line[m.end():]:
+            if ch == "<":
+                depth += 1
+            elif ch == ">" and depth == 1:
+                args.append(cur)
+                break
+            elif ch == ">":
+                depth -= 1
+            elif ch == "," and depth == 1:
+                args.append(cur)
+                cur = ""
+                continue
+            cur += ch
+        else:
+            continue
+        if len(args) == 2 and args[1].strip() == "String":
+            hits += 1
+    return hits
+
+
+def ban_rows(raw, code, com, ctx, add, path_parts=(), allow_exempt=False):
+    """Rows `ban-untagged`, `ban-error-capital`, `ban-error-period`, `ban-allow`, `ban-result-string` for one Rust file; `add(kind, ctx, i, detail)`."""
     for i, line in enumerate(code):
+        if BAN_ALLOW.search(line):
+            if allow_exempt:
+                add("ban-allow-exempt", ctx(i), i, raw[i])
+            else:
+                add("ban-allow", ctx(i), i, raw[i])
+                add("noreason", ctx(i), i, "allow attribute: use #[expect(lint, reason = \"...\")] (cfg_attr for a lint that fires under one cfg only); an `allow` hides a lint that stopped firing | " + raw[i])
+        if ctx(i) == "prod" and not STRING_ERROR_TEST_DIRS.intersection(path_parts) and result_string_hits(line):
+            add("ban-result-string", ctx(i), i, raw[i])
+            add("noreason", ctx(i), i, "Result<_, String> in production code: return a typed error (thiserror); no comment excuses one (STANDARDS section 6) | " + raw[i])
         if BAN_UNTAGGED.search(line):
             add("ban-untagged", ctx(i), i, raw[i])
             add("noreason", ctx(i), i, "#[serde(untagged)]: a wrong branch is silent, use an internally or adjacently tagged enum (ADR 0002) | " + raw[i])
@@ -957,6 +1013,10 @@ fn d(tx: Tx, unused: u8) {
 }
 #[allow(clippy::foo)]
 fn b() {}
+fn e() -> Result<(), String> { Ok(()) }
+fn h() -> Result<Vec<String>, String> { Ok(vec![]) }
+fn m() -> Result<BTreeMap<String, String>, Error> { todo() }
+fn n() -> io::Result<String> { todo() }
 #[expect(dead_code, reason = "kept")]
 fn c() {}
 #[cfg(test)]
@@ -1355,6 +1415,51 @@ def flake_self_test():
     return failures
 
 
+def allow_exempt_self_test():
+    """A `ban-allow` exemption keeps its file's `allow` quiet, and fails once the file has none."""
+    import tempfile
+    path = "crates/example/tests/support/mod.rs"
+    ALLOW_EXEMPT[path] = "self-test"
+    failures = []
+    for body, want in (('#![allow(dead_code, reason = "x")]\n', []), ('#![expect(dead_code, reason = "x")]\n', ["noreason"])):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.dirname(os.path.join(d, path)))
+            with open(os.path.join(d, path), "w") as h:
+                h.write(body)
+            got = sorted(r[0] for r in scan(d) if r[0] in ("ban-allow", "noreason"))
+            if got != want:
+                failures.append(f"{body.strip()}: want {want}, got {got}")
+    del ALLOW_EXEMPT[path]
+    return failures
+
+
+def test_cfg_self_test():
+    """Only test-only cfgs make test context: `cfg(any(windows, test))` (either order) and
+    `any(windows, feature = "testing")` stay prod and their unsafe block without a reason is flagged as prod."""
+    import tempfile
+    cases = {
+        "a_windows_or_test": ("#[cfg(any(windows, test))]", "prod"),
+        "b_test_or_windows": ("#[cfg(any(test, windows))]", "prod"),
+        "c_windows_or_testing": ('#[cfg(any(windows, feature = "testing"))]', "prod"),
+        "d_test": ("#[cfg(test)]", "test"),
+        "e_test_or_testing": ('#[cfg(any(test, feature = "testing"))]', "test"),
+        "f_all_test_unix": ("#[cfg(all(test, unix))]", "test"),
+    }
+    problems = []
+    with tempfile.TemporaryDirectory() as d:
+        os.makedirs(os.path.join(d, "crates/x/src"))
+        with open(os.path.join(d, "crates/x/src/lib.rs"), "w", encoding="utf-8") as h:
+            h.write("#![forbid(unsafe_code)]\n")
+        for name, (attr, _) in cases.items():
+            with open(os.path.join(d, f"crates/x/src/{name}.rs"), "w", encoding="utf-8") as h:
+                h.write(f"{attr}\nfn f() {{ unsafe {{ g() }} }}\n")
+        got = {r[2].split(":")[0].rsplit("/", 1)[1][:-3]: r[1] for r in scan(d) if r[0] == "unsafe-block"}
+        want = {name: ctx for name, (_, ctx) in cases.items()}
+        if got != want:
+            problems.append(f"unsafe block context {got}, want {want}")
+    return problems
+
+
 def self_test():
     import tempfile
     with tempfile.TemporaryDirectory() as d:
@@ -1378,6 +1483,10 @@ def self_test():
         if flagged != [".github/workflows/ci.yml:11"]:
             print("self-test FAIL workflow noreason rows", flagged)
             return 1
+    bad_exempt = allow_exempt_self_test()
+    if bad_exempt:
+        print("self-test FAIL ban-allow exemptions:\n  " + "\n  ".join(bad_exempt))
+        return 1
     bad_kit = kit_self_test()
     if bad_kit:
         print("self-test FAIL test kit dependency:\n  " + "\n  ".join(bad_kit))
@@ -1390,6 +1499,10 @@ def self_test():
     if bad_inline:
         print("self-test FAIL inline test blocks:\n  " + "\n  ".join(bad_inline))
         return 1
+    bad_cfg = test_cfg_self_test()
+    if bad_cfg:
+        print("self-test FAIL test cfg:\n  " + "\n  ".join(bad_cfg))
+        return 1
     bad_flake = flake_self_test()
     if bad_flake:
         print("self-test FAIL flake rules:\n  " + "\n  ".join(bad_flake))
@@ -1399,7 +1512,7 @@ def self_test():
         "unsafe-block.prod": 3, "unwrap.prod": 1, "unwrap.test": 1,
         "allow-attr.prod": 1, "expect-attr.prod": 1,
         "test-no-assert.test": 1, "marker-todo.any": 1, "marker-fixme.any": 1, "marker-hack.any": 1,
-        "noreason.prod": 4, "let-underscore.prod": 3, "let-underscore-uncommented.prod": 1,
+        "noreason.prod": 7, "ban-allow.prod": 1, "ban-result-string.prod": 2, "let-underscore.prod": 3, "let-underscore-uncommented.prod": 1,
         "sleep.test": 5, "sleep-fixed.test": 3, "sleep-fixed-uncommented.test": 2, "noreason.test": 3,
         "inline-test-block.test": 1,
         "flake-w3.test": 1,

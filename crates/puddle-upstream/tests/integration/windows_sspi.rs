@@ -239,7 +239,7 @@ fn serve(stream: TcpStream, schemes: &[&str], behaviour: Behaviour, observed: &M
             name.eq_ignore_ascii_case("proxy-authorization")
                 .then(|| value.trim().to_owned())
         });
-        first_had_auth.get_or_insert(auth.is_some());
+        first_had_auth.get_or_insert_with(|| auth.is_some());
         let challenge_all = || {
             schemes.iter().fold(String::new(), |mut all, scheme| {
                 all.push_str("Proxy-Authenticate: ");

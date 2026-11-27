@@ -120,6 +120,8 @@ export class PendingStore {
   rows = $state.raw<Row[]>([]);
   /** The most open requests the service lists per workspace (R-45); a workspace at it has a full list. */
   openLimit = $state(Number.POSITIVE_INFINITY);
+  /** Connections a rule allowed since the start of the UTC day; the service counts in memory, so a restart resets it. */
+  allowedToday = $state(0);
   decided = $state.raw<Decided[]>([]);
   status = $state<Status>("loading");
   /** Why the last read of the inbox failed; `null` once a read works. */
@@ -203,6 +205,7 @@ export class PendingStore {
       }
       this.loadError = null;
       this.openLimit = data.open_limit;
+      this.allowedToday = data.allowed_today;
       const rows: Row[] = data.groups.flatMap((g) =>
         g.requests
           .filter((request) => !this.#decidedMeanwhile.includes(request.id))
@@ -389,8 +392,26 @@ export class PendingStore {
     if (unknown) void this.refresh();
   }
 
-  /** Starts listening and polling; returns the function that stops both. */
+  /**
+   * Starts listening and polling; returns the function that stops both. The shell's strip and the
+   * Inbox both start it: one listener and one poll run while any caller holds it.
+   */
   start(): () => void {
+    this.#holders += 1;
+    if (this.#holders === 1) this.#stopRun = this.#run();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.#holders -= 1;
+      if (this.#holders === 0) this.#stopRun?.();
+    };
+  }
+
+  #holders = 0;
+  #stopRun: (() => void) | undefined;
+
+  #run(): () => void {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const unsubscribe = this.#source?.subscribe({

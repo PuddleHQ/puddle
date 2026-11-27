@@ -14,9 +14,9 @@ export const MODES: readonly Mode[] = [
 
 /** What the mode is called in a list. */
 export const MODE_NAMES: Record<Mode, string> = {
-  all: "Decrypt every host",
-  all_except_curated: "Decrypt every host except a known list",
-  known_only: "Decrypt only hosts Puddle has a reason to read",
+  all: "All HTTPS traffic",
+  all_except_curated: "All except sites known to break",
+  known_only: "Only where a rule needs it",
 };
 
 /** What the mode costs: shown wherever the mode is chosen or in force. */

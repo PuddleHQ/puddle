@@ -941,7 +941,10 @@ fn arb_index() -> impl Strategy<Value = RuleIndex> {
             owners.insert(sb("b"), UserId::from_stored(user));
         }
         let user_of = |scope: &Scope, user: i64| match scope.workspace() {
-            Some(w) => owners.get(w).copied().unwrap_or(UserId::from_stored(user)),
+            Some(w) => owners
+                .get(w)
+                .copied()
+                .unwrap_or_else(|| UserId::from_stored(user)),
             None => UserId::from_stored(user),
         };
         let rules = rules

@@ -54,15 +54,16 @@
     </div>
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     <div class="actions">
-      <button type="button" class="btn" onclick={() => (open = false)}
-        >Cancel</button
-      >
+      <button type="button" class="btn" onclick={() => (open = false)}>
+        Cancel
+      </button>
       <button
         type="submit"
         class="btn primary"
         disabled={trimmed === "" || working}
-        >{working ? "Adding…" : "Add user"}</button
       >
+        {working ? "Adding…" : "Add user"}
+      </button>
     </div>
   </form>
 </FormDialog>

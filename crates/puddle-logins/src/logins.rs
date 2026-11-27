@@ -127,9 +127,14 @@ struct Inner {
     /// One change of the kept logins at a time (a capture, a forget, the start's load), so two
     /// refreshes at once do not interleave their writes and a login forgotten during a capture
     /// does not come back when the capture ends.
-    capture: tokio::sync::Mutex<()>,
+    capture: Arc<tokio::sync::Mutex<()>>,
     /// How long a call on the credential store may take, in milliseconds.
     store_timeout_ms: AtomicU64,
+    /// Held by the blocking thread of each store call until the call returns, so a call that was
+    /// given up on keeps the next one waiting: its write cannot land after a later one.
+    store_gate: Arc<tokio::sync::Mutex<()>>,
+    /// How many store calls were given up on.
+    store_timeouts: AtomicU64,
     /// The stand-in of each slot that has one.
     slots: Mutex<BTreeMap<(&'static str, Slot), String>>,
     /// The earlier stand-ins of a slot whose stand-in is made again at every exchange, newest
@@ -276,10 +281,12 @@ impl Logins {
                 registry,
                 notices,
                 marker,
-                capture: tokio::sync::Mutex::new(()),
+                capture: Arc::new(tokio::sync::Mutex::new(())),
                 store_timeout_ms: AtomicU64::new(
                     u64::try_from(STORE_TIMEOUT.as_millis()).unwrap_or(u64::MAX),
                 ),
+                store_gate: Arc::default(),
+                store_timeouts: AtomicU64::new(0),
                 slots: Mutex::new(BTreeMap::new()),
                 retired: Mutex::new(BTreeMap::new()),
             }),
@@ -335,11 +342,34 @@ impl Logins {
     ) -> Result<T, VaultError> {
         let vault = self.inner.vault.clone();
         let limit = Duration::from_millis(self.inner.store_timeout_ms.load(Ordering::Relaxed));
-        match tokio::time::timeout(limit, tokio::task::spawn_blocking(move || call(&vault))).await {
+        let gate = Arc::clone(&self.inner.store_gate);
+        let run = async move {
+            let turn = gate.lock_owned().await;
+            tokio::task::spawn_blocking(move || {
+                let result = call(&vault);
+                drop(turn);
+                result
+            })
+            .await
+        };
+        match tokio::time::timeout(limit, run).await {
             Ok(Ok(result)) => result,
-            // The call was cut off or panicked: the store is not usable now.
-            Ok(Err(_)) | Err(_) => Err(VaultError::Unavailable),
+            // The call panicked: the store is not usable now.
+            Ok(Err(_)) => Err(VaultError::Unavailable),
+            Err(_) => {
+                self.inner.store_timeouts.fetch_add(1, Ordering::Relaxed);
+                Err(VaultError::Unavailable)
+            }
         }
+    }
+
+    /// Waits until the store call that was given up on has returned (ten times the store timeout
+    /// at most), so what it wrote is in the store before the caller puts the old entries back.
+    async fn settle_store(&self) {
+        let limit = Duration::from_millis(self.inner.store_timeout_ms.load(Ordering::Relaxed))
+            .saturating_mul(10);
+        // Timing out is fine: the put back then runs behind the late write and may not land.
+        let _ = tokio::time::timeout(limit, self.inner.store_gate.lock()).await;
     }
 
     /// Puts a pair into the registry and the slots: the stand-in the workspace holds and the real
@@ -650,7 +680,22 @@ impl Logins {
         let (profile, endpoint) = route;
         let mut parsed =
             TokenBody::parse(content_type, body).map_err(|_| Problem::UnexpectedAnswer)?;
-        if holds_unnamed_token(endpoint, &parsed.fields()) {
+        let mut fields = parsed.fields();
+        // An identifier in a field named like a credential (a `token_uuid`) is no credential.
+        fields.retain(|field| {
+            !matches!(field.kind, FieldKind::Text(_))
+                || !parsed
+                    .text_at(&field.path)
+                    .is_some_and(|text| is_uuid(&text))
+        });
+        if let Some(field) = holds_unnamed_token(endpoint, &fields) {
+            // The name only, never the value: it is what lets the profile name the field.
+            tracing::warn!(
+                workspace = %self.inner.workspace,
+                profile = profile.id,
+                field = %field.path,
+                "a sign-in answer carries a token in a field the profile does not name"
+            );
             return Err(Problem::UnnamedToken);
         }
         let mut found: Vec<(&'static Field, Zeroizing<String>)> = Vec::new();
@@ -694,10 +739,11 @@ impl Logins {
         {
             return Err(Problem::UnusableToken);
         }
-        let _one_at_a_time = self.inner.capture.lock().await;
+        let mut one_at_a_time = Some(Arc::clone(&self.inner.capture).lock_owned().await);
         let planned = self.plan(profile, found)?;
         // The credential store first: a token that was not kept is not replaced in the answer.
-        self.keep_stored(profile, &planned).await?;
+        self.keep_stored(profile, &planned, &mut one_at_a_time)
+            .await?;
         for (field, real, stand_in, is_new) in &planned {
             let slot = (field.slot(), field.scope);
             // A refresh gives the stand-in a new token without a moment in which it has none; a
@@ -730,11 +776,13 @@ impl Logins {
     }
 
     /// Writes the tokens of `planned` that are kept in the credential store, with their
-    /// stand-ins, and notes the login in the marker.
+    /// stand-ins, and notes the login in the marker. `lock` holds the capture lock; a put back that
+    /// has to wait for a write that timed out takes it into a task, so the tool is answered first.
     async fn keep_stored(
         &self,
         profile: &'static Profile,
         planned: &[Planned],
+        lock: &mut Option<tokio::sync::OwnedMutexGuard<()>>,
     ) -> Result<(), Problem> {
         // One write per slot, with its last field's token, as the registry gets the last one too.
         let mut writes: Vec<(Slot, &Zeroizing<String>, &String)> = Vec::new();
@@ -749,8 +797,10 @@ impl Logins {
         // An answer with several tokens is kept whole or not at all: what the store held before
         // goes back when a later token cannot be written, so it never holds a pair that did not
         // come from one answer. One token needs no copy: its write is the whole change. Only the
-        // slots written before the failure go back: a write that timed out (a locked store) may
-        // still land later, and putting its slot back would only wait out the timeout again.
+        // slots written before the failure go back, and the failed one too when its write timed
+        // out: that write may still land, so the put back waits for it first. A write the store
+        // refused wrote nothing, and putting its slot back would only wait out a locked store's
+        // timeout again.
         let before = if slots.len() > 1 {
             self.saved(profile, &slots).await?
         } else {
@@ -758,13 +808,30 @@ impl Logins {
         };
         for (written, (slot, real, stand_in)) in writes.into_iter().enumerate() {
             let (stand_in, real) = (stand_in.clone(), real.clone());
+            let timeouts = self.inner.store_timeouts.load(Ordering::Relaxed);
             if self
                 .store(move |vault| vault.write(profile, slot, &stand_in, &real))
                 .await
                 .is_err()
             {
-                self.put_back(profile, before.into_iter().take(written))
-                    .await;
+                if self.inner.store_timeouts.load(Ordering::Relaxed) == timeouts {
+                    self.put_back(profile, before.into_iter().take(written))
+                        .await;
+                    return Err(Problem::StoreUnavailable);
+                }
+                // The write timed out and may still land. With nothing to put back there is
+                // nothing to wait for; otherwise the put back waits for it in a task that keeps
+                // the capture lock, and the tool gets its answer now.
+                let back: Vec<_> = before.into_iter().take(written + 1).collect();
+                let held = lock.take();
+                if let (false, Some(held)) = (back.is_empty(), held) {
+                    let this = self.clone();
+                    tokio::spawn(async move {
+                        this.settle_store().await;
+                        this.put_back(profile, back).await;
+                        drop(held);
+                    });
+                }
                 return Err(Problem::StoreUnavailable);
             }
         }
@@ -939,16 +1006,27 @@ fn token_like(name: &str) -> bool {
 
 /// Whether the answer holds a credential Puddle would not replace: a token-like text in a field
 /// the endpoint does not name (at any depth), or a named field that is repeated or structured
-/// (the tool may read the one Puddle did not).
-fn holds_unnamed_token(endpoint: &Endpoint, fields: &[BodyField]) -> bool {
+/// (the tool may read the one Puddle did not). A UUID is an identifier, not a credential, and is
+/// removed from `fields` by the caller.
+fn holds_unnamed_token<'a>(endpoint: &Endpoint, fields: &'a [BodyField]) -> Option<&'a BodyField> {
     let named = |field: &BodyField| endpoint.fields.iter().any(|f| f.path == field.path);
-    fields.iter().any(|field| {
+    fields.iter().find(|field| {
         if named(field) {
             let repeated = fields.iter().filter(|f| f.path == field.path).count() > 1;
             return repeated || field.kind == FieldKind::Structured;
         }
         matches!(field.kind, FieldKind::Text(n) if n >= MIN_TOKEN_LEN) && token_like(&field.name)
     })
+}
+
+/// Whether a text is a UUID (8-4-4-4-12 hex digits): an identifier a service names a token by,
+/// not a secret.
+fn is_uuid(text: &str) -> bool {
+    text.len() == 36
+        && text.char_indices().all(|(i, c)| match i {
+            8 | 13 | 18 | 23 => c == '-',
+            _ => c.is_ascii_hexdigit(),
+        })
 }
 
 /// What the tool is told when its login is refused: the reason, and what to do.

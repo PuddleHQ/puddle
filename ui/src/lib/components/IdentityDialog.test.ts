@@ -309,6 +309,93 @@ describe("editing an identity", () => {
     expect(api.bodies.at(-1)).toMatchObject({ label: "Work" });
   });
 
+  it("narrows a credential's coverage without the token being pasted again", async () => {
+    api.identities = [existing()];
+    await store.refresh();
+    mount({ mode: "edit", identity: store.identities[0] as never });
+    const before = api.tokens.length;
+    await fireEvent.click(
+      screen.getByRole("button", { name: /^Change coverage of gh/ }),
+    );
+    expect(screen.getByLabelText(/Owners or organisations/)).toHaveValue(
+      "acme",
+    );
+    await type(/Owners or organisations/, "acme, acme-labs");
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Change coverage" }),
+    );
+    expect(dialog()).toHaveTextContent("acme, acme-labs");
+    expect(screen.queryByLabelText("Token")).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    expect(api.tokens).toHaveLength(before);
+    expect(store.identities[0]!.credentials[0]).toMatchObject({
+      source: ghSource("tijs-work"),
+      covers: { owners: ["acme", "acme-labs"], rest_of_host: false },
+    });
+    expect(store.identities[0]!.credentials[1]!.source).toMatchObject({
+      id: "tok-old",
+    });
+  });
+
+  it("refuses coverage that names nothing or a bad name, and cancels", async () => {
+    api.identities = [existing()];
+    await store.refresh();
+    mount({ mode: "edit", identity: store.identities[0] as never });
+    const change = () =>
+      screen.getByRole("button", { name: /^Change coverage of gh/ });
+    await fireEvent.click(change());
+    await type(/Owners or organisations/, "");
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Change coverage" }),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent("Name an owner");
+    await fireEvent.click(screen.getByLabelText("The rest of github.com"));
+    await fireEvent.click(screen.getByLabelText("The rest of github.com"));
+    await type(/Owners or organisations/, "a b!");
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Change coverage" }),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent("is not a user");
+    await fireEvent.click(
+      within(screen.getByRole("form", { name: "Change coverage" })).getByRole(
+        "button",
+        { name: "Cancel" },
+      ),
+    );
+    expect(screen.queryByLabelText(/Owners or organisations/)).toBeNull();
+    expect(dialog()).toHaveTextContent("gh · tijs-work · github.com: acme");
+  });
+
+  it("widens a credential to the rest of its host", async () => {
+    api.identities = [existing()];
+    await store.refresh();
+    mount({ mode: "edit", identity: store.identities[0] as never });
+    await fireEvent.click(
+      screen.getByRole("button", { name: /^Change coverage of gh/ }),
+    );
+    await fireEvent.click(screen.getByLabelText("The rest of github.com"));
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Change coverage" }),
+    );
+    expect(dialog()).toHaveTextContent("acme and the rest of github.com");
+  });
+
+  it("closes the coverage form when its credential is removed, not another's", async () => {
+    api.identities = [existing()];
+    await store.refresh();
+    mount({ mode: "edit", identity: store.identities[0] as never });
+    await fireEvent.click(
+      screen.getByRole("button", { name: /^Change coverage of gh/ }),
+    );
+    await fireEvent.click(
+      screen.getByRole("button", { name: /^Remove Pasted/ }),
+    );
+    expect(screen.getByLabelText(/Owners or organisations/)).toBeVisible();
+    await fireEvent.click(screen.getByRole("button", { name: /^Remove gh/ }));
+    expect(screen.queryByLabelText(/Owners or organisations/)).toBeNull();
+  });
+
   it("removes the token of a credential the save took away, and only then", async () => {
     api.identities = [existing()];
     api.tokens = ["tok-old"];

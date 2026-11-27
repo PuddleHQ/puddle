@@ -23,6 +23,7 @@
   import { toasts } from "#lib/stores/toasts.svelte.ts";
   import Toast from "#lib/components/Toast.svelte";
   import "#lib/theme/controls.css";
+  import { plantedRouteThrow } from "#lib/plant.ts";
 
   /** How long typing in "Search" waits before the log is read again. */
   const TYPING_MS = 250;
@@ -63,6 +64,27 @@
       requestRulesStore.status === "ready" &&
       !requestRulesStore.rules.some((r) => r.id === id)
     );
+  }
+
+  /** With nothing in a short range, the next step is the 7-day range, with how many records it holds. */
+  let week = $state<{ count: number; more: boolean } | null>(null);
+  $effect(() => {
+    week = null;
+    if (store.status !== "ready" || total !== 0) return;
+    if (filter.range !== "1h" && filter.range !== "24h") return;
+    const wider: Filter = { ...filter, range: "7d" };
+    let stale = false;
+    void store.count(wider).then((n) => {
+      if (!stale) week = n;
+    });
+    return () => {
+      stale = true;
+    };
+  });
+
+  function showWeek() {
+    filter = { ...filter, range: "7d" };
+    apply();
   }
 
   onMount(() => {
@@ -149,6 +171,8 @@
       `Saved ${result.records.toLocaleString()} ${result.records === 1 ? "record" : "records"} as ${name}.`,
     );
   }
+
+  plantedRouteThrow("activity");
 </script>
 
 <div class="head">
@@ -169,7 +193,7 @@
       Live
     </label>
     <button type="button" class="btn" disabled={exporting} onclick={save}>
-      <Download aria-hidden="true" size={16} />Export JSON lines
+      <Download aria-hidden="true" size={16} />Export
     </button>
   </div>
 </div>
@@ -198,32 +222,36 @@
     <label for="f-workspace">Workspace</label>
     <select id="f-workspace" bind:value={filter.workspace} onchange={apply}>
       <option value="">All workspaces</option>
-      {#each workspaces as w (w.id)}<option value={w.id}>{w.label}</option
-        >{/each}
+      {#each workspaces as w (w.id)}<option value={w.id}>
+          {w.label}
+        </option>{/each}
     </select>
   </div>
   <div class="field">
     <label for="f-type">Type</label>
     <select id="f-type" bind:value={filter.type} onchange={apply}>
       <option value="">All types</option>
-      {#each TYPES as t (t.value)}<option value={t.value}>{t.label}</option
-        >{/each}
+      {#each TYPES as t (t.value)}<option value={t.value}>
+          {t.label}
+        </option>{/each}
     </select>
   </div>
   <div class="field">
     <label for="f-outcome">Outcome</label>
     <select id="f-outcome" bind:value={filter.outcome} onchange={apply}>
       <option value="">Any outcome</option>
-      {#each OUTCOMES as o (o.value)}<option value={o.value}>{o.label}</option
-        >{/each}
+      {#each OUTCOMES as o (o.value)}<option value={o.value}>
+          {o.label}
+        </option>{/each}
     </select>
   </div>
   <div class="field">
     <label for="f-category">Destination</label>
     <select id="f-category" bind:value={filter.category} onchange={apply}>
       <option value="">Any destination</option>
-      {#each CATEGORIES as c (c.value)}<option value={c.value}>{c.label}</option
-        >{/each}
+      {#each CATEGORIES as c (c.value)}<option value={c.value}>
+          {c.label}
+        </option>{/each}
     </select>
   </div>
   <div class="field">
@@ -249,8 +277,10 @@
         class="btn"
         onclick={() => {
           cancelExport = true;
-        }}>Cancel</button
+        }}
       >
+        Cancel
+      </button>
     </p>
   {/if}
   {#if store.held.length > 0}
@@ -281,6 +311,14 @@
         Nothing in {rangeLabel} matches these filters. Change them, or pick a longer
         time range.
       </p>
+      {#if week !== null && week.count > 0}
+        <button type="button" class="btn" onclick={showWeek}>
+          Show the last 7 days ({week.count.toLocaleString()}{week.more
+            ? "+"
+            : ""}
+          {week.count === 1 && !week.more ? "record" : "records"})
+        </button>
+      {/if}
     {:else}
       <h2>Nothing recorded yet</h2>
       <p>Connections, decisions and rule changes appear here as they happen.</p>
@@ -309,12 +347,6 @@
     gap: var(--space-4);
     margin-bottom: var(--space-4);
   }
-  h1 {
-    font-size: var(--text-xl);
-  }
-  h1:focus {
-    outline: none;
-  }
   .sub,
   .muted,
   .count {
@@ -322,7 +354,7 @@
     color: var(--color-text-muted);
   }
   .sub {
-    max-width: 52rem;
+    max-width: var(--page-reading-width);
   }
   .actions {
     display: flex;
@@ -366,12 +398,9 @@
   .count {
     font-size: var(--text-sm);
   }
+  /* An empty screen is plain words on the page, not a box. */
   .empty {
-    padding: var(--space-6);
-    max-width: 64rem;
-    background: var(--color-surface);
-    border: 1px solid var(--color-border-subtle);
-    border-radius: var(--radius-md);
+    padding-block: var(--space-4);
   }
   .empty h2,
   .empty p {

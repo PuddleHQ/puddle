@@ -13,9 +13,9 @@
 use std::collections::HashSet;
 use std::sync::{Mutex, PoisonError};
 
-use crate::name::StoredId;
 use crate::secret::Secret;
 use crate::store::{SecretStore, StoreError, Sweep};
+use puddle_types::StoredId;
 
 /// The id the list is kept under. It is not a credential and is never offered as one.
 const INDEX_ID: &str = "puddle-index";

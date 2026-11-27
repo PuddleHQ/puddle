@@ -5,7 +5,7 @@ use crate::agent_reports::ReportDesk;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use puddle_api::{EventHub, HostNetworkHealth, ProxySignInService, SettingsRepo};
+use puddle_api::{EventHub, SettingsRepo};
 use puddle_certs::CorporateRoots;
 use puddle_compute::Runtime;
 use puddle_netpolicy::{
@@ -16,6 +16,7 @@ use puddle_proxy::ssh_agent::SshAgents;
 use puddle_proxy::{GitSsh, GitSshHttps, Proxy, TcpPortProbe, Terminations, Upstream};
 use puddle_repos::{HostApi, Repos};
 use puddle_secrets::{ReadLog, SecretCache, SecretStore, Sources, ToolPaths};
+use puddle_services::{network_health::HostNetworkHealth, proxy_sign_in::ProxySignInService};
 use puddle_store::{ConnectionRecorder, Store, SystemClock};
 use puddle_types::{ConnectionLog, Event, EventSink, Problem, Problems, WorkspaceId};
 use puddle_upstream::{AuthList, BasicAuth, Chain, ChainConfig, Discovery, TlsClient, system_auth};
@@ -118,7 +119,10 @@ impl Injecting {
         events: &Arc<EventHub>,
     ) -> (AbortOnDrop, AbortOnDrop) {
         (
-            AbortOnDrop(crate::changes::follow(events.subscribe(), service.clone())),
+            AbortOnDrop(crate::changes::follow(
+                events.follow(crate::changes::wanted),
+                service.clone(),
+            )),
             AbortOnDrop(forward_sign_in_needed(&self.secrets, events.clone())),
         )
     }

@@ -146,6 +146,7 @@ describe("events", () => {
                 entry: "e-x",
                 url: "https://github.com/acme/x.git",
                 directory: "x",
+                branch: null,
               },
             ],
           }
@@ -223,9 +224,35 @@ describe("events", () => {
       step: "syncing",
       detail: "files",
       repository: null,
+      bytes: null,
       operation: "starting",
       failed: false,
     });
+  });
+
+  it("keeps the byte counts of an image download and drops them with the next step", async () => {
+    api.list = api.list.map((w) =>
+      w.id === "w-b-site" ? { ...w, busy: "creating" } : w,
+    );
+    await store.refresh();
+    store.handleEvent({
+      ...step("w-b-site", "pulling_image"),
+      bytes_done: 50,
+      bytes_total: 200,
+    });
+    expect(store.progress["w-b-site"]?.bytes).toEqual({ done: 50, total: 200 });
+    store.handleEvent({
+      ...step("w-b-site", "unpacking_image"),
+      bytes_done: 7,
+      bytes_total: null,
+    });
+    expect(store.progress["w-b-site"]).toMatchObject({
+      step: "unpacking_image",
+      operation: "creating",
+      bytes: { done: 7, total: null },
+    });
+    store.handleEvent(step("w-b-site", "cloning"));
+    expect(store.progress["w-b-site"]?.bytes).toBeNull();
   });
 
   it("keeps the checkout a cloning step names", async () => {
@@ -651,6 +678,8 @@ describe("ids and names", () => {
     store.handleEvent(status("w-a-shop", "crashed"));
     expect(store.byId("w-a-shop")?.status).toBe("crashed");
     expect(store.byId("w-b-site")?.status).toBe("stopped");
+    expect(store.byId("w-a-shop")?.actions).toEqual([]);
+    await store.refresh(); // what the new state admits is read from the server
     store.handleEvent(step("w-a-shop", "stopping"));
     expect(Object.keys(store.progress)).toEqual(["w-a-shop"]);
     expect(store.labelOf("w-a-shop")).toBe("Shop");
@@ -683,11 +712,14 @@ describe("listening", () => {
     expect(reads()).toBe(1);
     source.emit(status("w-b-site", "running"));
     expect(store.byId("w-b-site")?.status).toBe("running");
-    source.resync();
+    // A change of an idle workspace's state is read again, for what it admits now.
     await vi.advanceTimersByTimeAsync(0);
     expect(reads()).toBe(2);
+    source.resync();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reads()).toBe(3);
     await vi.advanceTimersByTimeAsync(1000);
-    expect(reads()).toBeGreaterThanOrEqual(3);
+    expect(reads()).toBeGreaterThanOrEqual(4);
     stop();
     const after = reads();
     source.emit(status("w-b-site", "crashed"));

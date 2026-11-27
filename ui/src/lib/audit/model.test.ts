@@ -18,6 +18,8 @@ import {
   jsonLine,
   outcomeLabel,
   rawJson,
+  sentence,
+  ruleLink,
   toQuery,
   toSearch,
   typeLabel,
@@ -471,7 +473,7 @@ describe("a record as a row", () => {
     const detail = (reason: string) =>
       row(connection(1, { reason, rule_id: null }).record).detail;
     expect(detail("push_denied")).toBe(
-      'because the push is not on the workspace\'s push list yet (click "Allow push" in the notice, or turn off "Only push to listed repos" on its Git tab)',
+      'because the push is not in the workspace\'s allowed repositories (click "Allow push" in the notice, or tick Push for it on the Git tab)',
     );
     for (const reason of [
       "push_denied",
@@ -526,6 +528,7 @@ describe("a record as a row", () => {
       connection(1, {
         host: "github.com",
         port: 22,
+        protocol: "ssh",
         method,
         path,
         reason: "rule",
@@ -539,11 +542,12 @@ describe("a record as a row", () => {
       `${words} · rule set builtin:git · credential added`,
     );
   });
-  it("words a refused SSH push with the push list's reason, and leaves HTTP alone", () => {
+  it("words a refused SSH push with the allowed repositories' reason, and leaves HTTP alone", () => {
     const refused = row(
       connection(1, {
         host: "github.com",
         port: 22,
+        protocol: "ssh",
         method: "git-receive-pack",
         path: "/acme/other",
         decision: "blocked",
@@ -553,11 +557,12 @@ describe("a record as a row", () => {
     );
     expect(refused.outcome).toEqual({ label: "Blocked", tone: "deny" });
     expect(refused.detail).toBe(
-      'SSH: push to github.com/acme/other · because the push is not on the workspace\'s push list yet (click "Allow push" in the notice, or turn off "Only push to listed repos" on its Git tab)',
+      'SSH: push to github.com/acme/other · because the push is not in the workspace\'s allowed repositories (click "Allow push" in the notice, or tick Push for it on the Git tab)',
     );
     const http = row(
       connection(2, {
         host: "github.com",
+        protocol: "http",
         method: "POST",
         path: "/acme/other/git-receive-pack",
         decision: "blocked",
@@ -567,11 +572,45 @@ describe("a record as a row", () => {
     );
     expect(http.detail).toMatch(/^POST \/acme\/other\/git-receive-pack · /);
   });
+  it.each([
+    ["push", "Git push: GET /acme/app.git/info/refs"],
+    ["fetch", "Git fetch: GET /acme/app.git/info/refs"],
+  ] as const)(
+    "words a Git smart-HTTP %s connection by its operation",
+    (git_operation, words) => {
+      const view = row(
+        connection(1, {
+          host: "github.com",
+          protocol: "http",
+          method: "GET",
+          path: "/acme/app.git/info/refs",
+          git_operation,
+        }).record,
+      );
+      expect(view.detail).toMatch(new RegExp(`^${words}`));
+    },
+  );
+  it("words a method by the record's protocol, not by its spelling", () => {
+    const base = { host: "github.com", path: "/acme/app", reason: "rule" };
+    const http = row(
+      connection(1, {
+        ...base,
+        protocol: "http",
+        method: "git-receive-pack",
+      }).record,
+    );
+    expect(http.detail).toMatch(/^git-receive-pack \/acme\/app · /);
+    const newer = row(
+      connection(2, { ...base, protocol: "ssh", method: "git-archive" }).record,
+    );
+    expect(newer.detail).toMatch(/^SSH: git-archive \/acme\/app · /);
+  });
   it("words a command or a channel request Puddle refused over SSH", () => {
     const command = row(
       connection(1, {
         host: "github.com",
         port: 22,
+        protocol: "ssh",
         method: "ssh-command",
         path: "/",
         decision: "blocked",
@@ -586,6 +625,7 @@ describe("a record as a row", () => {
       connection(2, {
         host: "github.com",
         port: 22,
+        protocol: "ssh",
         method: "ssh-channel",
         path: "/",
         decision: "blocked",
@@ -863,6 +903,8 @@ describe("a record as a row", () => {
       "git_switches_changed",
       "root_disk_grown",
       "git_repaired",
+      "audit_retention_changed",
+      "audit_pruned",
     ]) {
       expect(op({ op: kind }).detail).toMatch(/^[A-Z][a-z ]+, by api$/);
     }
@@ -1168,5 +1210,54 @@ describe("raw records and export lines", () => {
     expect(exportName(Date.UTC(2026, 9, 7, 12, 0, 5))).toBe(
       "puddle-activity-2026-10-07T12-00-05.jsonl",
     );
+  });
+});
+
+describe("ruleLink", () => {
+  const deny = (over: Record<string, unknown> = {}) =>
+    connection(1, { decision: "deny", host: "ads.example.net", ...over })
+      .record;
+
+  it("links a refused connection to the form for a rule, with the workspace when known", () => {
+    expect(ruleLink(deny(), "shop")).toBe(
+      "/rules?new-rule=ads.example.net&workspace=shop",
+    );
+    expect(ruleLink(deny(), null)).toBe("/rules?new-rule=ads.example.net");
+  });
+
+  it("offers nothing where no rule could help", () => {
+    expect(ruleLink(deny({ decision: "allow" }), "shop")).toBeNull();
+    expect(ruleLink(deny({ decision: "blocked" }), "shop")).toBeNull();
+    expect(ruleLink(deny({ host: null }), "shop")).toBeNull();
+    expect(
+      ruleLink(
+        { type: "quota_changed", ts: 1 } as unknown as AuditRecord,
+        null,
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("sentence", () => {
+  const view = (destination: string | null, detail: string | null) =>
+    ({
+      destination,
+      detail,
+      outcome: { label: "Denied" },
+      type: "connection",
+    }) as unknown as Parameters<typeof sentence>[0];
+
+  it("joins what the row says after its head, skipping what is empty", () => {
+    expect(sentence(view("a.test:443", "no rule"))).toBe(
+      "Denied: a.test:443, no rule",
+    );
+    expect(sentence(view("a.test:443", ""))).toBe("Denied: a.test:443");
+    expect(sentence(view(null, "no rule"))).toBe("Denied: no rule");
+    expect(sentence(view(null, null))).toBe("Denied");
+  });
+
+  it("falls back to the record type when there is no outcome", () => {
+    const bare = { ...view(null, null), outcome: null } as never;
+    expect(sentence(bare)).toBe("connection");
   });
 });

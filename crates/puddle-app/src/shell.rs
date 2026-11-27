@@ -8,7 +8,7 @@ use puddle_host::{
     HostError, HostOptions, HostShutdown, MsbFactory, RuntimeFactory, SystemPlatform,
 };
 use puddle_lifecycle::LifecycleError;
-use puddle_log::{ScopedFilter, init_stderr};
+use puddle_log::ScopedFilter;
 use puddle_types::Problems;
 use tauri::{AppHandle, Manager, RunEvent, Runtime};
 use tauri_plugin_opener::OpenerExt;
@@ -90,8 +90,8 @@ impl SandboxProbe {
         clipboard: Option<&str>,
     ) -> Option<Self> {
         let clipboard_read = match clipboard {
-            None | Some("ask") => ClipboardRead::Ask,
-            Some("allow") => ClipboardRead::Allow,
+            None | Some("allow") => ClipboardRead::Allow,
+            Some("ask") => ClipboardRead::Ask,
             Some("deny") => ClipboardRead::Deny,
             // A typo must not quietly test the default.
             Some(_) => return None,
@@ -193,8 +193,11 @@ fn data_folder(options: &Options) -> Option<PathBuf> {
 #[must_use]
 pub fn report_startup_failure(options: &Options, err: &ShellError) -> String {
     let reason = startup_reason(err);
-    let file =
-        data_folder(options).and_then(|folder| crash::write_startup_error(&folder, &reason).ok());
+    let file = crash::write_startup_error_or_fallback(
+        data_folder(options).as_deref(),
+        &crash::fallback_dir(),
+        &reason,
+    );
     crash::startup_message(&reason, file.as_deref())
 }
 
@@ -211,6 +214,14 @@ fn startup_reason(err: &ShellError) -> String {
         ),
         other => other.to_string(),
     }
+}
+
+/// What `run` returns once the event loop ended: the error the setup hook stored, if any. The hook
+/// ends the loop instead of returning the error because Tauri panics on a setup error inside
+/// `run`, where nothing could report it.
+fn setup_outcome(stored: &Mutex<Option<ShellError>>) -> Result<(), ShellError> {
+    let failure = stored.lock().unwrap_or_else(PoisonError::into_inner).take();
+    failure.map_or(Ok(()), Err)
 }
 
 /// What `run` returns when Tauri's `build` failed: the shell's own error when the setup hook
@@ -678,7 +689,8 @@ fn log_filter(puddle_log: Option<&str>, rust_log: Option<&str>) -> (ScopedFilter
 /// wins; a second call in one process (tests) keeps the first.
 fn init_logging(puddle_log: Option<&str>, rust_log: Option<&str>) {
     let (filter, bad_filter) = log_filter(puddle_log, rust_log);
-    init_stderr(filter, false);
+    // A level from the environment is final; without one the Settings screen sets it.
+    puddle_log::init_logging(filter, false, puddle_log.is_some() || rust_log.is_some());
     if let Some(said) = bad_filter {
         tracing::warn!("{said}");
     }
@@ -694,6 +706,14 @@ fn init_logging_from(var: impl Fn(&str) -> Option<String>) {
     init_logging(var(PUDDLE_LOG_VAR).as_deref(), var(RUST_LOG_VAR).as_deref());
 }
 
+/// Starts keeping the log in a file in the data folder, which the log bundle collects. A folder
+/// that cannot be written costs the file and nothing else.
+fn attach_log_file(data: &std::path::Path) {
+    if let Err(err) = puddle_log::attach_log_file(&puddle_log::log_folder(data)) {
+        tracing::warn!(%err, "the log is not kept in a file");
+    }
+}
+
 /// Runs the app until it quits. The close button hides the window to the tray or quits, as Settings
 /// say ([`desktop`]).
 ///
@@ -706,6 +726,7 @@ pub fn run(options: &Options) -> Result<(), ShellError> {
     puddle_no_dump::harden_from_env().log();
     // Every panic after this writes a crash file into the data folder (nothing is sent).
     if let Some(folder) = data_folder(options) {
+        attach_log_file(&folder);
         crash::install(folder.join(crash::FOLDER));
     }
     // Before the runtime starts any machine: if the shell dies, Windows ends them with it.
@@ -724,9 +745,11 @@ pub fn run(options: &Options) -> Result<(), ShellError> {
     let app = with_plugins(builder)
         .setup(move |app| {
             if let Err(err) = start(app.handle(), &options, source) {
-                let text = err.to_string();
                 *kept.lock().unwrap_or_else(PoisonError::into_inner) = Some(err);
-                return Err(text.into());
+                // Returning the error would make Tauri panic inside `run`; end the loop and let
+                // `run` return it to `main`, which shows it.
+                app.handle().exit(1);
+                return Ok(());
             }
             if let Err(err) = desktop::install_quit_shortcut(app.handle()) {
                 tracing::warn!(%err, "Ctrl+Q will not quit");
@@ -735,13 +758,13 @@ pub fn run(options: &Options) -> Result<(), ShellError> {
         })
         .build(context())
         .map_err(|err| build_failure(&setup_failure, err))?;
-    app.run(|handle, event| {
+    app.run_return(|handle, event| {
         if matches!(event, RunEvent::Exit) {
             // the process is exiting; there is no one left to report a failed stop to
             let _ = stop(handle);
         }
     });
-    Ok(())
+    setup_outcome(&setup_failure)
 }
 
 #[cfg(test)]

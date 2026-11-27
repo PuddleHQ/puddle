@@ -33,7 +33,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn run() -> Result<(), String> {
+fn run() -> Result<(), Box<dyn std::error::Error>> {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
     let lock_path = Path::new(&manifest_dir).join("../../Cargo.lock");
     println!("cargo::rerun-if-changed={}", lock_path.display());
@@ -50,14 +50,14 @@ fn run() -> Result<(), String> {
     let generated = PathBuf::from(out_dir).join("built_for_version.rs");
     std::fs::write(
         &generated,
-        format!("RuntimeVersion::from_parts({major}, {minor}, {patch}, {puddle})\n"),
+        format!("Self::from_parts({major}, {minor}, {patch}, {puddle})\n"),
     )
     .map_err(|e| format!("cannot write {}: {e}", generated.display()))?;
     embed_digests(&manifest_dir, &version)
 }
 
 /// The pinned SHA-256 of the msb binary and the firmware library for this target, as env vars.
-fn embed_digests(manifest_dir: &str, version: &str) -> Result<(), String> {
+fn embed_digests(manifest_dir: &str, version: &str) -> Result<(), Box<dyn std::error::Error>> {
     let pins_path = Path::new(manifest_dir).join("../../ci/msb-runtime.sha256");
     println!("cargo::rerun-if-changed={}", pins_path.display());
     let pins = std::fs::read_to_string(&pins_path).map_err(|e| {

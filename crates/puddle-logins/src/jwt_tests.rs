@@ -93,13 +93,10 @@ async fn a_jwt_login_gives_the_tool_a_token_whose_claims_read_the_same() {
     );
     assert_eq!(given["expires_in"], 3600);
     assert_eq!(rig.registry.len(), 2);
-    let kept = Vault::new(
-        std::sync::Arc::clone(&rig.store) as _,
-        &WorkspaceId::new("alpha").unwrap(),
-    )
-    .read(&JWT_PROFILE[0], Role::Access)
-    .unwrap()
-    .unwrap();
+    let kept = Vault::new(rig.store.clone(), &WorkspaceId::new("alpha").unwrap())
+        .read(&JWT_PROFILE[0], Role::Access)
+        .unwrap()
+        .unwrap();
     assert_eq!(
         (kept.stand_in.as_str(), kept.real.as_str()),
         (access, real.as_str())
@@ -139,13 +136,10 @@ async fn a_refresh_makes_a_new_stand_in_and_a_few_older_ones_stay_registered() {
         assert!(registered(stand_in), "{stand_in}");
     }
     // The store holds the newest pair only.
-    let kept = Vault::new(
-        std::sync::Arc::clone(&rig.store) as _,
-        &WorkspaceId::new("alpha").unwrap(),
-    )
-    .read(&JWT_PROFILE[0], Role::Access)
-    .unwrap()
-    .unwrap();
+    let kept = Vault::new(rig.store.clone(), &WorkspaceId::new("alpha").unwrap())
+        .read(&JWT_PROFILE[0], Role::Access)
+        .unwrap()
+        .unwrap();
     assert_eq!(
         (kept.stand_in.as_str(), kept.real.as_str()),
         (given[4].as_str(), last_real.as_str())
@@ -202,13 +196,13 @@ fn rig_for_store(old: &Rig) -> Rig {
         true,
         &JWT_PROFILE,
         std::sync::Arc::clone(&registry),
-        std::sync::Arc::clone(&old.store) as _,
+        old.store.clone(),
         std::sync::Arc::new(crate::widened_tests::Quiet),
         crate::Marker::none(),
     );
     Rig {
         logins,
-        store: std::sync::Arc::clone(&old.store),
+        store: old.store.clone(),
         registry,
     }
 }

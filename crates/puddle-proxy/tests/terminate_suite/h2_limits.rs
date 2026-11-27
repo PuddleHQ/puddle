@@ -814,3 +814,86 @@ async fn a_header_block_left_open_is_recorded_as_the_limit_that_ended_the_connec
         [ConnectionReason::LimitEnded(LimitCode::HeaderBlockTooSlow)]
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// The upstream leg's windows
+
+/// Large downloads failed through the proxy with curl exit 92 when the upstream leg used hyper's
+/// adaptive window: its BDP pings and ever-raised windows made real servers (Cloudflare, for
+/// registry.npmjs.org) close the connection mid-body. The leg announces fixed windows instead.
+#[tokio::test]
+async fn the_upstream_leg_announces_fixed_windows_and_never_adapts_them() {
+    let pki = Pki::new();
+    let mut config = Arc::into_inner(pki.server_config("bound.test", Flaw::None)).unwrap();
+    config.alpn_protocols = vec![b"h2".to_vec()];
+    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (frames_tx, mut frames_rx) = tokio::sync::mpsc::unbounded_channel::<(u8, u32, Vec<u8>)>();
+    tokio::spawn(async move {
+        let Ok((tcp, _)) = listener.accept().await else {
+            return;
+        };
+        let Ok(mut tls) = acceptor.accept(tcp).await else {
+            return;
+        };
+        let mut preface = [0_u8; 24];
+        if tls.read_exact(&mut preface).await.is_err() {
+            return;
+        }
+        let _ = tls.write_all(&[0, 0, 0, 4, 0, 0, 0, 0, 0]).await;
+        loop {
+            let mut head = [0_u8; 9];
+            if tls.read_exact(&mut head).await.is_err() {
+                return;
+            }
+            let len =
+                (usize::from(head[0]) << 16) | (usize::from(head[1]) << 8) | usize::from(head[2]);
+            let mut payload = vec![0_u8; len];
+            if tls.read_exact(&mut payload).await.is_err() {
+                return;
+            }
+            if head[3] == 4 && head[4] & 1 == 0 {
+                let _ = tls.write_all(&[0, 0, 0, 4, 1, 0, 0, 0, 0]).await;
+            }
+            let stream = u32::from_be_bytes([head[5] & 0x7f, head[6], head[7], head[8]]);
+            let _ = frames_tx.send((head[3], stream, payload));
+        }
+    });
+    let rig = RigBuilder::new(&pki).name("bound.test", addr).build();
+    let mut guest = rig.guest();
+    let client = guest.h2("bound.test:443", &[b"h2"]).await;
+    let mut sender = client.sender.clone();
+    let request = http::Request::builder()
+        .uri("https://bound.test/")
+        .body(full(Bytes::new()))
+        .unwrap();
+    tokio::spawn(async move {
+        let _ = sender.send_request(request).await;
+    });
+    // The proxy's opening frames, up to its request's HEADERS.
+    let mut opening = Vec::new();
+    while let Ok(Some(frame)) = tokio::time::timeout(Duration::from_secs(5), frames_rx.recv()).await
+    {
+        let done = frame.0 == 1;
+        opening.push(frame);
+        if done {
+            break;
+        }
+    }
+    assert_eq!(
+        setting(&opening, 4),
+        Some(1024 * 1024),
+        "a stream's window is fixed at 1 MiB: {opening:?}"
+    );
+    let grants: Vec<u32> = opening
+        .iter()
+        .filter(|(kind, stream, _)| *kind == 8 && *stream == 0)
+        .filter_map(|(_, _, payload)| be32(payload))
+        .collect();
+    assert_eq!(grants, [4 * 1024 * 1024 - 65_535], "{opening:?}");
+    // No ping before data flows: the bandwidth-delay probe of an adaptive window is a ping.
+    assert!(opening.iter().all(|(kind, _, _)| *kind != 6), "{opening:?}");
+}

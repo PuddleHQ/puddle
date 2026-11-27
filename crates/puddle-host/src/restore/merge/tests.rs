@@ -9,7 +9,7 @@ fn restored() -> RestoredDatabase {
     }
 }
 
-fn write(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
+fn write(dir: &Path, name: &str, body: &str) -> PathBuf {
     let path = dir.join(name);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, body).unwrap();
@@ -173,7 +173,7 @@ fn lists_in_a_format_older_than_three_are_refused_and_the_message_says_why() {
         "there.json",
         r#"{"version":2,"workspaces":[{"id":"ws-two","name":"Two"}]}"#,
     );
-    let err = check_book_versions(&here, &there).unwrap_err();
+    let err = check_book_versions(&here, &there).unwrap_err().to_string();
     assert!(
         err.contains("format 2") && err.contains("format 4"),
         "{err}"
@@ -184,7 +184,7 @@ fn lists_in_a_format_older_than_three_are_refused_and_the_message_says_why() {
     );
     assert!(err.contains("choose Replace"), "{err}");
     // The same the other way round names this machine's list.
-    let err = check_book_versions(&there, &here).unwrap_err();
+    let err = check_book_versions(&there, &here).unwrap_err().to_string();
     assert!(err.contains("this machine's format 2"), "{err}");
     let err = book(
         ApplyMode::Add,
@@ -278,7 +278,7 @@ fn a_document_that_cannot_be_read_back_is_an_io_error() {
 fn a_workspace_list_that_cannot_be_read_is_named() {
     let dir = tempfile::tempdir().unwrap();
     // A folder where the list should be.
-    let err = read_book(dir.path()).unwrap_err();
+    let err = read_book(dir.path()).unwrap_err().to_string();
     assert!(err.contains("cannot read"), "{err}");
 }
 
@@ -326,4 +326,45 @@ fn a_present_temp_file_is_not_copied() {
     settings(ApplyMode::Add, &here, &dir.path().join("nothing"), &new).unwrap();
     assert!(new.join("global.json").is_file());
     assert!(!new.join(".global.json.1.tmp").exists());
+}
+
+#[test]
+fn a_restore_never_takes_over_the_first_run_flag() {
+    for mode in [ApplyMode::Add, ApplyMode::Replace] {
+        let dir = tempfile::tempdir().unwrap();
+        let here = dir.path().join("here");
+        let there = dir.path().join("there");
+        write(&here, "global.json", r#"{"version":1}"#);
+        write(
+            &there,
+            "global.json",
+            r#"{"version":1,"first_run":{"completed_at":5},"a":1}"#,
+        );
+        let new = dir.path().join("new");
+        settings(mode, &here, &there, &new).unwrap();
+        let global = read(&new.join("global.json"));
+        assert_eq!(
+            global["first_run"],
+            Value::Null,
+            "the flag stays unset here"
+        );
+        assert_eq!(
+            global["a"].as_i64(),
+            Some(1),
+            "{mode:?}: the other settings still come over"
+        );
+
+        // A machine that has been through the flow keeps its own value.
+        write(
+            &here,
+            "global.json",
+            r#"{"version":1,"first_run":{"completed_at":9}}"#,
+        );
+        let again = dir.path().join("again");
+        settings(mode, &here, &there, &again).unwrap();
+        assert_eq!(
+            read(&again.join("global.json"))["first_run"]["completed_at"],
+            9
+        );
+    }
 }

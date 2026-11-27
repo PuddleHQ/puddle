@@ -21,7 +21,23 @@ vi.mock("$app/state", () => ({
 const h = await vi.hoisted(async () => {
   const fake = await import("#lib/testing/fake-identities.ts");
   const ws = await import("#lib/testing/fake-workspaces.ts");
-  return { api: new fake.FakeIdentities(), workspace: ws.workspace };
+  const repos = await import("#lib/testing/fake-repos.ts");
+  const lists = new repos.FakeRepos();
+  lists.repos = [repos.repoView("acme", "billing", { identities: [1] })];
+  lists.sources = [repos.repoSource({ repo_count: 1 })];
+  return { api: new fake.FakeIdentities(), workspace: ws.workspace, lists };
+});
+
+vi.mock("#lib/stores/repos.svelte.ts", async (original) => {
+  const mod = await original<typeof import("#lib/stores/repos.svelte.ts")>();
+  return {
+    ...mod,
+    RepoLists: class extends mod.RepoLists {
+      constructor() {
+        super({ api: h.lists as never });
+      }
+    },
+  };
 });
 
 vi.mock("#lib/api/client.ts", () => ({ api: h.api }));
@@ -41,6 +57,7 @@ import { identities } from "#lib/stores/identities.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
 import { workspaces } from "#lib/stores/workspaces.svelte.ts";
 import { credential, identity, repoRow } from "#lib/testing/fake-identities.ts";
+import { repoView } from "#lib/testing/fake-repos.ts";
 import Page from "./+page.svelte";
 
 const { api, workspace } = h;
@@ -55,6 +72,7 @@ beforeEach(() => {
           entry: "e-Docs",
           url: "https://dev.azure.com/contoso/Platform/_git/Docs",
           directory: "Docs",
+          branch: null,
         },
       ],
     }),
@@ -87,6 +105,7 @@ beforeEach(() => {
     },
     "w-docs": { ids: [], repos: [], push: false, pull: true },
   };
+  vi.spyOn(workspaces, "refresh").mockResolvedValue();
   api.calls = [];
   api.bodies = [];
   api.down = false;
@@ -95,7 +114,10 @@ beforeEach(() => {
   identities.status = "loading";
   for (const t of [...toasts.items]) toasts.dismiss(t.id);
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 const lastToast = () => toasts.items.at(-1)?.message;
 const table = () =>
@@ -234,16 +256,19 @@ describe("identities on a workspace", () => {
             entry: "e-api",
             url: "https://github.com/acme/api.git",
             directory: "api",
+            branch: null,
           },
           {
             entry: "e-Docs",
             url: "https://dev.azure.com/contoso/Platform/_git/Docs",
             directory: "Docs",
+            branch: null,
           },
           {
             entry: "e-tools",
             url: "https://gitlab.example.org/team/tools.git",
             directory: "tools",
+            branch: null,
           },
         ],
       }),
@@ -266,7 +291,12 @@ describe("identities on a workspace", () => {
     workspaces.list = [
       workspace("odd", {
         repositories: [
-          { entry: "e-c", url: "https://github.com/a/b/c", directory: "c" },
+          {
+            entry: "e-c",
+            url: "https://github.com/a/b/c",
+            directory: "c",
+            branch: null,
+          },
         ],
       }),
     ];
@@ -335,10 +365,12 @@ describe("the repository table", () => {
       }),
     ).not.toBeChecked();
     expect(
-      screen.getByRole("switch", { name: "Only push to listed repos" }),
+      screen.getByRole("switch", { name: "Only push to allowed repositories" }),
     ).toBeChecked();
     expect(
-      screen.getByRole("switch", { name: "Only pull from listed repos" }),
+      screen.getByRole("switch", {
+        name: "Only pull from allowed repositories",
+      }),
     ).not.toBeChecked();
     expect(
       screen.getByText(
@@ -370,7 +402,9 @@ describe("the repository table", () => {
   it("flips each switch, and keeps it where it was when refused", async () => {
     await mount();
     await fireEvent.click(
-      screen.getByRole("switch", { name: "Only pull from listed repos" }),
+      screen.getByRole("switch", {
+        name: "Only pull from allowed repositories",
+      }),
     );
     await waitFor(() => expect(api.git["w-web-shop"]!.pull).toBe(true));
     expect(
@@ -379,7 +413,7 @@ describe("the repository table", () => {
       ),
     ).toBeInTheDocument();
     await fireEvent.click(
-      screen.getByRole("switch", { name: "Only push to listed repos" }),
+      screen.getByRole("switch", { name: "Only push to allowed repositories" }),
     );
     await waitFor(() => expect(api.git["w-web-shop"]!.push).toBe(false));
     expect(
@@ -387,7 +421,7 @@ describe("the repository table", () => {
     ).toBeInTheDocument();
     api.refuse = { status: 500, message: "no" };
     const pull = screen.getByRole("switch", {
-      name: "Only pull from listed repos",
+      name: "Only pull from allowed repositories",
     });
     await fireEvent.click(pull);
     expect(await screen.findByRole("alert")).toHaveTextContent("No.");
@@ -404,10 +438,12 @@ describe("the repository table", () => {
     ).toBeNull();
 
     await fireEvent.click(
-      screen.getByRole("switch", { name: "Only pull from listed repos" }),
+      screen.getByRole("switch", {
+        name: "Only pull from allowed repositories",
+      }),
     );
     const again = await screen.findByRole("button", {
-      name: "Use the default again for Only pull from listed repos",
+      name: "Use the default again for Only pull from allowed repositories",
     });
     expect(
       screen.getAllByText(/It follows the default for new workspaces/),
@@ -423,18 +459,20 @@ describe("the repository table", () => {
     await waitFor(() => expect(api.git["w-web-shop"]!.pull).toBeNull());
     expect(api.bodies.at(-1)).toEqual({ use_default_pull: true });
     expect(
-      screen.getByRole("switch", { name: "Only pull from listed repos" }),
+      screen.getByRole("switch", {
+        name: "Only pull from allowed repositories",
+      }),
     ).not.toBeChecked();
     expect(
       screen.getAllByText(/It follows the default for new workspaces/),
     ).toHaveLength(2);
 
     await fireEvent.click(
-      screen.getByRole("switch", { name: "Only push to listed repos" }),
+      screen.getByRole("switch", { name: "Only push to allowed repositories" }),
     );
     await fireEvent.click(
       await screen.findByRole("button", {
-        name: "Use the default again for Only push to listed repos",
+        name: "Use the default again for Only push to allowed repositories",
       }),
     );
     await waitFor(() => expect(api.git["w-web-shop"]!.push).toBeNull());
@@ -475,7 +513,7 @@ describe("the repository table", () => {
     render(Page);
     expect(
       await screen.findByText(
-        /No repository is listed\. With Only push to listed repos on, nothing can be pushed\./,
+        /No repository is listed\. With Only push to allowed repositories on, nothing can be pushed\./,
       ),
     ).toBeInTheDocument();
     cleanup();
@@ -491,9 +529,50 @@ describe("adding a repository", () => {
   const url_ = () => screen.getByLabelText("Add a repository");
   const add = () =>
     fireEvent.click(screen.getByRole("button", { name: "Add repository" }));
+  const listOnly = () =>
+    fireEvent.click(screen.getByLabelText("Clone immediately"));
 
-  it("lists the repository an address names, with the boxes chosen", async () => {
+  it("clones and lists the repository an address names, with the boxes chosen", async () => {
     await mount();
+    expect(screen.getByLabelText("Clone immediately")).toBeChecked();
+    await fireEvent.input(url_(), {
+      target: { value: "https://github.com/Acme/Billing.git" },
+    });
+    await fireEvent.click(screen.getByLabelText("Push"));
+    await add();
+    await waitFor(() =>
+      expect(lastToast()).toBe("Cloning github.com/acme/billing."),
+    );
+    expect(api.bodies.at(-1)).toEqual({
+      kind: "clone",
+      url: "https://github.com/Acme/Billing.git",
+      pull: true,
+      push: false,
+    });
+    expect(workspaces.refresh).toHaveBeenCalled();
+    expect(url_()).toHaveValue("");
+    expect(table().getByText("github.com/acme/billing")).toBeInTheDocument();
+  });
+
+  it("takes owner/repo as a GitHub repository, as the create form does", async () => {
+    await mount();
+    await fireEvent.input(url_(), { target: { value: "Acme/Billing" } });
+    expect(url_()).toHaveAccessibleDescription(
+      "Will clone https://github.com/Acme/Billing",
+    );
+    await add();
+    await waitFor(() =>
+      expect(lastToast()).toBe("Cloning github.com/acme/billing."),
+    );
+    expect(api.bodies.at(-1)).toMatchObject({
+      kind: "clone",
+      url: "https://github.com/Acme/Billing",
+    });
+  });
+
+  it("only lists the repository when Clone immediately is off", async () => {
+    await mount();
+    await listOnly();
     await fireEvent.input(url_(), {
       target: { value: "https://github.com/Acme/Billing.git" },
     });
@@ -509,6 +588,7 @@ describe("adding a repository", () => {
       pull: true,
       push: false,
     });
+    expect(api.calls).not.toContain("POST /api/workspaces/{id}/repositories");
     expect(url_()).toHaveValue("");
     expect(table().getByText("github.com/acme/billing")).toBeInTheDocument();
   });
@@ -521,6 +601,7 @@ describe("adding a repository", () => {
     expect(url_()).toHaveAccessibleDescription(
       /listed as the same repository as its HTTPS address/,
     );
+    await listOnly();
     await fireEvent.input(url_(), {
       target: { value: "git@github.com:Acme/Billing.git" },
     });
@@ -542,7 +623,7 @@ describe("adding a repository", () => {
     await mount();
     await add();
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "Enter the repository's HTTPS URL.",
+      "Enter the repository's address",
     );
     expect(url_()).toHaveFocus();
     await fireEvent.input(url_(), {
@@ -560,18 +641,86 @@ describe("adding a repository", () => {
       "not a repository address Puddle can read",
     );
     expect(api.calls).not.toContain("POST /api/workspaces/{id}/git/repos");
+    expect(api.calls).not.toContain("POST /api/workspaces/{id}/repositories");
   });
 
-  it("shows the host's refusal at the field", async () => {
+  it("shows the host's refusal at the field, for a clone and for a listing", async () => {
     await mount();
     await fireEvent.input(url_(), {
       target: { value: "https://github.com/acme/web-shop" },
     });
     await add();
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "That repository is already listed.",
+      "That repository is already on the list.",
     );
     expect(url_()).toHaveFocus();
+    await listOnly();
+    await add();
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "That repository is already listed.",
+      ),
+    );
+  });
+
+  it("greys out Push with the reason for an archived repository and clones without push", async () => {
+    const before = h.lists.repos;
+    h.lists.repos = [repoView("acme", "old", { archived: true })];
+    await mount();
+    await fireEvent.click(screen.getByText("Choose from your repositories"));
+    await fireEvent.click(
+      await screen.findByRole("button", { name: /acme\/old/ }),
+    );
+    const push = screen.getByLabelText("Push");
+    expect(push).toBeDisabled();
+    expect(push).not.toBeChecked();
+    expect(screen.getByText(/archived on its Git host/)).toBeInTheDocument();
+    await add();
+    await waitFor(() =>
+      expect(api.bodies.at(-1)).toMatchObject({
+        push: false,
+        push_block: "archived",
+      }),
+    );
+    await waitFor(() => expect(screen.getByLabelText("Push")).toBeEnabled());
+    expect(screen.getByLabelText("Push")).toBeChecked();
+    h.lists.repos = before;
+  });
+
+  it("fills the address from the repository picked in the search", async () => {
+    await mount();
+    await fireEvent.input(url_(), { target: { value: "nonsense" } });
+    await add();
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    await fireEvent.click(screen.getByText("Choose from your repositories"));
+    await fireEvent.click(
+      await screen.findByRole("button", { name: /acme\/billing/ }),
+    );
+    expect(url_()).toHaveValue("https://github.com/acme/billing");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+describe("rows with a push block", () => {
+  it("greys out Push on an archived or read-only row, with the reason", async () => {
+    api.git["w-web-shop"]!.repos.push(
+      repoRow(9, { repo: "legacy-site", push: false, push_block: "archived" }),
+      repoRow(10, { repo: "vendor", push: false, push_block: "read" }),
+    );
+    await mount();
+    const push = (name: string) =>
+      table().getByLabelText(`Push github.com/${name}`);
+    expect(push("acme/legacy-site")).toBeDisabled();
+    expect(push("acme/vendor")).toBeDisabled();
+    expect(push("acme/web-shop")).toBeEnabled();
+    expect(push("acme/design-tokens")).toBeEnabled();
+    expect(table().getByText(/archived on its Git host/)).toBeInTheDocument();
+    expect(
+      table().getByText(/account can only read this repository/),
+    ).toBeInTheDocument();
+    expect(push("acme/legacy-site")).toHaveAccessibleDescription(
+      /archived on its Git host/,
+    );
   });
 });
 

@@ -3,7 +3,7 @@
 // check reads box sizes, not pixels: the page's scroll width against its client width, and on a
 // failure the elements that stick out, so the message names the culprit.
 import { expect, test } from "./fixture";
-import { overflow } from "./support";
+import { lengthenUserStrings, overflow } from "./support";
 
 const ROUTES = [
   "/workspaces",
@@ -22,6 +22,7 @@ const ROUTES = [
   "/identities/1",
   "/settings",
   "/settings/network-health",
+  "/settings/app-errors",
   "/welcome",
   "/welcome/check",
   "/welcome/certificates",
@@ -48,3 +49,28 @@ test.describe("at 390 px wide", () => {
     });
   }
 });
+
+// The seeded data is short, but a repository URL, a host or a path is as long as its user made it.
+// `lengthenUserStrings` makes every such field in the API's answers long and unbroken, so a row
+// that cannot wrap fails on its route (the global `.meta` never wraps, #1293).
+for (const scenario of ["lived-in", "git-identities", "unmanaged-checkouts"]) {
+  test.describe(`at 390 px wide, scenario ${scenario}, every host, URL and path 120 characters longer`, () => {
+    test.use({ viewport: { width: 390, height: 844 } });
+
+    for (const route of ROUTES) {
+      test(`${route} has no horizontal scroll`, async ({ page, backend }) => {
+        await backend.control.reset(scenario);
+        await lengthenUserStrings(page);
+        await backend.installClock(page);
+        await backend.signIn(page);
+        await page.goto(route);
+        await expect(page.locator("h1").first()).toBeVisible();
+        const { by, culprits } = await overflow(page);
+        expect(
+          by,
+          `overflow by ${by} px; sticking out: ${culprits.join(", ")}`,
+        ).toBeLessThanOrEqual(0);
+      });
+    }
+  });
+}

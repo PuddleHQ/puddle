@@ -65,6 +65,8 @@
   let token = $state("");
   let ownersText = $state("");
   let rest = $state(true);
+  /** Whether the user changed the coverage themselves; until then it follows the host and organisation. */
+  let coverEdited = false;
   let problem = $state<{ field: string; message: string } | null>(null);
   let busy = $state(false);
   let root = $state<HTMLElement>();
@@ -188,15 +190,23 @@
     azCheck = await store.checkSource(azSource(tenant, azOrg));
   }
 
+  /** A pasted Azure DevOps token belongs to one organisation, so it covers that one by default. */
+  function pastedCoverFollows() {
+    if (coverEdited) return;
+    const named = needsOrg(host) ? org.trim() : "";
+    ownersText = named;
+    rest = !needsOrg(host);
+  }
+
   function switchMode(next: "found" | "paste" | "az") {
     mode = next;
+    coverEdited = false;
     problem = null;
     forget();
     if (next === "az") {
       azOrgChanged();
     } else if (next === "paste") {
-      ownersText = "";
-      rest = true;
+      pastedCoverFollows();
     } else if (chosen) {
       choose(chosen, pick ?? 0);
     }
@@ -317,7 +327,7 @@
               <span>
                 {foundLabel(account)}
                 {#if !account.signed_in}
-                  <span class="chip warn">sign-in expired</span>
+                  <span class="meta warn">sign-in expired</span>
                 {/if}
               </span>
             </label>
@@ -394,8 +404,10 @@
         type="button"
         class="btn"
         disabled={azCheck?.state === "checking"}
-        onclick={checkAz}>Check the Azure CLI</button
+        onclick={checkAz}
       >
+        Check the Azure CLI
+      </button>
     </div>
     {#if azCheck && azCheck.state !== "untested"}
       <div class="profile" aria-live="polite" data-testid="az-check">
@@ -426,6 +438,7 @@
         autocapitalize="off"
         spellcheck="false"
         bind:value={host}
+        oninput={pastedCoverFollows}
         aria-invalid={problem?.field === "host" ? "true" : undefined}
         aria-describedby={problem?.field === "host" ? `${id}-error` : undefined}
       />
@@ -440,6 +453,7 @@
           autocapitalize="off"
           spellcheck="false"
           bind:value={org}
+          oninput={pastedCoverFollows}
           aria-invalid={problem?.field === "org" ? "true" : undefined}
           aria-describedby={problem?.field === "org"
             ? `${id}-error`
@@ -471,8 +485,10 @@
           type="button"
           class="btn"
           disabled={busy || lookup.state === "looking"}
-          onclick={lookUpPasted}>Look up this account</button
+          onclick={lookUpPasted}
         >
+          Look up this account
+        </button>
       </div>
     </div>
   {/if}
@@ -495,12 +511,6 @@
               "no name"}{found.email ? ` <${found.email}>` : ""}.
           </p>
         {/if}
-        {#if !found.problem && !hasAuthor(found) && needsOrg(coverHost)}
-          <p class="hint">
-            Azure DevOps doesn't tell Puddle who you are: type the author name
-            and address yourself.
-          </p>
-        {/if}
         {#each found.notes as note, index (index)}
           <p class="hint">{note.message}</p>
         {/each}
@@ -514,8 +524,9 @@
                 aria-pressed={hasOwner(ownersText, organisation)}
                 onclick={() =>
                   (ownersText = toggleOwner(ownersText, organisation))}
-                >{organisation}</button
               >
+                {organisation}
+              </button>
             {/each}
           </div>
         {/if}
@@ -524,9 +535,9 @@
   {/if}
 
   <div class="field">
-    <label for="{id}-owners"
-      >Owners or organisations it covers on {coverHost}</label
-    >
+    <label for="{id}-owners">
+      Owners or organisations it covers on {coverHost}
+    </label>
     <input
       id="{id}-owners"
       type="text"
@@ -535,11 +546,16 @@
       spellcheck="false"
       placeholder="acme, acme-labs"
       bind:value={ownersText}
+      oninput={() => (coverEdited = true)}
       aria-invalid={problem?.field === "owners" ? "true" : undefined}
       aria-describedby={problem?.field === "owners" ? `${id}-error` : undefined}
     />
     <label class="choice">
-      <input type="checkbox" bind:checked={rest} />
+      <input
+        type="checkbox"
+        bind:checked={rest}
+        onchange={() => (coverEdited = true)}
+      />
       The rest of {coverHost}
     </label>
     <p class="hint">
@@ -558,9 +574,9 @@
   {/if}
   <div class="actions">
     <button type="button" class="btn" onclick={onCancel}>Cancel</button>
-    <button type="submit" class="btn primary" disabled={busy}
-      >Add credential</button
-    >
+    <button type="submit" class="btn primary" disabled={busy}>
+      Add credential
+    </button>
   </div>
 </form>
 
@@ -626,14 +642,6 @@
   .chipbtn[aria-pressed="true"] {
     border-color: var(--color-accent);
     font-weight: 600;
-  }
-  .chip {
-    padding: 0 var(--space-2);
-    border: 1px solid var(--color-warning);
-    border-radius: var(--radius-pill);
-    color: var(--color-warning);
-    font-size: var(--text-sm);
-    white-space: nowrap;
   }
   .actions {
     display: flex;

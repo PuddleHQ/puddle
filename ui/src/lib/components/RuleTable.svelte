@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
+  import HostName from "./HostName.svelte";
   import ArrowDown from "@lucide/svelte/icons/arrow-down";
   import ArrowUp from "@lucide/svelte/icons/arrow-up";
   import { absoluteTime, relativeTime } from "#lib/format/relative-time.ts";
@@ -123,16 +124,13 @@
           class:off={!rule.enabled}
         >
           <td class="host">
-            <span class="mono">{patternLabel(rule)}</span>
-            {#if rule.pattern_kind === "suffix"}
-              <span class="chip">and subdomains</span>
-            {/if}
-            {#if !rule.enabled}<span class="chip">off</span>{/if}
+            <HostName host={patternLabel(rule)} />
+            {#if !rule.enabled}<span class="meta">off</span>{/if}
           </td>
           <td>
-            <span class="chip {rule.effect}"
-              >{rule.effect === "allow" ? "Allow" : "Deny"}</span
-            >
+            <span class="chip {rule.effect}">
+              {rule.effect === "allow" ? "Allow" : "Deny"}
+            </span>
           </td>
           <td>
             {scopeLabel(rule)}
@@ -144,10 +142,9 @@
               <time
                 datetime={new Date(rule.expires_at).toISOString()}
                 title={absoluteTime(rule.expires_at)}
-                >{expired
-                  ? "Expired"
-                  : relativeTime(rule.expires_at, now)}</time
               >
+                {expired ? "Expired" : relativeTime(rule.expires_at, now)}
+              </time>
             {/if}
           </td>
           <td class="created">
@@ -155,8 +152,10 @@
               datetime={new Date(rule.created_at).toISOString()}
               title="{absoluteTime(rule.created_at)} by {actorLabel(
                 rule.created_by,
-              )}">{relativeTime(rule.created_at, now)}</time
+              )}"
             >
+              {relativeTime(rule.created_at, now)}
+            </time>
           </td>
           {#if onEnabled}
             <td class="on">
@@ -254,18 +253,21 @@
     text-align: end;
     white-space: nowrap;
   }
-  /* Below about 800 px the table must fit without a sideways scroll, since the row's menu sits at its
-     right end: the Created column steps aside and the host wraps. */
+  /* Below about 800 px the Created column steps aside. What still does not fit scrolls inside the
+     table's own box, never the page, and the row's menu stays pinned at the right end so it is
+     always in reach. */
   @media (max-width: 800px) {
     .created {
       display: none;
     }
-    .wrap {
-      overflow-x: visible;
-    }
     th,
     td {
-      padding-inline: var(--space-2);
+      padding-inline: var(--space-1);
+    }
+    td.actions {
+      position: sticky;
+      inset-inline-end: 0;
+      background: var(--color-surface);
     }
   }
 </style>

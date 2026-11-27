@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Self-test of ci/fetch-baseline-msi.sh with a fake `gh` (no network): a release's MSI wins; a
-# release without one fails; with no release, the newest green develop run on another commit that
+# release without one fails; with no release, the newest develop run with a passing msi job on another commit that
 # kept an MSI is taken, and runs of this commit, of other branches, expired ones and red ones are
 # passed over; no candidate fails with the reason. The fake answers `--jq` with jq over a fixture,
 # so the script's own filter is what selects. Prints ok only when every case passes.
@@ -36,7 +36,7 @@ case "$1 $2" in
     : >"$dir/$FAKE_RELEASE_MSI"
     ;;
 "api repos/o/r/actions/artifacts?name=puddle-msi&per_page=100") jq -r "$jq_filter" "$FAKE_ARTIFACTS" ;;
-"run view") awk -v id="$3" '$1 == id { print $2 }' "$FAKE_CONCLUSIONS" ;;
+"run view") awk -v id="$3" '$1 == id { print $2 }' "$FAKE_CONCLUSIONS" | jq -R "{jobs: [{name: \"upgrade (x)\", conclusion: \"failure\"}, {name: \"msi (build, install)\", conclusion: .}]}" | jq -r "$jq_filter" ;;
 "run download") : >"$dir/Puddle_0.0.0_x64_en-US.msi" ;;
 *) echo "fake gh: unexpected call: $*" >&2; exit 2 ;;
 esac
@@ -87,13 +87,13 @@ run "a release without an MSI" FAKE_TAG=v0.2.0 FAKE_RELEASE_MSI=
 run "no release" FAKE_TAG=
 [ "$rc" = 0 ] || bad "no release: exit $rc ($err)"
 [ "$out" = "$dir/Puddle_0.0.0_x64_en-US.msi" ] || bad "no release: printed '$out'"
-grep -q "^run download 56 " "$tmp/log" || bad "no release: did not take run 56 (the newest green develop run on another commit): $(cat "$tmp/log")"
+grep -q "^run download 56 " "$tmp/log" || bad "no release: did not take run 56 (the newest develop run with a passing msi job on another commit): $(cat "$tmp/log")"
 grep -qE "^run view (60|59|58) " "$tmp/log" && bad "no release: looked at a run of this commit, another branch or an expired MSI"
 [[ $err == *"develop at ddddddddd (msi run 56; no release yet)"* ]] || bad "no release: the source is not named: $err"
 
 run "no green run" FAKE_TAG= FAKE_CONCLUSIONS="$tmp/red"
 [ "$rc" = 1 ] || bad "no green run: exit $rc, want 1"
-[[ $err == *"no release and no green develop run"* ]] || bad "no green run: the reason is not named: $err"
+[[ $err == *"no release and no develop run of msi.yml with a passing msi job"* ]] || bad "no green run: the reason is not named: $err"
 
 run "few candidates" FAKE_TAG= BASELINE_MAX_CANDIDATES=1
 [ "$rc" = 1 ] || bad "a red newest candidate within a limit of one: exit $rc, want 1"
@@ -102,5 +102,15 @@ mkdir -p "$tmp/out$((n + 1))"
 : >"$tmp/out$((n + 1))/left-over"
 run "a folder in use" FAKE_TAG=v0.2.0 FAKE_RELEASE_MSI=Puddle_0.2.0_x64_en-US.msi
 [ "$rc" = 1 ] && [[ $err == *"is not empty"* ]] || bad "a folder in use: exit $rc ($err)"
+
+run "an asked-for run" FAKE_TAG=v0.2.0 FAKE_RELEASE_MSI=Puddle_0.2.0_x64_en-US.msi BASELINE_RUN=45515025599
+[ "$rc" = 0 ] || bad "an asked-for run: exit $rc ($err)"
+[ "$out" = "$dir/Puddle_0.0.0_x64_en-US.msi" ] || bad "an asked-for run: printed '$out'"
+grep -q "^run download 45515025599 " "$tmp/log" || bad "an asked-for run: did not download it: $(cat "$tmp/log")"
+grep -qE "^(release|api) " "$tmp/log" && bad "an asked-for run: looked at the releases or the kept MSIs too"
+[[ $err == *"msi run 45515025599 (asked for)"* ]] || bad "an asked-for run: the source is not named: $err"
+
+run "a run id that is not one" FAKE_TAG= BASELINE_RUN='12; x'
+[ "$rc" = 1 ] && [[ $err == *"is not a run id"* ]] || bad "a bad run id: exit $rc ($err)"
 
 if [ "$fail" = 0 ]; then echo "fetch-baseline-msi-test: ok"; else exit 1; fi

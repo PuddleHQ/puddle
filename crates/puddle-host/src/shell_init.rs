@@ -233,7 +233,8 @@ if [ "$out" != x ]; then printf '%s' "${out%x}"; exit 66; fi
 pub(crate) fn check_request(content: &str, user: SessionUser) -> ExecRequest {
     let mut request = ExecRequest::new("sh", ["-c", CHECK_SCRIPT])
         .as_user(user.name())
-        .with_timeout(CHECK_TIMEOUT);
+        .with_timeout(CHECK_TIMEOUT)
+        .with_max_output(ExecRequest::PROBE_MAX_OUTPUT);
     request.stdin = content.as_bytes().to_vec();
     request
 }

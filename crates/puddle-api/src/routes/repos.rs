@@ -10,12 +10,12 @@ use puddle_repos::{Freshness, Read};
 use puddle_store::IdentityId;
 use serde::Deserialize;
 
-use crate::ApiErrorBody;
 use crate::authz::Principal;
-use crate::error::{ApiError, blocking};
 use crate::extract::Query;
 use crate::routes::AppState;
-use crate::wire::{
+use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, blocking};
+use puddle_services::wire::{
     AccountProfile, AccountProfileRequest, RepoListing, RepoRefreshRequest, RepoSource,
     RepoSources, RepoView,
 };

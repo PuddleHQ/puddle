@@ -241,7 +241,7 @@ fn methods_show_as_a_sorted_comma_list_and_none_means_every_method() {
         "DELETE,PUT"
     );
     assert_eq!(Methods::parse(["get"]).unwrap().to_string(), "GET");
-    assert_eq!(Methods::any().names(), [] as [String; 0]);
+    assert_eq!(Methods::any().names(), <[String; 0]>::default());
     assert!(Methods::any().matches_any(["PATCH"]));
     assert!(!Methods::parse(["get"]).unwrap().matches_any(["PATCH"]));
 }

@@ -82,7 +82,7 @@ pub(crate) fn rig_for(profiles: &'static [Profile]) -> Rig {
         true,
         profiles,
         Arc::clone(&registry),
-        Arc::clone(&store) as Arc<dyn SecretStore>,
+        store.clone(),
         Arc::new(Quiet),
         Marker::none(),
     );
@@ -209,10 +209,7 @@ async fn two_resources_of_one_role_get_a_stand_in_and_an_entry_each() {
         out["graph_token"].as_str().unwrap(),
     );
     assert_ne!(arm, graph);
-    let vault = Vault::new(
-        Arc::clone(&rig.store) as Arc<dyn SecretStore>,
-        &WorkspaceId::new("alpha").unwrap(),
-    );
+    let vault = Vault::new(rig.store.clone(), &WorkspaceId::new("alpha").unwrap());
     let arm_slot = Slot {
         role: Role::Access,
         resource: Some("arm"),
@@ -272,8 +269,7 @@ async fn forgetting_deletes_every_resources_entry() {
 
 #[test]
 fn slots_are_listed_once_each_and_a_role_with_two_resources_counts_once() {
-    let slots: Vec<Slot> = WIDE[0].slots().into_iter().map(|(slot, _)| slot).collect();
-    assert_eq!(slots.len(), 3);
+    assert_eq!(WIDE[0].slots().len(), 3);
     assert_eq!(WIDE[0].roles(), [Role::Access, Role::ApiKey]);
     assert_eq!(
         WIDE[0].slot_name_of(Slot {
@@ -310,7 +306,7 @@ fn builtin_rig() -> Logins {
         true,
         crate::builtin(),
         Arc::new(StandIns::new()),
-        Arc::new(MemoryStore::new()) as Arc<dyn SecretStore>,
+        Arc::new(MemoryStore::new()),
         Arc::new(Quiet),
         Marker::none(),
     )

@@ -53,6 +53,8 @@ from it.
 - Keep a pull request to one change, with a description of what and why.
 - Run `scripts/check.sh` before pushing (or enable the hooks: `git config core.hooksPath .githooks`).
   The rules your change must meet are in [docs/STANDARDS.md](docs/STANDARDS.md).
+- To find your way around the code first, read the architecture pages in
+  [docs/architecture/](docs/architecture/README.md), starting with the building block view and the glossary.
 - By submitting a pull request you confirm that your contribution falls under the CLA you signed.
 - Keep code, comments, docs and commit messages self-contained: say the reason in words or cite an ADR or
   spec section, and don't reference ticket or planning-note IDs. The `standalone` gate and the

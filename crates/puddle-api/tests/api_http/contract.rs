@@ -3,7 +3,7 @@
 //! tests run the same suite on the real service, so the two cannot drift apart.
 
 use futures_util::future::LocalBoxFuture;
-use puddle_api::contract::{self, Reply, Subject};
+use puddle_services::contract::{self, Reply, Subject};
 use serde_json::Value;
 
 use crate::common::{Api, start};

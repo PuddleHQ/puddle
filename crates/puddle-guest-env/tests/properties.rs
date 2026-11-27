@@ -38,7 +38,8 @@ proptest! {
     #[test]
     fn valid_entries_round_trip(s in valid_entry()) {
         let e = NoProxyEntry::new(&s).unwrap();
-        prop_assert_eq!(NoProxyEntry::new(&e.as_str()).unwrap(), e.clone());
+        let again = NoProxyEntry::new(&e.as_str()).unwrap();
+        prop_assert!(again == e);
         prop_assert_eq!(e.as_str(), if s.parse::<std::net::IpAddr>().is_ok() { s } else { s.to_ascii_lowercase() });
     }
 

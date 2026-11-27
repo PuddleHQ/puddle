@@ -4,13 +4,7 @@
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
   import RepoSourceStatus from "./RepoSourceStatus.svelte";
   import type { Identity } from "#lib/identities/model.ts";
-  import {
-    roleWord,
-    tableCannotHold,
-    TABLE_CANNOT_HOLD,
-    traits,
-    type RepoView,
-  } from "#lib/repos/model.ts";
+  import { roleWord, traits, type RepoView } from "#lib/repos/model.ts";
   import type { RepoLists } from "#lib/stores/repos.svelte.ts";
   import "#lib/theme/controls.css";
 
@@ -51,7 +45,13 @@
   const sources = $derived(listing?.sources ?? []);
   const repos = $derived(listing?.repos ?? []);
   const noCredentials = $derived(
-    store.status === "ready" && sources.length === 0,
+    store.status === "ready" && identity.credentials.length === 0,
+  );
+  // The identity has credentials but no list was read for any of them.
+  const noLists = $derived(
+    store.status === "ready" &&
+      identity.credentials.length > 0 &&
+      sources.length === 0,
   );
   // Every list was read and holds nothing: say so, so an empty table is never a silent answer.
   const empty = $derived(
@@ -115,6 +115,11 @@
     This identity has no credential, so there is nothing to list. Edit the
     identity and add a sign-in or a token.
   </p>
+{:else if noLists}
+  <p class="muted" data-testid="repo-no-lists">
+    Puddle has no repository list for this identity's credentials yet. Check
+    them with Test, above.
+  </p>
 {:else if empty}
   <p class="muted" data-testid="repo-empty">
     This identity's account reaches no repository. If you expected some, check
@@ -149,15 +154,10 @@
             <td>
               <span class="name mono">{repo.full_name}</span>
               <span class="traits">
-                {#each traits(repo) as trait (trait)}<span class="trait"
-                    >{trait}</span
-                  >{/each}
+                {#each traits(repo) as trait (trait)}<span class="trait">
+                    {trait}
+                  </span>{/each}
               </span>
-              {#if tableCannotHold(repo.url)}
-                <span class="warn" data-testid="repo-table-warning"
-                  >{TABLE_CANNOT_HOLD}</span
-                >
-              {/if}
             </td>
             <td class="muted">{roleWord(repo.role)}</td>
             <td class="act">
@@ -166,8 +166,9 @@
                 class="btn primary"
                 aria-label="Create a workspace for this: {repo.full_name}"
                 onclick={() => onCreate(repo)}
-                >Create a workspace for this</button
               >
+                Create a workspace for this
+              </button>
             </td>
           </tr>
         {/each}
@@ -179,8 +180,9 @@
         class="btn more"
         disabled={store.loadingMore}
         onclick={() => store.more()}
-        >Show more ({listing.total - listing.repos.length} left)</button
       >
+        Show more ({listing.total - listing.repos.length} left)
+      </button>
     {/if}
   {/if}
 {/if}
@@ -251,15 +253,8 @@
     gap: var(--space-1);
   }
   .trait {
-    padding: 0 var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-pill);
     font-size: var(--text-sm);
     color: var(--color-text-muted);
-  }
-  .warn {
-    font-size: var(--text-sm);
-    color: var(--color-warning);
   }
   .act {
     text-align: right;

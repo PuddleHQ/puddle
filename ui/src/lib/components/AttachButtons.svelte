@@ -3,13 +3,7 @@
   import Plug from "@lucide/svelte/icons/plug";
   import Play from "@lucide/svelte/icons/play";
   import Square from "@lucide/svelte/icons/square";
-  import {
-    canAttach,
-    canStart,
-    canStop,
-    isDown,
-    type Workspace,
-  } from "#lib/workspaces/model.ts";
+  import { allows, isDown, type Workspace } from "#lib/workspaces/model.ts";
   import "#lib/theme/controls.css";
 
   let {
@@ -26,13 +20,18 @@
   } = $props();
 
   const down = $derived(isDown(workspace.status));
+  // A workspace being created reads "created" (no VM yet), but it cannot be started: its disk and
+  // first clone are still being made. Offer nothing until that ends.
+  const creating = $derived(workspace.busy === "creating");
 </script>
 
-{#if down}
+{#if creating}
+  <!-- no buttons while the workspace is created -->
+{:else if down}
   <button
     type="button"
     class="btn primary"
-    disabled={!canStart(workspace)}
+    disabled={!allows(workspace, "start")}
     onclick={() => onStart(workspace)}
   >
     <Play aria-hidden="true" size={16} />Start
@@ -42,7 +41,7 @@
   <button
     type="button"
     class="btn primary"
-    disabled={!canAttach(workspace)}
+    disabled={!allows(workspace, "attach")}
     onclick={() => onConnect(workspace)}
   >
     <Plug aria-hidden="true" size={16} />Connect
@@ -51,7 +50,7 @@
   <button
     type="button"
     class="btn"
-    disabled={!canStop(workspace)}
+    disabled={!allows(workspace, "stop")}
     onclick={() => onStop(workspace)}
   >
     <Square aria-hidden="true" size={16} />Stop

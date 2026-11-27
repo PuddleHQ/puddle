@@ -27,15 +27,18 @@
             type="button"
             class="btn"
             onclick={() => void queue.act(toast.id)}
-            >{toast.action.label}</button
           >
+            {toast.action.label}
+          </button>
         {/if}
         <button
           type="button"
           class="btn close"
           aria-label="Dismiss"
-          onclick={() => queue.dismiss(toast.id)}>&times;</button
+          onclick={() => queue.dismiss(toast.id)}
         >
+          &times;
+        </button>
       </div>
     {/each}
   </div>

@@ -1,8 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { Popover } from "bits-ui";
-  import Check from "@lucide/svelte/icons/check";
-  import X from "@lucide/svelte/icons/x";
   import {
     DURATIONS,
     suffixFor,
@@ -12,7 +10,9 @@
     type RuleSetChoice,
     type Target,
   } from "#lib/decision/model.ts";
+  import AllowDenyPair from "./AllowDenyPair.svelte";
   import SetChip from "./SetChip.svelte";
+  import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import "#lib/theme/controls.css";
 
   /** Under this window width the buttons sit under the host and the box opens below them. */
@@ -125,7 +125,9 @@
             value="workspace"
             bind:group={who}
           />
-          <span class="text">Only <b class="mono">{workspace}</b></span>
+          <span class="text">
+            Only <b>{workspaces.spokenLabelOf(workspace)}</b>
+          </span>
         </label>
         <label>
           <input
@@ -134,9 +136,9 @@
             value="global"
             bind:group={who}
           />
-          <span class="text"
-            >Every workspace <span class="hint">(asks to confirm)</span></span
-          >
+          <span class="text">
+            Every workspace <span class="hint">(asks to confirm)</span>
+          </span>
         </label>
         {#each sets as set (set.id)}
           <label>
@@ -146,12 +148,13 @@
               value="set:{set.id}"
               bind:group={who}
             />
-            <span class="text"
-              >Into rule set
+            <span class="text">
+              Into rule set
               <b><SetChip name={set.name} fill={set.fill} /></b>
-              {#if set.everywhere}<span class="hint">(on everywhere; asks)</span
-                >{/if}</span
-            >
+              {#if set.everywhere}<span class="hint">
+                  (on everywhere; asks)
+                </span>{/if}
+            </span>
           </label>
         {/each}
       </fieldset>
@@ -174,10 +177,10 @@
               value="suffix"
               bind:group={match}
             />
-            <span class="text"
-              >Everything under
-              <span class="mono">{suffix.slice(1)}</span></span
-            >
+            <span class="text">
+              Everything under
+              <span class="mono">{suffix.slice(1)}</span>
+            </span>
           </label>
         {/if}
       </fieldset>
@@ -192,12 +195,11 @@
       {#if stale}<p class="error" role="alert">{stale}</p>{/if}
       <div class="actions">
         <Popover.Close class="btn">Cancel</Popover.Close>
-        <button type="button" class="btn deny" onclick={() => decide("deny")}>
-          <X aria-hidden="true" size={16} />Deny
-        </button>
-        <button type="button" class="btn allow" onclick={() => decide("allow")}>
-          <Check aria-hidden="true" size={16} />Allow
-        </button>
+        <AllowDenyPair
+          icons
+          onAllow={() => decide("allow")}
+          onDeny={() => decide("deny")}
+        />
       </div>
     </Popover.Content>
   </Popover.Portal>

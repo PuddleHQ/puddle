@@ -8,13 +8,13 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use puddle_secrets::StoredId;
 
-use crate::ApiErrorBody;
 use crate::authz::Principal;
-use crate::credentials::Check;
-use crate::error::ApiError;
 use crate::extract::Path;
 use crate::routes::AppState;
-use crate::wire::{
+use puddle_services::credentials::Check;
+use puddle_services::error::ApiError;
+use puddle_services::error::ApiErrorBody;
+use puddle_services::wire::{
     CheckRequest, CheckResult, CredentialSource, FoundAccount, FoundAccounts, FoundProblem,
     FoundVia, SignInRequest, SignInStarted, StoreTokenRequest, StoredToken,
 };
@@ -45,7 +45,7 @@ pub(crate) async fn found_accounts(
             .iter()
             .map(|(listing, err)| FoundProblem {
                 via: FoundVia::from_listing(*listing),
-                message: crate::wire::source_problem(err),
+                message: puddle_services::wire::source_problem(err),
             })
             .collect(),
     }))
@@ -125,7 +125,7 @@ pub(crate) async fn forget_token(
     let id =
         StoredId::new(id).map_err(|_| ApiError::invalid("not a valid stored credential id"))?;
     // Another user's entry is left alone and answered as one that is not there.
-    if crate::stored_ids::is_users(principal.user, &id) {
+    if puddle_services::stored_ids::is_users(principal.user, &id) {
         state.credentials.forget_token(id).await?;
     }
     Ok(StatusCode::NO_CONTENT)

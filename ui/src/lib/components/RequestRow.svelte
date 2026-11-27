@@ -2,6 +2,7 @@
 <script lang="ts">
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import DecisionControl from "./DecisionControl.svelte";
+  import HostName from "./HostName.svelte";
   import {
     LOCAL_LABELS,
     companySignalText,
@@ -54,25 +55,39 @@
   onfocusin={() => onFocusRow(row)}
 >
   <p class="dest">
-    <span class="host">{request.host}</span>{#if request.port === 0}<span
+    <HostName
+      host={request.host}
+      port={request.port}
+      registrable={row.domain}
+    />{#if request.port === 0}<span
         class="port srv"
         title="Asked for a service record (SRV) to find where to connect; no port is known yet"
-        >name lookup (SRV)</span
-      >{:else}<span class="port">:{request.port}</span>{/if}
+      >
+        name lookup (SRV)
+      </span>{/if}
   </p>
   <p class="facts">
-    <b class="mono">{workspaces.labelOf(request.workspace)}</b> · {request.attempts}
+    <b class="mono">
+      {workspaces.labelOf(request.workspace)}
+    </b>{#if request.program}&nbsp;<span
+        class="program"
+        title="The program that asked, as the guest named it"
+      >
+        ({request.program})
+      </span>{/if} · {request.attempts}
     {request.attempts === 1 ? "try," : "tries, last"}
     <time
       datetime={new Date(request.last_seen).toISOString()}
       title={absoluteTime(request.last_seen)}
-      >{relativeTime(request.last_seen, now)}</time
-    >{#if firstDiffers}, first
+    >
+      {relativeTime(request.last_seen, now)}
+    </time>{#if firstDiffers}, first
       <time
         datetime={new Date(request.first_seen).toISOString()}
         title={absoluteTime(request.first_seen)}
-        >{relativeTime(request.first_seen, now)}</time
-      >{/if}
+      >
+        {relativeTime(request.first_seen, now)}
+      </time>{/if}
   </p>
   <DecisionControl
     target={{ host: request.host, registrableDomain: row.domain }}
@@ -90,8 +105,9 @@
       <a
         class="btn"
         href="/workspaces/{request.workspace}/settings#local-destinations"
-        >Open the company network switch</a
       >
+        Open the company network switch
+      </a>
       Turning it on only makes it approvable; it will still need your approval after
       that.
     </p>
@@ -99,9 +115,9 @@
     <p class="blocked">
       <b>{LOCAL_LABELS[blockedBy]}</b> destinations are switched off, so this
       can't be approved yet. Turn on
-      <a href="/settings/network#local-destinations"
-        >{LOCAL_LABELS[blockedBy]}</a
-      >
+      <a href="/settings/network#local-destinations">
+        {LOCAL_LABELS[blockedBy]}
+      </a>
       in Settings to make it approvable; it will still need your approval after that.
     </p>
   {/if}
@@ -145,14 +161,6 @@
   }
   .dest {
     overflow-wrap: anywhere;
-  }
-  .host {
-    font-family: var(--font-mono);
-    font-weight: 600;
-  }
-  .port {
-    font-family: var(--font-mono);
-    color: var(--color-text-muted);
   }
   .port.srv {
     margin-inline-start: var(--space-2);

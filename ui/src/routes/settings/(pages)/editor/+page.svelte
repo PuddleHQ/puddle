@@ -35,7 +35,8 @@
 </script>
 
 {#if store.view}
-  {@const stored = editorOf(store.view.workspace_defaults)}
+  {@const view = store.view}
+  {@const stored = editorOf(view.workspace_defaults)}
   <SettingsGroup title="Editor defaults">
     <ValueRow
       id="set-editor-theme"

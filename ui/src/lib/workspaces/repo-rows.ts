@@ -2,6 +2,7 @@
 // The create form's list of repositories without the DOM: which directory an address gets, which
 // rows clash, how a start folder is checked, and which row a refusal of the service is about.
 // The service checks all of this again; these checks only tell the user sooner, in the same words.
+import type { PushBlock } from "#lib/repos/model.ts";
 import { resolveRepoAddress } from "./model.ts";
 
 /** The most repositories one workspace lists (the service refuses more). */
@@ -89,7 +90,8 @@ export interface RowDraft {
   identity: string | null;
   /** The identity that listed the address in the picker, while the address is still as picked. */
   listedBy: number | null;
-  pull: boolean;
+  /** What the picker's listing says stops a push to the address, while it is still as picked. */
+  pushBlock: PushBlock | null;
   push: boolean;
 }
 
@@ -102,7 +104,7 @@ export function newRow(key: number, url = ""): RowDraft {
     directory: "",
     identity: null,
     listedBy: null,
-    pull: true,
+    pushBlock: null,
     push: true,
   };
 }

@@ -495,6 +495,31 @@ async fn refusals_carry_decision_headers_and_end_cleanly() {
     assert_eq!(rig.policy.pending()[0].id, PendingId(id));
 }
 
+/// The program the agent names on a `CONNECT` reaches the policy with the request; a copy that
+/// is not the first, or a name with nothing usable in it, does not.
+#[tokio::test]
+async fn the_program_named_on_a_connect_reaches_the_policy() {
+    let rig = Rig::new(&ProxyConfig::default());
+    let mut guest = rig.guest().await;
+    for head in [
+        "CONNECT named.test:443 HTTP/1.1\r\nx-puddle-program: pip\r\nx-puddle-program: sh\r\n\r\n",
+        "CONNECT unnamed.test:443 HTTP/1.1\r\nx-puddle-program: /\r\n\r\n",
+    ] {
+        let mut stream = guest.stream().await;
+        stream.write_all(head.as_bytes()).await.unwrap();
+        let mut reader = BufReader::new(stream);
+        let (code, _) = response_head(&mut reader).await.unwrap();
+        assert_eq!(code, 403);
+    }
+    let programs: Vec<Option<String>> = rig
+        .policy
+        .pending()
+        .into_iter()
+        .map(|p| p.program.map(|p| p.to_string()))
+        .collect();
+    assert_eq!(programs, vec![Some("pip".to_owned()), None]);
+}
+
 #[tokio::test]
 async fn a_head_over_64_kib_gets_431() {
     let rig = Rig::new(&ProxyConfig::default());
@@ -950,7 +975,7 @@ async fn a_cloud_metadata_destination_is_refused_naming_its_toggle_and_waits_for
         assert_eq!(header_value(&headers, "x-puddle-pending"), None, "{target}");
         let body = String::from_utf8(read_all(&mut reader).await.unwrap()).unwrap();
         assert!(
-            body.contains("'metadata' (cloud metadata)") && body.contains("toggle is off"),
+            body.contains("turn on 'Cloud metadata'") && body.contains("toggle is off"),
             "{target}: {body}"
         );
     }

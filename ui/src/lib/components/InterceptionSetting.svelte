@@ -81,18 +81,18 @@
         decrypted. It applies at once, no restart.
       </p>
       <p class="from">
-        <span class="chip"
-          >{store.mode === "inherit"
-            ? "Global setting"
-            : "This workspace"}</span
-        >
+        <span class="meta">
+          {store.mode === "inherit" ? "Global setting" : "This workspace"}
+        </span>
         {#if store.mode !== "inherit"}
           <button
             type="button"
             class="reset"
             aria-label="Use the global setting again for Which hosts to decrypt"
-            onclick={() => void useGlobal()}>Use global</button
+            onclick={() => void useGlobal()}
           >
+            Use global
+          </button>
         {/if}
       </p>
     </div>
@@ -150,11 +150,6 @@
     gap: var(--space-2);
     margin: 0;
     font-size: var(--text-sm);
-  }
-  .chip {
-    padding: 0 var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-pill);
   }
   .reset {
     padding: 0;

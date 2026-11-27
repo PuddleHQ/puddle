@@ -29,6 +29,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use puddle_agent_proto::origin::{CONTAINER, ORIGIN_HEADER};
+use puddle_agent_proto::program::{PROGRAM_HEADER, Program};
 use puddle_agent_proto::ssh::{PROTOCOL_HEADER, SSH, is_banner};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
@@ -46,6 +47,16 @@ pub(crate) fn from_container(head: &Head) -> bool {
     head.headers
         .iter()
         .any(|h| header_name(h) == ORIGIN_HEADER && header_value(h).eq_ignore_ascii_case(CONTAINER))
+}
+
+/// The program the agent named on the request, if any. The agent strips a client's own copy
+/// and the guest can fake the name anyway, so it is only a label; the first header wins and
+/// the value is cleaned again here ([`Program::sanitise`]).
+pub(crate) fn program(head: &Head) -> Option<Program> {
+    head.headers
+        .iter()
+        .find(|h| header_name(h) == PROGRAM_HEADER)
+        .and_then(|h| Program::sanitise(header_value(h)))
 }
 
 /// Whether the bytes the client sent with the request head are an SSH identification line.

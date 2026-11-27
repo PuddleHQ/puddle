@@ -416,6 +416,7 @@ fn pruning_the_audit_emits_for_its_trim_record() {
         ask(&store, "a", &format!("h{i}.example"));
     }
     clock.advance(2 * 24 * 60 * 60 * 1000);
+    ask(&store, "a", "fresh.example");
     drop(sink.take());
     let report = store.sweep().unwrap();
     assert!(report.audit_records_pruned > 0);
@@ -453,6 +454,7 @@ fn pending_wire(workspace: &str, host: &str, state: PendingState) -> PendingWire
         decided_by: None,
         rule_id: None,
         rule_set: None,
+        program: None,
     }
 }
 
@@ -504,8 +506,10 @@ fn connection(ts: u64, workspace: &str, host: &str, decision: ConnectionDecision
         scrubbed_stand_ins: Vec::new(),
         foreign_credentials: Vec::new(),
         answer_credentials: Vec::new(),
+        protocol: None,
         method: None,
         path: None,
+        git_operation: None,
         path_truncated: false,
         bytes_up: 0,
         bytes_down: 0,

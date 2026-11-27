@@ -7,10 +7,8 @@
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 check="$here/scripts/check.sh"
-fail() {
-    echo "check-sets-test: $*" >&2
-    exit 1
-}
+# shellcheck disable=SC1091 # the helper sits in scripts/
+. "$(dirname "$0")/../scripts/test-fail.sh"
 
 all=$("$check" --list all)
 pre_push=$("$check" --list pre-push)
@@ -54,6 +52,6 @@ done
 grep -qx hooks <<EOF || fail "fast lacks hooks"
 $fast
 EOF
-grep -q 'ci/scope-test.sh' "$here/scripts/check.sh" || fail "the hooks gate does not run ci/scope-test.sh"
+grep -q 'ci/scope-test.sh' "$here/scripts/hooks-gate.list" || fail "the hooks gate does not run ci/scope-test.sh"
 # The fast gates run first and alone, so none of them may need a stream (they are the serial prefix).
 echo "check-sets-test: ok"

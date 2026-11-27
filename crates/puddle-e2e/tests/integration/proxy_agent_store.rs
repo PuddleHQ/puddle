@@ -23,6 +23,7 @@ use l2::{
 };
 use puddle_agent::config::Target;
 use puddle_agent::{Agent, Config};
+use puddle_agent_proto::program::{PROGRAM_HEADER, Program};
 use puddle_e2e::l2;
 use puddle_store::{Actor, Limits, PendingState, Resolution};
 use puddle_test_kit::cpu_time;
@@ -292,7 +293,15 @@ async fn connections_land_in_the_store_audit() {
     assert!(allowed["rule_id"].is_i64());
     let head = format!("CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n\r\n");
     let established = "HTTP/1.1 200 Connection Established\r\n\r\n";
-    assert_eq!(allowed["bytes_up"], head.len() + 4);
+    // A Linux guest agent adds the name of the program that dialled, here this test binary.
+    let program_line = if cfg!(target_os = "linux") {
+        let exe = std::env::current_exe().unwrap();
+        let name = Program::sanitise(exe.file_name().unwrap().to_str().unwrap()).unwrap();
+        format!("{PROGRAM_HEADER}: {name}\r\n")
+    } else {
+        String::new()
+    };
+    assert_eq!(allowed["bytes_up"], head.len() + program_line.len() + 4);
     assert_eq!(allowed["bytes_down"], established.len() + 4);
 
     for (_, line) in rig.store.audit_lines(0, 1000).unwrap() {

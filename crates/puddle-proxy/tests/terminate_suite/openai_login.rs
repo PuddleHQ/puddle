@@ -11,7 +11,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use puddle_logins::{LoginNotices, Logins, Problem, Profile, builtin};
 use puddle_proxy::{InjectDecision, StandIns};
-use puddle_secrets::{MemoryStore, SecretStore};
+use puddle_secrets::MemoryStore;
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 use terminate_support::{
@@ -134,8 +134,8 @@ async fn codex_logs_in_trades_for_a_key_refreshes_and_calls_the_api_with_stand_i
         true,
         builtin(),
         Arc::clone(&registry),
-        Arc::new(MemoryStore::new()) as Arc<dyn SecretStore>,
-        Arc::clone(&notices) as Arc<dyn LoginNotices>,
+        Arc::new(MemoryStore::new()),
+        notices.clone(),
         puddle_logins::Marker::none(),
     );
     let rig = RigBuilder::new(&pki)

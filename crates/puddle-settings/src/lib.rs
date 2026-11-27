@@ -89,7 +89,7 @@ pub use resolve::{
 };
 pub use values::{
     AppIconChoice, ClipboardRead, CloseBehaviour, DensityChoice, DiskWarningPercent, HexColour,
-    PaletteChoice, ReconnectionGrace, ServerChoice, ThemeChoice,
+    LogLevelChoice, PaletteChoice, ReconnectionGrace, ServerChoice, ThemeChoice,
 };
 pub use workspace::{
     MiseMode, WORKSPACE_SCHEMA_VERSION, WorkspaceSettings, WorkspaceTools, mise_mode,

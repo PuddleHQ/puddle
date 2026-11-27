@@ -97,8 +97,10 @@ function reset() {
   inbox.calls = [];
   inbox.down = false;
   inbox.openLimit = 1000;
+  inbox.allowedToday = 0;
   pending.rows = [];
   pending.openLimit = Number.POSITIVE_INFINITY;
+  pending.allowedToday = 0;
   pending.decided = [];
   workspaces.list = [];
   pending.status = "loading";
@@ -157,8 +159,13 @@ const moreChoices = () =>
 const choice = (dialog: HTMLElement, label: RegExp) =>
   within(dialog).getByLabelText(label);
 
-const rowOf = (host: string) =>
-  screen.getByText(host, { selector: ".host" }).closest("li") as HTMLElement;
+// A host is drawn in pieces (HostName), so it is found by its whole text, without the port.
+const hostMatcher = (host: string) => (_: string, el: Element | null) =>
+  el?.classList.contains("host") === true &&
+  el.textContent?.replace(/:\d+$/, "") === host;
+const hostEl = (host: string) => screen.getByText(hostMatcher(host));
+const queryHostEl = (host: string) => screen.queryByText(hostMatcher(host));
+const rowOf = (host: string) => hostEl(host).closest("li") as HTMLElement;
 const press = (key: string, target: Element = document.body) =>
   fireEvent.keyDown(target, { key });
 
@@ -292,6 +299,21 @@ describe("the inbox page", () => {
     expect(inbox.calls.some((c) => c.includes("suppression"))).toBe(false);
   });
 
+  it("says in a quiet line how many requests rules allowed today, and says nothing for none", async () => {
+    inbox.allowedToday = 214;
+    inbox.add(request(1, { host: "a.one.test" }), "one.test");
+    const view = render(InboxPage);
+    expect(await screen.findByTestId("allowed-today")).toHaveTextContent(
+      "214 requests allowed by rules today.",
+    );
+    view.unmount();
+    reset();
+    inbox.add(request(1, { host: "a.one.test" }), "one.test");
+    render(InboxPage);
+    await screen.findByRole("heading", { name: "one.test" });
+    expect(screen.queryByTestId("allowed-today")).toBeNull();
+  });
+
   it("says when a workspace's list is full, and stops saying it once some are answered (R-45)", async () => {
     inbox.openLimit = 3;
     inbox.add(request(1, { host: "a.one.test" }), "one.test");
@@ -325,9 +347,7 @@ describe("the inbox page", () => {
       registrable_domain: "example.com",
     });
     await tick();
-    expect(
-      screen.getByText("new.example.com", { selector: ".host" }),
-    ).toBeInTheDocument();
+    expect(hostEl("new.example.com")).toBeInTheDocument();
     source.emit({
       type: "pending_updated",
       id: 9,
@@ -411,11 +431,7 @@ describe("deciding with the buttons", () => {
     await fireEvent.click(
       screen.getByRole("button", { name: "Allow a.example.com for demo" }),
     );
-    await vi.waitFor(() =>
-      expect(
-        screen.queryByText("a.example.com", { selector: ".host" }),
-      ).toBeNull(),
-    );
+    await vi.waitFor(() => expect(queryHostEl("a.example.com")).toBeNull());
     expect(inbox.rules[0]).toMatchObject({
       effect: "allow",
       pattern: "a.example.com",
@@ -563,11 +579,7 @@ describe("deciding with the buttons", () => {
     expect(
       await screen.findByText(/already decided or has gone away/),
     ).toBeInTheDocument();
-    await vi.waitFor(() =>
-      expect(
-        screen.queryByText("a.example.com", { selector: ".host" }),
-      ).toBeNull(),
-    );
+    await vi.waitFor(() => expect(queryHostEl("a.example.com")).toBeNull());
   });
 
   it("shows a refusal from the service as an error toast", async () => {
@@ -878,11 +890,7 @@ describe("keyboard", () => {
     seed();
     await ready();
     await press("a");
-    await vi.waitFor(() =>
-      expect(
-        screen.queryByText("a.example.com", { selector: ".host" }),
-      ).toBeNull(),
-    );
+    await vi.waitFor(() => expect(queryHostEl("a.example.com")).toBeNull());
     expect(inbox.rules[0]).toMatchObject({
       effect: "allow",
       pattern: "a.example.com",
@@ -908,9 +916,7 @@ describe("keyboard", () => {
       registrable_domain: "example.net",
     });
     await tick();
-    expect(
-      screen.getByText("evil.example.net", { selector: ".host" }),
-    ).toBeTruthy();
+    expect(hostEl("evil.example.net")).toBeTruthy();
     await press("a");
     await vi.waitFor(() =>
       expect(inbox.rules[0]).toMatchObject({

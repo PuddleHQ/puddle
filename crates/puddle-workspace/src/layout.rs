@@ -3,7 +3,7 @@
 //! Puddle's own directory beside them.
 //!
 //! ```text
-//! /workspaces/<id>/            the volume root (ext4); never cloned into, it holds .puddle
+//! /workspace/                 the volume root (ext4); never cloned into, it holds .puddle
 //!   ├── lost+found/            only if mkfs made one (msb 0.7.7's doesn't); ignored
 //!   ├── .puddle/               Puddle-owned (code-server data, a later ~/.vscode-server); the
 //!   │   │                      delete check ignores it
@@ -14,12 +14,14 @@
 use std::time::Duration;
 
 use puddle_compute::ExecRequest;
-use puddle_types::{CheckoutDir, GuestPath, SessionUser, WorkspaceId};
+use puddle_types::{CheckoutDir, GuestFile, GuestPath, SessionUser};
 
 use crate::WorkspaceError;
 
-/// Where every workspace volume is mounted: `/workspaces/<id>` (ADR 0006).
-pub const WORKSPACES_ROOT: &str = "/workspaces";
+/// Where a workspace's volume is mounted in its sandbox (ADR 0006). A sandbox holds one workspace,
+/// so the folder is the same for every workspace; the id names the volume and the sandbox, never a
+/// guest folder.
+pub const WORKSPACE_DIR: &str = "/workspace";
 
 /// Puddle's own directory on the volume, beside the checkouts.
 pub const PUDDLE_DIR: &str = ".puddle";
@@ -40,6 +42,13 @@ pub const PREPARE_SH: &str = include_str!("../guest/prepare.sh");
 /// (`guest/clone.sh`).
 pub const CLONE_SH: &str = include_str!("../guest/clone.sh");
 
+/// The boot step that shows the volume of a sandbox an older Puddle made at [`WORKSPACE_DIR`] too
+/// (`guest/older-mount.sh`).
+pub const OLDER_MOUNT_SH: &str = include_str!("../guest/older-mount.sh");
+
+/// Where [`Layout::older_mount_step`] puts its boot step in the guest.
+pub const OLDER_MOUNT_STEP_GUEST: &str = "/usr/local/lib/puddle/older-mount.sh";
+
 /// The folder below [`PUDDLE_DIR`] that clones are written in until git ends.
 const CLONING_DIR: &str = "cloning";
 
@@ -54,24 +63,24 @@ pub struct Layout {
 }
 
 impl Layout {
-    /// The layout of workspace `id`.
+    /// The layout of a workspace.
     ///
     /// # Errors
     ///
-    /// Never in practice: a [`WorkspaceId`] is a DNS label, so the path is always valid. The
-    /// error is [`WorkspaceError::Layout`].
-    pub fn new(id: &WorkspaceId) -> Result<Self, WorkspaceError> {
-        let mount = guest(&format!("{WORKSPACES_ROOT}/{id}"))?;
+    /// Never in practice: [`WORKSPACE_DIR`] is a valid path. The error is
+    /// [`WorkspaceError::Layout`].
+    pub fn new() -> Result<Self, WorkspaceError> {
+        let mount = guest(WORKSPACE_DIR)?;
         Ok(Self { mount })
     }
 
-    /// The volume's mount point, `/workspaces/<id>`.
+    /// The volume's mount point, `/workspace`.
     #[must_use]
     pub fn mount(&self) -> &GuestPath {
         &self.mount
     }
 
-    /// Puddle's own directory, `/workspaces/<id>/.puddle`.
+    /// Puddle's own directory, `/workspace/.puddle`.
     ///
     /// # Errors
     ///
@@ -80,7 +89,7 @@ impl Layout {
         self.child(PUDDLE_DIR)
     }
 
-    /// The managed tools' folder, `/workspaces/<id>/.puddle/mise`: mise's binary, data, cache and
+    /// The managed tools' folder, `/workspace/.puddle/mise`: mise's binary, data, cache and
     /// state.
     ///
     /// # Errors
@@ -90,7 +99,7 @@ impl Layout {
         self.child(&format!("{PUDDLE_DIR}/{MISE_DIR}"))
     }
 
-    /// The checkout directory `dir`, `/workspaces/<id>/<dir>`.
+    /// The checkout directory `dir`, `/workspace/<dir>`.
     ///
     /// # Errors
     ///
@@ -120,8 +129,8 @@ impl Layout {
         .with_timeout(PREPARE_TIMEOUT)
     }
 
-    /// The clone of `url` into `/workspaces/<id>/<dir>`: [`CLONE_SH`] with the URL, the stage
-    /// `/workspaces/<id>/.puddle/cloning/<dir>` and the checkout as its arguments. Git clones into
+    /// The clone of `url` into `/workspace/<dir>`: [`CLONE_SH`] with the URL, the stage
+    /// `/workspace/.puddle/cloning/<dir>` and the checkout as its arguments. Git clones into
     /// the stage (`git clone -- <url> <stage>`: `--` keeps a URL that starts with `-` from being
     /// read as an option, and the URL stays one argument whatever it holds), and the finished
     /// clone is renamed into place, so a clone that dies part way never leaves a half-written
@@ -152,7 +161,7 @@ impl Layout {
     }
 
     /// Where the clone of checkout `dir` is written until git ends:
-    /// `/workspaces/<id>/.puddle/cloning/<dir>`.
+    /// `/workspace/.puddle/cloning/<dir>`.
     ///
     /// # Errors
     ///
@@ -169,6 +178,29 @@ impl Layout {
         ExecRequest::new("sync", Vec::<String>::new())
             .as_user("root")
             .with_timeout(SYNC_TIMEOUT)
+    }
+
+    /// The boot step for a sandbox an older Puddle made with the volume at `older`
+    /// (`/workspaces/<id>`, before 2026-11-25): [`OLDER_MOUNT_SH`] at
+    /// [`OLDER_MOUNT_STEP_GUEST`], which binds `older` at the mount point, so the sandbox keeps its
+    /// root disk and every path below the mount point still reaches the volume. `None` when
+    /// `older` is the mount point itself, or holds a character other than letters, digits, `/`,
+    /// `.`, `_` and `-` (no older Puddle made such a folder).
+    #[must_use]
+    pub fn older_mount_step(&self, older: &GuestPath) -> Option<GuestFile> {
+        let plain = older
+            .as_str()
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'.' | b'_' | b'-'));
+        if !plain || older == &self.mount {
+            return None;
+        }
+        let script =
+            format!("PUDDLE_OLDER_MOUNT='{older}'\nexport PUDDLE_OLDER_MOUNT\n{OLDER_MOUNT_SH}");
+        Some(GuestFile::new(
+            guest(OLDER_MOUNT_STEP_GUEST).ok()?,
+            script.into_bytes(),
+        ))
     }
 
     fn child(&self, name: &str) -> Result<GuestPath, WorkspaceError> {

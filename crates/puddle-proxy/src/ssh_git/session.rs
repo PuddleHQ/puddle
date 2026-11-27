@@ -354,7 +354,7 @@ impl Conn {
         tracing::debug!(what, "ssh channel request refused");
         self.ctx
             .summary()
-            .refusal(HttpRequestLine::new("ssh-channel", "/"), CHANNEL_REFUSED);
+            .refusal(HttpRequestLine::ssh("ssh-channel", "/"), CHANNEL_REFUSED);
     }
 }
 
@@ -403,6 +403,7 @@ impl russh::server::Handler for Conn {
     }
 
     async fn auth_succeeded(&mut self, _: &mut Session) -> Result<(), Self::Error> {
+        tracing::debug!(workspace = %self.ctx.workspace, "ssh session authenticated");
         self.ctx.open.authenticated();
         Ok(())
     }
@@ -539,6 +540,7 @@ impl russh::server::Handler for Conn {
         session.channel_success(channel)?;
         let ctx = Arc::clone(&self.ctx);
         let command = std::str::from_utf8(command).map(str::to_owned).ok();
+        tracing::debug!(workspace = %self.ctx.workspace, command = command.as_deref().unwrap_or("(not text)"), "ssh exec request");
         self.tasks.spawn(async move {
             run_exec(&ctx, taken.channel, command, taken.versions).await;
             ctx.open.remove(channel);
@@ -691,7 +693,7 @@ async fn run_exec(
     let finish = match command.as_deref().map(|c| grammar::parse(c, &ctx.host)) {
         None | Some(Err(Refused::Unsupported)) => {
             ctx.summary()
-                .refusal(HttpRequestLine::new("ssh-command", "/"), UNSUPPORTED);
+                .refusal(HttpRequestLine::ssh("ssh-command", "/"), UNSUPPORTED);
             Finish::says(
                 1,
                 "this command is not supported over SSH; Puddle serves git-upload-pack and git-receive-pack (ssh_command_unsupported)",
@@ -699,7 +701,7 @@ async fn run_exec(
         }
         Some(Err(Refused::BadPath)) => {
             ctx.summary()
-                .refusal(HttpRequestLine::new("ssh-command", "/"), BAD_PATH);
+                .refusal(HttpRequestLine::ssh("ssh-command", "/"), BAD_PATH);
             Finish::says(
                 1,
                 "this repository path is not one Puddle reads; use owner/repository (bad_git_path)",
@@ -740,7 +742,7 @@ async fn lfs_authenticate(
         "git-lfs-download"
     };
     ctx.summary()
-        .command(HttpRequestLine::new(name, &repository.audit_path()));
+        .command(HttpRequestLine::ssh(name, &repository.audit_path()));
     match table(ctx, repository, service).await {
         Err(refusal) => refused(ctx, name, repository, &refusal),
         Ok(binding) => {
@@ -763,7 +765,7 @@ async fn git_command(
     repository: &Repository,
     versions: &[u8],
 ) -> Finish {
-    let line = HttpRequestLine::new(service.command(), &repository.audit_path());
+    let line = HttpRequestLine::ssh(service.command(), &repository.audit_path());
     ctx.summary().command(line);
     let binding = match table(ctx, repository, service).await {
         Ok(binding) => binding,
@@ -837,7 +839,7 @@ fn server_config(keys: Vec<super::GitSshHostKey>) -> russh::server::Config {
 /// Records the refusal in the connection's record and words it for the guest.
 fn refused(ctx: &Ctx, service: &str, repository: &Repository, refusal: &InjectRefusal) -> Finish {
     ctx.summary().refusal(
-        HttpRequestLine::new(service, &repository.audit_path()),
+        HttpRequestLine::ssh(service, &repository.audit_path()),
         refusal.code(),
     );
     Finish::says(1, refusal.message())

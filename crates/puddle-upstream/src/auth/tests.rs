@@ -27,7 +27,7 @@ impl ProxyAuth for Fake {
     ) -> Result<Option<Box<dyn AuthSession>>, AuthError> {
         Ok(offered
             .is_empty()
-            .then(|| Box::new(Echo(0)) as Box<dyn AuthSession>))
+            .then(|| -> Box<dyn AuthSession> { Box::new(Echo(0)) }))
     }
 }
 

@@ -213,6 +213,128 @@ async fn a_secret_added_to_a_running_workspace_is_decrypted_from_the_next_connec
     w.host.shutdown().await;
 }
 
+const SECOND: &str = "ghp_CANARY-second-token-swapped-in-while-it-runs";
+
+/// A new secret value saved while a build runs. The guest keeps the same stand-in,
+/// nothing restarts, the registry is the same one the open connections use, and neither value
+/// reaches the guest or a log. That the next request carries the new value is
+/// `a_new_real_value_for_a_stand_in_applies_from_the_next_request_on_an_open_connection` in
+/// `puddle-proxy`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_secret_value_saved_while_it_runs_keeps_the_stand_in_and_restarts_nothing() {
+    let logs = support::capture_logs();
+    let w = acme_and_beta().await;
+    let (rig, host) = (&w.rig, &w.host);
+    put_acme_api_key(&w).await;
+    let stand_in = stand_in_of(host, "acme", "API_KEY");
+    let registry = host.workspaces().termination(&name("acme")).unwrap();
+    let boots = rig.guest.boots();
+    let (creates, starts, stops) = (
+        calls_of(rig, "Create"),
+        calls_of(rig, "Start"),
+        calls_of(rig, "Stop"),
+    );
+
+    // Only the value changes; the hosts are sent as they were.
+    put_env(
+        &w.api,
+        "/api/workspaces/acme/env/API_KEY",
+        secret_body(Some(SECOND), &["api.example.org"]),
+    )
+    .await;
+    rig.guest.boots_reach(boots + 1).await;
+
+    assert_eq!(stand_in_of(host, "acme", "API_KEY"), stand_in);
+    let after = host.workspaces().termination(&name("acme")).unwrap();
+    assert!(Arc::ptr_eq(registry.stand_ins(), after.stand_ins()));
+    assert_eq!(after.stand_ins().ids(), ["stand-in:secret:API_KEY"]);
+    assert!(decrypts(host, "acme", "api.example.org"), "the host stays");
+    let file = pem_of(
+        &rig.guest.plan_files(rig.guest.boots() - 1),
+        "/etc/profile.d/01-puddle-env.sh",
+    );
+    assert!(
+        file.contains(&format!("export API_KEY='{stand_in}'")),
+        "{file}"
+    );
+    assert_eq!(rig.secrets.ids().len(), 1, "one value, replaced");
+    assert_eq!(
+        (
+            calls_of(rig, "Create"),
+            calls_of(rig, "Start"),
+            calls_of(rig, "Stop")
+        ),
+        (creates, starts, stops)
+    );
+    for value in [REAL, SECOND, "CANARY"] {
+        assert!(!guest_has(rig, value), "a value reached the guest");
+    }
+    w.host.shutdown().await;
+    let logged = String::from_utf8_lossy(&logs.lock().unwrap()).into_owned();
+    assert!(!logged.contains("CANARY"), "a value was logged");
+}
+
+/// A plain variable added while a process runs reaches the login-shell file (a new
+/// terminal reads it) and not the sandbox's own environment, which a running process and every
+/// exec keep until the next start.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plain_variable_added_while_it_runs_reaches_new_terminals_and_not_the_sandbox_environment()
+ {
+    let w = acme_and_beta().await;
+    let rig = &w.rig;
+    let boots = rig.guest.boots();
+    let (creates, starts, stops, set_envs) = (
+        calls_of(rig, "Create"),
+        calls_of(rig, "Start"),
+        calls_of(rig, "Stop"),
+        calls_of(rig, "SetEnv"),
+    );
+    assert_eq!(
+        rig.guest
+            .boot_envs
+            .lock()
+            .unwrap()
+            .last()
+            .unwrap()
+            .get("QA_MODE"),
+        None
+    );
+
+    put_env(
+        &w.api,
+        "/api/workspaces/acme/env/QA_MODE",
+        json!({"kind": "plain", "value": "two"}),
+    )
+    .await;
+    rig.guest.boots_reach(boots + 1).await;
+
+    let file = pem_of(
+        &rig.guest.plan_files(rig.guest.boots() - 1),
+        "/etc/profile.d/01-puddle-env.sh",
+    );
+    assert!(file.contains("export QA_MODE='two'"), "{file}");
+    // What a process already running (and the next exec) is started from has not changed.
+    assert!(
+        rig.guest
+            .boot_envs
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|env| env.get("QA_MODE").is_none()),
+        "the sandbox's environment was changed under a running process"
+    );
+    assert_eq!(calls_of(rig, "SetEnv"), set_envs, "no environment write");
+    assert_eq!(
+        (
+            calls_of(rig, "Create"),
+            calls_of(rig, "Start"),
+            calls_of(rig, "Stop")
+        ),
+        (creates, starts, stops)
+    );
+    w.host.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_global_secret_reaches_every_running_workspace_with_its_own_stand_in() {
     let w = acme_and_beta().await;
@@ -356,6 +478,14 @@ async fn an_unchanged_environment_starts_the_stopped_sandbox_again_and_does_not_
     start_acme(&mut e).await;
     assert_eq!(calls_of(&e.rig, "Create"), e.creates);
     assert_eq!(calls_of(&e.rig, "Remove"), 0);
+    assert!(
+        e.host
+            .problems()
+            .list()
+            .iter()
+            .all(|p| p.key != "rebuilt:acme"),
+        "a kept sandbox is no rebuild"
+    );
     e.host.shutdown().await;
 }
 
@@ -409,6 +539,28 @@ async fn a_failed_environment_write_falls_back_to_a_new_sandbox_on_the_same_volu
     );
     assert_eq!(last_boot_env(&e, "EDITOR").as_deref(), Some("emacs"));
     assert_eq!(volume_names(&e.rig).await, e.volumes);
+    let lasting = e
+        .host
+        .problems()
+        .list()
+        .into_iter()
+        .find(|p| p.key == "rebuilt:acme")
+        .expect("the rebuild stays on the workspace as a problem after the start ended");
+    assert!(
+        lasting.detail.contains("variables") && lasting.detail.contains("installed packages"),
+        "{lasting:?}"
+    );
+
+    // A start that keeps the sandbox does not take it back: the root disk stays lost.
+    stop_acme(&mut e).await;
+    start_acme(&mut e).await;
+    assert!(
+        e.host
+            .problems()
+            .list()
+            .iter()
+            .any(|p| p.key == "rebuilt:acme")
+    );
     e.host.shutdown().await;
 }
 

@@ -1,20 +1,23 @@
 puddle doctor (puddle 0.1.0, windows x86_64)
 
-ok    CPU virtualization    on (the hypervisor uses it)
-ok    Hypervisor            Windows Hypervisor Platform is on and the hypervisor runs
-ok    Code integrity        memory integrity (HVCI) on; App Control policy for programs off
-ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
-ok    Runtime starts        msb 0.7.7-puddle.2 (0.0 s)
-ok    Test boot             a test VM booted and ran a program in 1.1 s
-ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
-ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
-warn  SSH agent             the agent on \\.\pipe\openssh-ssh-agent is locked
-      note: SSH to servers other than Git hosts gets no key from Puddle while the agent is
-            locked. Unlock it (1Password, Bitwarden) or run ssh-add to add a key. Git hosts need
-            no agent.
-ok    Azure CLI (az)        version 2.64.0
-ok    Credential store      the operating system's credential store: a test write and delete worked
-ok    Global Secure Access  client not installed
+ok    CPU virtualization          on (the hypervisor uses it)
+ok    Hypervisor                  Windows Hypervisor Platform is on and the hypervisor runs
+ok    Code integrity              memory integrity on; policy limiting which programs may run off
+ok    Bundled runtime             msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
+ok    Runtime starts              msb 0.7.7-puddle.2 (0.0 s)
+ok    Test boot                   a test VM booted and ran a program in 1.1 s
+ok    Disk space                  120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
+ok    Disk encryption             data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
+warn  SSH agent                   the agent on \\.\pipe\openssh-ssh-agent is locked
+      impact: Programs in a workspace can't use your SSH keys while the agent is locked. Git over
+              SSH still works.
+      remedy: Unlock the agent, or add a key with ssh-add.
+      note:   SSH to servers other than Git hosts gets no key from Puddle while the agent is
+              locked. Unlock it (1Password, Bitwarden) or run ssh-add to add a key. Git hosts need
+              no agent.
+ok    Azure CLI (az)              version 2.64.0
+ok    Credential store            the operating system's credential store: a test write and delete worked
+ok    Known problematic software  none found
 
 No problems found; 1 warning to know about. (1.2 s)
 
@@ -41,7 +44,7 @@ No problems found; 1 warning to know about. (1.2 s)
     {
       "id": "code_integrity",
       "status": "ok",
-      "summary": "memory integrity (HVCI) on; App Control policy for programs off",
+      "summary": "memory integrity on; policy limiting which programs may run off",
       "impact": "Windows' code integrity rules guard the system against untrusted code, and Puddle runs alongside them."
     },
     {
@@ -96,10 +99,10 @@ No problems found; 1 warning to know about. (1.2 s)
       "impact": "Puddle keeps your tokens and passwords in a protected store, so you don't type them again."
     },
     {
-      "id": "global_secure_access",
+      "id": "problematic_software",
       "status": "ok",
-      "summary": "client not installed",
-      "impact": "Rules out a known reason for company sites to fail from a workspace: the Global Secure Access client."
+      "summary": "none found",
+      "impact": "Rules out programs known to keep workspaces from working as expected, such as company network clients."
     }
   ],
   "elapsed_ms": 1234

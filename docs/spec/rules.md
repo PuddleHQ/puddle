@@ -45,7 +45,9 @@ a binding never allows a host, and a toggle never allows a destination (R-14).
   from the user's own setup choices and shown with a reason for every host (R-40, R-41).
   *Note added 2026-10-08, reworded 2026-11-14.*
 - **R-2 Exact rules** match the identical normalised host or IP literal, on any port. Port rules are
-  later; the port is still recorded on pending rows and in the audit.
+  later; the port is still recorded on pending rows and in the audit. So an allow of a host also
+  lets TCP port 22 (or any other port) of that host through; to stop SSH to it, a deny of the host
+  is the only rule, and it stops every port.
 - **R-3 Suffix rules** `.example.com` match every name ending in `.example.com` at any depth, and
   not `example.com` itself *(default)*. Input `*.example.com` is accepted and stored as
   `.example.com`. A suffix rule never matches an IP literal.
@@ -107,7 +109,16 @@ expires when its workspace is deleted (R-21): a waiting request never lapses by 
   waiting, so a host that is not listed is never a silent one.
 - **R-47 The refusal says the request is waiting.** The 403 body says in words that the host is
   waiting for approval in Puddle and that the tool should retry once it is approved; the headers
-  keep `x-puddle-decision: pending` and, when a row exists, `x-puddle-pending: <id>`. For an
+  keep `x-puddle-decision: pending` and, when a row exists, `x-puddle-pending: <id>`. The status line
+  carries the words too (`403 Forbidden, waiting for approval in Puddle`): a client that discards the
+  body and headers of a refused `CONNECT` (`curl`, `git`) still shows the code only, but Python, npm,
+  Go and apt print the reason phrase. So that `curl`, `cargo` and `rustup` show it too, a refused
+  `CONNECT` to a name on port 443 from the workspace's own tools (not a container's, not SSH) is
+  answered inside the tunnel: the proxy answers `200`, presents a certificate from the workspace's
+  CA for that name, and answers the first HTTPS request with the same 403 (status, headers, body).
+  Nothing reaches the real server, and the decision is the rules' own. A client that does not trust
+  the workspace's CA sees a TLS error instead; a name on the workspace's pass-through list keeps
+  the plain `CONNECT` 403. For an
   `unlisted` request (R-45) the body says instead that the host is not listed for approval yet
   because Puddle holds more waiting requests for the workspace than it lists, and that answering some
   lists this one on the next try. The connection
@@ -199,6 +210,8 @@ expires when its workspace is deleted (R-21): a waiting request never lapses by 
   written after a name resolved to a local address (R-14) is decided as that request was: only an
   exact allow counts, so a suffix allow or a set's allow never closes it, here or after a set
   switch (R-37) or a System managed change. Once a row is asked for that way, it stays so.
+  Approving such a row with a suffix or into a rule set is refused (the row stays open, no rule
+  is made); the pending request carries `exact_only` so a client offers only the exact choice.
 - **R-17 Stale ids are refused.** Approving or denying an unknown id or a row not in `requested`
   fails with an error naming the row's current state; nothing changes. A successful call returns
   the row as decided (workspace, host, port) and the rule created, so the CLI and UI can echo exactly
@@ -242,7 +255,7 @@ readable as JSONL (one record per line).
 - **R-24 Record types** in `puddle-store`: `connection` (written by the proxy: `workspace_id`, `host`, `port`,
   `resolved_ip`, `category` (`company_network` for a destination in that category, `null` otherwise and in older records), `signal` (`pac_direct`, `dns_suffix`, `private_access_cgnat` or `vpn_route`: the signal that put it there, `null` when none is known), `decision` (`allow`, `deny`, `pending`, `blocked`), `outcome` (how reaching the destination went after an allow: `connected`, `upstream_refused`, `connect_failed`, `timeout`; `null` where nothing was attempted and in older records), `reason` (`rule`, `no_rule`,
   `toggle:<category>` (`toggle:company_network` for the company network), `puddle_endpoint`, `ssh_unsupported`, `udp_unsupported`, `local_address`, `settings_unreadable`,
-  `pki_distribution_point`, `policy_unavailable`, `request_rule` (R-54), `sni_mismatch`, `token_endpoint_spliced`, `guest_tls_rejected`, `certificate_unavailable`, `limit:<code>`, `connection_limit`, `bad_git_path` (a Git path Puddle does not read, over HTTPS or SSH), `ssh_command_unsupported` (an SSH command that is not `git-upload-pack` or `git-receive-pack`), `ssh_channel_refused` (an SSH channel request Puddle does not allow), `suppressed`, `merged`, ...), `rule_id`, `rule_set` (the set whose entry decided, R-43), `request_rule` (the rule on method and path that refused the request, R-54), `refused_address` and `refused_reason` (the first address of the answer that an IP rule denied (`ip_rule`), else the first the address guard refused, and its reason code; visibility only, the connection still goes to the allowed addresses; `null` when none was refused and in older records), `pending_id`, `binding_id`, `injected`, `unswapped_stand_ins` (the ids of the secret stand-ins that
+  `pki_distribution_point`, `policy_unavailable`, `request_rule` (R-54), `sni_mismatch`, `token_endpoint_spliced`, `guest_tls_rejected`, `certificate_unavailable`, `limit:<code>`, `connection_limit`, `bad_git_path` (a Git path Puddle does not read, over HTTPS or SSH), `ssh_command_unsupported` (an SSH command that is not `git-upload-pack` or `git-receive-pack`), `ssh_channel_refused` (an SSH channel request Puddle does not allow), `workspace_not_running` (the host holds no termination for the workspace), `suppressed`, `merged`, ...), `rule_id`, `rule_set` (the set whose entry decided, R-43), `request_rule` (the rule on method and path that refused the request, R-54), `refused_address` and `refused_reason` (the first address of the answer that an IP rule denied (`ip_rule`), else the first the address guard refused, and its reason code; visibility only, the connection still goes to the allowed addresses; `null` when none was refused and in older records), `pending_id`, `binding_id`, `injected`, `unswapped_stand_ins` (the ids of the secret stand-ins that
   went out unchanged: to a host outside their hosts, or in the path or query; also `stale-stand-in:secret:<name>` and
   `stale-stand-in:github` for a value shaped like a stand-in that the workspace does not hold),
   `scrubbed_stand_ins` (the ids of the stand-ins whose real values an answer from one of their
@@ -273,6 +286,9 @@ readable as JSONL (one record per line).
   (`header_block_too_slow`, `control_frame_flood`, `stream_idle`, `shutdown_ignored`,
   `websocket_idle`; the first limit that fires on a connection is the one recorded); a request refused for the workspace's HTTP/2 stream budget is `blocked` with
   `stream_limit`.
+  A workspace for which the host holds no termination (it stopped, or a start failed, while its guest may still run) gets no
+  connection through: a `CONNECT` and a plain-HTTP request are answered `503` before any rule runs, recorded `blocked` with
+  `workspace_not_running`, and so is the HTTPS leg of Git over SSH. Without this, the rules on method and path would stop applying.
   The proxy writes one `connection` record per request whose destination it parsed, when the
   connection ends. A guest connection that carries several plain-HTTP requests (keep-alive) writes
   one per request, each decided on its own and written once its answer has gone, with the bytes
@@ -306,8 +322,10 @@ readable as JSONL (one record per line).
 - **R-26 Size caps.** One line is at most 4 KiB: `path` is cut to 1 KiB *(default)* with
   `path_truncated: true`, and any other oversize string field is cut the same way. The audit is kept
   for a number of days, 90 *(default)*, 1 to 3650, set by the owner: the sweeper deletes the records
-  older than that (checked at most once an hour) and writes one `audit_trimmed` record per
-  deletion. Nothing is deleted for size and there is no cap per workspace, because a workspace
+  older than that (checked at most once an hour) and writes an `audit_trimmed` record in the same
+  transaction as each batch of deletes. A pass that would delete every record waits for the next
+  pass (an hour later) to find the same, so a host clock stepped forward cannot empty the log at once.
+  Nothing is deleted for size and there is no cap per workspace, because a workspace
   that floods its own log could then push out its history. The size only warns: past 2 GiB
   *(default)* a problem is shown, and the admin sees the audit's size and growth. The database
   file gives the space of deleted records back in short steps. Per workspace, `connection` records are limited to 200 per second
@@ -331,6 +349,10 @@ readable as JSONL (one record per line).
   session bind, which every `ssh` that does not bind sends, is not written) and `ssh_agent_answered` (the
   user's answer to the first-use question, actor `cli`, `ui` or `api`; `detail` says which of "allowed once",
   "allowed run", "allowed always" or "denied", for which key and host).
+  Two more are about the activity log itself: `audit_retention_changed` (the owner changed the days the
+  log is kept, through the API; written only when the number changed, `detail` gives the new and the old
+  days) and `audit_pruned` (an operator ran `puddle audit prune`, actor `cli`; `detail` gives the days and
+  the number of records deleted; written even when none was). The sweeper's own deletes stay `audit_trimmed`.
   A create or a delete is written whether it worked or not; a start or a stop only when it failed
   (a start that worked shows in the workspace's state); a rename when it worked, or when the
   workspace list could not be saved; the identity and repository changes, a new order of the identities included, when they worked. A call
@@ -506,7 +528,10 @@ the API. *Added 2026-10-08.*
   does not want it adds an own deny (R-60).
 
   Telemetry, experiment and certificate-status hosts are not in it: they are ordinary traffic
-  (R-1). When the reasons change, one `system_managed_changed` record per scope says which reasons
+  (R-1). Instead the browser editor does not ask for them: its first-open settings turn telemetry
+  and experiments off (`telemetry.telemetryLevel`, `workbench.enableExperiments`), so
+  `mobile.events.data.microsoft.com` and `default.exp-tas.com` no longer wait in the Inbox on a
+  first open (a workspace whose settings file already exists keeps its own). When the reasons change, one `system_managed_changed` record per scope says which reasons
   were added and removed, and open requests the new hosts decide are closed by `system` (R-37).
   Direct SSH is the workspace's effective `direct_ssh` setting (its own value, else the global
   default). The mise hosts follow the managed tools layer the same way: on unless the global
@@ -553,6 +578,10 @@ the API. *Added 2026-10-08.*
   ships off, R-36), so without the grant a clone into a fresh workspace would wait for the user. Cloning
   again and adopting an existing checkout make no grant. A grant that closes a pending row records
   `decided_by` `system`. The create answer lists the hosts it allowed with their rule ids.
+  The same grant is made by "Add repository" › clone on a running workspace's Repositories tab, on the same
+  terms and before that clone. A repository
+  added to the Git tab's list only stores a list row and makes no rule: its host, if no rule decides it,
+  waits in the Inbox like any new host.
 
 ### Groups and precedence
 

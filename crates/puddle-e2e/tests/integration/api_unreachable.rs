@@ -19,9 +19,7 @@ use std::sync::Arc;
 
 use puddle_agent::config::Target;
 use puddle_agent::{Agent, Config};
-use puddle_api::{
-    ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, RunningApi, Services, SettingsRepo,
-};
+use puddle_api::{ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, RunningApi, Services};
 use puddle_ipc::IpcRoot;
 use puddle_netpolicy::{LocalAccess, NetPolicy, PuddleEndpoints};
 use puddle_proxy::testing::StaticResolver;
@@ -48,7 +46,7 @@ async fn rig() -> Rig {
     let endpoints = PuddleEndpoints::new();
     let services = Services::new(
         store.clone(),
-        Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>,
+        Arc::new(MemorySettings::default()),
         Arc::new(EventHub::default()),
         clock,
     )

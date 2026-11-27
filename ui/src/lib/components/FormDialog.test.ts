@@ -32,4 +32,17 @@ describe("the form dialog", () => {
     });
     await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
+
+  it("puts focus on the element named by openFocus, not the first field", async () => {
+    render(FormDialog, {
+      props: {
+        open: true,
+        title: "Rename",
+        children,
+        openFocus: () => screen.getByRole("dialog"),
+      },
+    } as never);
+    const dialog = await screen.findByRole("dialog");
+    await vi.waitFor(() => expect(document.activeElement).toBe(dialog));
+  });
 });

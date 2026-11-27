@@ -12,12 +12,19 @@
 #   ci/build-msi.sh shell <stage-dir>
 #       Builds the shell in release mode (the slow step). Needs `cargo tauri` on PATH
 #       (ci/fetch-tauri-cli.sh).
+#   ci/build-msi.sh version
+#       Prints the version the other steps build (the workspace's, or the stamp below).
 #   ci/build-msi.sh bundle <stage-dir> <out-dir> [<version>]
 #       Has Tauri's WiX bundler pack the built shell with the staged files into
 #       <out-dir>/Puddle_<version>_x64_en-US.msi, from the template in crates/puddle-app/wix/.
 #       <version> is numeric `major.minor.patch` and defaults to the workspace's. The program's own
 #       version resource stays the workspace's whatever <version> is. First seeds the WiX toolset in the
 #       folder Tauri reads (ci/fetch-wix.sh: retry, cache, checksum), so Tauri never downloads it itself.
+#
+# Version stamp: while the workspace is the unversioned develop line (0.0.0), setting BUILD_NUMBER
+# (the CI run number) makes every program this script compiles report 0.0.<BUILD_NUMBER> and the
+# default package version the same, so a later build is strictly newer than an earlier one
+# (the upgrade test requires it). A numbered workspace version is left alone.
 #
 # Why the staged files are named in a generated overlay and not in tauri.conf.json: Tauri checks
 # every resource and sidecar path on each build of the crate, so listing them in the committed file
@@ -43,22 +50,51 @@ target_dir() {
     fi
 }
 
+# timed <label> <command...>: runs it and prints how long it took, so the log shows where a step's time goes.
+timed() {
+    _label=$1
+    shift
+    _t0=$(date +%s)
+    "$@" || return $?
+    echo "build-msi: $_label took $(($(date +%s) - _t0)) s"
+}
+
+build_agent() { agent=$("$here/build-agent.sh" --locked); }
+
 stage() {
     [ "$#" -eq 1 ] || fail "usage: $0 stage <stage-dir>"
     stage=$1
     [ ! -e "$stage" ] || fail "$stage exists"
     [ -f "$root/ui/build/index.html" ] || fail "the UI is not built: cd ui && npm ci && npm run build"
     cd "$root"
+    PUDDLE_BUILD_VERSION=$(workspace_version)
+    export PUDDLE_BUILD_VERSION
     mkdir -p "$stage/bin"
-    cargo xtask runtime --out "$stage/runtime"
-    cargo xtask code-server --out "$stage/runtime/code-server" --licenses "$stage/runtime/licenses"
-    agent=$("$here/build-agent.sh" --locked)
+    # The runtime folder and code-server are downloads and a licence inventory; the agent and the CLI are
+    # compilations, and the CLI's last crate compiles on one core for minutes. The first two run beside the
+    # compilations, with a target folder of their own (cargo holds a lock on a target folder while it builds,
+    # and `cargo xtask` is a build of the xtask crate), so neither waits for the other. Nothing is copied
+    # into $stage/runtime before they are done: `cargo xtask runtime` makes that folder.
+    xtask_dir=$(mktemp -d)
+    (
+        set -eu
+        export CARGO_TARGET_DIR="$xtask_dir"/target
+        timed "runtime folder (xtask build, downloads, notices)" cargo xtask runtime --out "$stage/runtime"
+        timed "code-server" cargo xtask code-server --out "$stage/runtime/code-server" --licenses "$stage/runtime/licenses"
+    ) >"$xtask_dir/xtask.log" 2>&1 &
+    xtask_pid=$!
+    timed "guest agent" build_agent
+    timed "Puddle command line (release)" cargo build --release --locked --manifest-path "$root/crates/puddle/Cargo.toml"
+    # Tauri names a sidecar `<name>-<target triple>` and installs it beside the shell as `<name>`.
+    cp "$(target_dir)/release/puddle.exe" "$stage/bin/puddle-$triple.exe"
+    timed "wait for the runtime and code-server" wait "$xtask_pid" || {
+        cat "$xtask_dir/xtask.log" >&2
+        fail "cargo xtask runtime or code-server failed (log above)"
+    }
+    cat "$xtask_dir/xtask.log"
     cp "$agent" "$stage/runtime/puddle-agent"
     cp "$root/ui/THIRD-PARTY-NOTICES.txt" "$stage/runtime/licenses/THIRD-PARTY-ui.txt"
     cp "$root/LICENSE" "$stage/runtime/licenses/AGPL-3.0.txt"
-    cargo build --release --locked --manifest-path "$root/crates/puddle/Cargo.toml"
-    # Tauri names a sidecar `<name>-<target triple>` and installs it beside the shell as `<name>`.
-    cp "$(target_dir)/release/puddle.exe" "$stage/bin/puddle-$triple.exe"
     echo "build-msi: staged in $stage"
 }
 
@@ -84,14 +120,26 @@ staged() {
     [ -d "$1/runtime" ] && [ -f "$1/bin/puddle-$triple.exe" ] || fail "$1 is not a staged folder (run '$0 stage' first)"
 }
 
-workspace_version() { awk -F'"' '/^version = / { print $2; exit }' "$root/Cargo.toml"; }
+workspace_version() {
+    cargo_version=$(awk -F'"' '/^version = / { print $2; exit }' "$root/Cargo.toml")
+    if [ "$cargo_version" = 0.0.0 ] && [ -n "${BUILD_NUMBER:-}" ]; then
+        case "$BUILD_NUMBER" in
+        *[!0-9]*) fail "BUILD_NUMBER '$BUILD_NUMBER' is not a number" ;;
+        esac
+        echo "0.0.$BUILD_NUMBER"
+    else
+        echo "$cargo_version"
+    fi
+}
 
 # The release build of the shell, without packing it: the slow step, done once.
 shell() {
     [ "$#" -eq 1 ] || fail "usage: $0 shell <stage-dir>"
     staged "$1"
     stage=$(cd "$1" && pwd)
-    cfg=$(overlay "$stage" "$(workspace_version)")
+    PUDDLE_BUILD_VERSION=$(workspace_version)
+    export PUDDLE_BUILD_VERSION
+    cfg=$(overlay "$stage" "$PUDDLE_BUILD_VERSION")
     cd "$app"
     cargo tauri build --no-bundle --ci --config "$cfg" -- --locked
 }
@@ -128,12 +176,13 @@ bundle() {
     echo "build-msi: $out/$(basename "$1")"
 }
 
-[ "$#" -ge 1 ] || fail "usage: $0 stage|shell|bundle ..."
+[ "$#" -ge 1 ] || fail "usage: $0 stage|shell|bundle|version ..."
 cmd=$1
 shift
 case "$cmd" in
 stage) stage "$@" ;;
 shell) shell "$@" ;;
 bundle) bundle "$@" ;;
+version) workspace_version ;;
 *) fail "unknown command $cmd" ;;
 esac

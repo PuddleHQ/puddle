@@ -15,11 +15,11 @@ use crate::error::StoreError;
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
 const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24, V25, V26, V27, V28, V29, V30, V31, V32,
+    V22, V23, V24, V25, V26, V27, V28, V29, V30, V31, V32, V33, V34,
 ];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 32;
+pub const SCHEMA_VERSION: u32 = 34;
 
 const V1: &str = "
 CREATE TABLE rules (
@@ -447,6 +447,16 @@ UPDATE audit SET search = nullif(lower(
     END), '');
 UPDATE audit SET search = substr(search, 2) WHERE search IS NOT NULL;
 ";
+
+/// The names of the triggers any Puddle schema version creates, read from the migrations. A
+/// staged backup may carry these and no others.
+pub(crate) fn known_trigger_names() -> std::collections::BTreeSet<&'static str> {
+    MIGRATIONS
+        .iter()
+        .flat_map(|sql| sql.split("CREATE TRIGGER ").skip(1))
+        .filter_map(|rest| rest.split_whitespace().next())
+        .collect()
+}
 
 /// Brings `conn` to [`SCHEMA_VERSION`] and returns the version it started at.
 ///
@@ -1005,6 +1015,22 @@ const V32: &str = "
 ALTER TABLE pending ADD COLUMN exact_only INTEGER NOT NULL DEFAULT 0 CHECK (exact_only IN (0, 1));
 ";
 
+const V33: &str = "
+-- The name of the program in the guest that opened the connection, as the agent reported it
+-- when the row was opened. A display hint: the first program seen for the row stays. A row from
+-- before this column, or one whose client the agent could not name, reads NULL.
+ALTER TABLE pending ADD COLUMN program TEXT
+    CHECK (program IS NULL OR length(program) BETWEEN 1 AND 32);
+";
+
+const V34: &str = "
+-- Why a push to a repository cannot succeed, as its listing said when the row was made
+-- ('archived' on its host, or 'read' for an account that can only read it). A row made before
+-- this column, or from a listing that named no block, reads NULL.
+ALTER TABLE workspace_repos ADD COLUMN push_block TEXT
+    CHECK (push_block IS NULL OR push_block IN ('archived', 'read'));
+";
+
 /// Migrates only up to `version`, to build the database an older Puddle left behind.
 #[cfg(test)]
 pub(crate) fn migrate_up_to(conn: &mut Connection, version: usize) -> Result<u32, StoreError> {
@@ -1196,7 +1222,7 @@ pub(crate) fn remove_stale_partial_copies(db: &Path) {
     let dir = db
         .parent()
         .filter(|d| !d.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
+        .unwrap_or_else(|| Path::new("."));
     let prefix = format!(
         "{}.pre-v",
         db.file_name().unwrap_or_default().to_string_lossy()
@@ -1225,7 +1251,7 @@ fn prune_backups(db: &Path) -> std::io::Result<()> {
     let dir = db
         .parent()
         .filter(|d| !d.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
+        .unwrap_or_else(|| Path::new("."));
     let file = db.file_name().unwrap_or_default();
     let prefix = format!("{}.pre-v", file.to_string_lossy());
     let mut copies: Vec<(u32, PathBuf)> = std::fs::read_dir(dir)?

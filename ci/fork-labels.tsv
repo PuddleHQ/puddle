@@ -84,3 +84,4 @@ libkrunfw	permanent	pick	feat(kernel): enable nested KVM on Windows x86 guests	W
 libkrunfw	candidate	pick	build(kernel): update Linux to 6.12.112	a kernel bump; upstream tracks kernel releases itself
 libkrunfw	candidate	pick	fix(config): drop /dev/mem from the guest kernels	hardening upstream could take
 libkrunfw	permanent	pick	ci(puddle):*	the fork's own build and release workflow
+microsandbox	permanent	regen	build(deps): pin the russh fork at v0.65.2-puddle.1	the fork's russh pin, regenerated with the patch section

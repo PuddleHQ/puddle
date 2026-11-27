@@ -4,7 +4,7 @@
   import { onMount } from "svelte";
   import Plus from "@lucide/svelte/icons/plus";
   import OrphanVolumesNotice from "#lib/components/OrphanVolumesNotice.svelte";
-  import FirstWorkspaceForm from "#lib/components/FirstWorkspaceForm.svelte";
+  import CreateWorkspaceForm from "#lib/components/CreateWorkspaceForm.svelte";
   import WorkspaceRow from "#lib/components/WorkspaceRow.svelte";
   import { orphanVolumes } from "#lib/stores/orphan-volumes.svelte.ts";
   import { pending } from "#lib/stores/pending.svelte.ts";
@@ -47,7 +47,11 @@
     {/if}
   </div>
   {#if workspaces.list.length > 0}
-    <button type="button" class="btn primary" onclick={actions.openCreate}>
+    <button
+      type="button"
+      class="btn primary"
+      onclick={() => actions.openCreate()}
+    >
       <Plus aria-hidden="true" size={16} />New workspace
     </button>
   {/if}
@@ -64,11 +68,13 @@
 {:else if workspaces.status === "failed"}
   <LoadNotice what="the workspaces" message={workspaces.loadError} />
 {:else if workspaces.list.length === 0}
-  <FirstWorkspaceForm onMore={actions.openCreate} />
+  <!-- The first workspace gets the whole form, like every later one, under the page's h1. -->
+  <CreateWorkspaceForm embedded />
 {:else}
   <div class="columns" aria-hidden="true">
-    <span>State</span><span>Name</span><span>Repository</span><span>Disk</span
-    ><span class="waiting">Waiting</span><span></span>
+    <span>State</span><span>Name</span><span>Repository</span><span>
+      Disk
+    </span><span class="waiting">Waiting</span><span></span>
   </div>
   <ul class="rows" aria-label="Workspaces">
     {#each workspaces.list as workspace (workspace.id)}
@@ -83,6 +89,8 @@
           onStart={actions.start}
           onStop={actions.stop}
           onConnect={actions.connect}
+          onRename={actions.openRename}
+          onDelete={actions.askDelete}
           onDismiss={actions.dismissProgress}
         />
       </li>
@@ -97,9 +105,6 @@
     justify-content: space-between;
     gap: var(--space-4);
     margin-bottom: var(--space-4);
-  }
-  h1 {
-    font-size: var(--text-xl);
   }
   .sub,
   .muted {

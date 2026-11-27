@@ -127,17 +127,18 @@
             <td class="mono name">{row.name}</td>
             <td class="value">
               {#if row.kind === "secret"}
-                <span class="chip">Secret</span>
+                <span class="meta">Secret</span>
                 Stored in Puddle, never shown. Sent only to
-                <span class="mono">{hostsSummary(row.hosts)}</span
-                >{placeSummary(row.place)}.
+                <span class="mono">
+                  {hostsSummary(row.hosts)}
+                </span>{placeSummary(row.place)}.
               {:else}
                 <span class="mono">{row.value}</span>
               {/if}
               {#if row.overridden}
-                <span class="muted"
-                  >Hidden here by this workspace's own {row.name}.</span
-                >
+                <span class="muted">
+                  Hidden here by this workspace's own {row.name}.
+                </span>
               {/if}
             </td>
             <td>
@@ -151,21 +152,27 @@
                   type="button"
                   class="btn"
                   aria-label="Override {row.name} for {workspace}"
-                  onclick={() => add(row.name)}>Override</button
+                  onclick={() => add(row.name)}
                 >
+                  Override
+                </button>
               {:else}
                 <button
                   type="button"
                   class="btn"
                   aria-label="Edit {row.name}"
-                  onclick={() => edit(row)}>Edit</button
+                  onclick={() => edit(row)}
                 >
+                  Edit
+                </button>
                 <button
                   type="button"
                   class="btn"
                   aria-label="Remove {row.name}"
-                  onclick={() => ask(row)}>Remove</button
+                  onclick={() => ask(row)}
                 >
+                  Remove
+                </button>
               {/if}
             </td>
           </tr>
@@ -193,9 +200,9 @@
   <AlertDialog.Portal>
     <AlertDialog.Overlay class="confirm-overlay" />
     <AlertDialog.Content class="confirm-content">
-      <AlertDialog.Title class="confirm-title"
-        >Remove {removing?.name}?</AlertDialog.Title
-      >
+      <AlertDialog.Title class="confirm-title">
+        Remove {removing?.name}?
+      </AlertDialog.Title>
       <AlertDialog.Description class="confirm-detail">
         Puddle deletes the value from this computer's credential store. It can't
         be shown again, so you would have to type it in again to use the secret.
@@ -206,8 +213,10 @@
           class="btn deny"
           onclick={() => {
             if (removing) void remove(removing);
-          }}>Remove secret</AlertDialog.Action
+          }}
         >
+          Remove secret
+        </AlertDialog.Action>
       </div>
     </AlertDialog.Content>
   </AlertDialog.Portal>
@@ -257,14 +266,6 @@
   .name,
   .value {
     overflow-wrap: anywhere;
-  }
-  .chip {
-    display: inline-block;
-    padding: 0 var(--space-2);
-    margin-inline-end: var(--space-1);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-pill);
-    font-size: var(--text-sm);
   }
   .actions {
     text-align: end;

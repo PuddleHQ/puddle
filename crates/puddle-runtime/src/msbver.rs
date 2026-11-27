@@ -27,12 +27,16 @@ pub const MAX_VERSION_BYTES: u64 = 256;
 ///
 /// # Errors
 ///
-/// A message when the file can't be opened, isn't an ELF/PE/COFF file, or has more than one,
-/// an empty, an oversized or a non-UTF-8 version section.
-pub fn read_embedded_version(path: &Path) -> Result<Option<String>, String> {
-    let file = File::open(path).map_err(|e| e.to_string())?;
+/// A [`VersionReadError`] when the file can't be opened, isn't an ELF/PE/COFF file, or has more
+/// than one, an empty, an oversized or a non-UTF-8 version section.
+pub fn read_embedded_version(path: &Path) -> Result<Option<String>, VersionReadError> {
+    let file = File::open(path).map_err(|e| VersionReadError::Open {
+        cause: e.to_string(),
+    })?;
     let cache = ReadCache::new(file);
-    let parsed = object::File::parse(&cache).map_err(|e| e.to_string())?;
+    let parsed = object::File::parse(&cache).map_err(|e| VersionReadError::NotBinary {
+        cause: e.to_string(),
+    })?;
     let mut sections = parsed.sections().filter(|s| {
         s.name_bytes()
             .is_ok_and(|n| n == VERSION_SECTION.as_bytes())
@@ -41,25 +45,64 @@ pub fn read_embedded_version(path: &Path) -> Result<Option<String>, String> {
         return Ok(None);
     };
     if sections.next().is_some() {
-        return Err("more than one version section".into());
+        return Err(VersionReadError::MoreThanOne);
     }
     let size = section.size();
     if size == 0 || size > MAX_VERSION_BYTES {
-        return Err(format!(
-            "version section must hold 1 to {MAX_VERSION_BYTES} bytes, has {size}"
-        ));
+        return Err(VersionReadError::Size { size });
     }
-    let bytes = section.data().map_err(|e| e.to_string())?;
+    let bytes = section.data().map_err(|e| VersionReadError::Data {
+        cause: e.to_string(),
+    })?;
     // PE pads raw section data to the file alignment; the version is the bytes before padding.
     let used = bytes
         .get(..usize::try_from(size).unwrap_or(usize::MAX))
         .unwrap_or(bytes);
-    let text = std::str::from_utf8(used).map_err(|_| "version section is not UTF-8".to_owned())?;
+    let text = std::str::from_utf8(used).map_err(|_| VersionReadError::NotUtf8)?;
     let text = text.trim_end_matches('\0');
     if text.is_empty() {
-        return Err("version section is empty".into());
+        return Err(VersionReadError::Empty);
     }
     Ok(Some(text.to_owned()))
+}
+
+/// Why the version section of a binary could not be read. It displays as the message the build and
+/// the doctor print.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum VersionReadError {
+    /// The file could not be opened.
+    #[error("{cause}")]
+    Open {
+        /// The operating system's words.
+        cause: String,
+    },
+    /// The file is not an ELF, PE or COFF file.
+    #[error("{cause}")]
+    NotBinary {
+        /// The parser's words.
+        cause: String,
+    },
+    /// The section's bytes could not be read.
+    #[error("{cause}")]
+    Data {
+        /// The parser's words.
+        cause: String,
+    },
+    /// The file has more than one version section.
+    #[error("more than one version section")]
+    MoreThanOne,
+    /// The section is empty or larger than [`MAX_VERSION_BYTES`].
+    #[error("version section must hold 1 to {MAX_VERSION_BYTES} bytes, has {size}")]
+    Size {
+        /// Its size in bytes.
+        size: u64,
+    },
+    /// The section is not UTF-8.
+    #[error("version section is not UTF-8")]
+    NotUtf8,
+    /// The section holds nothing but padding.
+    #[error("version section is empty")]
+    Empty,
 }
 
 #[cfg(test)]

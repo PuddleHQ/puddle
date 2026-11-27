@@ -23,6 +23,7 @@ async fn a_failed_sync_after_the_clones_leaves_nothing_behind() {
             "preparing_volume",
             "pulling_image",
             "starting",
+            "waiting_for_agent",
             "syncing",
             "cloning",
             "failed"
@@ -43,11 +44,14 @@ async fn a_failed_sync_after_the_clones_leaves_nothing_behind() {
     host.shutdown().await;
 }
 
-/// A list of repositories without its generated entry ids.
+/// A list of repositories without its generated entry ids and the branch the last listing found
+/// (the tests that read the branch read it from the list itself).
 fn without_entries(list: &serde_json::Value) -> serde_json::Value {
     let mut list = list.clone();
     for r in list.as_array_mut().unwrap() {
-        r.as_object_mut().unwrap().remove("entry");
+        let r = r.as_object_mut().unwrap();
+        r.remove("entry");
+        r.remove("branch");
     }
     list
 }
@@ -72,7 +76,7 @@ async fn the_one_problem_names_the_clone(api: &Api, workspace: &str, dir: &str, 
         "{detail}"
     );
     assert!(
-        detail.ends_with(&format!("git clone {url} /workspaces/{workspace}/{dir}")),
+        detail.ends_with(&format!("git clone {url} /workspace/{dir}")),
         "{detail}"
     );
 }
@@ -151,6 +155,7 @@ async fn a_clone_that_fails_fails_only_its_repository_and_every_clone_carries_it
             "preparing_volume",
             "pulling_image",
             "starting",
+            "waiting_for_agent",
             "syncing",
             "cloning",
             "cloning",
@@ -172,9 +177,9 @@ async fn a_clone_that_fails_fails_only_its_repository_and_every_clone_carries_it
     assert_eq!(
         rig.guest.clone_commands(),
         [
-            format!("clone -- {REPO} /workspaces/trio/api"),
-            format!("clone -- {DOWN} /workspaces/trio/docs"),
-            "clone -- https://example.org/acme/web /workspaces/trio/web".to_owned(),
+            format!("clone -- {REPO} /workspace/api"),
+            format!("clone -- {DOWN} /workspace/docs"),
+            "clone -- https://example.org/acme/web /workspace/web".to_owned(),
         ]
     );
     assert_eq!(rig.guest.syncs(), 1, "one sync after the last clone");
@@ -275,7 +280,7 @@ async fn an_added_clone_has_its_identity_and_table_row_before_it_runs_and_is_lis
     );
     assert_eq!(
         rig.guest.clone_commands().last().unwrap(),
-        &format!("clone -- {WEB} /workspaces/adds/web")
+        &format!("clone -- {WEB} /workspace/web")
     );
     assert_eq!(
         rig.guest.syncs(),
@@ -319,6 +324,50 @@ async fn an_added_clone_has_its_identity_and_table_row_before_it_runs_and_is_lis
         rig.guest.clone_commands().len(),
         2,
         "no clone ran for either"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_clone_of_a_host_passed_through_for_its_certificate_says_windows_does_not_trust_it() {
+    use puddle_types::{
+        ConnectionDecision, ConnectionEvent, ConnectionReason, Host, PassThroughCode,
+    };
+    const FORGE: &str = "https://forge.corp.example/acme/docs.git";
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "adds").await;
+    *rig.guest.fail_clone_of.lock().unwrap() = Some(FORGE.to_owned());
+    // The proxy passed the forge through for its certificate, as it does while git clones.
+    let mut passed = ConnectionEvent::puddle(
+        Host::parse_normalised("forge.corp.example").unwrap(),
+        443,
+        ConnectionDecision::Allow,
+        ConnectionReason::PassedThrough(PassThroughCode::ServerCertificate),
+    );
+    passed.origin = puddle_types::ConnectionOrigin::Workspace;
+    passed.workspace = Some(WorkspaceId::new("adds").unwrap());
+    host.store().record_connection(&passed).unwrap();
+
+    let reply = add_and_wait(
+        &api,
+        &mut events,
+        "adds",
+        json!({"kind": "clone", "url": FORGE}),
+    )
+    .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let problems = problems_of(&api).await;
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(
+        problems[0].3.starts_with(
+            "Windows does not trust forge.corp.example's certificate: add your company's root \
+             certificate to Windows. Git said: git exited 128: "
+        ),
+        "{}",
+        problems[0].3
     );
     host.shutdown().await;
 }
@@ -1052,6 +1101,7 @@ async fn a_workspace_with_no_repositories_is_made_without_a_clone_or_a_sync() {
             "preparing_volume",
             "pulling_image",
             "starting",
+            "waiting_for_agent",
             "syncing",
             "done"
         ]
@@ -1088,7 +1138,7 @@ async fn a_guest_that_stops_answering_between_clones_fails_the_create_and_leaves
         .filter(|c| c.op == Op::Exec && c.target.as_deref() == Some("probe"))
         .take_while(|c| {
             !c.detail.as_deref().is_some_and(|d| {
-                d.ends_with("puddle-clone https://example.org/acme/web /workspaces/probe/.puddle/cloning/web /workspaces/probe/web")
+                d.ends_with("puddle-clone https://example.org/acme/web /workspace/.puddle/cloning/web /workspace/web")
             })
         })
         .count();
@@ -1109,7 +1159,7 @@ async fn a_guest_that_stops_answering_between_clones_fails_the_create_and_leaves
     );
     assert_eq!(
         rig.guest.clone_commands()[clones_before..],
-        [format!("clone -- {REPO} /workspaces/gone/api")],
+        [format!("clone -- {REPO} /workspace/api")],
         "the second clone never reached the guest"
     );
     assert_eq!(api.get("/api/workspaces/gone").await.status, 404);
@@ -1173,5 +1223,34 @@ async fn a_host_on_a_version_1_list_shows_one_repository_in_its_checkout_and_a_r
         "{saved}"
     );
     assert!(saved["workspaces"][0].get("repo_url").is_none(), "{saved}");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_workspaces_list_shows_each_checkouts_branch_from_the_listing_made_at_the_attach() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "adds").await;
+    // The fake counts a listing before it answers, so "the guest ran it" is not "the host kept
+    // its branches": wait on the list itself. A read of the workspace never lists the checkouts,
+    // so before anything asks for them only the listing the attach made can have kept the branch.
+    let list = puddle_test_kit::eventually_async(
+        "the attach's listing is kept for the list",
+        APPLY,
+        || async {
+            let list = api.get("/api/workspaces/adds").await.json();
+            list["repositories"][0]["branch"]
+                .is_string()
+                .then_some(list)
+        },
+    )
+    .await;
+    let listed = checkouts_of(&api, "adds").await;
+    assert_eq!(
+        list["repositories"][0]["branch"], listed["checkouts"][0]["branch"],
+        "{list}"
+    );
     host.shutdown().await;
 }

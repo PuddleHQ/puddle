@@ -47,6 +47,18 @@ fn an_audit_record_carries_the_name_its_workspace_had_when_it_was_written() {
 }
 
 #[test]
+fn the_policy_reports_the_current_name_of_a_workspace() {
+    let (_, store) = store();
+    let acme = WorkspaceId::new("acme").unwrap();
+    assert_eq!(Policy::workspace_name(&store, &acme), None);
+    store.set_workspace_name(&acme, "Acme shop").unwrap();
+    assert_eq!(
+        Policy::workspace_name(&store, &acme).as_deref(),
+        Some("Acme shop")
+    );
+}
+
+#[test]
 fn a_workspace_name_that_cannot_be_written_is_dropped_and_the_record_has_no_name() {
     let (_, store) = store();
     let ws = WorkspaceId::new("acme").unwrap();
@@ -55,9 +67,15 @@ fn a_workspace_name_that_cannot_be_written_is_dropped_and_the_record_has_no_name
         store.note_workspace_name(&ws, "Acme"),
         "a rename replaces it"
     );
+    assert_eq!(store.current_workspace_name(&ws).as_deref(), Some("Acme"));
     store.break_database("DROP TABLE workspace_names");
     assert!(!store.note_workspace_name(&ws, "Lost"));
     assert!(store.set_workspace_name(&ws, "Lost").is_err());
+    assert_eq!(
+        store.current_workspace_name(&ws),
+        None,
+        "an unreadable name is none"
+    );
 }
 
 /// Set by the busy handler of `a_write_waits_for_another_connection_holding_the_file`.
@@ -296,6 +314,8 @@ fn raw_pending_rows_with_bad_fields_are_corrupt() {
         decided_by: None,
         rule_id: None,
         rule_set: None,
+        program: None,
+        exact_only: false,
     };
     assert!(pending_from_raw(&base()).is_ok());
     let cases: Vec<fn(&mut RawPending)> = vec![
@@ -306,6 +326,7 @@ fn raw_pending_rows_with_bad_fields_are_corrupt() {
         |r| r.state = "open".into(),
         |r| r.decided_by = Some("guest".into()),
         |r| r.decided_at = Some(-1),
+        |r| r.program = Some(" / ".into()),
     ];
     for (index, case) in cases.into_iter().enumerate() {
         let mut raw = base();
@@ -393,6 +414,41 @@ fn a_failed_connection_summary_write_is_written_with_the_next_connection() {
     store.audit_writes_work_again();
     store.record_connection(&event).unwrap();
     assert_eq!(summarised_connections(&store), 5);
+}
+
+#[test]
+fn allowed_today_counts_rule_allows_before_the_record_limit_and_resets_at_midnight() {
+    let (clock, store) = fresh_store();
+    store
+        .set_workspace_owner(&WorkspaceId::new("a").unwrap(), UserId::OWNER)
+        .unwrap();
+    let sb = |reason| {
+        ConnectionEvent::new(
+            &request("a", "x.example"),
+            ConnectionDecision::Allow,
+            reason,
+        )
+    };
+    // 205 allowed by rule: the record limit drops 5 records, the count keeps them.
+    for _ in 0..205 {
+        store
+            .record_connection(&sb(ConnectionReason::Rule))
+            .unwrap();
+    }
+    store
+        .record_connection(&sb(ConnectionReason::PuddleRequest))
+        .unwrap();
+    let denied = ConnectionEvent::new(
+        &request("a", "x.example"),
+        ConnectionDecision::Deny,
+        ConnectionReason::Rule,
+    );
+    store.record_connection(&denied).unwrap();
+    store.record_connection(&puddle_event()).unwrap();
+    // 1_000_000 ms is in day 0.
+    assert_eq!(store.allowed_today(UserId::OWNER), (205, 0));
+    clock.advance(86_400_000);
+    assert_eq!(store.allowed_today(UserId::OWNER), (0, 86_400_000));
 }
 
 fn puddle_event() -> ConnectionEvent {
@@ -631,7 +687,8 @@ struct RaceClock {
 
 impl Clock for RaceClock {
     fn now_ms(&self) -> u64 {
-        if let Some(hook) = lock(&self.hook).take() {
+        let hook = lock(&self.hook).take();
+        if let Some(hook) = hook {
             hook();
         }
         self.clock.now_ms()

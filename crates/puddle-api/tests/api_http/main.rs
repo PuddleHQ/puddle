@@ -26,6 +26,7 @@ mod guard;
 mod identities;
 mod interception;
 mod logins;
+mod logs;
 mod network_health;
 mod orphan_volumes;
 mod ports;

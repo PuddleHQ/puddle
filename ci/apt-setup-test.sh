@@ -9,7 +9,8 @@ here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d)
 holder=
 trap 'rm -rf "$tmp"; [ -z "$holder" ] || kill "$holder" 2>/dev/null || true' EXIT
-fail() { echo "apt-setup-test: FAIL: $1" >&2; exit 1; }
+# shellcheck disable=SC1091 # the helper sits in scripts/
+. "$(dirname "$0")/../scripts/test-fail.sh"
 
 mkdir -p "$tmp/apt"
 head -c 2097152 /dev/zero >"$tmp/full"

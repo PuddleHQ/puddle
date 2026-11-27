@@ -13,12 +13,12 @@ use futures_util::StreamExt as _;
 use puddle_secrets::StoredId;
 use puddle_types::{WorkspaceId, WorkspaceStatus};
 
-use crate::ApiErrorBody;
-use crate::error::ApiError;
 use crate::extract::Path as UrlPath;
-use crate::restore::{RestoreFacts, RestoreServiceError};
 use crate::routes::AppState;
-use crate::wire::{
+use puddle_services::error::ApiError;
+use puddle_services::error::ApiErrorBody;
+use puddle_services::restore::RestoreFacts;
+use puddle_services::wire::{
     RestoreApplied, RestoreApplyRequest, RestoreDisk, RestoreIdentityToken, RestorePreview,
     RestoreResultView, RestoreSecret, RestoreWorkspace, SafetyCopyList,
 };
@@ -236,20 +236,6 @@ async fn enrich(state: &AppState, facts: RestoreFacts) -> Result<RestorePreview,
         identity_tokens_needing_value,
         running_workspaces: u32::try_from(running).unwrap_or(u32::MAX),
     })
-}
-
-impl From<RestoreServiceError> for ApiError {
-    fn from(err: RestoreServiceError) -> Self {
-        match err {
-            RestoreServiceError::Refused(m) => Self::invalid(m),
-            RestoreServiceError::NotStaged(m) => Self::not_found(m),
-            RestoreServiceError::Unavailable(m) | RestoreServiceError::Failed(m) => Self::new(
-                StatusCode::SERVICE_UNAVAILABLE,
-                crate::error::ErrorCode::Unavailable,
-                m,
-            ),
-        }
-    }
 }
 
 #[cfg(test)]

@@ -1,0 +1,160 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The Windows soak: the installed, release app on a windows-2025 runner (WHP, real microVMs) through a
+# compressed day with no person (crates/puddle-app/e2e/soak-windows.mjs). `puddle-soak sample` measures the
+# Puddle processes (working set, threads, HANDLE COUNT) and the machine (free RAM, COMMIT CHARGE and its limit);
+# the day opens and closes the editor window 10 times, quits Puddle from the tray through UI Automation and
+# starts it again (every workspace must be listed again), idles through the night, collects the Application
+# event log entries of Puddle's processes with Get-WinEvent (collect-windows-events.ps1), and `puddle-soak
+# judge` reads the series (handles per process flat over the idle hour, RSS, commit charge under 95 % of its
+# limit). The Linux soak (soak.yml) covers the rest of docs/qa/soak-8h.md.
+#
+# Weekly on develop and by hand (`gh workflow run soak-windows.yml`): the day is 5 hours (a playbook hour
+# is 25 minutes). A pull request that touches the soak runs a 12 minute day three times to prove the path
+# and the checks: once as it is, and twice with a planted breakage (WINSOAK_PLANT) that must fail exactly
+# the check that guards against it; the first also plants a crash event for the collector. The MSI is the
+# one an earlier msi run kept (input msi_run_id, else the newest green msi run on develop). Not a required
+# check. A red scheduled run opens "Nightly red: soak-windows" through nightly-signal.yml. Never retried.
+name: soak-windows
+
+on:
+  schedule:
+    - cron: "17 1 * * 0"
+  workflow_dispatch:
+    inputs:
+      msi_run_id:
+        description: "The msi run whose MSI to install (default: the newest green msi run on develop)"
+        required: false
+        default: ""
+      hour_secs:
+        description: "Real seconds of one playbook hour (1500 is the 5 hour day, 60 the 12 minute one)"
+        required: false
+        default: ""
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - .github/workflows/soak-windows.yml
+      - crates/puddle-app/e2e/soak-windows.mjs
+      - crates/puddle-app/e2e/collect-windows-events.ps1
+      - crates/puddle-app/e2e/desktop.ps1
+      - crates/puddle-e2e/src/soak/**
+      - crates/puddle-e2e/src/bin/puddle-soak.rs
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: soak-windows-${{ github.event_name == 'schedule' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+jobs:
+  day:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"plant":"","name":"soak windows (12 minute day)"},{"plant":"lose-a-workspace","name":"soak windows (planted, a workspace lost over the tray quit)"},{"plant":"keep-the-editor-open","name":"soak windows (planted, an editor window left open)"}]' || '[{"plant":"","name":"soak windows (the day)"}]') }}
+    runs-on: windows-2025
+    timeout-minutes: 355
+    env:
+      HOUR_SECS: ${{ inputs.hour_secs || (github.event_name == 'pull_request' && '60') || '1500' }}
+      WINSOAK_PLANT: ${{ matrix.plant }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: whp
+        uses: ./.github/actions/whp-preflight
+        with:
+          title: soak windows
+          fail-events: pull_request
+      - name: the MSI (the one given, else the newest green msi run on develop)
+        id: msi
+        if: steps.whp.outputs.ok == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GIVEN: ${{ inputs.msi_run_id }}
+        run: |
+          id=${GIVEN:-$(gh run list -R "$GITHUB_REPOSITORY" --workflow msi.yml --branch develop --status success --limit 1 --json databaseId --jq '.[0].databaseId')}
+          [ -n "$id" ] || { echo "::error::no green msi run on develop to take the MSI from; pass msi_run_id"; exit 1; }
+          echo "run=$id" >> "$GITHUB_OUTPUT"
+      - name: download the MSI
+        if: steps.whp.outputs.ok == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: puddle-msi
+          path: ${{ runner.temp }}/msi
+          run-id: ${{ steps.msi.outputs.run }}
+          github-token: ${{ github.token }}
+      - name: Node (the driver)
+        if: steps.whp.outputs.ok == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Toolchain (from rust-toolchain.toml)
+        if: steps.whp.outputs.ok == 'true'
+        shell: bash
+        run: rustup toolchain install && rustc --version
+      - name: puddle-soak
+        if: steps.whp.outputs.ok == 'true'
+        shell: bash
+        run: cargo build --locked -p puddle-e2e --bin puddle-soak
+      - name: install the MSI per user
+        if: steps.whp.outputs.ok == 'true'
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem "$env:RUNNER_TEMP\msi" -Filter *.msi | Select-Object -First 1
+          $out = Join-Path $env:RUNNER_TEMP 'soak-windows-out'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          "WINSOAK_OUT=$out" >> $env:GITHUB_ENV
+          "WINSOAK_SOAK=$((Resolve-Path 'target\debug\puddle-soak.exe').Path)" >> $env:GITHUB_ENV
+          $log = Join-Path $out 'msiexec.log'
+          $p = Start-Process msiexec.exe -ArgumentList @('/i', "`"$($msi.FullName)`"", '/qn', '/norestart', '/l*v', "`"$log`"") -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec exited with $($p.ExitCode); see $log" }
+      - name: the collector sees a planted crash event (and a clean run has none)
+        if: ${{ steps.whp.outputs.ok == 'true' && github.event_name == 'pull_request' && matrix.plant == '' }}
+        shell: pwsh
+        run: |
+          $since = (Get-Date).ToUniversalTime().ToString('o')
+          $file = Join-Path $env:WINSOAK_OUT 'planted-events.txt'
+          powershell -NoProfile -ExecutionPolicy Bypass -File crates/puddle-app/e2e/collect-windows-events.ps1 -Since $since -Out $file
+          if ($LASTEXITCODE -ne 0) { throw 'the collector failed on a log with no Puddle crash' }
+          powershell -NoProfile -ExecutionPolicy Bypass -File crates/puddle-app/e2e/collect-windows-events.ps1 -Since $since -Out $file -Plant
+          if ($LASTEXITCODE -ne 1) { throw "the collector did not fail on a planted puddle-app.exe crash (exit $LASTEXITCODE)" }
+          if (-not (Select-String -Path $file -Pattern 'puddle-app.exe' -Quiet)) { throw 'the planted crash is not in the collected events' }
+          # The -Plant run exits 1 by design; the step must not end with that code.
+          $global:LASTEXITCODE = 0
+      - name: the day (${{ env.HOUR_SECS }} s a playbook hour)
+        if: steps.whp.outputs.ok == 'true'
+        shell: bash
+        env:
+          WINSOAK_HOUR_SECS: ${{ env.HOUR_SECS }}
+        run: node crates/puddle-app/e2e/soak-windows.mjs
+      - name: stop what the run left, collect the logs
+        if: ${{ always() && steps.whp.outputs.ok == 'true' }}
+        shell: pwsh
+        run: |
+          Get-Process -Name 'puddle-app','puddle','msb','puddle-soak' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          if (-not $env:WINSOAK_OUT) { exit 0 }
+          $logs = Join-Path $env:WINSOAK_OUT 'runtime-logs'
+          New-Item -ItemType Directory -Force -Path $logs | Out-Null
+          Get-ChildItem "$env:LOCALAPPDATA\puddle" -Recurse -Filter *.log -ErrorAction SilentlyContinue |
+            Where-Object { $_.Length -lt 5MB } | Select-Object -First 60 |
+            ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $logs ($_.FullName.Substring($env:LOCALAPPDATA.Length).TrimStart('\') -replace '[\\/:]', '_')) }
+      - name: upload the run folder
+        if: ${{ always() && steps.whp.outputs.ok == 'true' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: soak-windows-${{ matrix.plant || 'day' }}
+          path: |
+            ${{ runner.temp }}/soak-windows-out/*.tsv
+            ${{ runner.temp }}/soak-windows-out/*.txt
+            ${{ runner.temp }}/soak-windows-out/*.log
+            ${{ runner.temp }}/soak-windows-out/runtime-logs/*
+          retention-days: 30
+          if-no-files-found: ignore

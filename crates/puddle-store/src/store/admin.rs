@@ -245,7 +245,7 @@ impl Store {
                     |r| r.get(0),
                 )
                 .optional()?
-                .unwrap_or(UserId::OWNER.get());
+                .unwrap_or_else(|| UserId::OWNER.get());
             let user = [target.get()];
             for sql in [
                 "DELETE FROM env_stand_ins WHERE env_id IN (SELECT id FROM env_vars WHERE user_id = ?1)",

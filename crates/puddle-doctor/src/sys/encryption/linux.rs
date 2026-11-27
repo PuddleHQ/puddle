@@ -10,6 +10,7 @@
 
 use std::path::{Path, PathBuf};
 
+use super::ProbeError;
 use crate::facts::{DataEncryption, DiskEncryptionFacts, Protection, SwapArea, SwapFacts};
 
 /// How many layers of devices are followed.
@@ -18,8 +19,14 @@ const MAX_DEPTH: usize = 8;
 pub(crate) fn disk_encryption(dir: Option<&Path>) -> DiskEncryptionFacts {
     let mounts = std::fs::read_to_string("/proc/self/mountinfo")
         .map(|t| parse_mounts(&t))
-        .map_err(|e| format!("/proc/self/mountinfo: {e}"));
-    let swaps = std::fs::read_to_string("/proc/swaps").map_err(|e| format!("/proc/swaps: {e}"));
+        .map_err(|e| ProbeError::Unreadable {
+            path: "/proc/self/mountinfo",
+            cause: e.to_string(),
+        });
+    let swaps = std::fs::read_to_string("/proc/swaps").map_err(|e| ProbeError::Unreadable {
+        path: "/proc/swaps",
+        cause: e.to_string(),
+    });
     let wsl = is_wsl(&std::fs::read_to_string("/proc/version").unwrap_or_default());
     facts_from(Path::new("/sys"), dir, &mounts, &swaps, wsl)
 }
@@ -27,8 +34,8 @@ pub(crate) fn disk_encryption(dir: Option<&Path>) -> DiskEncryptionFacts {
 fn facts_from(
     sys: &Path,
     dir: Option<&Path>,
-    mounts: &Result<Vec<Mount>, String>,
-    swaps: &Result<String, String>,
+    mounts: &Result<Vec<Mount>, ProbeError>,
+    swaps: &Result<String, ProbeError>,
     wsl: bool,
 ) -> DiskEncryptionFacts {
     let mut facts = DiskEncryptionFacts {
@@ -38,13 +45,17 @@ fn facts_from(
                 dir: dir.to_path_buf(),
                 protection: match mounts {
                     Ok(mounts) => path_protection(sys, mounts, &nearest_existing(dir)),
-                    Err(why) => Protection::Unknown { why: why.clone() },
+                    Err(why) => Protection::Unknown {
+                        why: why.to_string(),
+                    },
                 },
             },
         },
         swap: match (swaps, mounts) {
             (Ok(swaps), Ok(mounts)) => swap_facts(sys, mounts, swaps),
-            (Err(why), _) | (_, Err(why)) => SwapFacts::Unreadable { why: why.clone() },
+            (Err(why), _) | (_, Err(why)) => SwapFacts::Unreadable {
+                why: why.to_string(),
+            },
         },
     };
     if wsl {

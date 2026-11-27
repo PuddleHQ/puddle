@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanCheck, dirtyCheck } from "#lib/testing/fake-workspaces.ts";
 import DeleteWorkspaceDialog from "./DeleteWorkspaceDialog.svelte";
@@ -82,6 +88,60 @@ describe("what the dialog says about the disk", () => {
     expect(button).toBeEnabled();
     await fireEvent.click(button);
     expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("lists each changed repository of four by its directory with its own unpushed commits", async () => {
+    const none = { items: [], more: 0 };
+    const repo = (dir: string, over: Record<string, unknown> = {}) => ({
+      dir,
+      clean: true,
+      uncommitted: none,
+      unpushed: none,
+      stashes: none,
+      ...over,
+    });
+    open({
+      check: cleanCheck("mono", {
+        clean: false,
+        fingerprint: "fp-four",
+        repos: [
+          repo("mono-api"),
+          repo("mono-web", {
+            clean: false,
+            unpushed: { items: ["a1 One", "b2 Two"], more: 3 },
+          }),
+          repo("mono-shared", {
+            clean: false,
+            uncommitted: { items: ["?? notes.md"], more: 0 },
+          }),
+          repo("mono-assets", {
+            clean: false,
+            unpushed: { items: ["c3 Logo"], more: 0 },
+          }),
+        ],
+      }),
+    });
+    const dialog = await screen.findByRole("alertdialog");
+    const unpushed = within(dialog)
+      .getAllByText("Commits that are on no remote branch")
+      .map((b) => b.closest("li")!);
+    expect(unpushed).toHaveLength(2);
+    expect(unpushed[0]).toHaveTextContent("in mono-web");
+    expect(unpushed[0]).toHaveTextContent("a1 One");
+    expect(unpushed[0]).toHaveTextContent("b2 Two");
+    expect(unpushed[0]).toHaveTextContent("and 3 more");
+    expect(unpushed[1]).toHaveTextContent("in mono-assets");
+    expect(unpushed[1]).toHaveTextContent("c3 Logo");
+    expect(unpushed[1]).not.toHaveTextContent("more");
+    const uncommitted = within(dialog)
+      .getByText("Uncommitted changes")
+      .closest("li")!;
+    expect(uncommitted).toHaveTextContent("in mono-shared");
+    expect(uncommitted).toHaveTextContent("?? notes.md");
+    expect(dialog).not.toHaveTextContent("mono-api");
+    expect(dialog).toHaveTextContent(
+      "The unsaved work check ignores git-ignored files.",
+    );
   });
 
   it("says the check ignores git-ignored files, for a dirty and a clean report", async () => {

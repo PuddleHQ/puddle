@@ -10,8 +10,8 @@ use std::collections::{BTreeSet, HashMap};
 use serde::Deserialize;
 
 use crate::error::{SourceError, Tool};
-use crate::name::{AccountName, HostName, OrgName};
 use crate::run::{TOOL_TIMEOUT, ToolPaths, run_capturing};
+use puddle_types::{AccountName, HostName, OrgName};
 
 /// The listing commands Puddle may run. A closed list: `az account list` joins it with the `az` source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -153,7 +153,7 @@ fn parse_gh(text: &str) -> Vec<DiscoveredAccount> {
 
 /// One account name per line; a line that is not a plain name is dropped.
 fn parse_gcm_github(text: &str) -> Vec<DiscoveredAccount> {
-    let host = crate::host_name!("github.com");
+    let host = puddle_types::host_name!("github.com");
     text.lines()
         .filter_map(|line| AccountName::new(line.trim()).ok())
         .map(|account| DiscoveredAccount {
@@ -168,7 +168,7 @@ fn parse_gcm_github(text: &str) -> Vec<DiscoveredAccount> {
 
 /// `org:` at the start of a line, then `  (global) -> user` or `  (local)  -> user` below it.
 fn parse_gcm_azure(text: &str) -> Vec<DiscoveredAccount> {
-    let host = crate::host_name!("dev.azure.com");
+    let host = puddle_types::host_name!("dev.azure.com");
     let mut out = Vec::new();
     let mut org: Option<OrgName> = None;
     for line in text.lines() {

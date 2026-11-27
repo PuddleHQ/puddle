@@ -96,6 +96,73 @@ fn a_damaged_database_is_refused() {
     );
 }
 
+/// A database at schema 20, as an older Puddle left it.
+fn old_puddle(path: &Path) {
+    let mut conn = Connection::open(path).unwrap();
+    schema::migrate_up_to(&mut conn, 20).unwrap();
+}
+
+#[test]
+fn a_staged_file_with_rules_as_a_view_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    old_puddle(&path);
+    sql(
+        &path,
+        "PRAGMA foreign_keys = OFF; DROP TABLE rules; \
+         CREATE VIEW rules AS SELECT 1 AS id;",
+    );
+    let refusal = check_staged_database(&path).unwrap().unwrap_err();
+    assert!(
+        matches!(refusal, DatabaseRefusal::NotPuddle(_)),
+        "{refusal}"
+    );
+}
+
+#[test]
+fn a_staged_file_with_a_view_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    old_puddle(&path);
+    sql(&path, "CREATE VIEW extra AS SELECT 1 AS id;");
+    let refusal = check_staged_database(&path).unwrap().unwrap_err();
+    assert!(
+        matches!(refusal, DatabaseRefusal::NotPuddle(_)),
+        "{refusal}"
+    );
+}
+
+#[test]
+fn a_staged_file_with_a_trigger_puddle_never_made_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    old_puddle(&path);
+    sql(
+        &path,
+        "CREATE TRIGGER sneaky AFTER INSERT ON rules BEGIN SELECT 1; END;",
+    );
+    let refusal = check_staged_database(&path).unwrap().unwrap_err();
+    assert!(
+        matches!(refusal, DatabaseRefusal::NotPuddle(_)),
+        "{refusal}"
+    );
+}
+
+#[test]
+fn a_foreign_database_with_a_puddle_sized_version_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    sql(
+        &path,
+        "CREATE TABLE other (x INTEGER); PRAGMA user_version = 5;",
+    );
+    let refusal = check_staged_database(&path).unwrap().unwrap_err();
+    assert!(
+        matches!(refusal, DatabaseRefusal::NotPuddle(_)),
+        "{refusal}"
+    );
+}
+
 #[test]
 fn an_older_schema_is_accepted_and_migrated_forward() {
     let dir = tempfile::tempdir().unwrap();
@@ -685,7 +752,7 @@ fn the_audit_log_rows_get_new_ids_in_the_order_of_the_backup() {
 #[test]
 fn the_preview_lists_the_pasted_tokens_of_the_backups_identities_and_no_other_source() {
     use crate::identity::{Coverage, CredentialBinding};
-    use puddle_secrets::{HostName, SourceSpec, StoredId, TokenScope};
+    use puddle_types::{HostName, SourceSpec, StoredId, TokenScope};
     let host = HostName::new("github.com").unwrap();
     let rest = Coverage::new(std::collections::BTreeSet::new(), true).unwrap();
     let pasted = CredentialBinding::new(
@@ -704,7 +771,7 @@ fn the_preview_lists_the_pasted_tokens_of_the_backups_identities_and_no_other_so
         &host,
         SourceSpec::Gh {
             host: host.clone(),
-            account: puddle_secrets::AccountName::new("octo").unwrap(),
+            account: puddle_types::AccountName::new("octo").unwrap(),
         },
         rest,
     )
@@ -723,7 +790,7 @@ fn the_preview_lists_the_pasted_tokens_of_the_backups_identities_and_no_other_so
     sql(
         &there,
         &[
-            insert("work", &[gh.clone(), pasted.clone()]),
+            insert("work", &[gh.clone(), pasted]),
             insert("plain", &[gh]),
             // Not the shape this build writes: no token is claimed, and nothing fails.
             "INSERT INTO identities (user_id, label, author_name, author_email, credentials, position, is_default, created_at, changed_at) \
@@ -741,4 +808,69 @@ fn the_preview_lists_the_pasted_tokens_of_the_backups_identities_and_no_other_so
             secret_id: "tok-1".into()
         }]
     );
+}
+
+#[test]
+fn a_backup_user_named_like_the_owner_never_becomes_the_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    let here = dir.path().join("here.db");
+    let there = dir.path().join("there.db");
+    open(&here);
+    open(&there);
+    sql(
+        &here,
+        &format!(
+            "UPDATE users SET name = 'Tijs' WHERE role = 'owner'; {}",
+            rule("mine.example.org", "allow", 5)
+        ),
+    );
+    sql(
+        &there,
+        "INSERT INTO users (id, role, name, created_at) VALUES (2, 'user', 'tijs', 1);
+         INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by, user_id, precedence) \
+         VALUES ('global', 'exact', 'theirs.example.org', 'allow', 1, 'cli', 2, 5);
+         INSERT INTO env_vars (workspace_id, name, kind, value, hosts, changed_at, user_id) \
+         VALUES (NULL, 'THEIRS', 'plain', 'v', NULL, 1, 2);",
+    );
+    let preview = preview_merge(&here, &there).unwrap();
+    assert_eq!(preview.users.add, 1, "{preview:?}");
+    assert_eq!(preview.rules.add, 1, "{preview:?}");
+    assert_eq!(preview.environment.add, 1, "{preview:?}");
+
+    let dest = dir.path().join("new.db");
+    let outcome = restore_database(&here, &there, &dest, RestoreMode::Add).unwrap();
+    // The owner keeps exactly what it had; the backup user is a new user with its own rows.
+    assert_eq!(
+        count(&dest, "SELECT count(*) FROM rules WHERE user_id = 1"),
+        1
+    );
+    assert_eq!(
+        count(&dest, "SELECT count(*) FROM env_vars WHERE user_id = 1"),
+        0
+    );
+    assert_eq!(
+        count(
+            &dest,
+            "SELECT count(*) FROM rules r JOIN users u ON u.id = r.user_id \
+             WHERE u.role = 'user' AND r.pattern = 'theirs.example.org'"
+        ),
+        1
+    );
+    assert_eq!(count(&dest, "SELECT count(*) FROM users"), 2);
+    assert_eq!(
+        count(
+            &dest,
+            "SELECT count(*) FROM users WHERE role = 'owner' AND name = 'Tijs'"
+        ),
+        1
+    );
+    assert_eq!(outcome.user_map, vec![(1, 1), (2, 2)]);
+    // Preview equals apply: a second restore of the same backup adds nothing.
+    let again = dir.path().join("again.db");
+    restore_database(&dest, &there, &again, RestoreMode::Add).unwrap();
+    assert_eq!(count(&again, "SELECT count(*) FROM users"), 2);
+    assert_eq!(count(&again, "SELECT count(*) FROM rules"), 2);
+    let second = preview_merge(&dest, &there).unwrap();
+    assert_eq!(second.users.add, 0, "{second:?}");
+    assert_eq!(second.rules.add, 0, "{second:?}");
 }

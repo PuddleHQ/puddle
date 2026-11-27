@@ -65,6 +65,7 @@ export class FakeFirstRun {
   state: FirstRun = {
     completed: false,
     completed_at: null,
+    step: null,
     dev_certificate: "not_checked",
   };
   report: DoctorReport = healthyReport();
@@ -119,12 +120,21 @@ export class FakeFirstRun {
         response: response(409),
       };
     }
-    const completed = (init.body as { completed: boolean }).completed;
-    this.state = {
-      ...this.state,
-      completed,
-      completed_at: completed ? 1_700_000_000_000 : null,
+    const body = init.body as {
+      completed?: boolean;
+      step?: FirstRun["step"];
     };
+    if (body.completed !== undefined) {
+      this.state = {
+        ...this.state,
+        completed: body.completed,
+        completed_at: body.completed ? 1_700_000_000_000 : null,
+        step: null,
+      };
+    }
+    if (body.step && !this.state.completed) {
+      this.state = { ...this.state, step: body.step };
+    }
     return { data: this.state, response: response(200) };
   };
 

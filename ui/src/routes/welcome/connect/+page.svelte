@@ -15,6 +15,7 @@
   import { around } from "#lib/welcome/steps.ts";
   import {
     DIRECT_SSH_HINT,
+    DIRECT_SSH_DEFAULT_LABEL,
     DIRECT_SSH_LABEL,
     TRUST_WORDS_GLOBAL,
   } from "#lib/workspaces/direct-ssh.ts";
@@ -110,7 +111,7 @@
       />
       <span>
         <b>Built-in VS Code server</b>
-        <span class="chip">default</span>
+        <span class="meta">default</span>
         <span class="desc">{CODE_SERVER_NOTE}</span>
       </span>
     </label>
@@ -124,15 +125,15 @@
       />
       <span>
         <b>Microsoft's VS Code server (downloaded)</b>
-        <span class="desc"
-          >{MICROSOFT_NOTE} You accept Microsoft's licence terms.</span
-        >
+        <span class="desc">
+          {MICROSOFT_NOTE} You accept Microsoft's licence terms.
+        </span>
       </span>
     </label>
   </fieldset>
 
   <fieldset class="card">
-    <legend>Desktop VS Code</legend>
+    <legend>Direct SSH attach</legend>
     <label class="choice">
       <input
         type="checkbox"
@@ -154,8 +155,11 @@
         }}
       />
       <span>
-        <b>{DIRECT_SSH_LABEL} for new workspaces</b>
-        <span class="desc">{DIRECT_SSH_HINT} Off by default.</span>
+        <b>{DIRECT_SSH_DEFAULT_LABEL}</b>
+        <span class="desc">
+          {DIRECT_SSH_HINT} Off by default; each workspace can set its own switch
+          later.
+        </span>
       </span>
     </label>
   </fieldset>
@@ -223,13 +227,6 @@
     cursor: pointer;
   }
 
-  .chip {
-    padding: 0 var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-pill);
-    font-size: var(--text-sm);
-    color: var(--color-text-muted);
-  }
   .actions {
     display: flex;
     justify-content: flex-end;

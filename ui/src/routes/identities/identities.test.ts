@@ -77,58 +77,82 @@ afterEach(cleanup);
 
 const rows = () =>
   screen
-    .getAllByRole("listitem")
-    .filter((li) => li.hasAttribute("data-identity-id"));
+    .getAllByRole("row")
+    .filter((tr) => tr.hasAttribute("data-identity-id"));
 const row = (label: string) =>
-  rows().find((r) => within(r).queryByRole("heading", { name: label }))!;
+  rows().find((r) => within(r).queryByRole("link", { name: label }))!;
 const lastToast = () => toasts.items.at(-1)?.message;
 
-describe("the default for new workspaces", () => {
-  const push = () =>
-    screen.getByRole("switch", { name: "Only push to listed repos" });
-  const pull = () =>
-    screen.getByRole("switch", { name: "Only pull from listed repos" });
-
-  it("shows the two switches as they are, even with no identity", async () => {
-    api.identities = [];
+describe("the page order", () => {
+  it("lists identities before anything else and points to the Git settings", async () => {
     render(Page);
+    await screen.findByText("Work");
+    expect(screen.queryByRole("switch")).toBeNull();
     expect(
-      await screen.findByRole("heading", {
-        name: "Default for new workspaces",
+      screen.getByRole("columnheader", {
+        name: "Order (first match is the commit author)",
       }),
     ).toBeInTheDocument();
-    await waitFor(() => expect(push()).toBeChecked());
-    expect(pull()).not.toBeChecked();
-    expect(
-      screen.getByText(/Off: a fetch may go to any repository/),
-    ).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Settings, Git" })).toHaveAttribute(
+      "href",
+      "/settings/git",
+    );
   });
 
-  it("changes one switch through the service and keeps the other", async () => {
+  it("offers no Test all with nothing to test", async () => {
+    api.identities = [];
     render(Page);
-    await waitFor(() => expect(pull()).toBeInTheDocument());
-    await fireEvent.click(pull());
-    await waitFor(() => expect(pull()).toBeChecked());
-    expect(push()).toBeChecked();
-    expect(api.bodies.at(-1)).toEqual({ only_pull_listed: true });
-    expect(
-      screen.getByText(/only from a repository whose Pull box is ticked/),
-    ).toBeTruthy();
-    await fireEvent.click(push());
-    await waitFor(() => expect(push()).not.toBeChecked());
-    expect(api.gitDefaults).toEqual({
-      only_push_listed: false,
-      only_pull_listed: true,
-    });
+    await screen.findByText("No identities yet");
+    expect(screen.queryByRole("button", { name: "Test all" })).toBeNull();
   });
 
-  it("puts a refused change back and says so", async () => {
+  it("moves an identity to where another sits when it is dropped there", async () => {
     render(Page);
-    await waitFor(() => expect(push()).toBeInTheDocument());
-    api.refuse = { status: 422, message: "nope" };
-    await fireEvent.click(push());
-    await waitFor(() => expect(lastToast()).toBe("Nope."));
-    expect(push()).toBeChecked();
+    await screen.findByText("Work");
+    const dragged = row("Commits only");
+    await fireEvent.dragStart(dragged);
+    await fireEvent.drop(row("Work"));
+    await waitFor(() =>
+      expect(rows().map((r) => r.getAttribute("data-identity-id"))).toEqual([
+        "3",
+        "1",
+        "2",
+      ]),
+    );
+  });
+});
+
+describe("dragging an identity", () => {
+  const order = () => rows().map((r) => r.getAttribute("data-identity-id"));
+
+  it("leaves the order alone when it is dropped on itself or nothing was dragged", async () => {
+    render(Page);
+    await screen.findByText("Work");
+    await fireEvent.drop(row("Work"));
+    await fireEvent.dragStart(row("Work"));
+    await fireEvent.dragOver(row("Personal"));
+    await fireEvent.drop(row("Work"));
+    expect(order()).toEqual(["1", "2", "3"]);
+  });
+
+  it("ends a drag without a drop and ignores a hover when nothing is dragged", async () => {
+    render(Page);
+    await screen.findByText("Work");
+    await fireEvent.dragOver(row("Personal"));
+    await fireEvent.dragStart(row("Commits only"));
+    await fireEvent.dragEnd(row("Commits only"));
+    await fireEvent.drop(row("Work"));
+    expect(order()).toEqual(["1", "2", "3"]);
+  });
+
+  it("says so when the new order is refused", async () => {
+    render(Page);
+    await screen.findByText("Work");
+    api.down = true;
+    await fireEvent.dragStart(row("Commits only"));
+    await fireEvent.drop(row("Work"));
+    await waitFor(() => expect(order()).toEqual(["1", "2", "3"]));
+    await waitFor(() => expect(lastToast()).toBeTruthy());
   });
 });
 
@@ -139,15 +163,17 @@ describe("the identities list", () => {
       await screen.findByRole("heading", { level: 1, name: "Identities" }),
     ).toBeInTheDocument();
     await screen.findByText("Commits only");
-    expect(
-      rows().map((r) => within(r).getByRole("heading").textContent),
-    ).toEqual(["Work", "Personal", "Commits only"]);
+    expect(rows().map((r) => within(r).getByRole("link").textContent)).toEqual([
+      "Work",
+      "Personal",
+      "Commits only",
+    ]);
     const work = within(row("Work"));
     expect(work.getByText("Default")).toBeInTheDocument();
     expect(work.getByText("Name 1 <id1@example.com>")).toBeInTheDocument();
     expect(
-      work.getByText("gh · tijs-work · github.com: acme"),
-    ).toBeInTheDocument();
+      work.getByRole("list", { name: "Credentials of Work" }),
+    ).toHaveTextContent(/github\.com: acme\s+\(gh · tijs-work\)/);
     expect(work.getByText("Used by 2 workspaces")).toBeInTheDocument();
     expect(work.getByText("Not tested")).toBeInTheDocument();
     expect(within(row("Personal")).queryByText("Default")).toBeNull();
@@ -238,7 +264,7 @@ describe("the identities list", () => {
     await fireEvent.click(down);
     await waitFor(() =>
       expect(
-        rows().map((r) => within(r).getByRole("heading").textContent),
+        rows().map((r) => within(r).getByRole("link").textContent),
       ).toEqual(["Personal", "Work", "Commits only"]),
     );
     const last = within(row("Work")).getByRole("button", {
@@ -413,12 +439,5 @@ describe("the identities list", () => {
     expect(
       within(row("Fresh")).getByText("No credentials: commits only."),
     ).toBeInTheDocument();
-  });
-
-  it("disables Test all with nothing to test", async () => {
-    api.identities = [];
-    render(Page);
-    await screen.findByText("No identities yet");
-    expect(screen.getByRole("button", { name: "Test all" })).toBeDisabled();
   });
 });

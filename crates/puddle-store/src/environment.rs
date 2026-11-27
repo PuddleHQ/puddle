@@ -9,12 +9,16 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
-use puddle_secrets::StoredId;
+use puddle_types::StoredId;
 use puddle_types::{QueryName, WorkspaceId};
 use serde::{Deserialize, Serialize};
 
 use crate::error::StoreError;
 use crate::pattern::Pattern;
+
+/// Why the caller's stand-in minting failed; the store wraps its message once, into
+/// [`StoreError::EnvInvalid`].
+pub type MintError = Box<dyn std::error::Error + Send + Sync>;
 
 /// The longest variable name.
 pub const MAX_NAME_LEN: usize = 64;

@@ -7,7 +7,7 @@
 //! its token and blob hosts) was reached through the proxy. A fresh msb home makes sure nothing
 //! comes from an earlier test's cache. The interception half (an untrusted root refused, a given
 //! root trusted) is the I test `puddle-e2e/tests/image_pull_proxy.rs`.
-mod support;
+use puddle_compute_msb_test_support as support;
 
 use std::collections::BTreeSet;
 use std::io;

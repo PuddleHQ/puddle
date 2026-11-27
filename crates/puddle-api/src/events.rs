@@ -4,15 +4,15 @@
 
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use axum::response::sse;
 use futures_util::{Stream, StreamExt};
 use puddle_store::{Role, Store, UserId};
 use puddle_types::{Event, EventSink, WorkspaceId};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, watch};
+use tokio::sync::{broadcast, mpsc, watch};
 use utoipa::ToSchema;
 
 use crate::authz::Principal;
@@ -28,6 +28,15 @@ pub struct EventHub {
     tx: broadcast::Sender<Event>,
     /// Receivers the server itself holds, which are not streams.
     taps: Arc<AtomicUsize>,
+    /// The server's own lossless feeds ([`EventHub::follow`]), each with the events it wants.
+    followers: Mutex<Vec<Follower>>,
+}
+
+/// One feed of [`EventHub::follow`].
+#[derive(Debug)]
+struct Follower {
+    wanted: fn(&Event) -> bool,
+    tx: mpsc::UnboundedSender<Event>,
 }
 
 /// Keeps a tap from being counted as a stream while it lives.
@@ -47,6 +56,7 @@ impl EventHub {
         Self {
             tx,
             taps: Arc::new(AtomicUsize::new(0)),
+            followers: Mutex::new(Vec::new()),
         }
     }
 
@@ -71,6 +81,21 @@ impl EventHub {
     pub fn subscribe(&self) -> broadcast::Receiver<Event> {
         self.tx.subscribe()
     }
+
+    /// Every event `wanted` picks, from now on, none ever dropped: for the server's own work
+    /// that must see each change (a stream only needs to know that it missed some, and refetches).
+    /// The feed holds what its reader has not taken yet, so `wanted` should pick few kinds and the
+    /// reader take them as they come. It is not a stream and does not count in
+    /// [`EventHub::subscribers`]; dropping the receiver ends it.
+    #[must_use]
+    pub fn follow(&self, wanted: fn(&Event) -> bool) -> mpsc::UnboundedReceiver<Event> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.followers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(Follower { wanted, tx });
+        rx
+    }
 }
 
 impl Default for EventHub {
@@ -81,6 +106,11 @@ impl Default for EventHub {
 
 impl EventSink for EventHub {
     fn emit(&self, event: Event) {
+        // A follower whose receiver is gone is forgotten.
+        self.followers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|f| !(f.wanted)(&event) || f.tx.send(event.clone()).is_ok());
         // `send` fails only when nobody subscribes; then there is nobody to tell.
         let _ = self.tx.send(event);
     }
@@ -153,7 +183,7 @@ impl Audience {
             let id = workspace.clone();
             // A workspace with no recorded user is nobody's: its events reach no one (and are not
             // remembered, as a user is recorded before anything about a workspace is announced).
-            match crate::error::blocking(move || Ok(store.workspace_owner(&id)?)).await {
+            match puddle_services::error::blocking(move || Ok(store.workspace_owner(&id)?)).await {
                 Ok(Some(user)) => *self.known.entry(workspace.clone()).or_insert(user),
                 Ok(None) | Err(_) => return false,
             }

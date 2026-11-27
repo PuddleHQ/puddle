@@ -64,6 +64,8 @@ exclude_re = [
     "git_path\\.rs:\\d+:\\d+: replace \\| with \\^ in decode_segment",
     # The default body of `Policy::lookup` is `Ok(None)`, so replacing it with `Ok(None)` is the same code.
     'replace Policy::lookup -> Result<Option<Decision>, PolicyError> with Ok\(None\)',
+    # The default body of `Policy::workspace_name` is `None`, so replacing it with `None` is the same code.
+    'replace Policy::workspace_name -> Option<String> with None',
     # `keyword` returns `Some("")` for a blank line and `Some("#...")` for a comment when `||` becomes
     # `&&`; both callers only ask whether the word is `include`, `host` or `match`, which neither is.
     'sshconfig\.rs:\d+:\d+: replace \|\| with && in keyword',
@@ -142,9 +144,6 @@ exclude_re = [
     # `escape_at` joins `high << 4 | low` with `low` below 16: the shifted value has its low
     # four bits clear, so `^` gives the same byte for every input.
     'percent\.rs:\d+:\d+: replace \| with \^ in escape_at',
-    # `PassThrough` entries expire when their age passes the ttl: `<` against `<=` differs only for
-    # an age equal to the ttl to the nanosecond, which no clock reading can produce on purpose.
-    'intercept\.rs:\d+:\d+: replace < with <= in PassThrough::(learn|contains|forget|clear)',
     # `records_answer` truncates to `MAX_RECORDS`: with exactly `MAX_RECORDS` records `truncate` is a
     # no-op, so `>` and `>=` give the same answer.
     'resolve\.rs:\d+:\d+: replace > with >= in records_answer',
@@ -171,10 +170,7 @@ exclude_re = [
     # way (to at least double, at least the needed size), so only the overwrite of the freed
     # buffer, which no safe code can read, differs.
     'wiped\.rs:\d+:\d+: replace (\+ with \*|> with ==) in Wiped::extend_from_slice',
-    # `PassThrough::set_limits` keeps a host while its age is under the time; `<=` differs only for an
-    # age equal to the time to the nanosecond, which a clock that moves cannot be made to show.
-    'intercept\.rs:\d+:\d+: replace < with <= in PassThrough::set_limits',
-    # In the same function, `excess > 0` guards a `take(excess)`: with `>=` a zero excess takes none.
+    # `PassThrough::set_limits`: `excess > 0` guards a `take(excess)`; with `>=` a zero excess takes none.
     'intercept\.rs:\d+:\d+: replace > with >= in PassThrough::set_limits',
     # `collect` counts the records it leaves out (`truncated`, `skipped`) only to say so in a log
     # line, and `skipped + truncated > 0` only decides whether the line is written; the answer is the

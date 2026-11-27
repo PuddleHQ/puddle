@@ -4,15 +4,19 @@
   // it. Every page keeps its own short list of settings; each setting saves by itself (see
   // SettingRow), so there is no Save bar here.
   import { onMount, type Snippet } from "svelte";
+  import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import Toast from "#lib/components/Toast.svelte";
   import UnknownFields from "#lib/components/UnknownFields.svelte";
   import { provideSaver } from "#lib/settings/context.ts";
   import {
+    GROUPS,
     PAGES,
-    pageLabel,
+    movedTarget,
+    pageWhere,
     searchSettings,
     settingHref,
+    type GroupId,
   } from "#lib/settings/pages.ts";
   import { SettingsSaver } from "#lib/settings/saver.svelte.ts";
   import { globalSettings as store } from "#lib/stores/global-settings.svelte.ts";
@@ -27,6 +31,14 @@
   const results = $derived(searchSettings(query));
   const searching = $derived(query.trim() !== "");
   const here = $derived(page.url.pathname.replace(/\/$/, ""));
+  const groupIds = Object.keys(GROUPS) as GroupId[];
+  const current = $derived(PAGES.find((p) => p.href === here));
+
+  // An old link to a setting that has moved (`/settings/editor#set-zoom`) follows it.
+  $effect(() => {
+    const target = movedTarget(page.url.pathname, page.url.hash);
+    if (target !== null) void goto(target, { replaceState: true });
+  });
 </script>
 
 <h1 tabindex="-1">Settings</h1>
@@ -64,10 +76,9 @@
             <ul class="results">
               {#each results as hit (hit.id)}
                 <li>
-                  <a href={settingHref(hit)} onclick={() => (query = "")}
-                    >{hit.label}<span class="where">{pageLabel(hit.page)}</span
-                    ></a
-                  >
+                  <a href={settingHref(hit)} onclick={() => (query = "")}>
+                    {hit.label}<span class="where">{pageWhere(hit.page)}</span>
+                  </a>
                 </li>
               {/each}
             </ul>
@@ -75,17 +86,24 @@
         </section>
       {:else}
         <nav aria-label="Settings pages">
-          {#each PAGES as entry (entry.id)}
-            <a
-              href={entry.href}
-              aria-current={here === entry.href ? "page" : undefined}
-              >{entry.label}</a
-            >
+          {#each groupIds as group (group)}
+            <p class="heading">{GROUPS[group].heading}</p>
+            {#each PAGES.filter((p) => p.group === group) as entry (entry.id)}
+              <a
+                href={entry.href}
+                aria-current={here === entry.href ? "page" : undefined}
+              >
+                {entry.label}
+              </a>
+            {/each}
           {/each}
         </nav>
       {/if}
     </div>
     <div class="content">
+      {#if current}
+        <p class="kind">{GROUPS[current.group].note}</p>
+      {/if}
       {@render children()}
     </div>
   </div>
@@ -94,9 +112,6 @@
 <Toast />
 
 <style>
-  h1 {
-    margin: 0;
-  }
   .sub,
   .muted {
     color: var(--color-text-muted);
@@ -143,12 +158,26 @@
     background: var(--color-surface-raised);
     font-weight: 600;
   }
+  .heading {
+    margin: var(--space-2) 0 0;
+    padding: 0 var(--space-2);
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+    font-weight: 600;
+  }
+  .heading:first-child {
+    margin-top: 0;
+  }
+  .kind {
+    margin: 0 0 var(--space-3);
+    color: var(--color-text-muted);
+  }
   .where {
     color: var(--color-text-muted);
     font-size: var(--text-sm);
   }
   .content {
-    max-width: 48rem;
+    max-width: var(--page-reading-width);
   }
   .content :global(:target) {
     outline: 2px solid var(--color-accent);
@@ -164,6 +193,9 @@
     nav {
       display: flex;
       flex-wrap: wrap;
+    }
+    .heading {
+      flex-basis: 100%;
     }
   }
 </style>

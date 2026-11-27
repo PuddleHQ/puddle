@@ -8,15 +8,13 @@ set -eu
 for v in $(git rev-parse --local-env-vars); do unset "$v"; done
 unset CARGO_TARGET_DIR CHECK_TMPDIR
 here=$(cd "$(dirname "$0")" && pwd)
-fail() {
-    echo "rustdoc-gate-test: $*" >&2
-    exit 1
-}
+# shellcheck disable=SC1091 # the helper sits in scripts/
+. "$(dirname "$0")/../scripts/test-fail.sh"
 root=$(mktemp -d /var/tmp/chk-rustdoc.XXXXXX)
 trap 'rm -rf "$root"' EXIT
 repo=$root/repo
 mkdir -p "$repo/scripts" "$repo/crates/fixture/src"
-cp "$here/check.sh" "$here/gate-sched.sh" "$repo/scripts/"
+cp "$here/check.sh" "$here/gate-sched.sh" "$here/check-wire-docs.sh" "$here/diff-base.sh" "$repo/scripts/"
 # the repository's toolchain, so rustup has a version to run outside the repository (a host with no default toolchain)
 cp "$here/../rust-toolchain.toml" "$repo/"
 cat >"$repo/Cargo.toml" <<'T'

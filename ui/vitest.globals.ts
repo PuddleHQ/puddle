@@ -2,6 +2,7 @@
 // Setup for every test file: what the jsdom context lacks.
 import * as perfHooks from "node:perf_hooks";
 import * as webStreams from "node:stream/web";
+import { vi } from "vitest";
 
 // Vitest's vm pools run each test file in a bare jsdom context, which lacks the Node globals the
 // other pools leave in place: the web streams (the event stream reader pipes a response body
@@ -42,3 +43,16 @@ if (typeof globalThis.ResizeObserver === "undefined") {
     disconnect(): void {}
   };
 }
+
+// A host stall freezes every worker at once (the lag probe in vitest.setup.ts printed 34-37 s for
+// all of them in one run), and whichever test is running then outlasts its 5 s clock though it
+// needs 40 ms. The limits stay as they are; a test that timed out gets one more attempt, so a
+// stall that already ended does not fail the run and a test that really hangs still fails twice.
+// Only a timeout retries: a failed assertion fails at once. It is set here and not in the config
+// because a RegExp condition does not survive the config's trip to the workers.
+// `vi.setConfig` copies every key onto the runner's config, `retry` included, but its `RuntimeOptions`
+// type omits it, so the value is typed as the parameter plus the key it really takes.
+const timeoutRetry: Parameters<typeof vi.setConfig>[0] & {
+  retry: { count: number; condition: RegExp };
+} = { retry: { count: 1, condition: /timed out/i } };
+vi.setConfig(timeoutRetry);

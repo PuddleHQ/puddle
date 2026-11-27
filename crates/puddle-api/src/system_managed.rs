@@ -9,9 +9,9 @@ use puddle_types::{Problem, WorkspaceId};
 
 use puddle_settings::resolve;
 
-use crate::error::blocking;
 use crate::routes::AppState;
 use crate::routes::settings::{load_global, load_workspace};
+use puddle_services::error::blocking;
 
 /// What direct SSH gives a workspace: each desktop editor's server download and extension hosts.
 const DIRECT_SSH_REASONS: [SystemReason; 4] = [
@@ -88,6 +88,7 @@ pub(crate) async fn refresh(state: &AppState) {
     let result = blocking(move || {
         let repo = settings.as_ref();
         let global = load_global(repo)?;
+        crate::routes::settings::apply_log_level(&global.settings);
         let mut direct = Vec::new();
         let mut mise = Vec::new();
         for name in names {

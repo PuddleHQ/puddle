@@ -23,8 +23,9 @@
               ? tabHref(id, "settings")
               : tabHref(id, section.slug)}
             aria-current={current === section.slug ? "page" : undefined}
-            >{section.label}</a
           >
+            {section.label}
+          </a>
         </li>
       {/each}
     </ul>

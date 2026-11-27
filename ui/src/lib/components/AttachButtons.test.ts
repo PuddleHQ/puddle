@@ -53,8 +53,9 @@ describe("AttachButtons", () => {
     expect(screen.getByRole("button", { name: "Stop demo" })).toBeDisabled();
   });
 
-  it("disables Start while it is busy", () => {
+  it("offers no Start while the workspace is being created", () => {
     mount({ status: "created", busy: "creating" });
-    expect(screen.getByRole("button", { name: "Start demo" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Start demo" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Connect/ })).toBeNull();
   });
 });

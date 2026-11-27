@@ -284,7 +284,7 @@ fn a_run_too_long_to_be_a_token_is_skipped_across_pieces_without_a_find_in_its_t
 #[test]
 fn the_scanner_keeps_at_most_one_run_between_pieces() {
     let mut scanner = TokenScanner::default();
-    let piece = "word ".repeat(1000) + &"b".repeat(100);
+    let piece = format!("{}{}", "word ".repeat(1000), "b".repeat(100));
     for _ in 0..4 {
         let _ = scanner.feed(piece.as_bytes(), false, &NO_ONE);
         assert!(scanner.carry.len() <= MAX_RUN, "{}", scanner.carry.len());
@@ -441,7 +441,7 @@ fn rig(on: bool) -> Rig {
     let sink = Arc::new(CollectingSink::default());
     let report = Arc::new(AnswerReport::new(
         Arc::new(ForeignCredentialWarning::new(move || on)),
-        Arc::clone(&sink) as Arc<dyn EventSink>,
+        sink.clone(),
         workspace(),
         host(),
     ));

@@ -41,8 +41,10 @@
           <div class="line" data-shortcut={shortcut.id}>
             <dt>
               {#each shortcut.keys as key, i (key)}{#if i > 0}+{/if}<kbd
-                  class="kbd">{key}</kbd
-                >{/each}
+                  class="kbd"
+                >
+                  {key}
+                </kbd>{/each}
             </dt>
             <dd>{shortcut.does}</dd>
           </div>
@@ -54,15 +56,17 @@
           <a
             class="link-block"
             href="/settings/notifications#set-confirm-global"
-            >Turn the single keys off in Settings</a
           >
+            Turn the single keys off in Settings
+          </a>
         {:else}
           The single keys A, D, J and K are off.
           <a
             class="link-block"
             href="/settings/notifications#set-confirm-global"
-            >Turn them on in Settings</a
           >
+            Turn them on in Settings
+          </a>
         {/if}
       </p>
     </Popover.Content>

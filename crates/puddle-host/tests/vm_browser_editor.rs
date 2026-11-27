@@ -21,8 +21,8 @@
     reason = "VM test: a failed step fails the test"
 )]
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
@@ -30,11 +30,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
-use puddle_api::{
-    BrowserTarget, CONNECTION_TOKEN_COOKIE, DesktopTarget, EditorSignIn, LaunchError, Launcher,
-    WorkspaceRecord,
-};
 use puddle_compute_msb::MsbRuntime;
+use puddle_services::{
+    workspaces::BrowserTarget, workspaces::CONNECTION_TOKEN_COOKIE, workspaces::DesktopTarget,
+    workspaces::EditorSignIn, workspaces::LaunchError, workspaces::Launcher,
+    workspaces::WorkspaceRecord,
+};
 use puddle_store::{Actor, Effect, NewRule, Pattern, Scope};
 use puddle_types::WorkspaceId;
 use puddle_vm_tests::{BrowserClient, BrowserCookie, BrowserSession, PageId, PageRequest};
@@ -87,7 +88,7 @@ const WINDOW_STATE: &str = r"(() => {
 /// or comes back empty, the window keeps the file's identity with no folder and says "No Folder
 /// Opened" without an error. The cached copy says which of the two reads gave the folders, and
 /// the failed loads name the addresses the console only counts.
-const WINDOW_STORAGE: &str = r"(async () => {
+const WINDOW_STORAGE: &str = "(async () => {
   const failed = performance.getEntriesByType('resource')
     .filter(e => e.responseStatus >= 400)
     .map(e => `${e.responseStatus} ${e.name}`);
@@ -126,11 +127,11 @@ const WINDOW_STORAGE: &str = r"(async () => {
 const SERVER_STATE: &str = r#"
 ps -eo pid,etimes,args | grep -e '[c]ode-server' | cut -c1-2000
 data=$(ps -eo args= | grep -o -e '--user-data-dir [^ ]*' | head -n 1 | cut -d' ' -f2)
-for f in /workspaces/*/.puddle/editor/*.code-workspace; do [ -f "$f" ] && { echo "== $f"; cat "$f"; echo; stat -c 'inode %i, %s bytes, modified %y, changed %z' "$f"; }; done
-echo "== /workspaces/*/.puddle/editor"; ls -la --time-style=full-iso /workspaces/*/.puddle/editor/
+for f in /workspace/.puddle/editor/*.code-workspace; do [ -f "$f" ] && { echo "== $f"; cat "$f"; echo; stat -c 'inode %i, %s bytes, modified %y, changed %z' "$f"; }; done
+echo "== /workspace/.puddle/editor"; ls -la --time-style=full-iso /workspace/.puddle/editor/
 echo "== boot report"; tail -n 20 /run/puddle/boot.log
 for f in $(find "$data" -path '*CachedConfigurations*' -type f 2>/dev/null); do echo "== $f"; head -c 2000 "$f"; echo; done
-echo "== volume"; ls -a /workspaces/*/
+echo "== volume"; ls -a /workspace/
 for f in $(find "$data/logs" -type f 2>/dev/null | sort | tail -n 12); do echo "== $f"; tail -n 30 "$f"; done
 echo "== agent"; tail -n 30 /run/puddle/agent.log
 true
@@ -176,14 +177,38 @@ async fn explorer(
                 Ok(outcome) => outcome.result.to_string(),
                 Err(e) => format!("(not read: {e})"),
             };
+            let logs = PageRequest::new("", "true")
+                .result(WINDOW_LOGS)
+                .budget(PAGE_BUDGET);
+            let logs = match shell.browser.lock().await.wait(page, &logs).await {
+                Ok(outcome) => outcome.result.to_string(),
+                Err(e) => format!("(not read: {e})"),
+            };
+            tracing::error!(workspace = %sandbox, step, %logs, "the window's own logs");
             // Logged before the guest is asked: a guest that does not answer fails the test in
             // `guest_within`, and the window's state must not be lost with it.
             tracing::error!(workspace = %sandbox, step, error = %e, %window, %storage, "the explorer did not get ready");
+            // One reload of the same window, after the dump: folders on the second load say the
+            // window's first read of the multi-root file lost a race, none say the server's answer
+            // was wrong; either way the next failure names which.
+            let reload = PageRequest::new("", "true")
+                .result("(setTimeout(() => location.reload(), 0), true)")
+                .budget(PAGE_BUDGET);
+            let _ = shell.browser.lock().await.wait(page, &reload).await;
+            let again = PageRequest::new("", EXPLORER_READY)
+                .result("true")
+                .budget(PAGE_BUDGET);
+            let reloaded = shell.browser.lock().await.wait(page, &again).await;
+            tracing::error!(workspace = %sandbox, step, shows_folders_after_reload = reloaded.is_ok(), "the same window reloaded");
             let server = guest_within(runtime, sandbox, SERVER_STATE, PAGE_BUDGET).await;
             panic!("{sandbox}'s explorer did not get ready ({step}); the guest:\n{server}");
         }
     }
 }
+
+/// The ids of the workspaces the editor keeps storage for, and of those it has a cached copy of
+/// the multi-root file for: `storage= <ids> cached= <ids>`.
+const WORKSPACE_IDS: &str = "cd /workspace/.puddle/code-server/user-data/User && echo storage= $(ls workspaceStorage 2>/dev/null | grep -v '[.]') cached= $(ls caches/CachedConfigurations/workspaces 2>/dev/null)";
 
 /// Waits until the editor server answers its health check.
 const EDITOR_UP: &str = "for i in $(seq 1 100); do curl -sf -o /dev/null http://127.0.0.1:41337/healthz && exit 0; sleep 1; done; exit 1";
@@ -223,6 +248,8 @@ struct ShellStandIn {
     opened: Mutex<Vec<String>>,
     /// The uncaught errors every page reported, in order.
     page_errors: Mutex<Vec<String>>,
+    /// Whether the windows opened from now on log at trace level (see [`PAGE_TRACE`]).
+    trace_pages: std::sync::atomic::AtomicBool,
 }
 
 impl ShellStandIn {
@@ -242,6 +269,7 @@ impl ShellStandIn {
             closed: Mutex::default(),
             opened: Mutex::default(),
             page_errors: Mutex::default(),
+            trace_pages: std::sync::atomic::AtomicBool::default(),
         })
     }
 
@@ -450,7 +478,11 @@ impl Launcher for ShellStandIn {
             self.opened.lock().unwrap().push(target.origin.clone());
             // The shell's launcher returns once the window is built and the page loads after; a
             // load waited for here would run into the API's request limit on a slow host.
-            let request = PageRequest::new(start_address(target), "true")
+            let mut address = start_address(target);
+            if self.trace_pages.load(std::sync::atomic::Ordering::Relaxed) {
+                address.push_str(PAGE_TRACE);
+            }
+            let request = PageRequest::new(address, "true")
                 .on_commit()
                 .budget(PAGE_BUDGET);
             let (browser, pages) = (Arc::clone(&self.browser), Arc::clone(&self.pages));
@@ -482,6 +514,45 @@ impl Launcher for ShellStandIn {
         })
     }
 }
+
+/// Appended to a window's address when its log level is raised: the web workbench reads
+/// `logLevel` from the `payload` query (a JSON list of pairs), and keeps its logs, the file
+/// service's reads of the multi-root file among them, in the page's `vscode-logs-store`.
+const PAGE_TRACE: &str = "&payload=%5B%5B%22logLevel%22%2C%22trace%22%5D%5D";
+
+/// The window's own logs from `vscode-logs-store`: every file's name and size, and the lines of
+/// the biggest ones that name a workspace file read, a cancel, an error or the remote file
+/// system, so a window that shows no folders says which read of the multi-root file failed.
+const WINDOW_LOGS: &str = "(async () => {
+  const text = v => typeof v === 'string' ? v : new TextDecoder().decode(v);
+  return await new Promise(done => {
+    const open = indexedDB.open('vscode-web-db');
+    open.onerror = () => done(`(no database: ${open.error})`);
+    open.onsuccess = () => {
+      const db = open.result;
+      const store = 'vscode-logs-store';
+      if (!db.objectStoreNames.contains(store)) { done(`(no ${store})`); return; }
+      const all = db.transaction(store, 'readonly').objectStore(store);
+      const keys = all.getAllKeys();
+      keys.onerror = () => done(`(keys not read: ${keys.error})`);
+      keys.onsuccess = () => {
+        const wanted = keys.result;
+        if (!wanted.length) { done([]); return; }
+        const found = [];
+        const interesting = /code-workspace|readFile|atomic|cancel|error|remoteFilesystem|RemoteFileSystem|workspace/i;
+        for (const key of wanted) {
+          const get = all.get(key);
+          get.onsuccess = get.onerror = () => {
+            const body = get.result === undefined ? '' : text(get.result);
+            const lines = body.split('\\n').filter(l => interesting.test(l)).slice(-60);
+            found.push({ key: String(key), bytes: body.length, lines });
+            if (found.length === wanted.length) done(found);
+          };
+        }
+      };
+    };
+  });
+})()";
 
 /// The address the shell's window opens: the editor's root with the place the host named, as the
 /// shell builds it (`/?workspace=<file>` or `/?folder=<path>`), or the root alone.
@@ -642,7 +713,7 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
         .until(ended(name_static), Duration::from_secs(600))
         .await;
     assert_eq!(end["step"], "done", "{end}");
-    let root = format!("/workspaces/{name}");
+    let root = "/workspace".to_owned();
     guest(
         &runtime,
         &sandbox,
@@ -677,6 +748,36 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
     );
     assert!(answer.get("url").is_none_or(Value::is_null), "{answer}");
     let rows = explorer(&shell, &runtime, &sandbox, "first window", EXPLORER_ROWS).await;
+    // The agent puts the editor's cached copy of the multi-root file in place under the id the
+    // workbench gives the window's workspace, which it mirrors from the workbench's internals.
+    // The window's own storage folder carries the workbench's id: an editor release that keys
+    // its cache another way fails here, not later as windows that open with no folders.
+    let (storage, cached) = puddle_test_kit::eventually_async(
+        "the window's storage folder",
+        Duration::from_secs(90),
+        || async {
+            let line = guest(&runtime, &sandbox, WORKSPACE_IDS).await;
+            let words = |part: &str| -> Vec<String> {
+                part.split_whitespace().map(str::to_owned).collect()
+            };
+            match line
+                .trim()
+                .strip_prefix("storage=")
+                .and_then(|rest| rest.split_once("cached="))
+            {
+                Some((storage, cached)) if !storage.trim().is_empty() => {
+                    Ok((words(storage), words(cached)))
+                }
+                _ => Err(format!("the guest shows {line}")),
+            }
+        },
+    )
+    .await;
+    assert!(
+        storage.iter().all(|id| cached.contains(id)),
+        "the window's workspace ids {storage:?} have no cached copy among {cached:?}: the editor \
+         no longer keys its cache the way the agent mirrors it"
+    );
     let place = shell.wait(&name, "true", WHERE, PAGE_BUDGET).await;
     assert_eq!(place["login"], false, "{place}");
     let password = guest(&runtime, &sandbox, "cat /run/puddle/editor-password").await;
@@ -860,7 +961,7 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
 /// What a window of the editor shows of its colour theme: the workbench's theme class (`vs-dark`
 /// for a dark theme, `vs` for a light one: VS Code's `ColorScheme`) and the scheme the browser
 /// reports as the system's.
-const WINDOW_THEME: &str = r"(() => {
+const WINDOW_THEME: &str = "(() => {
   const classes = [...(document.querySelector('.monaco-workbench')?.classList ?? [])];
   return {
     dark: classes.includes('vs-dark'),
@@ -913,8 +1014,7 @@ async fn vm_browser_code_server_first_open_follows_the_systems_colour_scheme_and
     guest(&runtime, &sandbox, EDITOR_UP).await;
 
     // The file the agent seeded before the server's first start.
-    let settings_file =
-        format!("/workspaces/{name}/.puddle/code-server/user-data/User/settings.json");
+    let settings_file = "/workspace/.puddle/code-server/user-data/User/settings.json".to_owned();
     let seeded = guest(&runtime, &sandbox, &format!("cat {settings_file}")).await;
     assert!(
         seeded.contains(r#""window.autoDetectColorScheme": true"#),
@@ -1186,9 +1286,9 @@ async fn vm_browser_microsoft_s_server_opens_with_its_token_and_switches_builds_
 
     // The builds go on the volume (the agent found none to start: no internet here), and the next
     // start runs the current one without asking Microsoft.
-    let builds = format!("/workspaces/{name}/.puddle/vscode-server/servers");
+    let builds = "/workspace/.puddle/vscode-server/servers".to_owned();
     // On the volume, so it is there after the restart below.
-    let tools = format!("/workspaces/{name}/.puddle/stand-in");
+    let tools = "/workspace/.puddle/stand-in".to_owned();
     guest(
         &runtime,
         &sandbox,
@@ -1375,7 +1475,7 @@ impl Editor {
             .await;
         assert_eq!(end["step"], "done", "{end}");
         let editor = Self {
-            root: format!("/workspaces/{name}"),
+            root: "/workspace".to_owned(),
             vm,
             shell,
             api,
@@ -1811,7 +1911,19 @@ async fn vm_browser_code_server_a_killed_browser_is_picked_up_within_the_grace_a
     );
 
     // Killed again and nobody comes: the hosts of that window stay for the grace and go after it.
-    let hosts = editor.extension_hosts().await;
+    // The window opened again runs a host of its own: the first window's host is not its host, and its grace
+    // began at the first kill, so it ends about GRACE after that, whatever the second kill does.
+    let first_window = hosts;
+    let hosts: Vec<u32> = editor
+        .extension_hosts()
+        .await
+        .into_iter()
+        .filter(|host| !first_window.contains(host))
+        .collect();
+    assert!(
+        !hosts.is_empty(),
+        "the window opened again has an extension host"
+    );
     shell.crash_newest(name).await;
     let killed = std::time::Instant::now();
     // flake-ok: an absence window: the host must still run a third of the grace after the kill, and
@@ -1939,7 +2051,7 @@ async fn vm_browser_code_server_hovering_a_typescript_symbol_shows_the_type_the_
                 .await
                 .map_err(|e| e.to_string())?
                 .result;
-            let hover = state["hover"].as_str().unwrap_or_default().to_string();
+            let hover = state["hover"].as_str().unwrap_or_default().to_owned();
             if hover.contains("const total: number") {
                 Ok(hover)
             } else {
@@ -1952,5 +2064,116 @@ async fn vm_browser_code_server_hovering_a_typescript_symbol_shows_the_type_the_
 
     let errors = shell.page_errors.lock().unwrap().clone();
     assert!(errors.is_empty(), "the pages reported errors: {errors:?}");
+    editor.finish().await;
+}
+
+/// Rounds before the memory baseline is read.
+const WARM_UP_ROUNDS: u32 = 2;
+
+/// Whether the editor has cached the multi-root file in its own configuration cache: `yes` or `no`.
+const WORKSPACE_CACHED: &str = "ls /workspace/.puddle/code-server/user-data/User/caches/CachedConfigurations/workspaces/*/workspace.json >/dev/null 2>&1 && echo yes || echo no";
+
+/// What the guest's processes hold in memory, summed (bytes), four samples one second apart; the
+/// round's figure is the lowest of them.
+const GUEST_RSS_SAMPLES: &str =
+    "for i in 1 2 3 4; do sleep 1; ps -eo rss= | awk '{ s += $1 } END { print s * 1024 }'; done";
+
+/// K tier, code-server, soak bar. The window opened and closed ten times in a row: after each
+/// close the guest has no extension host, and after the tenth the guest's memory floor (the lowest of four samples after the close) is within 10 % of
+/// the floor after the warm-up (the first rounds fill code-server's caches: the guest grew
+/// 48 MB from round 1 to 2, then stayed within 4 % of round 3). `PUDDLE_VM_SOAK_BREAK=keep-extension-host`
+/// stops the hosts at each close and skips the cleanup, which must turn the no-extension-host bar red.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_soak_browser_code_server_ten_opens_and_closes_leave_no_extension_host_and_the_memory_back()
+ {
+    let editor = Box::pin(Editor::start("wch", None)).await;
+    let sandbox = &editor.sandbox;
+    let windows = editor.vm.host.editor_windows();
+    // Only the soak: its windows log at trace level, so a window that misses its folders leaves
+    // logs that say why (the other tests keep the default level).
+    editor
+        .shell
+        .trace_pages
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    editor
+        .guest(&format!(
+            "cd {} && git init -q api && git init -q web && echo loose >notes.txt && chown -R agent:agent .",
+            editor.root
+        ))
+        .await;
+    let broken = std::env::var("PUDDLE_VM_SOAK_BREAK").is_ok_and(|v| v == "keep-extension-host");
+    let mut first = 0;
+    let mut last = 0;
+    for round in 1..=10 {
+        editor.attach().await;
+        editor.explorer(&format!("window {round}")).await;
+        // The window is not closed before the editor has cached the multi-root file. Without that
+        // cache entry the next window starts from an empty cached copy, and on a busy host the web
+        // workbench (VS Code 1.141) can drop the real file's folders when its read answers while
+        // the workspace is still being set up: the window then shows "No Folder Opened" until a
+        // reload. The workbench writes the entry seconds after it opens, later than a soak round
+        // takes on a loaded runner, so without this wait every window is such a first window.
+        puddle_test_kit::eventually_async(
+            "the editor cached the multi-root file",
+            Duration::from_secs(90),
+            || async {
+                let cached = editor.guest(WORKSPACE_CACHED).await;
+                if cached.trim() == "yes" {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "the cache entry is not there yet ({})",
+                        cached.trim()
+                    ))
+                }
+            },
+        )
+        .await;
+        windows_become(windows, sandbox, true).await;
+        let open = counts_until(
+            &editor.vm.runtime,
+            sandbox,
+            "the window's extension host",
+            |l| count(l, "hosts") >= 1,
+        )
+        .await;
+        if broken {
+            editor.guest(STOP_HOSTS).await;
+        }
+        editor.shell.close_pages(&editor.name).await;
+        windows_become(windows, sandbox, false).await;
+        if !broken {
+            editor
+                .vm
+                .host
+                .workspaces()
+                .end_extension_hosts(sandbox)
+                .await
+                .expect("the agent answered");
+        }
+        let closed = counts_until(
+            &editor.vm.runtime,
+            sandbox,
+            "no extension host after the close",
+            |l| count(l, "hosts") == 0,
+        )
+        .await;
+        // A single sample swings by a third on a busy host: settle, then keep the lowest of a few.
+        let samples: Vec<u64> = editor
+            .guest(GUEST_RSS_SAMPLES)
+            .await
+            .split_whitespace()
+            .map(|n| n.parse().unwrap())
+            .collect();
+        let rss = puddle_vm_tests::soak::rss_floor(&samples).unwrap();
+        eprintln!(
+            "round {round}: guest memory floor {rss} bytes of {samples:?}; open {open}; closed {closed}"
+        );
+        if round == WARM_UP_ROUNDS + 1 {
+            first = rss;
+        }
+        last = rss;
+    }
+    puddle_vm_tests::soak::judge_rss_back(first, last).unwrap();
     editor.finish().await;
 }

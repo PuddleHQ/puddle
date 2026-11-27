@@ -73,6 +73,7 @@ export function repoRow(id: number, over: Partial<RepoRow> = {}): RepoRow {
     repo: `repo-${id}`,
     pull: true,
     push: true,
+    push_block: null,
     created_at: 1_000,
     ...over,
   };
@@ -106,6 +107,8 @@ export class FakeIdentities {
   };
   /** What a sign-in does to `unreadable`: it makes the credential readable, as a finished one does. */
   signInFixes = true;
+  /** Lines (`describeSource`) of the credentials whose token the Git host refuses, with its words. */
+  hostRefuses = new Map<string, string>();
   /** What the Git host says of an account, by `describeSource`; a source left out answers a problem. */
   profiles: Record<string, AccountProfile> = {};
   /** When set, a profile answer waits for it (a slow host). */
@@ -243,6 +246,36 @@ export class FakeIdentities {
         this.identities = [...this.identities, made];
         return this.reply(201, made);
       }
+      case "/api/repos/refresh": {
+        const id = body["identity_id"] as number | undefined;
+        const sources = this.identities
+          .filter((i) => id === undefined || i.id === id)
+          .flatMap((i) =>
+            i.credentials.map((c, at) => {
+              const why = this.hostRefuses.get(describeSource(c.source));
+              return {
+                identity_id: i.id,
+                credential: at,
+                host: c.host,
+                organisation: null,
+                state: why === undefined ? "fresh" : "unavailable",
+                refreshed_at: null,
+                retry_at: null,
+                problem:
+                  why === undefined
+                    ? null
+                    : {
+                        code: "token_rejected",
+                        message: why,
+                        needs_sign_in: false,
+                      },
+                notes: [],
+                repo_count: 0,
+              };
+            }),
+          );
+        return this.reply(200, { sources });
+      }
       case "/api/credentials/check": {
         const source = body["source"] as Source;
         const line = describeSource(source);
@@ -293,6 +326,36 @@ export class FakeIdentities {
         g.ids = next;
         this.#sync();
         return this.reply(200, this.#view(String(init.params?.path["id"])));
+      }
+      case "/api/workspaces/{id}/repositories": {
+        const g = this.#ws(init.params?.path["id"]);
+        const [, owner = "", repo = ""] =
+          /^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/.exec(
+            String(body["url"]),
+          ) ?? [];
+        if (
+          g.repos.some(
+            (r) =>
+              r.owner === owner.toLowerCase() && r.repo === repo.toLowerCase(),
+          )
+        )
+          return this.#clash(
+            "that repository is already on the list",
+            "conflict",
+            409,
+          );
+        g.repos = [
+          ...g.repos,
+          repoRow(this.#row++, {
+            host: "github.com",
+            owner: owner.toLowerCase(),
+            repo: repo.toLowerCase(),
+            pull: body["pull"] as boolean,
+            push: body["push"] as boolean,
+            push_block: (body["push_block"] as RepoRow["push_block"]) ?? null,
+          }),
+        ];
+        return this.reply(202, {});
       }
       case "/api/workspaces/{id}/git/repos": {
         const g = this.#ws(init.params?.path["id"]);

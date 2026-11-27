@@ -38,7 +38,6 @@ beforeEach(async () => {
   api.calls = [];
   api.check = null;
   await workspaces.refresh();
-  actions.createOpen = false;
   actions.connectOpen = false;
   actions.trustOpen = false;
   actions.deleteOpen = false;
@@ -56,22 +55,6 @@ describe("WorkspaceDialogs", () => {
     expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 
-  it("opens the create form from the action", async () => {
-    render(WorkspaceDialogs);
-    actions.openCreate();
-    expect(
-      await screen.findByRole("dialog", { name: "New workspace" }),
-    ).toBeInTheDocument();
-  });
-
-  it("closes the create form when Escape is pressed", async () => {
-    render(WorkspaceDialogs);
-    actions.openCreate();
-    const dialog = await screen.findByRole("dialog", { name: "New workspace" });
-    await fireEvent.keyDown(dialog, { key: "Escape" });
-    await vi.waitFor(() => expect(actions.createOpen).toBe(false));
-  });
-
   it("renames from the dialog: starts from the current name, refuses a clash before asking, then saves and says so", async () => {
     api.list = [
       workspace("demo", { status: "running" }),
@@ -85,7 +68,8 @@ describe("WorkspaceDialogs", () => {
     });
     const field = within(dialog).getByRole("textbox", { name: "Name" });
     expect(field).toHaveValue("demo");
-    expect(dialog).toHaveTextContent("workspace id, w-demo");
+    expect(dialog).toHaveTextContent("The new name shows everywhere");
+    expect(dialog).not.toHaveTextContent("w-demo");
     await fireEvent.input(field, { target: { value: "handbook" } });
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
       'Another workspace is already called "Handbook".',

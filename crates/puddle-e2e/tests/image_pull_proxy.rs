@@ -34,7 +34,7 @@ use puddle_compute::{ComputeError, Runtime};
 use puddle_compute_msb::{MsbConfig, MsbRuntime};
 use puddle_netpolicy::PuddleEndpoints;
 use puddle_proxy::PullProxy;
-use puddle_store::{AuditCursor, AuditFilter, AuditRecord, Clock, Limits, Store, SystemClock};
+use puddle_store::{AuditCursor, AuditFilter, AuditRecord, Limits, Store, SystemClock};
 use puddle_types::{ConnectionDecision, ConnectionOrigin, ImageRef};
 use tokio::net::TcpListener;
 
@@ -228,9 +228,7 @@ fn image_pulls_go_through_the_pull_proxy_and_trust_only_the_given_roots() {
     let registry_listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
     let registry_addr = registry_listener.local_addr().unwrap();
     let endpoints = PuddleEndpoints::new();
-    let store = Arc::new(
-        Store::open_in_memory(Arc::new(SystemClock) as Arc<dyn Clock>, Limits::default()).unwrap(),
-    );
+    let store = Arc::new(Store::open_in_memory(Arc::new(SystemClock), Limits::default()).unwrap());
     let proxy = PullProxy::bind(&endpoints)
         .unwrap()
         .with_resolver(Arc::new(pull_lab::LabResolver(registry_addr)))

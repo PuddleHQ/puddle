@@ -40,7 +40,7 @@
 
 <StepHeading
   title="Which hosts should Puddle decrypt?"
-  lead="Puddle reads HTTPS traffic so a rule can allow one request and block another on the same host. You can change this later in Settings."
+  lead="Puddle decrypts HTTPS traffic from your workspaces so it can show you what they contact, add credentials for you and filter requests. You can change this later in Settings."
 />
 
 {#if store.status === "loading"}
@@ -59,7 +59,7 @@
         <input type="radio" name="mode" value={mode} bind:group={choice} />
         <span>
           <b>{MODE_NAMES[mode]}</b>
-          {#if mode === DEFAULT_MODE}<span class="chip">recommended</span>{/if}
+          {#if mode === DEFAULT_MODE}<span class="meta">recommended</span>{/if}
           <span class="desc">{MODE_WARNINGS[mode]}</span>
         </span>
       </label>
@@ -70,6 +70,25 @@
       host through for a while and lists it for you.
     </p>
   </fieldset>
+  <details class="more-details">
+    <summary>More details</summary>
+    <p>
+      To read HTTPS traffic, Puddle decrypts a workspace's connections with its
+      own certificate, which is trusted inside that workspace only. Nothing is
+      decrypted outside it.
+    </p>
+    <p>
+      Reading the traffic gives you three things: a record of what each
+      workspace sends, credential injection (Puddle adds the secret to the
+      request on the way out, so it never enters the workspace), and rules on
+      single requests, such as allowing a read and blocking a write on the same
+      site.
+    </p>
+    <p>
+      Reading less costs some of that. On a host Puddle doesn't read, a rule can
+      only allow or block the whole host, and no credential is injected.
+    </p>
+  </details>
 {/if}
 
 <div class="status" aria-live="polite">
@@ -81,8 +100,10 @@
     type="button"
     class="btn primary"
     disabled={busy || store.status !== "ready"}
-    onclick={() => void carryOn()}>Continue</button
+    onclick={() => void carryOn()}
   >
+    Continue
+  </button>
 </div>
 
 <style>
@@ -106,6 +127,10 @@
   .error {
     color: var(--color-danger);
   }
+  .more-details p {
+    margin: var(--space-2) 0 0;
+    color: var(--color-text-muted);
+  }
   .card {
     display: grid;
     gap: var(--space-3);
@@ -126,13 +151,6 @@
     cursor: pointer;
   }
 
-  .chip {
-    padding: 0 var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-pill);
-    font-size: var(--text-sm);
-    color: var(--color-text-muted);
-  }
   .actions {
     display: flex;
     justify-content: flex-end;

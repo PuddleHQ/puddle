@@ -17,7 +17,11 @@ fn linux_pins(tag: &str) -> String {
 
 #[test]
 fn a_fully_pinned_tag_passes_for_the_oses_it_is_pinned_for() {
-    let pins = windows_pins("v1.0.0-puddle.1") + &linux_pins("v1.0.0-puddle.1");
+    let pins = format!(
+        "{}{}",
+        windows_pins("v1.0.0-puddle.1"),
+        linux_pins("v1.0.0-puddle.1")
+    );
     for oses in [vec!["windows"], vec!["linux"], vec!["windows", "linux"]] {
         let line = check(&pins, "1.0.0-puddle.1", &oses).unwrap();
         assert!(

@@ -13,6 +13,7 @@
 //! | [`ENV_GRACE`] | the reconnection grace in seconds |
 //! | [`ENV_FOLDER`] | the folder the editor opens (the workspace volume) |
 //! | [`ENV_WORKSPACE_FILE`] | the multi-root file the editor opens instead when it exists and lists folders (optional) |
+//! | [`ENV_WINDOW_AUTHORITY`] | the address part a browser window of the editor is opened at (`<workspace>.localhost:<port>`), for the agent to fill the editor's workspace cache (optional) |
 //! | [`ENV_KIND`] | which server: unset or `code-server`, or `microsoft` (Microsoft's own, which the agent downloads) |
 //! | [`ENV_TELEMETRY`] | `1` or `0`: whether Microsoft's server may send telemetry (only with `microsoft`) |
 //! | [`ENV_AUTO_UPDATE`] | `1` or `0`: whether the agent looks for newer builds of Microsoft's server (only with `microsoft`; unset is `1`) |
@@ -22,7 +23,7 @@
 //!
 //! ```
 //! use puddle_agent_proto::editor::EditorServer;
-//! let server = EditorServer::new("/workspaces/acme/.puddle/code-server", "/workspaces/acme", 300);
+//! let server = EditorServer::new("/workspace/.puddle/code-server", "/workspace", 300);
 //! let env = server.env();
 //! let back = EditorServer::from_lookup(|k| {
 //!     env.iter().find(|(name, _)| *name == k).map(|(_, v)| v.clone())
@@ -57,6 +58,10 @@ pub const ENV_FOLDER: &str = "PUDDLE_AGENT_EDITOR_FOLDER";
 /// The multi-root file the editor opens instead of the folder, when the file exists and lists
 /// a folder. Unset: the editor always opens the folder.
 pub const ENV_WORKSPACE_FILE: &str = "PUDDLE_AGENT_EDITOR_WORKSPACE_FILE";
+
+/// The address part (`host:port`) of the browser windows of the editor: see
+/// [`EditorServer::window_authority`].
+pub const ENV_WINDOW_AUTHORITY: &str = "PUDDLE_AGENT_EDITOR_WINDOW_AUTHORITY";
 
 /// The server variable.
 pub const ENV_KIND: &str = "PUDDLE_AGENT_EDITOR_KIND";
@@ -156,6 +161,10 @@ pub struct EditorServer {
     /// server where the file exists and lists a folder. The host writes it at an attach, so the
     /// server only finds it at a start that comes after one.
     pub workspace_file: Option<String>,
+    /// The authority (`<workspace>.localhost:<port>`) of the address a browser window of the
+    /// editor opens at. The window's copy of the multi-root file is keyed by it, so the agent can
+    /// put that copy in the editor's cache before the first window opens.
+    pub window_authority: Option<String>,
     /// The reconnection grace in seconds ([`MIN_GRACE_SECS`] to [`MAX_GRACE_SECS`]).
     pub grace_secs: u32,
     /// The user the server runs as: the workspace's session user, so its terminals are that
@@ -178,6 +187,7 @@ impl EditorServer {
             data: data.into(),
             folder: folder.into(),
             workspace_file: None,
+            window_authority: None,
             grace_secs,
             user: SessionUser::Root,
             defaults_file: EDITOR_DEFAULTS_GUEST.to_owned(),
@@ -216,6 +226,13 @@ impl EditorServer {
         self
     }
 
+    /// The same server, its windows opened at `authority` (`<workspace>.localhost:<port>`).
+    #[must_use]
+    pub fn with_window_authority(mut self, authority: impl Into<String>) -> Self {
+        self.window_authority = Some(authority.into());
+        self
+    }
+
     /// The same server, run as `user`.
     #[must_use]
     pub fn with_user(mut self, user: SessionUser) -> Self {
@@ -235,6 +252,9 @@ impl EditorServer {
         ];
         if let Some(file) = &self.workspace_file {
             env.push((ENV_WORKSPACE_FILE, file.clone()));
+        }
+        if let Some(authority) = &self.window_authority {
+            env.push((ENV_WINDOW_AUTHORITY, authority.clone()));
         }
         if !self.user.is_root() {
             env.push((ENV_USER, self.user.name().to_owned()));
@@ -339,6 +359,16 @@ impl EditorServer {
             workspace_file: get(ENV_WORKSPACE_FILE)
                 .map(|file| path(ENV_WORKSPACE_FILE, file))
                 .transpose()?,
+            window_authority: match get(ENV_WINDOW_AUTHORITY) {
+                None => None,
+                Some(a) if !a.is_empty() && a.bytes().all(|b| b.is_ascii_graphic()) => Some(a),
+                Some(_) => {
+                    return Err(EditorEnvError::new(
+                        ENV_WINDOW_AUTHORITY,
+                        "expected a host and port without spaces",
+                    ));
+                }
+            },
             grace_secs,
             user: match get(ENV_USER).as_deref() {
                 None => SessionUser::Root,

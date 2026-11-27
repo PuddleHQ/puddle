@@ -15,22 +15,22 @@ use utoipa_axum::routes;
 
 use crate::admin::AdminService;
 use crate::authz::Authorizer;
-use crate::backup::BackupService;
-use crate::credential_store::CredentialStoreService;
-use crate::credentials::CredentialService;
-use crate::dev_cert::DevCertService;
-use crate::doctor::DoctorService;
 use crate::events::EventHub;
-use crate::learned::LearnedService;
-use crate::network_health::NetworkHealthService;
-use crate::ports::PortsService;
-use crate::proxy_sign_in::ProxySignInService;
-use crate::repos::RepoService;
-use crate::restore::RestoreService;
 use crate::settings::SettingsRepo;
 use crate::signin::SignIn;
-use crate::terminals::{Registry, TerminalService};
-use crate::workspaces::WorkspaceService;
+use puddle_services::backup::BackupService;
+use puddle_services::credential_store::CredentialStoreService;
+use puddle_services::credentials::CredentialService;
+use puddle_services::dev_cert::DevCertService;
+use puddle_services::doctor::DoctorService;
+use puddle_services::learned::LearnedService;
+use puddle_services::network_health::NetworkHealthService;
+use puddle_services::ports::PortsService;
+use puddle_services::proxy_sign_in::ProxySignInService;
+use puddle_services::repos::RepoService;
+use puddle_services::restore::RestoreService;
+use puddle_services::terminals::{Registry, TerminalService};
+use puddle_services::workspaces::WorkspaceService;
 
 mod admin;
 mod app_icon;
@@ -46,6 +46,7 @@ mod first_run;
 mod identities;
 mod interception;
 mod logins;
+mod logs;
 mod meta;
 mod network_health;
 mod orphan_volumes;
@@ -218,6 +219,7 @@ pub(crate) fn api_router() -> OpenApiRouter<AppState> {
             workspaces::create_workspace
         ))
         .routes(routes!(workspaces::lookup_workspace))
+        .routes(routes!(workspaces::default_image))
         .routes(routes!(
             workspaces::get_workspace,
             workspaces::rename_workspace,
@@ -451,6 +453,7 @@ pub(crate) fn slow_router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(doctor::doctor))
         .routes(routes!(backup::create_backup))
+        .routes(routes!(logs::create_log_bundle))
         .merge(restore_upload_router())
         .routes(routes!(first_run::trust_dev_certificate))
         .routes(routes!(credential_store::retry_credential_store))

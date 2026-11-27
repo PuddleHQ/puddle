@@ -8,13 +8,13 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use puddle_secrets::{AccountName, HostName, SourceSpec};
 use puddle_store::testing::own;
 use puddle_store::{
     Author, CollisionWhat, Coverage, CredentialBinding, CredentialChoice, GitDefaults,
-    IdentityDraft, IdentityId, Limits, ManualClock, Owner, RepoGitRequest, RepoRef, RepoToggles,
-    StartBasis, Store, StoreError, SwitchChange, SwitchSource, WorkspaceGit,
+    IdentityDraft, IdentityId, Limits, ManualClock, Owner, PushBlock, RepoGitRequest, RepoRef,
+    RepoToggles, StartBasis, Store, StoreError, SwitchChange, SwitchSource, WorkspaceGit,
 };
+use puddle_types::{AccountName, HostName, SourceSpec};
 use puddle_types::{CollectingSink, Event, WorkspaceId};
 
 fn fixture() -> (Arc<CollectingSink>, Store) {
@@ -276,14 +276,16 @@ fn the_repository_table_and_the_two_switches() {
     let fresh = store.workspace_git(&w).unwrap();
     assert!(fresh.only_push_listed && !fresh.only_pull_listed && fresh.repos.is_empty());
     let web = RepoRef::new("GitHub.com", "Acme", "web.git").unwrap();
-    let entry = store.add_repo(&w, &web, RepoToggles::BOTH).unwrap();
+    let entry = store.add_repo(&w, &web, RepoToggles::BOTH, None).unwrap();
     assert_eq!(entry.repo.to_string(), "github.com/acme/web");
     assert!(matches!(
-        store.add_repo(&w, &web, RepoToggles::BOTH),
+        store.add_repo(&w, &web, RepoToggles::BOTH, None),
         Err(StoreError::RepoListed(_))
     ));
     let docs = RepoRef::new("github.com", "acme", "docs").unwrap();
-    let docs_row = store.add_repo(&w, &docs, RepoToggles::PULL_ONLY).unwrap();
+    let docs_row = store
+        .add_repo(&w, &docs, RepoToggles::PULL_ONLY, None)
+        .unwrap();
     let git = store.workspace_git(&w).unwrap();
     assert!(git.allows_push(&web) && !git.allows_push(&docs));
     assert!(
@@ -316,6 +318,41 @@ fn the_repository_table_and_the_two_switches() {
 }
 
 #[test]
+fn a_rows_push_block_is_kept_from_the_add_and_from_a_workspace_start() {
+    let (_sink, store) = fixture();
+    let w = ws("shop");
+    let old = RepoRef::new("github.com", "acme", "old").unwrap();
+    let added = store
+        .add_repo(&w, &old, RepoToggles::PULL_ONLY, Some(PushBlock::Archived))
+        .unwrap();
+    assert_eq!(added.push_block, Some(PushBlock::Archived));
+    let open = RepoRef::new("github.com", "acme", "open").unwrap();
+    assert_eq!(
+        store
+            .add_repo(&w, &open, RepoToggles::BOTH, None)
+            .unwrap()
+            .push_block,
+        None
+    );
+    let started = RepoGitRequest {
+        push_block: Some(PushBlock::Read),
+        ..ask(repo("github.com", "acme", "theirs"))
+    };
+    store.start_repository_git(&w, &started).unwrap();
+    let blocks: Vec<_> = store
+        .workspace_git(&w)
+        .unwrap()
+        .repos
+        .iter()
+        .map(|row| row.push_block)
+        .collect();
+    assert_eq!(
+        blocks,
+        [Some(PushBlock::Archived), None, Some(PushBlock::Read)]
+    );
+}
+
+#[test]
 fn deleting_a_workspace_clears_its_git_settings_but_keeps_the_identities() {
     let (sink, store) = fixture();
     let a = make(&store, "Work", &["acme"], false);
@@ -326,6 +363,7 @@ fn deleting_a_workspace_clears_its_git_settings_but_keeps_the_identities() {
             &w,
             &RepoRef::new("github.com", "acme", "web").unwrap(),
             RepoToggles::BOTH,
+            None,
         )
         .unwrap();
     store.set_git_switches(&w, Some(false), Some(true)).unwrap();
@@ -348,8 +386,8 @@ fn the_database_holds_references_never_a_value() {
     let (_, store) = fixture();
     let host = HostName::new("github.com").unwrap();
     let source = SourceSpec::Stored {
-        id: puddle_secrets::StoredId::new("tok1").unwrap(),
-        scope: puddle_secrets::TokenScope {
+        id: puddle_types::StoredId::new("tok1").unwrap(),
+        scope: puddle_types::TokenScope {
             host: host.clone(),
             org: None,
         },
@@ -396,6 +434,7 @@ fn ask(repo: RepoRef) -> RepoGitRequest {
         identity: None,
         pull: true,
         push: true,
+        push_block: None,
     }
 }
 
@@ -792,8 +831,8 @@ fn a_list_of_repositories_is_set_up_whole_or_not_at_all() {
 
 #[test]
 fn the_secret_ids_in_use_are_the_stored_tokens_of_identities_and_the_secrets_of_variables() {
-    use puddle_secrets::{StoredId, TokenScope};
     use puddle_store::{EnvDraft, EnvName, EnvScope, SecretHost};
+    use puddle_types::{StoredId, TokenScope};
 
     let (_sink, store) = fixture();
     let id = |text: &str| StoredId::new(text).unwrap();
@@ -868,7 +907,12 @@ fn a_set_up_that_only_adds_the_identity_or_only_adds_the_row_still_says_so() {
     // The row exists already: only the identity joins the list.
     let w = ws("only-identity");
     store
-        .add_repo(&w, &repo("github.com", "acme", "shop"), RepoToggles::BOTH)
+        .add_repo(
+            &w,
+            &repo("github.com", "acme", "shop"),
+            RepoToggles::BOTH,
+            None,
+        )
         .unwrap();
     let _ = sink.take();
     let named = RepoGitRequest {

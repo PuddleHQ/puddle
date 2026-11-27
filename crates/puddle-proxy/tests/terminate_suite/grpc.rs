@@ -79,7 +79,8 @@ impl StreamingService<Msg> for BidiEcho {
         Box::pin(async move {
             let inbound = request.into_inner();
             let outbound = inbound.map(|item| item.map(|m| msg(&format!("echo {}", m.text))));
-            Ok(Response::new(Box::pin(outbound) as Self::ResponseStream))
+            let outbound: Self::ResponseStream = Box::pin(outbound);
+            Ok(Response::new(outbound))
         })
     }
 }

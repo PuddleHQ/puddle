@@ -37,9 +37,9 @@ fn puddle_with_env(dir: &Path, args: &[&str], env: &[(&str, &Path)]) -> Output {
     }
     // A `PATH` of the folder holding only the copied `puddle`: the check for the Azure CLI finds
     // no `az`, so it never runs the machine's real one, which waits on the network (an update
-    // check and telemetry) for as long as that network answers slowly.
-    #[cfg(unix)]
-    command.env("PATH", dir);
+    // check and telemetry) for as long as that network answers slowly. Windows keeps its own
+    // system folder on the path so the probes that run `powershell` and `reg` still find them.
+    command.env("PATH", search_path_without_az(dir));
     let child = command
         .envs(env.iter().copied())
         .stdout(std::process::Stdio::piped())
@@ -48,6 +48,15 @@ fn puddle_with_env(dir: &Path, args: &[&str], env: &[(&str, &Path)]) -> Output {
         .unwrap();
     drop(guard);
     child.wait_with_output().unwrap()
+}
+
+/// `dir` alone, plus `%SystemRoot%\\System32` on Windows (no `az.cmd` lives there).
+fn search_path_without_az(dir: &Path) -> std::ffi::OsString {
+    let mut folders = vec![dir.to_path_buf()];
+    if let Some(root) = std::env::var_os("SystemRoot").filter(|_| cfg!(windows)) {
+        folders.push(Path::new(&root).join("System32"));
+    }
+    std::env::join_paths(folders).unwrap()
 }
 
 /// The folder the report says it measured the free space of.
@@ -159,7 +168,7 @@ fn text_report_has_the_fix_line() {
     let text = String::from_utf8(out.stdout).unwrap();
     assert!(text.starts_with("puddle doctor (puddle "), "{text}");
     assert!(text.contains("FAIL  Bundled runtime"), "{text}");
-    assert!(text.contains("fix:  Reinstall Puddle"), "{text}");
+    assert!(text.contains("fix:    Reinstall Puddle"), "{text}");
     assert!(
         text.contains("to fix before Puddle can run sandboxes"),
         "{text}"

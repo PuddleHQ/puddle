@@ -31,17 +31,19 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 use puddle_agent_proto::editor::{EditorServer, NEEDS_GLIBC};
 use puddle_agent_proto::forward::OpenError;
-use puddle_api::{
-    DeleteCheck, DisplayName, EditorLogin, GitSetup, KeptLogin, LaunchError, Launcher, Listing,
-    LocalCheckoutError, Operation, RepoFindings, Repository, StartFolder, WorkspaceError,
-    WorkspaceRecord, not_found,
-};
 use puddle_boot::{Gate, GatedSandbox};
 use puddle_ca::CaCertificate;
 use puddle_compute::{ComputeError, ImageConfig, Runtime};
 use puddle_lifecycle::Lifecycle;
 use puddle_ports::{NoLink, Ports};
 use puddle_proxy::Route;
+use puddle_services::{
+    workspaces::DeleteCheck, workspaces::DisplayName, workspaces::EditorLogin,
+    workspaces::GitSetup, workspaces::KeptLogin, workspaces::LaunchError, workspaces::Launcher,
+    workspaces::Listing, workspaces::LocalCheckoutError, workspaces::Operation,
+    workspaces::RepoFindings, workspaces::Repository, workspaces::StartFolder,
+    workspaces::WorkspaceError, workspaces::WorkspaceRecord, workspaces::not_found,
+};
 use puddle_ssh::SshEndpoint;
 use puddle_store::{AllUsers, Clock, Store};
 use puddle_types::{
@@ -61,6 +63,7 @@ use crate::git_hosts::{Authors, SshListing};
 use crate::injection::Injection;
 use crate::op_error::{OpError, SAVE_HINT};
 
+mod clone_detail;
 mod repositories;
 
 pub(crate) mod orphans;
@@ -97,10 +100,6 @@ impl<R: Runtime + Clone> crate::changes::Changes for HostWorkspaces<R> {
         Self::rewrite_authors(self, &workspace).await;
     }
 
-    async fn all_git_changed(&self) {
-        Self::all_git_changed(self).await;
-    }
-
     fn all_request_rules_changed(&self) {
         for name in self.inner.injection.running_workspaces() {
             Self::decrypt_changed(self, &name);
@@ -111,16 +110,8 @@ impl<R: Runtime + Clone> crate::changes::Changes for HostWorkspaces<R> {
         Self::environment_changed(self, &workspace).await;
     }
 
-    async fn all_environments_changed(&self) {
-        // Together: a credential store that is slow for one workspace's secrets holds up no other.
-        futures_util::future::join_all(
-            self.inner
-                .injection
-                .running_workspaces()
-                .iter()
-                .map(|name| Self::environment_changed(self, name)),
-        )
-        .await;
+    fn running(&self) -> Vec<WorkspaceId> {
+        self.inner.injection.running_workspaces()
     }
 
     fn shell_init_changed(&self, workspace: WorkspaceId) -> impl Future<Output = ()> + Send {
@@ -131,25 +122,12 @@ impl<R: Runtime + Clone> crate::changes::Changes for HostWorkspaces<R> {
     fn pending_closed(&self, workspace: &WorkspaceId, id: i64, allowed: bool) {
         self.tools_pending_closed(workspace, id, allowed);
     }
-
-    fn all_shell_inits_changed(&self) -> impl Future<Output = ()> + Send {
-        let names: Vec<WorkspaceId> = self
-            .state()
-            .slots
-            .values()
-            .map(|slot| slot.record.id.clone())
-            .collect();
-        for name in names {
-            Self::shell_init_changed(self, &name);
-        }
-        std::future::ready(())
-    }
 }
 
-/// Runs when an author rewrite starts, before it waits for its workspace's rewrite lock, and
+/// Runs when an author rewrite holds its guest's rewrite lock, before it looks at the guest, and
 /// returns once the rewrite may go on; the value it returns is dropped when the rewrite ends. Tests
-/// use it to hold one rewrite back and see the rewrites of a workspace run out of order. A host
-/// without one lets every rewrite go on at once.
+/// use it to hold one rewrite back and see what waits behind it (the next change, a stop). A host without one lets every
+/// rewrite go on at once.
 pub type RewriteGate = Arc<dyn Fn(&WorkspaceId) -> BoxFuture<'static, Box<dyn Send>> + Send + Sync>;
 
 /// What the service is built from.
@@ -184,7 +162,7 @@ pub(crate) struct Parts<R: Runtime + Clone> {
     pub(crate) front_guests: Arc<dyn puddle_front::Guests>,
     pub(crate) front_halves: Arc<dyn puddle_front::ServerHalves>,
     /// Where new workspace ids come from.
-    pub(crate) ids: Arc<dyn puddle_api::IdSource>,
+    pub(crate) ids: Arc<dyn puddle_services::workspaces::IdSource>,
     /// The folder of the login markers, which a new id must not find one of its own in.
     pub(crate) login_markers: std::path::PathBuf,
     /// The free space of the drive that holds Puddle's data: the one a root disk grows into.
@@ -290,6 +268,8 @@ struct State {
 /// What the running guest was set up with, kept to set it up again with one thing changed.
 #[derive(Clone)]
 struct GuestState {
+    /// The workspace's name as the prompt in the guest shows it now.
+    label: String,
     /// The image's config, so a plan can be rebuilt without pulling.
     image: ImageConfig,
     /// This start's CA certificate.
@@ -307,10 +287,10 @@ struct GuestState {
     editor: Option<EditorServer>,
     /// The development certificate this start gave the guest, so a re-planned boot keeps it.
     dev_cert: Option<puddle_certs::devcert::GuestDevCert>,
-    /// Where login shells land: what the saved start folder was at this start, or when it last
-    /// changed.
+    /// Where login shells land ([`crate::editor_file::terminal_folder`]) at this start, or when
+    /// the start folder last changed.
     start_folder: Option<StartFolder>,
-    /// The volume's mount point, `/workspaces/<id>`.
+    /// The volume's mount point, `/workspace`.
     root: GuestPath,
     /// The multi-root file the editor opens when the workspace has two or more checkouts, as the
     /// last attach wrote it; `None` has the hook take Puddle's lines out of it.
@@ -324,6 +304,10 @@ struct GuestState {
     ssh_agent: bool,
     /// The managed mise layer the guest was planned with: the settings as of this start.
     mise: Option<MiseLayer>,
+    /// The boot step that binds the volume at `/workspace` in a sandbox an older Puddle made with
+    /// it at `/workspaces/<id>` ([`puddle_workspace::Layout::older_mount_step`]); `None` for a
+    /// sandbox with the volume at `/workspace`.
+    older_mount: Option<GuestFile>,
 }
 
 /// How long a terminal opened while its workspace starts waits for the boot hook.
@@ -377,7 +361,7 @@ struct Inner<R: Runtime + Clone> {
     front_addr: std::net::SocketAddr,
     front_guests: Arc<dyn puddle_front::Guests>,
     front_halves: Arc<dyn puddle_front::ServerHalves>,
-    ids: Arc<dyn puddle_api::IdSource>,
+    ids: Arc<dyn puddle_services::workspaces::IdSource>,
     login_markers: std::path::PathBuf,
     space: Arc<dyn crate::Space>,
     state: Mutex<State>,
@@ -393,6 +377,8 @@ struct Inner<R: Runtime + Clone> {
     running: watch::Sender<usize>,
     /// Whether the image the delete check boots is in the cache; see [`HostWorkspaces::maintenance_ready`].
     maintenance_image: watch::Sender<Warmth>,
+    /// The default image's description from its labels, once read; see [`HostWorkspaces::default_image_description`].
+    default_image_note: Mutex<ImageNote>,
     /// Workspaces whose start found their shell-init folder changed from inside, until `settle`
     /// has said so (with what the boot hook found, as one notice).
     shell_init_changed_inside: Mutex<BTreeSet<WorkspaceId>>,
@@ -541,6 +527,17 @@ fn listing(l: &puddle_workspace::Listing) -> Listing {
 /// the user to try again: under the API's 30 s request limit, so the answer is ours and not a 408.
 const MAINTENANCE_WAIT: Duration = Duration::from_secs(15);
 
+/// Where reading the default image's labels stands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ImageNote {
+    /// Not asked for yet.
+    Cold,
+    /// A task of the service is downloading the image to read them.
+    Reading,
+    /// Read: the one line they give, or none when they say nothing.
+    Read(Option<String>),
+}
+
 /// Where the download of the image the delete check boots stands.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Warmth {
@@ -667,10 +664,12 @@ struct GuestLogin {
     guests: Arc<dyn puddle_front::Guests>,
     ports: Ports,
     workspace: WorkspaceId,
+    /// The name the user gave the workspace, for what a window is told.
+    label: String,
 }
 
 /// What the user is told when `workspace` has no agent link to sign in through.
-fn no_link_message(workspace: &WorkspaceId, why: NoLink) -> String {
+fn no_link_message(workspace: &str, why: NoLink) -> String {
     match why {
         NoLink::NotRunning => format!("{workspace} is not running; start it first"),
         NoLink::NotConnected => format!(
@@ -701,7 +700,7 @@ impl EditorLogin for GuestLogin {
                         .ports
                         .guest_link_within(&self.workspace, AGENT_HELLO_WAIT)
                         .await
-                        .map_err(|why| LaunchError::new(no_link_message(&self.workspace, why)))?;
+                        .map_err(|why| LaunchError::new(no_link_message(&self.label, why)))?;
                     Arc::new(link)
                 };
             editor
@@ -745,13 +744,16 @@ fn kept_login_row(login: &puddle_logins::KeptLogin) -> KeptLogin {
 }
 
 #[cfg(test)]
-mod room_for_a_grow;
+mod clone_detail_tests;
 
 #[cfg(test)]
-mod kept_login_rows;
+mod room_for_a_grow_tests;
 
 #[cfg(test)]
-mod no_link_words;
+mod kept_login_rows_tests;
+
+#[cfg(test)]
+mod no_link_words_tests;
 
 /// Why the runtime refuses a checkout, as the user is told: the reason of a refused spec as it is
 /// (the runtime's own wording names the folder), any other failure by its message.
@@ -773,3 +775,6 @@ mod checkout_refusal_tests;
 
 #[cfg(test)]
 mod workspace_error_tests;
+
+#[cfg(test)]
+mod pull_throttle_tests;

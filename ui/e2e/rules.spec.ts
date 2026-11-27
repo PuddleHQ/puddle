@@ -10,6 +10,7 @@ import {
   expectNoAxeViolations,
   staysEmpty,
   pickFromRowMenu,
+  hostName,
 } from "./support";
 
 interface Rule {
@@ -46,11 +47,8 @@ const SEEDED_EXPIRY_HEAD_ROOM = 60_000;
 const rowFor = (page: Page, pattern: string, workspace?: string): Locator =>
   page
     .locator("tbody tr", {
-      // The pattern sits in `span.mono`; a suffix rule's "and subdomains" chip is a sibling.
-      // `:text-is` is an exact match on text, so the pattern is never read as a regexp.
-      has: page.locator(
-        `td.host span.mono:text-is(${JSON.stringify(pattern)})`,
-      ),
+      // The pattern is drawn by `HostName`; a rule that is off has a plain "off" word beside it.
+      has: hostName(page.locator("td.host"), pattern),
     })
     .filter(workspace ? { hasText: workspace } : {});
 
@@ -84,7 +82,11 @@ test.describe("the list", () => {
     await expect(global).toContainText("Never");
     const suffix = rowFor(page, "*.crates.io");
     await expect(suffix).toContainText("web-shop");
-    await expect(suffix).toContainText("and subdomains");
+    // "and subdomains" is the wildcard in the host text itself.
+    await expect(suffix.locator("span.wild")).toHaveAttribute(
+      "title",
+      "This host and every subdomain of it",
+    );
     const expiring = rowFor(page, "api.example.com");
     // The page clock starts at the fixture's now but keeps running, and the formatter truncates, so a
     // slow start reads "in 2 hours" for a rule that has 3 hours less a moment left.
@@ -236,9 +238,9 @@ test.describe("adding", () => {
       .getByLabel("Workspace", { exact: true })
       .selectOption({ label: "web-shop" });
     await dialog.getByRole("button", { name: "Add rule" }).click();
-    await expect(rowFor(page, "*.cdn.example.org")).toContainText(
-      "and subdomains",
-    );
+    await expect(
+      rowFor(page, "*.cdn.example.org").locator("span.wild"),
+    ).toHaveAttribute("title", "This host and every subdomain of it");
     const rule = (await rules(request, backend)).find(
       (r) => r.pattern === ".cdn.example.org",
     );
@@ -439,7 +441,10 @@ test.describe("changing the expiry", () => {
   }) => {
     await openRules(page, backend);
     const expiring = rowFor(page, "api.example.com");
-    await pickFromRowMenu(expiring, /^Change expiry: allow api.example.com/);
+    await pickFromRowMenu(
+      expiring,
+      /^Change expiry\s*:\s*allow api\.example\.com/,
+    );
     const dialog = page.getByRole("dialog", { name: "Change expiry" });
     await expect(dialog).toContainText("api.example.com");
     await dialog.getByRole("button", { name: "Save" }).click();
@@ -725,12 +730,13 @@ test.describe("accessibility", () => {
     backend,
   }) => {
     await openRules(page, backend);
+    // One "..." menu button per row since the row menu replaced Edit, Change expiry and Delete.
     const buttons = await page
       .locator("tbody tr")
       .first()
       .getByRole("button")
       .all();
-    expect(buttons).toHaveLength(3);
+    expect(buttons).toHaveLength(1);
     for (const button of [
       ...buttons,
       ...(await page.getByRole("button", { name: /^Sort by/ }).all()),

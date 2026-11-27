@@ -73,3 +73,19 @@ fn unknown_keys_are_refused() {
     assert!("Loopback".parse::<LocalCategory>().is_err());
     assert!(serde_json::from_str::<LocalCategory>("\"lan\"").is_err());
 }
+
+#[test]
+fn labels_are_the_names_on_the_toggles() {
+    let labels: Vec<_> = LocalCategory::ALL.iter().map(|c| c.label()).collect();
+    assert_eq!(
+        labels,
+        [
+            "This computer (loopback)",
+            "Private networks",
+            "Link-local",
+            "Cloud metadata",
+            "Other special ranges",
+            "Company network"
+        ]
+    );
+}

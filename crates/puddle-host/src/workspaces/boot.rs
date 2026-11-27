@@ -4,11 +4,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use puddle_api::{StartFolder, WorkspaceRecord};
 use puddle_boot::{Gate, GatedSandbox};
 use puddle_compute::{DiskSize, ExecRequest, ImageConfig, Runtime, Sandbox as _};
+use puddle_services::{workspaces::StartFolder, workspaces::WorkspaceRecord};
 use puddle_types::{
-    CheckoutDir, GuestEnv, GuestFile, GuestPath, Problem, SessionUser, WorkspaceId, WorkspaceStep,
+    CheckoutDir, GuestEnv, GuestFile, GuestPath, Problem, WorkspaceId, WorkspaceStep,
 };
 
 use puddle_workspace::{Layout, WorkspaceError};
@@ -78,13 +78,18 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             Err(reason) => return Err(self.abort_attachment(attachment, reason).await),
         };
         // The CA comes after the route: a start that fails here has nothing else to take back.
-        let (plan, env, guest) = match self.plan_guest_for(record, config).await {
+        let (plan, env, guest) = match self.plan_guest_for(record, config, None).await {
             Ok(ready) => ready,
             Err(reason) => {
                 route.shutdown().await;
                 return Err(self.abort_attachment(attachment, reason).await);
             }
         };
+        // The guests mount the code-server folder, which the host copies in the background.
+        if let Err(e) = inner.kit.code_server_ready().await {
+            route.shutdown().await;
+            return Err(self.abort_attachment(attachment, e.into()).await);
+        }
         let spec = attachment
             .add_to(
                 inner
@@ -100,7 +105,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         match inner
             .kit
             .hook()
-            .create(&inner.runtime, spec, &plan, &gate)
+            .create_kept(&inner.runtime, spec, &plan, &gate, &self.keeper(name))
             .await
         {
             Ok(gated) => {
@@ -121,6 +126,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 Ok(())
             }
             Err(e) => {
+                // A sandbox the hook stopped again leaves the lifecycle; one it could not stop
+                // stays, so the shutdown stops it.
+                if !e.left_running() {
+                    inner.lifecycle.release(&name.sandbox_name());
+                }
                 inner.injection.end(name);
                 let reason = self.abort_attachment(attachment, e.into()).await;
                 route.shutdown().await;
@@ -129,54 +139,48 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
     }
 
-    /// [`Self::plan_guest`] for `record`'s workspace and saved start folder.
+    /// Makes this start's CA for `record`'s workspace, registers what it decrypts and its secrets'
+    /// stand-ins and plans the guest's boot with the CA in its trust, the authors of the
+    /// workspace's identities, its environment and its saved start folder, plus `older_mount`'s
+    /// step for a sandbox an older Puddle made. A start that fails after this must call
+    /// `Injection::end`.
     pub(super) async fn plan_guest_for(
         &self,
         record: &WorkspaceRecord,
         image: ImageConfig,
+        older_mount: Option<GuestFile>,
     ) -> Result<(puddle_boot::BootPlan, GuestEnv, GuestState), OpError> {
-        self.plan_guest(
-            &record.id,
-            &record.id,
-            image,
-            record.start_folder.as_ref(),
-            record.session_user,
-        )
-        .await
-    }
-
-    /// Makes this start's CA for `name`, registers what it decrypts and its secrets' stand-ins and
-    /// plans the guest's boot with the CA in its trust, the authors of the workspace's identities
-    /// and its environment. A start that fails after this must call `Injection::end`.
-    pub(super) async fn plan_guest(
-        &self,
-        id: &WorkspaceId,
-        name: &WorkspaceId,
-        image: ImageConfig,
-        start_folder: Option<&StartFolder>,
-        session_user: SessionUser,
-    ) -> Result<(puddle_boot::BootPlan, GuestEnv, GuestState), OpError> {
+        let name = &record.id;
+        let start_folder = record.start_folder.as_ref();
+        let terminals = crate::editor_file::terminal_folder(record);
+        let session_user = record.session_user;
+        let label = record.label();
         let inner = &self.inner;
         let capture = crate::logins::capture_enabled(inner.settings.as_ref(), name);
         let editor = inner
             .kit
-            .editor(id, self.reconnection_grace(name), self.editor_kind())?
-            .map(|server| server.with_user(session_user));
+            .editor(name, self.reconnection_grace(name), self.editor_kind())?
+            .map(|server| {
+                server
+                    .with_user(session_user)
+                    .with_window_authority(window_authority(name, inner.front_addr.port()))
+            });
         let mode = crate::settings_read::mise_or_off(inner.settings.as_ref(), name);
-        let mise = MiseLayer::of(id, mode)?;
+        let mise = MiseLayer::of(mode)?;
         let began = inner.injection.begin(name, capture).await?;
         let wanted = authors(&began.git);
         self.report_git_settings(name, &began.git, &wanted);
-        let root = Layout::new(id)?.mount().clone();
+        let root = Layout::new()?.mount().clone();
         // Only a running guest can list the checkouts, so the multi-root file the last attach
         // wrote stays as it is and the editor server opens it at this start; the next attach
         // writes it again. A start folder replaces it.
         let editor_file = start_folder
             .is_none()
-            .then(|| crate::editor_file::workspace_file_path(&root, id))
+            .then(|| crate::editor_file::workspace_file_path(&root, name))
             .flatten()
             .map(GuestFile::kept);
         let state = GuestState {
+            label: label.to_owned(),
             editor,
             image,
             ca: began.certificate,
@@ -184,13 +188,14 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             ssh: began.ssh,
             env: began.env,
             dev_cert: inner.kit.dev_cert().await,
-            start_folder: start_folder.cloned(),
+            start_folder: terminals,
             root,
             editor_file,
             editor_defaults: self.editor_defaults_file(name),
             session_user,
             ssh_agent: began.ssh_agent,
             mise,
+            older_mount,
         };
         match inner.kit.plan(
             &state.image,
@@ -208,6 +213,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 session_user: state.session_user,
                 ssh_agent: state.ssh_agent,
                 mise: state.mise.as_ref(),
+                older_mount: state.older_mount.as_ref(),
+                label: &state.label,
             },
         ) {
             Ok((plan, env)) => Ok((plan, env, state)),
@@ -332,15 +339,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// Runs the boot plan again in the running guest when its authors differ from what the guest
     /// holds (the hook is idempotent: only the author files change).
     ///
-    /// The settings are read once the guest is ours alone: rewrites for one workspace start in
-    /// any order, and a copy taken when the change arrived could be applied after a newer one,
-    /// leaving the old authors and a problem the newer settings already ended.
+    /// The settings are read once the guest is ours alone, not when the change arrived: the
+    /// workspace's change queue runs one rewrite for every change that waited behind a running one,
+    /// and `settle` runs one more after a boot.
     pub(crate) async fn rewrite_authors(&self, name: &WorkspaceId) {
         let inner = &self.inner;
-        let _held = match &inner.rewrite_gate {
-            Some(gate) => Some(gate(name).await),
-            None => None,
-        };
         let rewrite = {
             let live = inner.live.lock().await;
             match live.get(name) {
@@ -349,6 +352,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }
         };
         let _one_at_a_time = rewrite.lock().await;
+        let _held = match &inner.rewrite_gate {
+            Some(gate) => Some(gate(name).await),
+            None => None,
+        };
         let (gated, guest) = {
             let live = inner.live.lock().await;
             match live
@@ -440,7 +447,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             ["-c", "[ -d \"$1\" ]", "puddle-start-folder", path.as_str()].map(str::to_owned),
         )
         .as_user("root")
-        .with_timeout(Duration::from_secs(10));
+        .with_timeout(Duration::from_secs(10))
+        .with_max_output(ExecRequest::PROBE_MAX_OUTPUT);
         let exists = match gated.ungated().exec(request).await {
             Ok(output) => output.status.success(),
             Err(e) => {
@@ -503,7 +511,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 .and_then(|e| Some((e.gated.clone()?, e.guest.clone()?)))?
         };
         let replanned = GuestState {
-            start_folder: record.start_folder.clone(),
+            start_folder: crate::editor_file::terminal_folder(record),
             // Opening a folder replaces the multi-root window; the next attach writes it again.
             editor_file: if record.start_folder.is_some() {
                 None
@@ -549,6 +557,55 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .await
     }
 
+    /// A rename of `record`'s workspace: the running guest's prompt shows the new name from its
+    /// next terminal on, through the boot plan run again. A stopped workspace reads the name at
+    /// its next start. The prompt is cosmetic, so a guest that does not answer only gets a log
+    /// line.
+    pub(super) async fn follow_rename(&self, record: &WorkspaceRecord) {
+        let name = &record.id;
+        let inner = &self.inner;
+        let Some(rewrite) = inner
+            .live
+            .lock()
+            .await
+            .get(name)
+            .map(|e| Arc::clone(&e.rewrite))
+        else {
+            return;
+        };
+        let _one_at_a_time = rewrite.lock().await;
+        let Some((gated, guest)) = ({
+            let live = inner.live.lock().await;
+            live.get(name)
+                .and_then(|e| Some((e.gated.clone()?, e.guest.clone()?)))
+        }) else {
+            return;
+        };
+        if guest.label == record.label() {
+            return;
+        }
+        let replanned = GuestState {
+            label: record.label().to_owned(),
+            ..guest
+        };
+        match self.run_plan(name, &gated, &replanned).await {
+            Ok(()) => {
+                if let Some(state) = inner
+                    .live
+                    .lock()
+                    .await
+                    .get_mut(name)
+                    .and_then(|e| e.guest.as_mut())
+                {
+                    state.label = replanned.label;
+                }
+            }
+            Err(reason) => {
+                tracing::warn!(workspace = %name, %reason, "the prompt in the workspace's terminals keeps the old name");
+            }
+        }
+    }
+
     /// The checkouts the editor opens. An image with no git can't describe checkouts (the
     /// checkouts screen says so), but the editor needs only their names, which a scan for `.git`
     /// entries gives.
@@ -558,11 +615,16 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         id: &WorkspaceId,
     ) -> Result<crate::editor_file::Found, WorkspaceError> {
         let workspaces = &self.inner.workspaces;
+        let began = self.inner.clock.now_ms();
         let list = match workspaces.list_checkouts(gated.ungated(), id).await {
             Err(WorkspaceError::GitMissing { .. }) => {
                 workspaces.list_checkout_names(gated.ungated(), id).await?
             }
-            other => other?,
+            Ok(list) => {
+                self.keep_listing(id, began, &list).await;
+                list
+            }
+            Err(e) => return Err(e),
         };
         Ok(crate::editor_file::Found::from_listing(&list))
     }
@@ -658,6 +720,13 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     }
 }
 
+/// The `host:port` a browser window of workspace `name`'s editor opens at, on a front listening
+/// on `port` ([`puddle_front::origin_of`] without its scheme).
+fn window_authority(name: &WorkspaceId, port: u16) -> String {
+    let origin = puddle_front::origin_of(port, name);
+    origin.strip_prefix("http://").unwrap_or(&origin).to_owned()
+}
+
 /// The multi-root file the editor opens for `found`, `None` when it opens the start folder or the
 /// volume root instead.
 fn multi_root_file(
@@ -671,5 +740,7 @@ fn multi_root_file(
         .map(|r| r.directory.clone())
         .collect();
     crate::editor_file::multi_root_folders(root, record.start_folder.as_ref(), found, &order)
-        .and_then(|folders| crate::editor_file::workspace_file(root, &record.id, &folders))
+        .and_then(|folders| {
+            crate::editor_file::workspace_file(root, &record.id, record.label(), &folders)
+        })
 }

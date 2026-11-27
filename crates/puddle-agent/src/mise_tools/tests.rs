@@ -121,7 +121,11 @@ fn the_command_line_is_checked_before_anything_runs() {
         &["/w", "set", "node", "22"],
         &["/w", "frobnicate"],
     ] {
-        assert_eq!(Request::parse(bad).unwrap_err(), USAGE, "{bad:?}");
+        assert_eq!(
+            Request::parse(bad).unwrap_err(),
+            UsageError::Shape(USAGE),
+            "{bad:?}"
+        );
     }
     for bad in [
         &["/w", "set", "-x", "22", "absent"][..],
@@ -130,7 +134,7 @@ fn the_command_line_is_checked_before_anything_runs() {
         &["/w", "remove", "a b", "absent"],
         &["/w", "versions", "a\"b"],
     ] {
-        let err = Request::parse(bad).unwrap_err();
+        let err = Request::parse(bad).unwrap_err().to_string();
         assert!(err.ends_with(USAGE) && err.starts_with("invalid"), "{err}");
     }
 }

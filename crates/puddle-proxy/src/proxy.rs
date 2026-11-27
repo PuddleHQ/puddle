@@ -19,8 +19,8 @@ use puddle_agent_proto::host::{
 use puddle_agent_proto::resolve::{ResolveAnswer, ResolveQuery};
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason, Decision,
-    EgressRequest, EventSink, Host, HttpRequestLine, NullConnectionLog, PassThroughCode, Policy,
-    PolicyError, ProtocolHint, ReasonCode, SuffixAllows, WorkspaceId,
+    EgressRequest, EventSink, Host, HttpRequestLine, NullConnectionLog, Policy, PolicyError,
+    ProtocolHint, ReasonCode, SuffixAllows, WorkspaceId,
 };
 use tokio::io::{AsyncBufRead, BufReader};
 use tokio::sync::Semaphore;
@@ -34,21 +34,24 @@ use crate::destination::{AddressCheck, Resolver, SystemResolver};
 use crate::http::{self, Body, Head, HeadError, RawTarget};
 use crate::plain;
 use crate::records::{RecordResolver, SystemRecords};
+use crate::request_target::Target;
 use crate::ssh;
-use crate::target::Target;
 use crate::terminate::{self, TerminationSource};
 use crate::upstream::{Admitted, Upstream};
 
 mod admit;
 mod config;
 mod forward;
+mod plan;
 mod refusal;
 mod relay;
 
 use admit::resolve_destination;
-pub(crate) use admit::{Unresolved, admit};
+pub(crate) use admit::{Unresolved, admit, refuse_not_running};
 pub use config::ProxyConfig;
-pub(crate) use forward::{connect_first, forward, tunnel};
+pub(crate) use forward::{connect_first, tunnel};
+pub(crate) use plan::Seen;
+pub(crate) use plan::is_git_ssh_name;
 pub(crate) use refusal::{Refusal, refuse};
 use relay::relay;
 
@@ -85,8 +88,7 @@ pub struct Proxy {
     pub(crate) config: ProxyConfig,
     /// How many guest connections are being served right now, the audit record of each included.
     open_guest_streams: Arc<std::sync::atomic::AtomicUsize>,
-    /// How many upstream connections have ended; tests wait on it (feature `testing`).
-    #[cfg(feature = "testing")]
+    /// How many upstream connections have ended; tests wait on it through `upstream_connections_ended`.
     pub(crate) upstream_ended: Arc<std::sync::atomic::AtomicU64>,
 }
 
@@ -124,7 +126,6 @@ impl Proxy {
             reports: None,
             config: ProxyConfig::default(),
             open_guest_streams: Arc::default(),
-            #[cfg(feature = "testing")]
             upstream_ended: Arc::default(),
         }
     }
@@ -265,30 +266,6 @@ impl Proxy {
         })
     }
 
-    /// The Git SSH server and host for `request`, when SSH to its name is served by Puddle: a
-    /// built-in Git host, or a host of one of the workspace's Git credentials.
-    fn git_ssh_for(
-        &self,
-        request: &EgressRequest,
-    ) -> Option<(
-        &crate::ssh_git::GitSsh,
-        Arc<terminate::Termination>,
-        crate::ssh_git::GitHost,
-    )> {
-        let git = self.git_ssh.as_ref()?;
-        let termination = self.termination_of(request)?;
-        let host = crate::ssh_git::built_in(&request.host).or_else(|| {
-            termination
-                .git_ssh_hosts()
-                .contains(&request.host)
-                .then(|| crate::ssh_git::GitHost {
-                    https: request.host.clone(),
-                    form: crate::ssh_git::PathForm::Plain,
-                })
-        })?;
-        Some((git, termination, host))
-    }
-
     /// Passes what each workspace's agent says about the guest (the way to open a stream to it,
     /// the ports it listens on) to `watcher`. Without one the proxy ignores both.
     #[must_use]
@@ -328,7 +305,8 @@ impl Proxy {
     }
 
     /// The termination of `request`'s workspace, if this connection is to be terminated: a
-    /// `CONNECT` to a name of the workspace's termination set on port 443.
+    /// `CONNECT` to a name of the workspace's termination set on port 443. Reads the registry: for
+    /// a leg made later than its connection (Git over SSH), which must see a stop.
     pub(crate) fn terminating(
         &self,
         request: &EgressRequest,
@@ -339,31 +317,27 @@ impl Proxy {
         &puddle_upstream::TlsClient,
     )> {
         let terminations = self.terminations.as_ref()?;
-        if request.port != terminate::request::HTTPS_PORT {
-            return None;
-        }
-        let termination = terminations.source.termination(&request.workspace)?;
-        let mode = termination.mode_for(&request.host, from_container)?;
+        let seen = self.seen(&request.workspace);
+        let mode = seen.mode(request, from_container)?;
+        let termination = Arc::clone(seen.termination()?);
         Some((termination, mode, &terminations.tls))
     }
 
-    /// The workspace's termination, which also holds its rules on method and path.
-    fn termination_of(&self, request: &EgressRequest) -> Option<Arc<terminate::Termination>> {
-        self.terminations
-            .as_ref()?
-            .source
-            .termination(&request.workspace)
-    }
-
-    /// Why a host that the workspace would decrypt (it decrypts every host) is passed through
-    /// instead: on its never-decrypt list, or one its tools did not accept the certificate for.
-    fn skipped(&self, request: &EgressRequest, from_container: bool) -> Option<PassThroughCode> {
+    /// The termination for a Git-over-SSH leg to `request`'s host, whether or not the workspace
+    /// decrypts the host. The leg's client is Puddle's own and trusts its CA, and the injector
+    /// adds no credential where no identity covers the repository. The leg is always to port 443.
+    /// `None` only when the workspace has no termination.
+    pub(crate) fn terminating_ssh_leg(
+        &self,
+        request: &EgressRequest,
+    ) -> Option<(
+        Arc<terminate::Termination>,
+        terminate::Mode,
+        &puddle_upstream::TlsClient,
+    )> {
         let terminations = self.terminations.as_ref()?;
-        if request.port != terminate::request::HTTPS_PORT {
-            return None;
-        }
         let termination = terminations.source.termination(&request.workspace)?;
-        termination.skipped(&request.host, from_container)
+        Some((termination, terminate::Mode::Bound, &terminations.tls))
     }
 
     pub(crate) fn addresses(&self) -> &dyn AddressCheck {
@@ -383,21 +357,6 @@ impl Proxy {
         self.upstream
             .as_ref()
             .is_some_and(Upstream::resolves_unknown_names)
-    }
-
-    /// Whether `request`'s name is one whose SSH Puddle serves itself or refuses, never splices:
-    /// a built-in Git host or a host of one of the workspace's Git credentials.
-    pub(crate) fn is_git_ssh_name(&self, request: &EgressRequest) -> bool {
-        crate::ssh_git::built_in(&request.host).is_some()
-            || self
-                .termination_of(request)
-                .is_some_and(|t| t.git_ssh_hosts().contains(&request.host))
-    }
-
-    /// Whether `request` is SSH to a Git host's name that Puddle does not serve: refused at once,
-    /// before the rules (SSH to any other name is spliced after a rules decision).
-    pub(crate) fn refuses_ssh(&self, request: &EgressRequest) -> bool {
-        request.protocol == Some(ProtocolHint::Ssh) && self.is_git_ssh_name(request)
     }
 
     /// The refusal text for SSH to Azure DevOps when this machine's own probe of the port failed
@@ -481,26 +440,48 @@ impl Proxy {
         request: &EgressRequest,
         suffix_allows: SuffixAllows,
     ) -> Result<Decision, PolicyError> {
-        if self.refuses_ssh(request) {
-            return Ok(Decision::Blocked {
-                reason: BlockReason::SshUnsupported,
-            });
-        }
         let policy = Arc::clone(&self.policy);
         let request = request.clone();
+        let asked = (
+            request.workspace.clone(),
+            request.host.clone(),
+            request.port,
+        );
         // A miss writes a pending row, so the call may block on SQLite.
-        tokio::task::spawn_blocking(move || policy.decide(&request, suffix_allows))
+        let decided = tokio::task::spawn_blocking(move || policy.decide(&request, suffix_allows))
             .await
             .unwrap_or_else(|_| {
                 Err(PolicyError {
                     reason: "policy task failed".into(),
                 })
-            })
+            });
+        // Names and ports only: never a header, a body or a query string.
+        match &decided {
+            Ok(decision) => {
+                tracing::debug!(workspace = %asked.0, host = %asked.1, port = asked.2, ?decision, "egress decision");
+            }
+            Err(err) => {
+                tracing::debug!(workspace = %asked.0, host = %asked.1, port = asked.2, reason = %err.reason, "egress decision failed");
+            }
+        }
+        decided
+    }
+
+    /// How a refusal names `workspace`: its name, or its id when the policy knows none.
+    pub(crate) async fn workspace_label(&self, workspace: &WorkspaceId) -> String {
+        let policy = Arc::clone(&self.policy);
+        let id = workspace.clone();
+        tokio::task::spawn_blocking(move || policy.workspace_name(&id))
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| workspace.to_string())
     }
 
     /// Hands `event` to the connection log on a blocking thread (it may write to SQLite).
     pub(crate) async fn record(&self, event: ConnectionEvent) {
         let log = Arc::clone(&self.log);
+        tracing::debug!(workspace = ?event.workspace, host = %event.host, port = event.port, decision = ?event.decision, outcome = ?event.outcome, reason = ?event.reason, upstream = ?event.upstream, "connection recorded");
         if tokio::task::spawn_blocking(move || log.record(&event))
             .await
             .is_err()
@@ -678,7 +659,8 @@ async fn serve(handler: &WorkspaceHandler, stream: GuestStream) {
         return;
     }
     let mut request =
-        EgressRequest::new(handler.workspace.clone(), target.host.clone(), target.port);
+        EgressRequest::new(handler.workspace.clone(), target.host.clone(), target.port)
+            .with_program(ssh::program(&head));
     if ssh::announced(&head) || ssh::started(reader.buffer()) {
         request = request.with_protocol(ProtocolHint::Ssh);
     }
@@ -764,13 +746,12 @@ type RecordChange = Box<dyn FnOnce(&mut ConnectionEvent) + Send>;
 /// decrypting: a plain-HTTP request, and (because a tunnel's content is not readable) a tunnel
 /// to a covered host on a port that is not decrypted. `None`: nothing refuses it.
 pub(crate) fn refuse_by_request_rule(
-    proxy: &Proxy,
+    seen: &Seen,
     request: &EgressRequest,
     head: &Head,
     path: Option<&str>,
 ) -> Option<(Refusal, RecordChange)> {
-    let termination = proxy.termination_of(request)?;
-    let rules = termination.request_rules();
+    let rules = seen.request_rules()?;
     let covering = rules.covering(&request.host)?;
     let Some(path) = path else {
         if request.port == terminate::request::HTTPS_PORT {

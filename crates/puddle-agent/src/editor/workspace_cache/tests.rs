@@ -47,35 +47,28 @@ fn server(file: &Path, authority: Option<&str>) -> EditorServer {
     }
 }
 
-// The editor runs in the Linux guest, so its file paths are POSIX paths starting with `/`; a
-// Windows temp path never names a cache entry (`entry_path` is `None`).
-#[cfg(unix)]
+/// The editor runs in the Linux guest, so the multi-root file's path is a POSIX path whatever the
+/// host running the test is; the tests name one literally instead of building it from a temp dir.
+const GUEST_FILE: &str = "/home/agent/w.code-workspace";
+
 #[test]
-fn fill_writes_the_file_text_under_the_windows_id() {
+fn store_writes_the_file_text_under_the_windows_id() {
     let dir = tempfile::tempdir().unwrap();
     let user_data = dir.path().join("user-data");
     std::fs::create_dir(&user_data).unwrap();
-    let file = dir.path().join("w.code-workspace");
-    std::fs::write(
-        &file,
-        "{\n\t\"folders\": [{\"path\": \"/workspace/api\"}]\n}\n",
-    )
-    .unwrap();
     let authority = "w.localhost:43021";
+    let text = "{\n\t\"folders\": [{\"path\": \"/workspace/api\"}]\n}\n";
 
-    fill(&server(&file, Some(authority)), &user_data);
+    store(&user_data, authority, GUEST_FILE, text).unwrap();
 
-    let uri = format!("vscode-remote://{authority}{}", file.display());
+    let uri = format!("vscode-remote://{authority}{GUEST_FILE}");
     let entry = user_data
         .join(WORKSPACES_CACHE)
         .join(workspace_id(&uri))
         .join(ENTRY_FILE);
     let written: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&entry).unwrap()).unwrap();
-    assert_eq!(
-        written,
-        serde_json::json!({"content": "{\n\t\"folders\": [{\"path\": \"/workspace/api\"}]\n}\n"})
-    );
+    assert_eq!(written, serde_json::json!({ "content": text }));
 }
 
 #[test]
@@ -92,24 +85,65 @@ fn fill_writes_nothing_without_a_window_address_or_a_file() {
     assert!(!user_data.join("User").exists());
 }
 
-// The editor runs in the Linux guest, so its file paths are POSIX paths starting with `/`; a
-// Windows temp path never names a cache entry (`entry_path` is `None`).
-#[cfg(unix)]
 #[test]
-fn fill_replaces_a_copy_of_an_older_file() {
+fn fill_reads_the_file_and_stores_its_text() {
     let dir = tempfile::tempdir().unwrap();
     let user_data = dir.path().join("user-data");
     std::fs::create_dir(&user_data).unwrap();
-    let file = dir.path().join("w.code-workspace");
-    let server = server(&file, Some("w.localhost:1"));
-    std::fs::write(&file, "{\"folders\": []}").unwrap();
-    fill(&server, &user_data);
-    std::fs::write(&file, "{\"folders\": [{\"path\": \"/workspace\"}]}").unwrap();
+    let text = "{\"folders\": [{\"path\": \"/workspace/api\"}]}";
+    let server = EditorServer::new("/data", "/workspace", 300)
+        .with_workspace_file(GUEST_FILE)
+        .with_window_authority("w.localhost:1");
 
-    fill(&server, &user_data);
+    try_fill(&server, &user_data, |file| {
+        assert_eq!(file, GUEST_FILE);
+        Ok(text.to_owned())
+    })
+    .unwrap();
 
-    let uri = format!("vscode-remote://w.localhost:1{}", file.display());
-    let entry = entry_path(&user_data, "w.localhost:1", file.to_str().unwrap()).unwrap();
+    let entry = entry_path(&user_data, "w.localhost:1", GUEST_FILE).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(entry).unwrap()).unwrap();
+    assert_eq!(written, serde_json::json!({ "content": text }));
+}
+
+#[test]
+fn fill_writes_nothing_when_the_file_is_missing_and_fails_on_other_read_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let user_data = dir.path().join("user-data");
+    std::fs::create_dir(&user_data).unwrap();
+    let server = EditorServer::new("/data", "/workspace", 300)
+        .with_workspace_file(GUEST_FILE)
+        .with_window_authority("w.localhost:1");
+
+    try_fill(&server, &user_data, |_| Err(io::ErrorKind::NotFound.into())).unwrap();
+    assert!(!user_data.join("User").exists());
+
+    let err = try_fill(&server, &user_data, |_| {
+        Err(io::ErrorKind::PermissionDenied.into())
+    })
+    .unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+    assert!(!user_data.join("User").exists());
+}
+
+#[test]
+fn store_replaces_a_copy_of_an_older_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let user_data = dir.path().join("user-data");
+    std::fs::create_dir(&user_data).unwrap();
+    store(&user_data, "w.localhost:1", GUEST_FILE, "{\"folders\": []}").unwrap();
+
+    store(
+        &user_data,
+        "w.localhost:1",
+        GUEST_FILE,
+        "{\"folders\": [{\"path\": \"/workspace\"}]}",
+    )
+    .unwrap();
+
+    let uri = format!("vscode-remote://w.localhost:1{GUEST_FILE}");
+    let entry = entry_path(&user_data, "w.localhost:1", GUEST_FILE).unwrap();
     assert!(entry.ends_with(format!("{}/{ENTRY_FILE}", workspace_id(&uri))));
     assert!(
         std::fs::read_to_string(entry)

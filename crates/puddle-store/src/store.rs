@@ -56,6 +56,7 @@ mod ssh_agent;
 mod ssh_agent_asks;
 pub(crate) mod users;
 mod workspace_git;
+mod workspaces;
 
 use audit::{append, append_for, appended_since, audit_head};
 use rows::{

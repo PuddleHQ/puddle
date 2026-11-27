@@ -2,7 +2,6 @@
 //! The filtered audit queries behind `GET /api/audit`.
 #![expect(
     clippy::unwrap_used,
-    clippy::panic,
     reason = "test helpers outside #[test] functions fail the test by panicking"
 )]
 

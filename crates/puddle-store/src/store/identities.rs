@@ -513,20 +513,5 @@ impl Store {
     }
 }
 
-/// Drops what a deleted workspace held in the Git tables.
-pub(super) fn delete_workspace_rows(
-    tx: &Transaction<'_>,
-    ws: &WorkspaceId,
-) -> Result<bool, StoreError> {
-    let mut any = 0;
-    for table in ["workspace_identities", "workspace_git", "workspace_repos"] {
-        any += tx.execute(
-            &format!("DELETE FROM {table} WHERE workspace_id = ?1"),
-            [ws.as_str()],
-        )?;
-    }
-    Ok(any > 0)
-}
-
 #[cfg(test)]
 mod tests;

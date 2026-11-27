@@ -170,12 +170,8 @@
         }
         return;
       }
-      // Tokens of credentials this edit took away are no longer referenced.
-      const kept = new Set(credentials.map((c) => describeSource(c.source)));
-      for (const old of identity?.credentials ?? []) {
-        if (!kept.has(describeSource(old.source)))
-          void store.forgetToken(old.source);
-      }
+      // A token this edit took away stays for the host to judge: its update removes the token
+      // unless another identity or an environment secret still reads it.
       open = false;
       onSaved(result.value);
     } finally {

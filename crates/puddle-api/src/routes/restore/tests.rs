@@ -78,7 +78,7 @@ async fn an_upload_that_fails_for_another_reason_is_not_a_413() {
 
 fn secret_ref(id: &str) -> SecretRef {
     SecretRef {
-        workspace_id: Some("w-1".into()),
+        workspace_id: Some("w-one".into()),
         name: format!("NAME_{id}"),
         secret_id: id.into(),
     }
@@ -116,7 +116,7 @@ async fn only_the_secrets_and_tokens_without_a_value_here_are_listed() {
     .unwrap();
     let names: Vec<_> = secrets.iter().map(|s| s.name.as_str()).collect();
     assert_eq!(names, ["NAME_env-gone", "NAME_not a stored id!"]);
-    assert_eq!(secrets[0].workspace_id.as_deref(), Some("w-1"));
+    assert_eq!(secrets[0].workspace_id.as_deref(), Some("w-one"));
     let who: Vec<_> = tokens.iter().map(|t| t.identity.as_str()).collect();
     assert_eq!(who, ["who-tok-gone", "who-bad id!"]);
     assert_eq!(tokens[0].host, "github.com");

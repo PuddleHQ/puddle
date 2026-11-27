@@ -52,6 +52,7 @@ use super::token_body::TokenBody;
 
 mod answer;
 mod scan;
+mod shared;
 mod url_target;
 
 pub(crate) use answer::{
@@ -128,7 +129,8 @@ pub enum StandInError {
     /// A stand-in with no host is not allowed: it would be worth nothing anywhere.
     #[error("a stand-in needs at least one host")]
     NoHosts,
-    /// A `*.` pattern over a domain anyone can register a name under (`*.github.io`, `*.co.uk`):
+    /// A `*.` pattern over a domain anyone can register a name under (`*.github.io`, `*.co.uk`), or
+    /// over one with such a domain below it (`*.amazonaws.com` covers `x.s3.amazonaws.com`):
     /// the real value would go to whoever registers one.
     #[error("*.{0} covers names anyone can register; list the exact hosts instead")]
     SharedDomain(String),
@@ -221,7 +223,7 @@ impl StandIn {
         }
         if let Some(base) = hosts
             .wildcard_bases()
-            .find(|base| psl::domain(base.as_bytes()).is_none())
+            .find(|base| shared::covers_public_suffix(base))
         {
             return Err(StandInError::SharedDomain(base.to_owned()));
         }

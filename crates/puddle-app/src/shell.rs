@@ -343,13 +343,18 @@ where
     match signals {
         Err(err) => tracing::warn!(%err, "a shutdown signal will not stop the VMs"),
         Ok(signals) => {
-        let quitting = app.clone();
-        #[expect(
-            clippy::exit,
-            reason = "a second signal means the stop hangs; the next start reconciles the VMs"
-        )]
-        let give_up = || std::process::exit(1);
-        tauri::async_runtime::spawn(quit_on_signals(signals, move || quitting.exit(0), give_up));
+            let quitting = app.clone();
+            #[expect(
+                clippy::exit,
+                reason = "a second signal means the stop hangs; the next start reconciles the VMs"
+            )]
+            let give_up = || std::process::exit(1);
+            tauri::async_runtime::spawn(quit_on_signals(
+                signals,
+                move || quitting.exit(0),
+                give_up,
+            ));
+        }
     }
     let backend = tauri::async_runtime::block_on(source.start_with(options, factory, host))?;
     if let Some(launcher) = launcher {

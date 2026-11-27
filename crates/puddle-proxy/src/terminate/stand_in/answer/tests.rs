@@ -1246,3 +1246,37 @@ fn a_range_request_toward_a_scrubbed_host_is_asked_for_whole() {
     assert!(headers.get(header::IF_RANGE).is_none());
     assert!(headers.get(header::ACCEPT).is_some());
 }
+
+#[test]
+fn a_body_that_ends_in_exactly_the_shortest_cut_form_is_cut_off() {
+    let scrubber = scrubber();
+    let start = &REAL_GH.as_bytes()[..MIN_CUT_FORM];
+    let mut body = b"echo: ".to_vec();
+    body.extend_from_slice(start);
+    assert!(stream(&scrubber, &[&body]).is_err(), "{MIN_CUT_FORM} bytes");
+    let one_less = &REAL_GH.as_bytes()[..MIN_CUT_FORM - 1];
+    let mut body = b"echo: ".to_vec();
+    body.extend_from_slice(one_less);
+    assert_eq!(text(&whole(&scrubber, &body)), text(&body), "one byte less");
+}
+
+#[test]
+fn a_refreshed_value_keeps_exactly_the_last_eight_old_ones_scrubbed() {
+    let registry = registry();
+    let to = host("api.github.com");
+    let old = |n: usize| format!("ghp_old{n:02}Old{n:02}Old{n:02}");
+    for n in 0..9 {
+        registry.set_real(GH, SecretValue::new(old(n))).unwrap();
+    }
+    // Nine refreshes: the value before the first is forgotten, the next eight are kept (and
+    // the ninth is the current one).
+    let scrubber = registry.answer_scrubber(&to).unwrap();
+    assert_eq!(
+        text(&whole(&scrubber, REAL_GH.as_bytes())),
+        REAL_GH,
+        "forgotten"
+    );
+    for n in 0..9 {
+        assert_eq!(text(&whole(&scrubber, old(n).as_bytes())), GH, "{n}");
+    }
+}

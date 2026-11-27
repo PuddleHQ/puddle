@@ -2102,6 +2102,10 @@ fn click_install_in_row(name: &str) -> String {
     )
 }
 
+/// Two checkouts and a loose file, owned by the editor's user: the window's explorer lists rows
+/// only when the volume holds more than `.puddle`.
+const CHECKOUTS: &str = "cd /workspace && git init -q api && git init -q web && echo loose >notes.txt && chown -R agent:agent .";
+
 /// K tier, code-server. Installing an extension from the Extensions view, which is the path a user
 /// takes (the CLI test in `vm_editor_extensions` skips it): the editor asks "Do you trust the
 /// publisher?" before it downloads anything, and a click on "Trust Publisher & Install" installs
@@ -2110,6 +2114,7 @@ fn click_install_in_row(name: &str) -> String {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn vm_browser_code_server_installs_extensions_from_the_view_after_trusting_the_publisher() {
     let editor = Box::pin(Editor::start("exu", None)).await;
+    editor.guest(CHECKOUTS).await;
     let (shell, name) = (&editor.shell, &editor.name);
     editor.attach().await;
     editor.explorer("window").await;

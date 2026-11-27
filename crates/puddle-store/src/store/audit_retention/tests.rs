@@ -337,3 +337,30 @@ fn a_manual_prune_deletes_at_once() {
     clock.advance(10 * DAY);
     assert_eq!(store.prune_audit(1).unwrap().deleted, records);
 }
+
+#[test]
+fn a_prune_logs_what_it_deleted_and_stays_quiet_when_it_deleted_nothing() {
+    let (clock, store) = a_store_with_old_records_only();
+    let records = store.audit_stats().unwrap().records;
+    let logs = crate::test_support::Logs::capture();
+
+    // Nothing is past retention yet.
+    assert_eq!(store.prune_audit(1).unwrap().deleted, 0);
+    assert!(
+        !logs
+            .lines()
+            .iter()
+            .any(|line| line.contains("audit records past their retention deleted")),
+        "a prune that deleted nothing says nothing: {:?}",
+        logs.lines()
+    );
+
+    clock.advance(10 * DAY);
+    assert_eq!(store.prune_audit(1).unwrap().deleted, records);
+    let lines = logs.lines();
+    let line = lines
+        .iter()
+        .find(|line| line.contains("audit records past their retention deleted"))
+        .unwrap_or_else(|| panic!("a prune that deleted records says so: {lines:?}"));
+    assert!(line.contains(&format!("deleted={records}")), "{line}");
+}

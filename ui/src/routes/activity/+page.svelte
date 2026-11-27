@@ -11,13 +11,13 @@
     OUTCOMES,
     RANGES,
     TYPES,
-    exportName,
     fromSearch,
     isFiltered,
     isNarrowed,
     toSearch,
     type Filter,
-  } from "#lib/audit/model.ts";
+  } from "#lib/audit/filter.ts";
+  import { exportName } from "#lib/audit/model.ts";
   import { requestRulesStore } from "#lib/stores/request-rules.svelte.ts";
   import { auditStore as store } from "#lib/stores/audit.svelte.ts";
   import { toasts } from "#lib/stores/toasts.svelte.ts";

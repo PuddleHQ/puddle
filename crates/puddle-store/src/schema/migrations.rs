@@ -99,7 +99,8 @@ pub(super) fn current_version(conn: &Connection, supported: u32) -> Result<u32, 
 }
 
 /// Runs the steps after `start` in one write transaction. Returns `false`, changing nothing,
-/// when the file is no longer at `start` once the lock is held.
+/// when the file is no longer at `start` once the lock is held, or another process has committed
+/// since `copy` was taken.
 pub(super) fn run_steps(
     conn: &mut Connection,
     migrations: &[&str],
@@ -109,6 +110,11 @@ pub(super) fn run_steps(
     let supported = u32::try_from(migrations.len()).unwrap_or(u32::MAX);
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     if current_version(&tx, supported)? != start {
+        return Ok(false);
+    }
+    // A commit by another process of the same version since the copy was taken is missing from
+    // it: take the copy again.
+    if copy.is_some_and(|copy| copy.data_version != data_version(&tx).unwrap_or(-1)) {
         return Ok(false);
     }
     // Violations a step did not cause (an older bug, a hand edit) never block the upgrade.
@@ -149,16 +155,27 @@ pub(super) struct PreUpgradeCopy {
     pub(super) made: PathBuf,
     pub(super) db: PathBuf,
     pub(super) target: u32,
+    /// `PRAGMA data_version` of the connection before the copy was taken; it changes when another
+    /// connection commits.
+    pub(super) data_version: i64,
+}
+
+fn data_version(conn: &Connection) -> rusqlite::Result<i64> {
+    conn.pragma_query_value(None, "data_version", |row| row.get(0))
 }
 
 impl PreUpgradeCopy {
     /// Renames the copy to `<file>.pre-v<target>` (replacing a copy a failed earlier run left)
-    /// and deletes all but the newest [`BACKUPS_KEPT`] copies.
+    /// and deletes all but the newest [`BACKUPS_KEPT`] copies. An old copy that cannot be deleted
+    /// (on Windows, one another program holds open) is logged: it must not stop the host starting.
     fn put_in_place(&self) -> Result<(), StoreError> {
         let backup = backup_path(&self.db, self.target);
         std::fs::rename(&self.made, &backup)
             .map_err(|err| StoreError::Backup(format!("{}: {err}", backup.display())))?;
-        prune_backups(&self.db).map_err(|err| StoreError::Backup(err.to_string()))
+        if let Err(error) = prune_backups(&self.db) {
+            tracing::warn!(%error, "old upgrade copy not deleted");
+        }
+        Ok(())
     }
 
     /// Deletes the copy if it was not put in place.
@@ -182,6 +199,7 @@ pub(super) fn copy_before(
         return Ok(None);
     };
     let db = PathBuf::from(path);
+    let data_version = data_version(conn)?;
     let mut name = backup_path(&db, target).into_os_string();
     name.push(format!(
         ".{}-{}.partial",
@@ -192,6 +210,7 @@ pub(super) fn copy_before(
         made: PathBuf::from(name),
         db,
         target,
+        data_version,
     };
     // `VACUUM INTO` refuses an existing file.
     copy.discard();

@@ -6,7 +6,7 @@
 // a resync. Every string in a listing came from the guest.
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import type { components } from "#lib/api/schema.d.ts";
-import { sentence } from "#lib/rules/model.ts";
+import { sentence } from "#lib/format/sentence.ts";
 import type { CheckoutListing } from "#lib/workspaces/checkouts.ts";
 import type { LiveSource } from "./live.svelte.ts";
 import { live } from "./live.svelte.ts";

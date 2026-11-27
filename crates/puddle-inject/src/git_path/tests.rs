@@ -191,6 +191,75 @@ fn azure_devops_paths_in_every_shape() {
 }
 
 #[test]
+fn an_azure_devops_ref_filter_segment_after_git_reads_as_the_same_repository() {
+    for (host, plain, repo) in [
+        (
+            "dev.azure.com",
+            "/Org/Proj/_git/{}Repo/info/refs",
+            "dev.azure.com/org/proj/repo",
+        ),
+        (
+            "dev.azure.com",
+            "/org/_git/{}repo/info/refs",
+            "dev.azure.com/org/repo/repo",
+        ),
+        (
+            "contoso.visualstudio.com",
+            "/proj/_git/{}repo/info/refs",
+            "contoso.visualstudio.com/contoso/proj/repo",
+        ),
+        (
+            "contoso.visualstudio.com",
+            "/DefaultCollection/proj/_git/{}repo/info/refs",
+            "contoso.visualstudio.com/contoso/proj/repo",
+        ),
+    ] {
+        for segment in ["", "_full/", "_optimized/", "_FULL/", "_Optimized/"] {
+            let path = plain.replace("{}", segment);
+            let found = git(host, "GET", &path, Some("service=git-upload-pack"));
+            assert_eq!(found.describe(), repo, "{path}");
+            assert_eq!(found.credential_host, "dev.azure.com", "{path}");
+        }
+    }
+    // The segment changes neither the access nor where the endpoint starts.
+    let push = git(
+        "dev.azure.com",
+        "POST",
+        "/org/proj/_git/_full/repo/git-receive-pack",
+        None,
+    );
+    assert_eq!(push.access, Access::Push);
+    assert_eq!(push.describe(), "dev.azure.com/org/proj/repo");
+}
+
+#[test]
+fn an_azure_devops_ref_filter_segment_with_no_repository_after_it_names_none() {
+    for (host, path) in [
+        ("dev.azure.com", "/org/proj/_git/_full"),
+        ("dev.azure.com", "/org/_git/_optimized"),
+        ("contoso.visualstudio.com", "/proj/_git/_full"),
+        (
+            "contoso.visualstudio.com",
+            "/DefaultCollection/proj/_git/_optimized",
+        ),
+    ] {
+        assert_eq!(
+            classify(host, "GET", path, None),
+            Classified::NotGit,
+            "{path}"
+        );
+    }
+    // Only straight after `_git`: elsewhere it is an ordinary name.
+    let found = git(
+        "dev.azure.com",
+        "GET",
+        "/org/_full/_git/repo/info/refs",
+        None,
+    );
+    assert_eq!(found.describe(), "dev.azure.com/org/_full/repo");
+}
+
+#[test]
 fn the_credential_host_of_every_azure_devops_name_is_one() {
     let on_visualstudio = git(
         "contoso.visualstudio.com",

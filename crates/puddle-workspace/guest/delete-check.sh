@@ -38,6 +38,10 @@ clean() {
 # clean or process program never runs; the -c settings reach the git that `status` starts in a
 # nested repository). Any owner is accepted (the checkout may belong to the session user, not
 # root). A file a filter would rewrite may then read as changed: more is reported, never less.
+# A partial clone's remote can name a program (`uploadpack`) that git runs to fetch a missing object,
+# so lazy fetch is off (`GIT_NO_LAZY_FETCH`, git 2.44 and later) and, for an older git, no transport
+# is allowed (`protocol.allow=never`): a missing object is an error, never a program.
+export GIT_NO_LAZY_FETCH=1 GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=protocol.allow GIT_CONFIG_VALUE_0=never
 tab=$(printf '\t')
 
 # The filter drivers named in the config of the repository in $1 and of those nested in it, at

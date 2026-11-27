@@ -494,7 +494,7 @@ pub enum InstallState {
     },
 }
 
-/// What the check found for one entry of [`PROBLEMATIC_SOFTWARE`].
+/// What the check found for one entry of [`crate::PROBLEMATIC_SOFTWARE`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SoftwareFacts {
     /// The program looked for.

@@ -61,7 +61,12 @@ fn public_suffix_parents_match_the_psl_crate_rules() {
         std::fs::read_to_string(Path::new(manifest).parent().unwrap().join("data/rules.txt"))
             .unwrap();
     let want = parents(&rules);
-    let text = want.iter().map(|p| format!("{p}\n")).collect::<String>();
+    let mut text = want
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join("\n");
+    text.push('\n');
     let file = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("src/terminate/stand_in/public_suffix_parents.txt");
     let have: BTreeSet<String> = PARENTS.iter().map(|p| (*p).to_owned()).collect();

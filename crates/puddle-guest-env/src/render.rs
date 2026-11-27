@@ -152,7 +152,8 @@ pub fn guest_proxy_config(
         file(
             &format!("{gradle_home}/{GRADLE_INIT_RELATIVE}"),
             gradle_init(settings.proxy, &java_bypass),
-        )?,
+        )?
+        .with_session_owner(),
         file(SSH_CONFIG_GUEST, ssh_config(settings)?)?,
         ssh_config_include()?,
     ];
@@ -163,7 +164,8 @@ pub fn guest_proxy_config(
             GuestPath::new(&format!("{docker_dir}/config.json")).map_err(|e| path_error(&e))?;
         files.push(
             GuestFile::merged(path, docker_cli_config(container, &no_proxy)?)
-                .with_mode(DOCKER_CONFIG_MODE),
+                .with_mode(DOCKER_CONFIG_MODE)
+                .with_session_owner(),
         );
     }
     Ok(GuestProxyConfig { env, files })

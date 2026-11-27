@@ -281,6 +281,8 @@ pub struct GuestFile {
     mode: u32,
     #[serde(default)]
     apply: ApplyKind,
+    #[serde(default)]
+    session_owned: bool,
 }
 
 impl fmt::Debug for GuestFile {
@@ -345,6 +347,7 @@ impl GuestFile {
             contents,
             mode: Self::DEFAULT_MODE,
             apply: ApplyKind::Replace,
+            session_owned: false,
         }
     }
 
@@ -365,6 +368,7 @@ impl GuestFile {
             contents: spec.fresh(),
             mode: Self::DEFAULT_MODE,
             apply: ApplyKind::Merge(spec),
+            session_owned: false,
         }
     }
 
@@ -382,6 +386,7 @@ impl GuestFile {
             contents: Vec::new(),
             mode: Self::DEFAULT_MODE,
             apply: ApplyKind::Keep,
+            session_owned: false,
         }
     }
 
@@ -390,6 +395,28 @@ impl GuestFile {
     pub fn with_mode(mut self, mode: FileMode) -> Self {
         self.mode = mode.bits();
         self
+    }
+
+    /// The same file, and the directories the hook makes for it, belonging to the session user
+    /// even outside that user's home (a path an image env variable moved there). Below the
+    /// home they always do.
+    ///
+    /// ```
+    /// use puddle_types::{GuestFile, GuestPath};
+    /// let f = GuestFile::new(GuestPath::new("/opt/gradle/init.d/a.gradle").unwrap(), Vec::new())
+    ///     .with_session_owner();
+    /// assert!(f.session_owned());
+    /// ```
+    #[must_use]
+    pub fn with_session_owner(mut self) -> Self {
+        self.session_owned = true;
+        self
+    }
+
+    /// Whether the file belongs to the session user wherever it is.
+    #[must_use]
+    pub fn session_owned(&self) -> bool {
+        self.session_owned
     }
 
     /// Where the file goes in the guest.

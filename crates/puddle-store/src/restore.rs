@@ -171,15 +171,15 @@ fn user_key(db: &str) -> String {
     format!(
         "CASE WHEN (SELECT role FROM {db}.users WHERE id = x.user_id) = 'owner' THEN '' \
          ELSE lower({}) END",
-        user_name(db, "x.user_id")
+        matched_as(db, "x.user_id")
     )
 }
 
-/// The name a user of `db` is matched and added under, given the SQL expression `id` of its id.
+/// The name a person of `db` is matched and added under, given the SQL expression `id` of its id.
 /// A plain user of the backup named like this machine's owner (a name is unique here, and the owner
 /// is never a match for anyone) is matched and added as `<name> (restored)`, so the owner's rows
 /// stay the owner's; the preview and the merge both use this one expression.
-fn user_name(db: &str, id: &str) -> String {
+fn matched_as(db: &str, id: &str) -> String {
     let name = format!("(SELECT name FROM {db}.users WHERE id = {id})");
     if db == "backup" {
         format!(
@@ -300,7 +300,7 @@ fn queries(db: &str) -> [(&'static str, String); 6] {
             format!(
                 "SELECT CASE WHEN x.role = 'owner' THEN '' ELSE lower({}) END, x.role \
                  FROM {db}.users x",
-                user_name(db, "x.id")
+                matched_as(db, "x.id")
             ),
         ),
     ]
@@ -596,15 +596,15 @@ fn map_rows(conn: &Connection, map: &str, table: &str, key: &str) -> Result<(), 
 /// The id mapping of the users: the owner to the owner, the same name to the same user, anyone
 /// else added as a user with no password.
 fn map_users(conn: &Connection) -> Result<(), StoreError> {
-    let name = user_name("backup", "b.id");
+    let matched = matched_as("backup", "b.id");
     conn.execute_batch(&format!(
         "INSERT INTO main.users (role, name, created_at) \
-           SELECT 'user', {name}, b.created_at FROM backup.users b \
-           WHERE b.role = 'user' AND NOT EXISTS (SELECT 1 FROM main.users m WHERE m.name = {name} COLLATE NOCASE);
+           SELECT 'user', {matched}, b.created_at FROM backup.users b \
+           WHERE b.role = 'user' AND NOT EXISTS (SELECT 1 FROM main.users m WHERE m.name = {matched} COLLATE NOCASE);
          DROP TABLE IF EXISTS temp.umap;
          CREATE TEMP TABLE umap AS SELECT b.id AS b_id, \
            CASE WHEN b.role = 'owner' THEN (SELECT id FROM main.users WHERE role = 'owner') \
-                ELSE (SELECT id FROM main.users m WHERE m.role = 'user' AND m.name = {name} COLLATE NOCASE) END AS p_id \
+                ELSE (SELECT id FROM main.users m WHERE m.role = 'user' AND m.name = {matched} COLLATE NOCASE) END AS p_id \
            FROM backup.users b;"
     ))?;
     Ok(())

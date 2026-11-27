@@ -141,7 +141,7 @@ async fn cargo_prints_the_refusal_text_and_does_not_retry() {
     std::fs::write(project.join("src/main.rs"), "fn main() {}\n").unwrap();
     std::fs::write(
         project.join("Cargo.toml"),
-        "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nserde = \"1\"\n",
+        "[workspace]\n\n[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nserde = \"1\"\n",
     )
     .unwrap();
     std::fs::write(

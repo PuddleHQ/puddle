@@ -66,10 +66,6 @@ impl Root {
         })
     }
 
-    pub(crate) fn stable(install_id: &str) -> Result<Self, IpcError> {
-        Self::stable_in(&default_parent(), install_id)
-    }
-
     /// The root folder `puddle-<first 8 digits of the install id>` below `parent`, made `0700` if
     /// it is missing and otherwise trusted only when it is a real folder (not a symlink) of this
     /// user with exactly that mode: anything else could have been put there by someone else.

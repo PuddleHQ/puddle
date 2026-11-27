@@ -14,7 +14,7 @@ FAIL  Hypervisor                  can't run: this is a virtual machine without n
               run Puddle on a physical PC. On a Hyper-V host, with the VM off:
                 Set-VMProcessor -VMName <name> -ExposeVirtualizationExtensions $true
               On VMware: "Virtualize Intel VT-x/EPT or AMD-V/RVI" in the VM's processor settings.
-ok    Code integrity              memory integrity (HVCI) on; App Control policy for programs off
+ok    Code integrity              memory integrity on; policy limiting which programs may run off
 ok    Bundled runtime             msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
 ok    Runtime starts              msb 0.7.7-puddle.2 (0.0 s)
 skip  Test boot                   not checked: no usable hypervisor
@@ -57,7 +57,7 @@ ok    Known problematic software  none found
     {
       "id": "code_integrity",
       "status": "ok",
-      "summary": "memory integrity (HVCI) on; App Control policy for programs off",
+      "summary": "memory integrity on; policy limiting which programs may run off",
       "impact": "Windows' code integrity rules guard the system against untrusted code, and Puddle runs alongside them."
     },
     {

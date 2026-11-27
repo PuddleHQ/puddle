@@ -2,7 +2,7 @@ puddle doctor (puddle 0.1.0, windows x86_64)
 
 ok    CPU virtualization          on (the hypervisor uses it)
 ok    Hypervisor                  Windows Hypervisor Platform is on and the hypervisor runs
-ok    Code integrity              memory integrity (HVCI) on; App Control policy for programs off
+ok    Code integrity              memory integrity on; policy limiting which programs may run off
 info  Job object                  could not be read; whether Puddle runs in a job object that blocks child processes from leaving it is unknown
       impact: Puddle couldn't read whether the program that started it limits its processes.
       remedy: If workspaces fail to start, start Puddle from the Start menu or a normal terminal.
@@ -49,7 +49,7 @@ ok    Known problematic software  none found
     {
       "id": "code_integrity",
       "status": "ok",
-      "summary": "memory integrity (HVCI) on; App Control policy for programs off",
+      "summary": "memory integrity on; policy limiting which programs may run off",
       "impact": "Windows' code integrity rules guard the system against untrusted code, and Puddle runs alongside them."
     },
     {

@@ -199,6 +199,21 @@ const type = (label: string, value: string) =>
   fireEvent.input(field(label), { target: { value } });
 
 describe("CreateWorkspaceForm", () => {
+  it("selects the suggested name on focus so typing replaces it, and leaves a typed name alone", async () => {
+    mount();
+    await screen.findByRole("region");
+    await type("Git repository (HTTPS)", "https://github.com/acme/shop");
+    const name = field("Name");
+    expect(name.value).toBe("shop");
+    name.focus();
+    expect([name.selectionStart, name.selectionEnd]).toEqual([0, 4]);
+    await fireEvent.input(name, { target: { value: "mine" } });
+    name.setSelectionRange(4, 4);
+    name.blur();
+    name.focus();
+    expect([name.selectionStart, name.selectionEnd]).toEqual([4, 4]);
+  });
+
   it("is a dialog with the repository first", async () => {
     mount();
     const dialog = await screen.findByRole("region", { name: "New workspace" });

@@ -43,6 +43,10 @@ const STEP: Duration = Duration::from_secs(60);
 /// loaded runner takes tens of seconds).
 const CONNECT: Duration = Duration::from_secs(120);
 
+/// How long a window that was just stopped may keep its debug port and its process. Windows ends a
+/// killed process after `taskkill` returns, and a window started before that cannot open the port.
+const RELEASE: Duration = Duration::from_secs(60);
+
 /// The pinned VS Code release and the Remote-SSH package that go with it.
 #[derive(Debug, Clone)]
 pub struct VsCodeRelease {
@@ -345,6 +349,7 @@ impl VsCodeWindow {
             log,
             connect,
         } = *wiring;
+        port_free(port, RELEASE).await?;
         let out = std::fs::File::create(log).map_err(|e| HarnessError::io("create", log, e))?;
         let err = out
             .try_clone()
@@ -516,25 +521,58 @@ impl VsCodeWindow {
         .map(drop)
     }
 
-    /// Stops the driver and the window with all its processes.
+    /// Stops the driver and the window with all its processes, and waits until the window's first
+    /// process has ended.
     ///
     /// # Errors
     ///
-    /// [`HarnessError::Timeout`] when the driver did not end in time (the window is stopped
-    /// anyway).
+    /// [`HarnessError::Timeout`] when the driver or the window did not end in time (the window is
+    /// stopped anyway).
     pub async fn close(mut self) -> Result<(), HarnessError> {
         let ended = match self.driver.take() {
             Some(driver) => driver.quit().await,
             None => Ok(()),
         };
         stop_tree(&self.child);
-        ended
+        let _ = self.child.start_kill();
+        let gone = match tokio::time::timeout(RELEASE, self.child.wait()).await {
+            Ok(_) => Ok(()),
+            Err(_) => Err(HarnessError::Timeout {
+                what: "stopping the VS Code window",
+                limit: RELEASE,
+            }),
+        };
+        ended.and(gone)
     }
 }
 
 impl Drop for VsCodeWindow {
     fn drop(&mut self) {
         stop_tree(&self.child);
+    }
+}
+
+/// Waits until nothing listens on the debug port. A window that finds it taken starts without one and
+/// no driver can reach it; when an earlier window of the same user-data folder still runs, VS Code
+/// also hands the new window's arguments to it and exits.
+async fn port_free(port: u16, within: Duration) -> Result<(), HarnessError> {
+    let until = tokio::time::Instant::now() + within;
+    // flake-ok: returns a named error instead of panicking, and this crate may not depend on the dev-only test kit
+    loop {
+        // A port this user may not bind at all (below 1024 on Linux) is not taken: the window reports that itself.
+        let taken = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port))
+            .is_err_and(|e| e.kind() == std::io::ErrorKind::AddrInUse);
+        if !taken {
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= until {
+            return Err(HarnessError::Browser {
+                detail: format!(
+                    "port {port} is still taken after {within:?}: an earlier window or another program holds it"
+                ),
+            });
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
     }
 }
 

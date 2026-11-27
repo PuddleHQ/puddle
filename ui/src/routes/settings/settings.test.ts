@@ -14,6 +14,7 @@ const api = await vi.hoisted(async () => {
   return new mod.FakeSettings();
 });
 vi.mock("#lib/api/client.ts", () => ({ api }));
+vi.mock("$app/navigation", () => ({ goto: vi.fn() }));
 vi.mock("$app/state", () => ({
   page: {
     url: new URL("http://127.0.0.1/settings/appearance"),
@@ -33,23 +34,31 @@ import { palette } from "#lib/theme/palette.svelte.ts";
 import { NO_CUSTOM } from "#lib/theme/palette.ts";
 import { theme } from "#lib/theme/theme.svelte.ts";
 import Appearance from "./(pages)/appearance/+page.svelte";
+import Credentials from "./(pages)/credentials/+page.svelte";
 import Editor from "./(pages)/editor/+page.svelte";
+import EditorServer from "./(pages)/editor-server/+page.svelte";
+import Environment from "./(pages)/environment/+page.svelte";
+import Git from "./(pages)/git/+page.svelte";
 import Network from "./(pages)/network/+page.svelte";
 import Notifications from "./(pages)/notifications/+page.svelte";
 import ThisComputer from "./(pages)/this-computer/+page.svelte";
 import Workspaces from "./(pages)/workspaces/+page.svelte";
 
-// Every test here mounts all six pages of Settings, so one test costs about a second on an idle
+// Every test here mounts all ten pages of Settings, so one test costs about a second on an idle
 // host and several times that on a loaded one; the default 5 s limit is under the loaded cost.
 vi.setConfig({ testTimeout: 30_000 });
 
 const ALL = [
   Appearance,
   Notifications,
-  Workspaces,
-  Network,
-  Editor,
   ThisComputer,
+  Workspaces,
+  Editor,
+  Network,
+  Credentials,
+  Environment,
+  EditorServer,
+  Git,
 ];
 
 beforeEach(() => {
@@ -201,22 +210,24 @@ describe("the screen", () => {
       "Notifications",
       "Also notify when",
       "Inbox",
-      "Workspaces",
-      "Disk space",
-      "Environment",
-      "Proxy",
-      "Local destinations",
-      "Decrypting traffic",
-      "Editor defaults",
-      "Browser VS Code",
-      "Git and SSH",
       "Startup and window",
+      "Disk space",
       "Devices and sign-in",
       "Back up and restore",
       "Activity log",
       "Diagnostic log",
       "Checks and errors",
       "Privacy and about",
+      "New workspaces",
+      "Editor defaults",
+      "Proxy",
+      "Local destinations",
+      "Decrypting traffic",
+      "Logins and credentials",
+      "Limits",
+      "Environment",
+      "Browser VS Code server",
+      "Git and SSH",
     ]);
     expect(screen.getByLabelText("Default memory")).toHaveValue("4096");
     expect(screen.getByLabelText("Theme")).toHaveValue("system");

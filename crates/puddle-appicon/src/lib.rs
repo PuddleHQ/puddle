@@ -7,9 +7,13 @@
 //! really show.
 #![forbid(unsafe_code)]
 
+mod badge;
 mod builtin;
 mod upload;
 
+pub use badge::{
+    DOT as BADGE_DOT, overlay as badge_overlay, overlay_side, tray_side, with_dot as badge_dot,
+};
 pub use builtin::built_in;
 pub use upload::{IconError, MAX_UPLOAD_BYTES, normalize_upload};
 

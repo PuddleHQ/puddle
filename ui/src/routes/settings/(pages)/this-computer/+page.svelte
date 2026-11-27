@@ -9,10 +9,18 @@
   import SelectRow from "#lib/components/SelectRow.svelte";
   import SettingRow from "#lib/components/SettingRow.svelte";
   import SettingsGroup from "#lib/components/SettingsGroup.svelte";
+  import SwitchRow from "#lib/components/SwitchRow.svelte";
   import UiSwitchRow from "#lib/components/UiSwitchRow.svelte";
+  import ValueRow from "#lib/components/ValueRow.svelte";
   import { api } from "#lib/api/client.ts";
-  import { saveUi } from "#lib/settings/apply.ts";
+  import { saveLayer, saveUi } from "#lib/settings/apply.ts";
   import { requireSaver } from "#lib/settings/context.ts";
+  import {
+    DEFAULT_FAIL_FREE_GB,
+    DEFAULT_WARN_FREE_GB,
+    linesProblem,
+    parseFreeGb,
+  } from "#lib/settings/disk-space.ts";
   import {
     CLOSE_OPTIONS,
     LOG_LEVEL_OPTIONS,
@@ -47,10 +55,26 @@
       noticesFailed = true;
     }
   }
+  /** A free-space line as typed, checked against the other line as it is stored. */
+  function freeLine(other: () => number, isWarn: boolean) {
+    return (text: string) => {
+      const parsed = parseFreeGb(text);
+      if (!parsed.ok) return parsed;
+      const problem = isWarn
+        ? linesProblem(parsed.gb, other())
+        : linesProblem(other(), parsed.gb);
+      return problem
+        ? { ok: false as const, message: problem }
+        : { ok: true as const, value: parsed.gb };
+    };
+  }
 </script>
 
 {#if store.view}
   {@const ui = store.view.ui}
+  {@const eff = store.view.effective}
+  {@const warnStored = ui.disk_warn_free_gb ?? DEFAULT_WARN_FREE_GB}
+  {@const failStored = ui.disk_fail_free_gb ?? DEFAULT_FAIL_FREE_GB}
   <SettingsGroup title="Startup and window">
     <UiSwitchRow
       id="set-login"
@@ -83,6 +107,47 @@
       desc="Off: minimizing leaves Puddle in the taskbar."
       how="Without a tray icon on your desktop, minimizing always leaves it in the taskbar."
       fallback={false}
+    />
+    <SwitchRow
+      id="set-zoom"
+      label="Zoom shortcuts"
+      desc="Ctrl and plus or minus in workspace windows. Applies to Puddle's windows on this computer."
+      checked={eff.zoom_hotkeys.value}
+      onchange={(next) =>
+        saveLayer(
+          saver,
+          "set-zoom",
+          "zoom_hotkeys",
+          next,
+          eff.zoom_hotkeys.value,
+        )}
+    />
+  </SettingsGroup>
+
+  <SettingsGroup
+    title="Disk space"
+    intro="Free room on the drive that holds Puddle's data, in GB of 1024 x 1024 x 1024 bytes."
+  >
+    <ValueRow
+      id="set-disk-warn"
+      label="Warn when free space is under (GB)"
+      desc="Default {DEFAULT_WARN_FREE_GB}. The check shows a warning and the app says so once."
+      how="puddle doctor and the app check the room left on the drive against these two lines. They do not measure the size of the disks: a workspace's root disk (16 GiB for a new workspace) and its volume are sparse files that take space only as the workspace writes, so a workspace can still grow past what is left."
+      value={String(warnStored)}
+      inputmode="numeric"
+      parse={freeLine(() => failStored, true)}
+      onsave={(gb) =>
+        saveUi(saver, "set-disk-warn", "disk_warn_free_gb", gb, warnStored)}
+    />
+    <ValueRow
+      id="set-disk-fail"
+      label="Fail when free space is under (GB)"
+      desc="Default {DEFAULT_FAIL_FREE_GB}. The check fails and the app says so once. Never above the warning line."
+      value={String(failStored)}
+      inputmode="numeric"
+      parse={freeLine(() => warnStored, false)}
+      onsave={(gb) =>
+        saveUi(saver, "set-disk-fail", "disk_fail_free_gb", gb, failStored)}
     />
   </SettingsGroup>
 

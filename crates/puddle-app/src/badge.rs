@@ -4,6 +4,7 @@
 
 use std::collections::BTreeSet;
 
+use puddle_appicon::Icon;
 use puddle_types::Event;
 
 /// The open requests, kept from the event stream so the badge needs no query per event.
@@ -78,122 +79,25 @@ pub fn tooltip(count: usize, on: bool) -> String {
     }
 }
 
-/// A square RGBA image the badge dot is drawn on or is.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Pixels {
-    /// Width and height in pixels.
-    pub size: u32,
-    /// Four bytes per pixel: red, green, blue, alpha.
-    pub rgba: Vec<u8>,
-}
+/// Whether the tray icon's badge dot has a white ring round it. Off: the red dot is clear against
+/// the duck on a light and a dark tray, and the overlay on the taskbar button has none either. Set
+/// it to `true` to bring the ring back.
+pub const TRAY_RING: bool = false;
 
-/// The dot's colour: a red that has contrast against both light and dark taskbars.
-const DOT: [u8; 4] = [0xd9, 0x2d, 0x20, 0xff];
-/// The ring around the dot, so it stands out from an icon of a similar colour.
-const RING: [u8; 4] = [0xff, 0xff, 0xff, 0xff];
-
-/// Paints a dot of `radius` pixels with a ring around it, centred at `(cx, cy)`.
-fn paint_dot(pixels: &mut Pixels, cx: f32, cy: f32, radius: f32) {
-    let size = pixels.size;
-    for y in 0..size {
-        for x in 0..size {
-            #[expect(clippy::cast_precision_loss, reason = "pixel coordinates are tiny")]
-            let (dx, dy) = (x as f32 + 0.5 - cx, y as f32 + 0.5 - cy);
-            let distance = (dx * dx + dy * dy).sqrt();
-            let colour = if distance <= radius {
-                DOT
-            } else if distance <= radius + (radius / 4.0).max(1.0) {
-                RING
-            } else {
-                continue;
-            };
-            let at = ((y * size + x) * 4) as usize;
-            if let Some(pixel) = pixels.rgba.get_mut(at..at + 4) {
-                pixel.copy_from_slice(&colour);
-            }
-        }
-    }
-}
-
-/// `base` with the badge dot in its lower right corner (the tray icon while requests wait).
-/// `None` when `base` is not a square of `size` pixels with four bytes each.
+/// The tray icon with the badge dot in its lower right corner. `None` when `base` is not a square
+/// of four-byte pixels.
 #[must_use]
-pub fn with_dot(base: &Pixels) -> Option<Pixels> {
-    let expected = (base.size as usize)
-        .checked_mul(base.size as usize)?
-        .checked_mul(4)?;
-    if base.size == 0 || base.rgba.len() != expected {
-        return None;
-    }
-    let mut out = base.clone();
-    #[expect(clippy::cast_precision_loss, reason = "icon sizes are tiny")]
-    let size = base.size as f32;
-    paint_dot(&mut out, size * 0.72, size * 0.72, size * 0.2);
-    Some(out)
+pub fn with_dot(base: &Icon) -> Option<Icon> {
+    puddle_appicon::badge_dot(base, TRAY_RING)
 }
 
-/// The digits of the overlay's number, five rows of three pixels each (bit 2 is the left pixel).
-const DIGITS: [[u8; 5]; 10] = [
-    [0b111, 0b101, 0b101, 0b101, 0b111],
-    [0b010, 0b110, 0b010, 0b010, 0b111],
-    [0b111, 0b001, 0b111, 0b100, 0b111],
-    [0b111, 0b001, 0b111, 0b001, 0b111],
-    [0b101, 0b101, 0b111, 0b001, 0b001],
-    [0b111, 0b100, 0b111, 0b001, 0b111],
-    [0b111, 0b100, 0b111, 0b101, 0b111],
-    [0b111, 0b001, 0b001, 0b001, 0b001],
-    [0b111, 0b101, 0b111, 0b101, 0b111],
-    [0b111, 0b101, 0b111, 0b001, 0b111],
-];
-
-/// The plus after a nine, three rows of three pixels.
-const PLUS: [u8; 3] = [0b010, 0b111, 0b010];
-
-/// The size of the taskbar overlay, in pixels.
-const OVERLAY: u32 = 16;
-
-/// Paints `rows` (three pixels wide) with `scale` pixels per cell, its top left corner at
-/// `(left, top)`, in white.
-fn paint_glyph(pixels: &mut Pixels, rows: &[u8], scale: u32, left: u32, top: u32) {
-    for (row, bits) in (0..).zip(rows) {
-        for column in 0..3_u32 {
-            if bits >> (2 - column) & 1 == 0 {
-                continue;
-            }
-            for dy in 0..scale {
-                for dx in 0..scale {
-                    let (x, y) = (left + column * scale + dx, top + row * scale + dy);
-                    let at = ((y * pixels.size + x) * 4) as usize;
-                    if let Some(pixel) = pixels.rgba.get_mut(at..at + 4) {
-                        pixel.copy_from_slice(&RING);
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// The Windows taskbar's overlay: the number of waiting requests in white on the dot, 16 pixels,
-/// on a transparent background. One to nine shows the digit, more shows `9+`. With nothing
-/// waiting it is the plain dot (the shell shows no overlay then).
+/// The Windows taskbar's overlay for the display `scale` (1.0 is 100 percent): the number of
+/// waiting requests in white on a red dot, 16 pixels at 100 percent and 20, 24 and 32 at 125, 150
+/// and 200, so Windows shows it as drawn. One to nine shows the digit, more shows `9+`. With
+/// nothing waiting it is the plain dot (the shell shows no overlay then).
 #[must_use]
-pub fn overlay_number(count: usize) -> Pixels {
-    let mut pixels = Pixels {
-        size: OVERLAY,
-        rgba: vec![0; (OVERLAY * OVERLAY * 4) as usize],
-    };
-    paint_dot(&mut pixels, 8.0, 8.0, 7.0);
-    // One to nine is the digit; ten and more is the largest digit and a plus.
-    let digit = DIGITS.get(count.min(9));
-    match (count, digit) {
-        (0, _) | (_, None) => {}
-        (1..=9, Some(rows)) => paint_glyph(&mut pixels, rows, 2, 5, 3),
-        (_, Some(nine)) => {
-            paint_glyph(&mut pixels, nine, 2, 2, 3);
-            paint_glyph(&mut pixels, &PLUS, 1, 10, 5);
-        }
-    }
-    pixels
+pub fn overlay_number(count: usize, scale: f64) -> Option<Icon> {
+    puddle_appicon::badge_overlay(count, puddle_appicon::overlay_side(scale))
 }
 
 #[cfg(test)]

@@ -206,6 +206,10 @@ async fn explorer(
     }
 }
 
+/// The ids of the workspaces the editor keeps storage for, and of those it has a cached copy of
+/// the multi-root file for: `storage= <ids> cached= <ids>`.
+const WORKSPACE_IDS: &str = "cd /workspace/.puddle/code-server/user-data/User && echo storage= $(ls workspaceStorage 2>/dev/null | grep -v '[.]') cached= $(ls caches/CachedConfigurations/workspaces 2>/dev/null)";
+
 /// Waits until the editor server answers its health check.
 const EDITOR_UP: &str = "for i in $(seq 1 100); do curl -sf -o /dev/null http://127.0.0.1:41337/healthz && exit 0; sleep 1; done; exit 1";
 
@@ -540,7 +544,7 @@ const WINDOW_LOGS: &str = "(async () => {
           const get = all.get(key);
           get.onsuccess = get.onerror = () => {
             const body = get.result === undefined ? '' : text(get.result);
-            const lines = body.split('\n').filter(l => interesting.test(l)).slice(-60);
+            const lines = body.split('\\n').filter(l => interesting.test(l)).slice(-60);
             found.push({ key: String(key), bytes: body.length, lines });
             if (found.length === wanted.length) done(found);
           };
@@ -744,6 +748,36 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
     );
     assert!(answer.get("url").is_none_or(Value::is_null), "{answer}");
     let rows = explorer(&shell, &runtime, &sandbox, "first window", EXPLORER_ROWS).await;
+    // The agent puts the editor's cached copy of the multi-root file in place under the id the
+    // workbench gives the window's workspace, which it mirrors from the workbench's internals.
+    // The window's own storage folder carries the workbench's id: an editor release that keys
+    // its cache another way fails here, not later as windows that open with no folders.
+    let (storage, cached) = puddle_test_kit::eventually_async(
+        "the window's storage folder",
+        Duration::from_secs(90),
+        || async {
+            let line = guest(&runtime, &sandbox, WORKSPACE_IDS).await;
+            let words = |part: &str| -> Vec<String> {
+                part.split_whitespace().map(str::to_owned).collect()
+            };
+            match line
+                .trim()
+                .strip_prefix("storage=")
+                .and_then(|rest| rest.split_once("cached="))
+            {
+                Some((storage, cached)) if !storage.trim().is_empty() => {
+                    Ok((words(storage), words(cached)))
+                }
+                _ => Err(format!("the guest shows {line}")),
+            }
+        },
+    )
+    .await;
+    assert!(
+        storage.iter().all(|id| cached.contains(id)),
+        "the window's workspace ids {storage:?} have no cached copy among {cached:?}: the editor \
+         no longer keys its cache the way the agent mirrors it"
+    );
     let place = shell.wait(&name, "true", WHERE, PAGE_BUDGET).await;
     assert_eq!(place["login"], false, "{place}");
     let password = guest(&runtime, &sandbox, "cat /run/puddle/editor-password").await;
@@ -2036,6 +2070,9 @@ async fn vm_browser_code_server_hovering_a_typescript_symbol_shows_the_type_the_
 /// Rounds before the memory baseline is read.
 const WARM_UP_ROUNDS: u32 = 2;
 
+/// Whether the editor has cached the multi-root file in its own configuration cache: `yes` or `no`.
+const WORKSPACE_CACHED: &str = "ls /workspace/.puddle/code-server/user-data/User/caches/CachedConfigurations/workspaces/*/workspace.json >/dev/null 2>&1 && echo yes || echo no";
+
 /// What the guest's processes hold in memory, summed (bytes).
 const GUEST_RSS: &str = "ps -eo rss= | awk '{ s += $1 } END { print s * 1024 }'";
 
@@ -2050,8 +2087,8 @@ async fn vm_soak_browser_code_server_ten_opens_and_closes_leave_no_extension_hos
     let editor = Box::pin(Editor::start("wch", None)).await;
     let sandbox = &editor.sandbox;
     let windows = editor.vm.host.editor_windows();
-    // Only the soak: a first load that misses the folders is a rare race, and its window's trace
-    // logs are what name the read that failed (the other tests keep the default level).
+    // Only the soak: its windows log at trace level, so a window that misses its folders leaves
+    // logs that say why (the other tests keep the default level).
     editor
         .shell
         .trace_pages
@@ -2068,6 +2105,28 @@ async fn vm_soak_browser_code_server_ten_opens_and_closes_leave_no_extension_hos
     for round in 1..=10 {
         editor.attach().await;
         editor.explorer(&format!("window {round}")).await;
+        // The window is not closed before the editor has cached the multi-root file. Without that
+        // cache entry the next window starts from an empty cached copy, and on a busy host the web
+        // workbench (VS Code 1.141) can drop the real file's folders when its read answers while
+        // the workspace is still being set up: the window then shows "No Folder Opened" until a
+        // reload. The workbench writes the entry seconds after it opens, later than a soak round
+        // takes on a loaded runner, so without this wait every window is such a first window.
+        puddle_test_kit::eventually_async(
+            "the editor cached the multi-root file",
+            Duration::from_secs(90),
+            || async {
+                let cached = editor.guest(WORKSPACE_CACHED).await;
+                if cached.trim() == "yes" {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "the cache entry is not there yet ({})",
+                        cached.trim()
+                    ))
+                }
+            },
+        )
+        .await;
         windows_become(windows, sandbox, true).await;
         let open = counts_until(
             &editor.vm.runtime,

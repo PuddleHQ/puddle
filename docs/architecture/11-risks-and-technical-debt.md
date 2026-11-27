@@ -1,5 +1,73 @@
 # 11. Risks and technical debt
 
-Known risks and technical debt, ordered by how much they matter, each with what limits it today.
+What could go wrong, which quality bars are not met yet, and what is knowingly unfinished. Each
+item says what limits it today. The lists hold only what is true of `develop` at the time of
+writing (late November 2026); an item that is fixed is deleted, not struck through.
 
-This section is not written yet.
+## 11.1 Risks
+
+Ordered by how much they matter: the first ones would break the containment promise or stop
+Puddle from running at all.
+
+| Risk                                                                                                                                                                                                                                      | What limits it today                                                                                                                                                                                                                                                                                                    |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **An escape from the VM through msb or libkrun.** The VM is the boundary, and escapes through the runtime itself are outside what Puddle defends against, as is malware already running as the same Windows user.                         | The VM has no network device and one routed vsock port (`crates/puddle-compute-msb/src/spec.rs`, the contract suite's hostile cases); `SDK_OPTIONS` in `crates/puddle-compute-msb` lists every SDK option for an escape review. A dedicated review of the runtime before the first stable version is planned, not done. |
+| **Puddle depends on a small upstream runtime.** msb and libkrun are young projects; Puddle carries fixes in public forks and rebases them on each upstream release.                                                                       | One exact fork tag pinned in the root `Cargo.toml`, hashes checked at start (`crates/puddle-runtime`), the runtime contract suite on both systems for every bump.                                                                                                                                                       |
+| **WHP or the runtime's processes are blocked on a company computer** (WHP not enabled, application control, antivirus rules for an unknown program that starts VMs).                                                                      | `puddle doctor` and the first-run check name the cause and the fix (`crates/puddle-doctor`). There is no runtime without WHP.                                                                                                                                                                                           |
+| **Tokens of services Puddle has no capture profile for land in the workspace.** Such services are not decrypted, so their logins pass unchanged. In the other direction, a profiled service that adds a token field breaks its own login. | Every decrypted answer is scanned for tokens of known kinds and a warning names the kind (`crates/puddle-proxy/src/terminate/stand_in/scan.rs`); the stop names the field so a profile fix is small. The decided heuristics with a choice per field (section 9.3.3) are not built.                                      |
+| **The push list does not see a service's REST API.** A token that may write can still create or change content through the API of GitHub and others.                                                                                      | Fine-grained tokens limit reach at the source; a method and path rule can refuse API writes; the docs say so (section 9.3.4).                                                                                                                                                                                           |
+| **A bug in termination could mint a certificate for a host outside the decrypt set,** which the guest would accept because the workspace's CA has no name constraint.                                                                     | The CA lives only in memory, is per workspace with path length 0 (`crates/puddle-ca/src/authority.rs`), and the proxy's own checks decide which hosts get a leaf.                                                                                                                                                       |
+| **Several workspaces commit more memory than the host has.** Memory is a fixed size per workspace and is not given back while the VM runs.                                                                                                | An 8 GiB default and a per-workspace setting. The Windows soak day reached 96.6 % of the host's commit limit (11.2). Memory reclaim is planned after the first stable version.                                                                                                                                          |
+| **The installer is unsigned.** Windows shows an unknown-publisher warning, and some antivirus tools distrust unsigned programs.                                                                                                           | Code signing comes with the first stable version (section 9.6.4).                                                                                                                                                                                                                                                       |
+| **Company networks vary more than the tests do.** CI covers one lab shape: PAC, NTLM sign-in and TLS inspection.                                                                                                                          | The upstream proxy layer handles PAC, WPAD, policy and environment settings with Negotiate, NTLM or Basic (`crates/puddle-upstream`); the network health page shows how Puddle reaches the internet.                                                                                                                    |
+| **Kubernetes Services do not route** in a workspace, because the shared guest kernel lacks the pieces `kube-proxy` needs.                                                                                                                 | A warning when kind, k3d or minikube is found, and [docs/kubernetes.md](../kubernetes.md) with the ways around it.                                                                                                                                                                                                      |
+| **Reds found after landing.** Most code is written by coding agents with one maintainer reviewing; in the light CI mode the heavy suites run on `develop` after a change lands, not on its pull request.                                  | The merge queue still runs the required verdict; every push to `develop` runs the whole `ci` workflow, the heavy workflows run on `develop` by dispatch, and a red nightly opens an issue (section 8.8).                                                                                                                |
+
+## 11.2 Quality bars not met yet
+
+Bars from section 10 that the latest finished runs on `develop` do not meet.
+
+| Bar                                                                  | State                                                                                                                                                                         |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Ten browser editor opens and closes leave no extension host          | `vm_soak_browser_code_server_ten_opens_and_closes_*` fails in `vm-linux` (a later window shows no folder opened). Cause not found.                                            |
+| A kept-alive request from a Windows guest costs within 3 times Linux | About 15 ms per request on Windows against about 0.5 ms on Linux; the test passes only through its `KNOWN_FAILING_HERE` marker (`crates/puddle-host/tests/vm_perf_vsock.rs`). |
+| A working day on Windows with no MAJOR finding                       | `soak-windows.yml` fails: the UI's event stream went silent for hours without a reconnect, and the host's commit charge passed 95 %. The Linux day passes.                    |
+| A cold `npm` install within 2.0 times the host                       | Measured by hand at about 1.8 to 2.0 times after a socket fix; there is no standing test, and whether the bar should be 2.0 or 2.5 is not decided.                            |
+| The full `ci` run on `develop` is green on every push                | Push runs alternate between red and green; failures are fixed as they appear.                                                                                                 |
+| Real tools against real registries                                   | The radar passed once after a series of red runs; one green run does not show it holds.                                                                                       |
+
+## 11.3 Technical debt
+
+Unfinished parts of the product that are known and accepted for now.
+
+| Debt                                                                                                                                                                                                                            | Where, and what limits it                                                                                 |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| **No log file.** Logs go to standard error only, so a user cannot attach a log to a bug report. A pull request that adds a log level setting, a log file with redaction and a log bundle is open.                               | `crates/puddle-log`; section 8.6.                                                                         |
+| **Start-up errors show a dialog only in Windows release builds.** On Linux, and in debug builds, they go to standard error.                                                                                                     | `crates/puddle-app/src/main.rs`; the error is also written to `startup-error.txt` (section 6.9).          |
+| **Crash reports are written and never read.** Nothing in the app, the UI or the doctor shows them.                                                                                                                              | `crates/puddle-app/src/crash.rs` keeps the last 10.                                                       |
+| **No integrity check of the database at start.** A corrupt `puddle.db` surfaces as a generic open error.                                                                                                                        | Backup and restore check integrity (`crates/puddle-store/src/backup.rs`, `restore.rs`); a start does not. |
+| **Telemetry and crash-report consents are stored but unused.** Nothing sends either.                                                                                                                                            | `crates/puddle-settings/src/consent.rs`. Puddle sends no telemetry.                                       |
+| **Settings changes write no audit record.**                                                                                                                                                                                     | Rules, pending requests, rule sets and workspaces are audited (section 8.3); settings are not.            |
+| **The connection file is never deleted, and the command line does not read it.** `api.json` stays after quit.                                                                                                                   | It is owner-only and holds a random token (`crates/puddle-api/src/token.rs`; section 8.1).                |
+| **Decided but not built:** the choice per unknown token field (9.3.3), the three settings headings (9.6.3), the restyled installer and code signing (9.6.4), overlap warnings in the rule list (9.2.4), memory reclaim (9.1.5). | Each entry in section 9 says what the code does today.                                                    |
+| **Turning managed tools off does not yet reach existing workspaces.** The design leaves open how mise is removed cleanly from a workspace that has it.                                                                          | The layer is dormant in the shipped build (section 9.5.4), so no user meets it yet.                       |
+
+## 11.4 Documentation debt
+
+Small mismatches between the documents and the code, found while writing these pages. The code is
+right in each case.
+
+- Two ADRs carry the number 0007, and the [rules spec](../spec/rules.md) has two entries numbered
+  R-36 (SRV queries, and built-in groups).
+- The intro text of rule sets in `ui/src/lib/rules/sets.ts` (`SETS_INTRO`) still describes the order
+  before explicit precedence ("your rules decide first, and a set's allow only fills the gaps").
+- The local-destination labels differ between the settings search (`ui/src/lib/settings/pages.ts`:
+  "Link-local addresses", "Instance metadata") and the decision labels
+  (`ui/src/lib/decision/local-labels.ts`: "Link-local", "Cloud metadata").
+- The module docs of `crates/puddle-compute-msb/src/lib.rs` name the fork tag `v0.7.7-puddle.N`; the
+  root `Cargo.toml` pins `v0.7.12-puddle.8`. The docs of `crates/puddle/src/lib.rs` list the commands
+  without `backup`, `audit` and `secrets`.
+- [STANDARDS.md](../STANDARDS.md) says `puddle-runtime` sets the proxy environment for image pulls;
+  the pull proxy reaches msb through the SDK's own setting (`crates/puddle-proxy/src/pull.rs`). Its
+  CI section does not mention the light CI mode, and its workflow table has no rows for the soak,
+  fuzz and full-test workflows.

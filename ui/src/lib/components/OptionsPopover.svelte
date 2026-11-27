@@ -12,6 +12,7 @@
   } from "#lib/decision/model.ts";
   import AllowDenyPair from "./AllowDenyPair.svelte";
   import SetChip from "./SetChip.svelte";
+  import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import "#lib/theme/controls.css";
 
   /** Under this window width the buttons sit under the host and the box opens below them. */
@@ -124,7 +125,9 @@
             value="workspace"
             bind:group={who}
           />
-          <span class="text">Only <b class="mono">{workspace}</b></span>
+          <span class="text">
+            Only <b>{workspaces.spokenLabelOf(workspace)}</b>
+          </span>
         </label>
         <label>
           <input

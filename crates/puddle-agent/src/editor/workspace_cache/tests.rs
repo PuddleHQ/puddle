@@ -47,6 +47,9 @@ fn server(file: &Path, authority: Option<&str>) -> EditorServer {
     }
 }
 
+// The editor runs in the Linux guest, so its file paths are POSIX paths starting with `/`; a
+// Windows temp path never names a cache entry (`entry_path` is `None`).
+#[cfg(unix)]
 #[test]
 fn fill_writes_the_file_text_under_the_windows_id() {
     let dir = tempfile::tempdir().unwrap();
@@ -89,6 +92,9 @@ fn fill_writes_nothing_without_a_window_address_or_a_file() {
     assert!(!user_data.join("User").exists());
 }
 
+// The editor runs in the Linux guest, so its file paths are POSIX paths starting with `/`; a
+// Windows temp path never names a cache entry (`entry_path` is `None`).
+#[cfg(unix)]
 #[test]
 fn fill_replaces_a_copy_of_an_older_file() {
     let dir = tempfile::tempdir().unwrap();

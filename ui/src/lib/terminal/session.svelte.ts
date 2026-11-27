@@ -3,7 +3,7 @@
 // every rule here is tested without a browser. No byte of the terminal is logged or stored: the
 // scrollback lives in the emulator, in the page.
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
-import { sentence } from "#lib/rules/model.ts";
+import { sentence } from "#lib/format/sentence.ts";
 import { SERVICE_DOWN } from "#lib/stores/read-failure.ts";
 import { cleanTitle, endLine, BROKE, type EndLine } from "./text.ts";
 import type { Screen } from "./xterm-screen.ts";

@@ -54,8 +54,9 @@ pub fn backup_database(source: &Path, dest: &Path) -> Result<BackupInfo, StoreEr
 }
 
 /// The tables that hold sign-in secrets (see [`crate::AccountSecrets`]); a backup never keeps
-/// their rows.
-const SECRET_TABLES: [&str; 2] = ["account_passwords", "account_invites"];
+/// their rows. A session's refresh digest is one too: a restore must not bring back a device that
+/// was revoked after the backup.
+const SECRET_TABLES: [&str; 3] = ["account_passwords", "account_invites", "account_sessions"];
 
 const TABLE_EXISTS: &str =
     "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)";

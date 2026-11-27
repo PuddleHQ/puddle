@@ -480,3 +480,43 @@ fn the_headless_advice_is_worded_for_a_build_with_and_without_the_serve_command(
     );
     assert!(without.contains("keyring"), "{without}");
 }
+
+#[test]
+fn a_sweep_from_one_data_folder_leaves_the_secrets_another_folder_stored() {
+    let os = Arc::new(MemoryStore::new());
+    let folder_a = tempfile::tempdir().unwrap();
+    let folder_b = tempfile::tempdir().unwrap();
+    put(
+        scoped_vault(Shared(os.clone()), folder_a.path()).as_ref(),
+        "tok-a",
+    );
+
+    let vault_b = scoped_vault(Shared(os.clone()), folder_b.path());
+    put(vault_b.as_ref(), "tok-b");
+    let again_b = scoped_vault(Shared(os.clone()), folder_b.path());
+    let store = Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default()).unwrap();
+    let swept = sweep(again_b.as_ref(), &store, &[]).unwrap();
+
+    assert_eq!(swept.removed, 1, "only folder B's own value goes");
+    assert!(os.get(&id("tok-a")).unwrap().is_some());
+    assert!(os.get(&id("tok-b")).unwrap().is_none());
+}
+
+#[test]
+fn a_data_folder_keeps_one_credential_scope_and_two_folders_never_share_one() {
+    let folder_a = tempfile::tempdir().unwrap();
+    let folder_b = tempfile::tempdir().unwrap();
+    let first = credential_scope(folder_a.path());
+    assert_eq!(credential_scope(folder_a.path()), first);
+    assert_ne!(credential_scope(folder_b.path()), first);
+    assert!(first.bytes().all(|b| b.is_ascii_hexdigit()));
+}
+
+#[test]
+fn a_folder_that_cannot_keep_a_scope_file_still_gets_a_stable_scope_of_its_own() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("not-made");
+    let scope = credential_scope(&missing);
+    assert_eq!(credential_scope(&missing), scope);
+    assert_ne!(credential_scope(&dir.path().join("other")), scope);
+}

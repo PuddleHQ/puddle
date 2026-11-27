@@ -336,7 +336,9 @@ fn ends_with_secret_name(word: &str) -> bool {
 
 /// Whether `name` is the cookie header (`Cookie:`, `Set-Cookie:`), whose value is a list of pairs.
 fn is_cookie_name(name: &str) -> bool {
-    name_parts(trim_punctuation(name.trim_end_matches('='))).contains(&"cookie".to_string())
+    name_parts(trim_punctuation(name.trim_end_matches('=')))
+        .iter()
+        .any(|part| part == "cookie")
 }
 
 fn is_secret_name(name: &str) -> bool {

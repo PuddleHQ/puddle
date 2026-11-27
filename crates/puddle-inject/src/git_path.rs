@@ -13,7 +13,8 @@
 //! - GitHub and every other host: `/{owner}/{repo}[.git]/...`;
 //! - Azure DevOps: `dev.azure.com/{org}/{project}/_git/{repo}/...`, `.../{org}/_git/{repo}/...`
 //!   (the project has the repository's name) and `{org}.visualstudio.com/[DefaultCollection/]
-//!   {project}/_git/{repo}/...`.
+//!   {project}/_git/{repo}/...`; each also as `_git/_full/{repo}` or `_git/_optimized/{repo}`
+//!   (every ref, limited refs), which is the same repository.
 //!
 //! followed by one of `info/refs`, `git-upload-pack`, `git-receive-pack` or `info/lfs/...`.
 
@@ -248,6 +249,17 @@ fn tail(segments: &[String], from: usize) -> Vec<String> {
         .collect()
 }
 
+/// The repository after the `_git` at `git_at`, and where its endpoint starts. Azure DevOps
+/// serves a repository also as `_git/_full/{repo}` (every ref) and `_git/_optimized/{repo}`
+/// (limited refs): the segment is skipped, so every spelling is one repository.
+fn azure_repo(segments: &[String], git_at: usize) -> (Option<String>, usize) {
+    let filter = segments
+        .get(git_at + 1)
+        .is_some_and(|s| s.eq_ignore_ascii_case("_full") || s.eq_ignore_ascii_case("_optimized"));
+    let at = git_at + 1 + usize::from(filter);
+    (segments.get(at).map(|s| repo_name(s)), at + 1)
+}
+
 /// Finds the owner and the repository in `segments` by what `host` is. `has_service` says the
 /// query names a `service`, which an `info/refs` request of the smart protocol always does.
 ///
@@ -262,10 +274,11 @@ fn locate(
     let lower = |i: usize| segments.get(i).map(|s| s.to_ascii_lowercase());
     if host == "dev.azure.com" {
         let (project, repo, rest_from) = if segment(2).is_some_and(is_git_segment) {
-            (lower(1), segment(3).map(repo_name), 4)
+            let (repo, rest_from) = azure_repo(segments, 2);
+            (lower(1), repo, rest_from)
         } else if segment(1).is_some_and(is_git_segment) {
-            let repo = segment(2).map(repo_name);
-            (repo.clone(), repo, 3)
+            let (repo, rest_from) = azure_repo(segments, 1);
+            (repo.clone(), repo, rest_from)
         } else {
             return Ok(None);
         };
@@ -281,11 +294,13 @@ fn locate(
     }
     if let Some(org) = host.strip_suffix(".visualstudio.com") {
         let (project, repo, rest_from) = if segment(1).is_some_and(is_git_segment) {
-            (lower(0), segment(2).map(repo_name), 3)
+            let (repo, rest_from) = azure_repo(segments, 1);
+            (lower(0), repo, rest_from)
         } else if segment(0).is_some_and(|s| s.eq_ignore_ascii_case("DefaultCollection"))
             && segment(2).is_some_and(is_git_segment)
         {
-            (lower(1), segment(3).map(repo_name), 4)
+            let (repo, rest_from) = azure_repo(segments, 2);
+            (lower(1), repo, rest_from)
         } else {
             return Ok(None);
         };

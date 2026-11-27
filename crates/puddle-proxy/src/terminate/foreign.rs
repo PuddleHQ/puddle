@@ -16,8 +16,8 @@
 //!   unknown shape stays silent: it is too often harmless (a registry's anonymous token, a local
 //!   service's own session).
 //!
-//! A stale stand-in of Puddle's own is found by [`super::stale`] and joins the warning in
-//! `Outcome::note_stand_ins`.
+//! A stale stand-in of Puddle's own is found by [`super::stale`] and is reported through
+//! `stale_kind` and `record_foreign` in `session.rs`.
 //!
 //! Puddle cannot tell the user's own token from a leaked one, so this catches mistakes, not
 //! attackers: a hostile workspace can send a token to a host that is not decrypted. Nothing here

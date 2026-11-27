@@ -117,6 +117,7 @@ grep -q 'checksum mismatch for v1.0.0-puddle.2 msb-linux-x86_64' "$tmp/out3" || 
     echo "fetch-msb-test: no checksum mismatch message" >&2
     exit 1
 }
+[ ! -e "$tmp/bad/msb" ] || { echo "fetch-msb-test: an unverified msb was left at its final path after a checksum mismatch" >&2; exit 1; }
 echo "fetch-msb-test: ok (a pinned Linux msb is downloaded and checked, no git)"
 
 # A download that fails at first (a stub curl: exit 92, the stream error of a GitHub outage) is retried

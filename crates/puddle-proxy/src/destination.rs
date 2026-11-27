@@ -12,12 +12,14 @@ use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::sync::{Arc, LazyLock};
 
 use dns_lookup::{AddrInfoHints, LookupError, LookupErrorKind, SockType};
 
 pub use puddle_netpolicy::AddressVerdict;
 use puddle_netpolicy::{NetPolicy, Target};
 use puddle_types::{BlockReason, CompanySignal, DomainName, Host, WorkspaceId};
+use tokio::sync::Semaphore;
 
 /// Decides per destination and per resolved address (R-14). [`NetPolicy`] is the product
 /// implementation; tests use doubles.
@@ -118,7 +120,43 @@ pub trait Resolver: Send + Sync {
     ) -> BoxFuture<'a, io::Result<Vec<SocketAddr>>>;
 }
 
-/// The OS resolver (`getaddrinfo` on a blocking thread, through tokio). A name under `.invalid`
+/// Most OS lookups running at once. A lookup's timeout drops the waiter, not the thread, and the
+/// blocking pool is shared with every workspace's rule decisions and audit writes, so lookups of
+/// many slow names must not take it all.
+const MAX_LOOKUPS: usize = 32;
+
+static LOOKUP_SLOTS: LazyLock<BlockingSlots> = LazyLock::new(|| BlockingSlots::new(MAX_LOOKUPS));
+
+/// Runs blocking jobs on tokio's blocking pool, at most a fixed number at a time. A job waits for
+/// a slot on the async side (holding no thread), and its slot is held by the blocking thread
+/// itself, so a caller that gives up early does not free the slot of a job still running.
+struct BlockingSlots(Arc<Semaphore>);
+
+impl BlockingSlots {
+    fn new(slots: usize) -> Self {
+        Self(Arc::new(Semaphore::new(slots)))
+    }
+
+    async fn run<T: Send + 'static>(
+        &self,
+        job: impl FnOnce() -> T + Send + 'static,
+    ) -> io::Result<T> {
+        let slot = Arc::clone(&self.0)
+            .acquire_owned()
+            .await
+            .map_err(io::Error::other)?;
+        tokio::task::spawn_blocking(move || {
+            let answer = job();
+            drop(slot);
+            answer
+        })
+        .await
+        .map_err(io::Error::other)
+    }
+}
+
+/// The OS resolver (`getaddrinfo` on a blocking thread, through tokio, at most [`MAX_LOOKUPS`]
+/// at once). A name under `.invalid`
 /// (and the bare `invalid`) is answered "no such name" at once without asking the OS: RFC 6761
 /// section 6.4 reserves it as never existing, and lets software say so itself. A private DNS that
 /// would resolve such a name is not asked either.
@@ -139,9 +177,7 @@ impl Resolver for SystemResolver {
                 ));
             }
             let host = name.as_str().to_owned();
-            tokio::task::spawn_blocking(move || lookup(&host, port))
-                .await
-                .map_err(io::Error::other)?
+            LOOKUP_SLOTS.run(move || lookup(&host, port)).await?
         })
     }
 }

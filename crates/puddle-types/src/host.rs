@@ -91,6 +91,24 @@ pub enum Host {
 }
 
 impl Host {
+    /// The host for an address: an IPv4-mapped IPv6 address (`::ffff:a.b.c.d`) becomes the IPv4
+    /// host, so one address has one spelling when rules are looked up. NAT64 addresses stay as
+    /// they are: they are another address that a gateway translates, not a spelling of the IPv4
+    /// one.
+    #[must_use]
+    pub fn from_ip(ip: IpAddr) -> Self {
+        Self::Ip(ip.to_canonical())
+    }
+
+    /// This host with an IPv4-mapped address folded as by [`Host::from_ip`]; a name is unchanged.
+    #[must_use]
+    pub fn folded(&self) -> Self {
+        match self {
+            Self::Ip(ip) => Self::from_ip(*ip),
+            Self::Name(_) => self.clone(),
+        }
+    }
+
     /// Accepts `text` only if it is already a normalised name or a canonical IP literal.
     ///
     /// ```

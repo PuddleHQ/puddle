@@ -12,6 +12,8 @@ import {
   matching,
   matchingUrl,
   nextRetryDelay,
+  parsePushBlock,
+  pushBlock,
   POLL_CEILING_MS,
   POLL_FLOOR_MS,
   retryText,
@@ -218,5 +220,25 @@ describe("tableCannotHold", () => {
     expect(
       tableCannotHold("https://dev.azure.com/contoso/%E0%A4%A/_git/x"),
     ).toBe(false);
+  });
+});
+
+describe("pushBlock", () => {
+  it("blocks an archived repository and one the account only reads", () => {
+    expect(pushBlock(repoView("a", "b", { archived: true }))).toBe("archived");
+    expect(pushBlock(repoView("a", "b", { role: "read" }))).toBe("read");
+    expect(pushBlock(repoView("a", "b", { role: "triage" }))).toBe("read");
+  });
+
+  it("blocks nothing the listing does not call read-only", () => {
+    expect(pushBlock(repoView("a", "b", { role: "write" }))).toBeNull();
+    expect(pushBlock(repoView("a", "b", { role: "unknown" }))).toBeNull();
+  });
+
+  it("reads only the two known words back from a link", () => {
+    expect(parsePushBlock("archived")).toBe("archived");
+    expect(parsePushBlock("read")).toBe("read");
+    expect(parsePushBlock("x")).toBeNull();
+    expect(parsePushBlock(null)).toBeNull();
   });
 });

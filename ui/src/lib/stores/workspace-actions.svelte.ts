@@ -9,6 +9,7 @@ import {
   type Settled,
   type WorkspaceStore,
 } from "./workspaces.svelte.ts";
+import type { PushBlock } from "#lib/repos/model.ts";
 import { toasts as defaultToasts, type ToastQueue } from "./toasts.svelte.ts";
 import { readRemoved, type Removed } from "#lib/workspaces/removed.ts";
 import {
@@ -125,9 +126,13 @@ export class WorkspaceActions {
   };
 
   /** The New workspace screen, with a repository filled in when one is given. */
-  openCreate = (from?: { url: string; identity: number | null }): void => {
+  openCreate = (from?: {
+    url: string;
+    identity: number | null;
+    pushBlock?: PushBlock | null;
+  }): void => {
     const query = from
-      ? `?url=${encodeURIComponent(from.url)}${from.identity === null ? "" : `&identity=${from.identity}`}`
+      ? `?url=${encodeURIComponent(from.url)}${from.identity === null ? "" : `&identity=${from.identity}`}${from.pushBlock ? `&push_block=${from.pushBlock}` : ""}`
       : "";
     void goto(`/workspaces/new${query}`);
   };

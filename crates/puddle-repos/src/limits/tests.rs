@@ -155,6 +155,45 @@ fn a_hosts_message_is_cut_short() {
 }
 
 #[test]
+fn a_reset_far_in_the_future_waits_a_few_hours_at_most() {
+    let far = reply(
+        403,
+        &[
+            ("x-ratelimit-remaining", "0"),
+            ("x-ratelimit-reset", "99999999999"),
+        ],
+        PRIMARY,
+    );
+    assert_eq!(
+        github(&far, NOW, 1),
+        Verdict::Limited {
+            until_ms: NOW + MAX_RESET_MS,
+            primary: true
+        }
+    );
+    // A value that is not a number is no reset: the back-off rule answers.
+    let junk = reply(
+        403,
+        &[
+            ("x-ratelimit-remaining", "0"),
+            ("x-ratelimit-reset", "soon"),
+        ],
+        PRIMARY,
+    );
+    assert_eq!(
+        github(&junk, NOW, 1),
+        Verdict::Limited {
+            until_ms: NOW + MIN_WAIT_MS,
+            primary: false
+        }
+    );
+    // The same bound applies to a success that spent the budget.
+    assert_eq!(bounded_reset(u64::MAX, NOW), NOW + MAX_RESET_MS);
+    assert_eq!(bounded_reset(NOW - 5, NOW), NOW + 1000);
+    assert_eq!(bounded_reset(NOW + 60_000, NOW), NOW + 60_000);
+}
+
+#[test]
 fn a_success_that_spent_the_budget_blocks_until_the_reset() {
     let spent = reply(
         200,

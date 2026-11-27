@@ -182,13 +182,5 @@ export function workspaceNameError(name: string): string | null {
   return null;
 }
 
-/** The API's messages are lower case with no full stop; the form shows them as sentences. */
-export function sentence(message: string): string {
-  const trimmed = message.trim();
-  if (trimmed === "") return trimmed;
-  const first = trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
-  return /[.!?]$/.test(first) ? first : `${first}.`;
-}
-
 export const PRECEDENCE =
   "The most specific rule wins: an exact host beats a pattern, and a more specific pattern beats a more generic pattern. At the same specificity a workspace rule beats an every-workspace rule, then deny beats allow. Rule sets come after your rules: a set never opens what your rules close.";

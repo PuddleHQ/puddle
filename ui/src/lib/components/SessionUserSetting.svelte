@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { api } from "#lib/api/client.ts";
-  import { sentence } from "#lib/rules/model.ts";
+  import { sentence } from "#lib/format/sentence.ts";
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import type { Workspace } from "#lib/workspaces/model.ts";
   import "#lib/theme/controls.css";

@@ -11,7 +11,7 @@ FAIL  Hypervisor                  Windows Hypervisor Platform is off
               features > Windows Hypervisor Platform.) Virtual Machine Platform, which WSL2 uses,
               is a different feature.
       from:   WinHvPlatform.dll: The specified module could not be found. (os error 126)
-ok    Code integrity              memory integrity (HVCI) on; App Control policy for programs off
+ok    Code integrity              memory integrity on; policy limiting which programs may run off
 ok    Bundled runtime             msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
 FAIL  Runtime starts              msb can't load a DLL it needs (0xC0000135)
       impact: Puddle can't start any workspace: a Windows file its runtime needs is missing.
@@ -56,7 +56,7 @@ ok    Known problematic software  none found
     {
       "id": "code_integrity",
       "status": "ok",
-      "summary": "memory integrity (HVCI) on; App Control policy for programs off",
+      "summary": "memory integrity on; policy limiting which programs may run off",
       "impact": "Windows' code integrity rules guard the system against untrusted code, and Puddle runs alongside them."
     },
     {

@@ -142,6 +142,13 @@ async fn a_restart_that_cannot_serve_the_sandboxes_route_makes_it_again_and_says
                 .is_some_and(|d| d.contains("made again") && d.contains("volume"))
     });
     assert!(said, "no notice that the sandbox was made again");
+    let lasting = again
+        .problems()
+        .list()
+        .into_iter()
+        .find(|p| p.key == "rebuilt:acme")
+        .expect("the rebuild is a problem on the workspace, not only a progress line");
+    assert!(lasting.detail.contains("route"), "{lasting:?}");
     assert_eq!(rig.runtime.list_volumes().await.unwrap().len(), 1);
     // The new sandbox has the new run's stable route: a second restart keeps it.
     again.shutdown().await;

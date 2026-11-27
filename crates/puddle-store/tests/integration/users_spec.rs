@@ -767,7 +767,7 @@ fn a_workspace_with_no_user_is_refused_everywhere_and_still_cleaned_up() {
     // The refused writes left nothing behind: once the workspace has a user it is empty.
     own(&store, &stray);
     let git = store.workspace_git(&stray).unwrap();
-    assert!(git.repos.is_empty());
+    assert_eq!(git.repos, []);
     assert!(!git.only_pull_listed && git.only_push_listed);
     assert_eq!(store.ssh_agent_hosts(&stray).unwrap(), []);
     assert_eq!(store.open_ssh_agent_asks(None, Some(&stray)).unwrap(), []);

@@ -78,11 +78,20 @@ fn start_with(config: HostConfig) -> Harness {
 }
 
 fn start_handler<H: StreamHandler>(handler: Arc<H>, config: HostConfig) -> Harness {
+    start_session(handler, config, SessionId::next())
+}
+
+fn start_session<H: StreamHandler>(
+    handler: Arc<H>,
+    config: HostConfig,
+    session: SessionId,
+) -> Harness {
     let (guest, host) = tokio::io::duplex(1 << 20);
     let (tx, events) = mpsc::unbounded_channel();
     let server = tokio::spawn(serve_session(
         host,
         name(),
+        session,
         Arc::new(ChanSink(tx)),
         handler,
         config,
@@ -743,6 +752,7 @@ async fn a_connection_that_is_not_yamux_is_refused() {
     let server = tokio::spawn(serve_session(
         host,
         name(),
+        SessionId::next(),
         Arc::new(puddle_types::NullSink),
         Arc::new(Echo),
         HostConfig::default(),
@@ -759,6 +769,7 @@ async fn a_silent_connection_times_out() {
         serve_session(
             host,
             name(),
+            SessionId::next(),
             Arc::new(puddle_types::NullSink),
             Arc::new(Echo),
             HostConfig {
@@ -807,6 +818,7 @@ async fn a_failing_connection_is_an_io_error() {
     let result = serve_session(
         Broken,
         name(),
+        SessionId::next(),
         Arc::new(puddle_types::NullSink),
         Arc::new(Echo),
         HostConfig::default(),
@@ -893,6 +905,7 @@ async fn a_handler_without_a_name_policy_answers_unavailable() {
     let server = tokio::spawn(serve_session(
         host,
         name(),
+        SessionId::next(),
         Arc::new(puddle_types::NullSink),
         Arc::new(Silent),
         HostConfig::default(),
@@ -1241,4 +1254,90 @@ async fn editor_password_sends_password_and_returns_the_agents_answer() {
         editor_link_answered_with(crate::editor_stream::password_line(&hex)).await;
     assert_eq!(link.editor_password().await.unwrap(), hex);
     assert_eq!(requests.recv().await.unwrap(), b"password\n");
+}
+
+/// Holds every proxied stream open and says when a stream task is dropped.
+struct Hold {
+    started: Arc<AtomicBool>,
+    dropped: Arc<AtomicBool>,
+}
+
+impl StreamHandler for Hold {
+    async fn handle(&self, _stream: GuestStream) {
+        struct Dropped(Arc<AtomicBool>);
+        impl Drop for Dropped {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let _dropped = Dropped(Arc::clone(&self.dropped));
+        self.started.store(true, Ordering::SeqCst);
+        std::future::pending::<()>().await;
+    }
+}
+
+#[tokio::test]
+async fn a_stream_task_is_gone_when_its_session_has_returned() {
+    let dropped = Arc::new(AtomicBool::new(false));
+    let started = Arc::new(AtomicBool::new(false));
+    let hold = Hold {
+        started: Arc::clone(&started),
+        dropped: Arc::clone(&dropped),
+    };
+    let (guest, host) = tokio::io::duplex(1 << 20);
+    let mut client = Session::new_client(guest, client_config());
+    let mut control = client.control();
+    tokio::spawn(async move { while client.next().await.is_some() {} });
+    // The session runs in this task, so nothing else runs between its return and the check below.
+    let (served, ()) = tokio::join!(
+        serve_session(
+            host,
+            name(),
+            SessionId::next(),
+            Arc::new(puddle_types::NullSink),
+            Arc::new(hold),
+            HostConfig::default(),
+        ),
+        async {
+            let mut stream = control.open_stream().await.unwrap();
+            stream.write_all(b"GET / HTTP/1.1\r\n\r\n").await.unwrap();
+            stream.flush().await.unwrap();
+            eventually("the handler holds the stream", WAIT, || {
+                started.load(Ordering::SeqCst)
+            })
+            .await;
+            control.close().await;
+        }
+    );
+    served.unwrap();
+    assert!(
+        dropped.load(Ordering::SeqCst),
+        "the stream task outlived its session"
+    );
+}
+
+/// Keeps the link the agent's hello produced.
+#[derive(Default)]
+struct KeepLink(std::sync::Mutex<Option<GuestLink>>);
+
+impl StreamHandler for KeepLink {
+    async fn handle(&self, _stream: GuestStream) {}
+
+    async fn guest_link(&self, link: GuestLink) {
+        *self.0.lock().unwrap() = Some(link);
+    }
+}
+
+#[tokio::test]
+async fn the_link_carries_the_identity_the_session_was_given() {
+    let kept = Arc::new(KeepLink::default());
+    let id = SessionId::next();
+    let mut h = start_session(Arc::clone(&kept), HostConfig::default(), id);
+    let mut control = h.control_stream().await;
+    send(&mut control, &AgentMessage::hello()).await;
+    let link = eventually("the link", WAIT, || kept.0.lock().unwrap().clone()).await;
+    assert_eq!(link.session(), id);
+    assert_ne!(id, SessionId::next());
+    drop(control);
+    h.close().await.unwrap();
 }

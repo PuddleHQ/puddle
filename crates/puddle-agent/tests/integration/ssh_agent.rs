@@ -15,7 +15,7 @@ use std::time::Duration;
 use puddle_agent::config::{SshAgentConfig, Target};
 use puddle_agent::{Agent, Config};
 use puddle_agent_proto::host::{
-    AgentStream, GuestStream, HostConfig, StreamHandler, serve_session,
+    AgentStream, GuestStream, HostConfig, SessionId, StreamHandler, serve_session,
 };
 use puddle_test_kit::eventually;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -59,6 +59,7 @@ async fn a_client_of_the_guest_socket_reaches_the_hosts_agent_stream_both_ways()
                 let _ = serve_session(
                     conn,
                     common::workspace(),
+                    SessionId::next(),
                     Arc::new(common::ChanSink(tx)),
                     Arc::new(Host),
                     HostConfig::default(),

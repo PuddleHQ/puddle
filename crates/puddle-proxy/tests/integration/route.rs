@@ -1674,7 +1674,7 @@ impl AgentReports for KeptReports {
 struct Watched {
     link: std::sync::Mutex<Option<(WorkspaceId, puddle_agent_proto::forward::GuestLink)>>,
     ports: std::sync::Mutex<Vec<(WorkspaceId, Vec<u16>)>>,
-    ended: std::sync::Mutex<Vec<WorkspaceId>>,
+    ended: std::sync::Mutex<Vec<(WorkspaceId, puddle_agent_proto::host::SessionId)>>,
 }
 
 impl puddle_agent_proto::host::GuestWatcher for Watched {
@@ -1686,8 +1686,11 @@ impl puddle_agent_proto::host::GuestWatcher for Watched {
         self.ports.lock().unwrap().push((workspace.clone(), ports));
     }
 
-    fn session_ended(&self, workspace: &WorkspaceId) {
-        self.ended.lock().unwrap().push(workspace.clone());
+    fn session_ended(&self, workspace: &WorkspaceId, session: puddle_agent_proto::host::SessionId) {
+        self.ended
+            .lock()
+            .unwrap()
+            .push((workspace.clone(), session));
     }
 }
 
@@ -1771,8 +1774,8 @@ async fn the_guest_watcher_gets_the_link_and_the_ports_of_the_routes_workspace()
         *watched.ports.lock().unwrap(),
         [(workspace("box"), vec![3000, 8080])]
     );
-    let linked = watched.link.lock().unwrap().take().map(|(name, _)| name);
-    assert_eq!(linked, Some(workspace("box")));
+    let (linked, link) = watched.link.lock().unwrap().take().unwrap();
+    assert_eq!(linked, workspace("box"));
 
     // The session ends with the guest's connection, and the watcher hears of it.
     drop(control);
@@ -1783,7 +1786,54 @@ async fn the_guest_watcher_gets_the_link_and_the_ports_of_the_routes_workspace()
         || !watched.ended.lock().unwrap().is_empty(),
     )
     .await;
-    assert_eq!(*watched.ended.lock().unwrap(), [workspace("box")]);
+    // It names the session whose link the watcher was given.
+    assert_eq!(
+        *watched.ended.lock().unwrap(),
+        [(workspace("box"), link.session())]
+    );
+}
+
+#[tokio::test]
+async fn the_end_of_one_of_two_sessions_names_that_session_only() {
+    use puddle_agent_proto::AgentMessage;
+    use puddle_agent_proto::control::PREAMBLE;
+    let watched = Arc::new(Watched::default());
+    let proxy = Arc::new(
+        Proxy::new(Arc::new(StaticPolicy::new()), Arc::new(NullSink))
+            .with_guest_watcher(watched.clone()),
+    );
+    let root = IpcRoot::new().unwrap();
+    let route = proxy.serve_route(root.listen().unwrap(), workspace("box"));
+    let mut hello = Vec::new();
+    for _ in 0..2 {
+        let mut guest = Guest::connect(&route).await;
+        let mut control = guest.stream().await;
+        control.write_all(PREAMBLE).await.unwrap();
+        control
+            .write_all(&AgentMessage::hello().to_line().unwrap())
+            .await
+            .unwrap();
+        control.flush().await.unwrap();
+        let (_, link) = puddle_test_kit::eventually(
+            "the agent session started",
+            Duration::from_secs(5),
+            || watched.link.lock().unwrap().clone(),
+        )
+        .await;
+        hello.push((guest, control, link.session()));
+        *watched.link.lock().unwrap() = None;
+    }
+    let (first_guest, first_control, first) = hello.remove(0);
+    assert_ne!(first, hello[0].2);
+    drop(first_control);
+    drop(first_guest);
+    puddle_test_kit::eventually(
+        "the end of the first session arrived",
+        Duration::from_secs(5),
+        || !watched.ended.lock().unwrap().is_empty(),
+    )
+    .await;
+    assert_eq!(*watched.ended.lock().unwrap(), [(workspace("box"), first)]);
 }
 
 #[tokio::test]
@@ -1811,7 +1861,11 @@ async fn stopping_a_route_reports_the_end_of_each_session_it_cuts_off() {
     .await;
     // The guest stays connected: the route's stop is what ends the session.
     route.shutdown().await;
-    assert_eq!(*watched.ended.lock().unwrap(), [workspace("box")]);
+    let (_, link) = watched.link.lock().unwrap().take().unwrap();
+    assert_eq!(
+        *watched.ended.lock().unwrap(),
+        [(workspace("box"), link.session())]
+    );
     drop(control);
 }
 

@@ -29,7 +29,7 @@ use std::time::Duration;
 use puddle_agent::config::{CaptureConfig, DnsConfig, Target};
 use puddle_agent::{Agent, Config};
 use puddle_agent_proto::host::{
-    AgentReport, GuestStream, HostConfig, StreamHandler, UdpRefusal, serve_session,
+    AgentReport, GuestStream, HostConfig, SessionId, StreamHandler, UdpRefusal, serve_session,
 };
 use puddle_agent_proto::resolve::{RecordType, ResolveAnswer, ResolveQuery, StandInReason};
 use puddle_test_kit::eventually_async;
@@ -306,6 +306,7 @@ fn start_host(socket: &Path, seen: &Arc<Seen>) {
                 let _ = serve_session(
                     conn,
                     common::workspace(),
+                    SessionId::next(),
                     Arc::new(common::ChanSink(tx)),
                     Arc::new(handler),
                     HostConfig::default(),

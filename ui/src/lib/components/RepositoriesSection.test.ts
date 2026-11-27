@@ -377,6 +377,61 @@ describe("removing and cloning again", () => {
   });
 });
 
+describe("one clone failing among four repositories", () => {
+  const dirs = ["api", "web", "shared", "assets", "docs"];
+  const entries = dirs.map((d) => ({
+    entry: entryOf(d),
+    url: `https://forge.test/acme/mono-${d}.git`,
+    directory: d,
+    branch: null,
+  }));
+  const fourOnTheDisk = listing(
+    entries.slice(0, 4).map((e) => checkout(e.directory, { entry: e })),
+    { missing: ["docs"] },
+  );
+
+  it("leaves the other four listed and usable, and offers Clone again for the failed one only", async () => {
+    await mount({ repositories: entries }, fourOnTheDisk);
+    for (const d of dirs.slice(0, 4))
+      expect(section().getByText(d)).toBeInTheDocument();
+    expect(section().getAllByText("Not on the disk")).toHaveLength(1);
+    expect(
+      section().getAllByRole("button", { name: /^Clone again: / }),
+    ).toHaveLength(1);
+    expect(
+      section().getByRole("button", { name: "Clone again: docs" }),
+    ).toBeEnabled();
+    expect(
+      section().getByRole("button", { name: "Add repository" }),
+    ).toBeEnabled();
+  });
+
+  it("clones only the failed entry again, and the row turns into a checkout once it is on the disk", async () => {
+    await mount({ repositories: entries }, fourOnTheDisk);
+    await fireEvent.click(
+      section().getByRole("button", { name: "Clone again: docs" }),
+    );
+    await waitFor(() =>
+      expect(api.calls).toContain(
+        "POST /api/workspaces/{id}/repositories/{entry}/clone",
+      ),
+    );
+    expect(api.calls.filter((c) => c.endsWith("/clone"))).toHaveLength(1);
+    api.checkouts["w-dev"] = listing(
+      entries.map((e) => checkout(e.directory, { entry: e })),
+    );
+    h.source.emit({
+      type: "workspace_repositories_changed",
+      workspace: "w-dev",
+    });
+    await waitFor(() =>
+      expect(section().queryByText("Not on the disk")).toBeNull(),
+    );
+    expect(section().queryByText(/^Clone again/)).toBeNull();
+    expect(section().getByText("docs")).toBeInTheDocument();
+  });
+});
+
 describe("refusals and changes", () => {
   it("marks a checkout that has uncommitted changes", async () => {
     await mount({}, listing([checkout("api", { entry: own, dirty: true })]));

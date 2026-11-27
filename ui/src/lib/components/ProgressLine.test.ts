@@ -61,6 +61,29 @@ describe("ProgressLine", () => {
     expect(line.querySelector("b b")).toBeNull();
   });
 
+  it("shows a failed clone with git's message as text, in an alert that can be dismissed", () => {
+    render(ProgressLine, {
+      props: {
+        busy: null,
+        progress: {
+          step: "failed",
+          detail:
+            "mono-docs: fatal: unable to access 'https://forge.test/acme/mono-docs.git/': <b>403</b>",
+          repository: "mono-docs",
+          operation: "cloning",
+          failed: true,
+        },
+        onDismiss: () => {},
+      },
+    });
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("Cloning failed.");
+    expect(alert).toHaveTextContent("mono-docs: fatal: unable to access");
+    expect(alert).toHaveTextContent("<b>403</b>");
+    expect(alert.querySelector("b b")).toBeNull();
+    expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
+  });
+
   it("shows how much of the image is downloaded, with a bar", () => {
     const mib = 1024 * 1024;
     render(ProgressLine, {

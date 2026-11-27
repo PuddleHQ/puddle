@@ -5,6 +5,7 @@ import {
   extensionsText,
   parseExtensions,
   parseFontSize,
+  parseCustomSettings,
   parseKeybindings,
   parseTheme,
 } from "./editor.ts";
@@ -90,6 +91,31 @@ describe("the key bindings", () => {
   });
 });
 
+describe("the custom editor settings", () => {
+  it("accepts a JSON object and keeps the text as typed", () => {
+    const text = '{"editor.tabSize": 2}';
+    expect(parseCustomSettings(` ${text} `)).toEqual({ ok: true, value: text });
+    expect(parseCustomSettings("")).toEqual({ ok: true, value: null });
+    expect(parseCustomSettings("{}")).toEqual({ ok: true, value: "{}" });
+  });
+
+  it("refuses what the API refuses and names the field that owns a key", () => {
+    for (const text of ["{", "[]", "1", "null", "{\n// c\n}"]) {
+      expect(parseCustomSettings(text).ok, text).toBe(false);
+    }
+    const owned = parseCustomSettings('{"editor.fontSize": 12}');
+    expect(owned).toEqual({
+      ok: false,
+      message:
+        '"editor.fontSize" is set by the font size field. Remove it here.',
+    });
+    expect(parseCustomSettings('{"workbench.colorTheme": "x"}').ok).toBe(false);
+    expect(parseCustomSettings(`{"a": "${"x".repeat(70_000)}"}`).ok).toBe(
+      false,
+    );
+  });
+});
+
 describe("a stored layer", () => {
   it("is read as unset when it predates the editor group", () => {
     expect(editorOf({})).toEqual({
@@ -97,6 +123,7 @@ describe("a stored layer", () => {
       font_size: null,
       extensions: null,
       keybindings: null,
+      settings: null,
     });
     expect(
       editorOf({
@@ -105,6 +132,7 @@ describe("a stored layer", () => {
           font_size: null,
           extensions: null,
           keybindings: null,
+          settings: null,
         },
       }).colour_theme,
     ).toBe("X");

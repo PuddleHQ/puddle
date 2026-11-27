@@ -11,8 +11,10 @@
 //!   else in it changes.
 //! - **The answer.** When the rewriter wants it, the answer is read in full and handed to the
 //!   rewriter, which may give back a new body: the real token replaced by a stand-in. The new body
-//!   is what the guest gets, with its own framing. An answer larger than the cap, or in an
-//!   encoding the rewriter did not ask for, goes through as it is.
+//!   is what the guest gets, with its own framing. An answer in an encoding the
+//!   rewriter did not ask for goes through as it is. One larger than the cap goes through as it is
+//!   unless [`AnswerRewriter::too_large`] refuses it: the default keeps it, and the login rewriter
+//!   overrides that to refuse.
 //!
 //! The seam knows nothing about tokens: which fields hold what, how a stand-in is made and where
 //! the real token is kept belong to whoever implements [`ExchangeRewriter`].
@@ -169,7 +171,7 @@ pub trait AnswerRewriter: Send {
     ) -> BoxFuture<'a, Rewrite>;
 
     /// The answer turned out larger than [`MAX_EXCHANGE_BODY`] (it had no length to say so up
-    /// front). It goes to the guest as it is unless this refuses it.
+    /// front). It goes to the guest as it is unless this refuses it (the default keeps it).
     fn too_large(&mut self) -> Rewrite {
         Rewrite::Keep
     }

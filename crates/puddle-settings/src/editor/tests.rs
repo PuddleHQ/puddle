@@ -106,3 +106,34 @@ fn a_theme_name_has_a_length_cap() {
     assert!(ColourTheme::new(&"x".repeat(ColourTheme::MAX_CHARS)).is_ok());
     assert!(ColourTheme::new(&"x".repeat(ColourTheme::MAX_CHARS + 1)).is_err());
 }
+
+#[test]
+fn custom_settings_must_be_an_object_without_puddles_own_keys() {
+    assert!(CustomEditorSettings::new(r#"{"editor.tabSize": 2, "files.autoSave": "off"}"#).is_ok());
+    assert!(CustomEditorSettings::new("[1]").is_err());
+    assert!(CustomEditorSettings::new("{\n// note\n\"a\": 1}").is_err());
+    let err = CustomEditorSettings::new(r#"{"workbench.colorTheme": "x"}"#)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("colour theme field"), "{err}");
+    assert!(CustomEditorSettings::new(r#"{"editor.fontSize": 9}"#).is_err());
+    assert!(CustomEditorSettings::new(r#"{"window.autoDetectColorScheme": true}"#).is_err());
+}
+
+#[test]
+fn custom_settings_resolve_workspace_over_global() {
+    let own = |t: &str| Some(CustomEditorSettings::new(t).unwrap());
+    let global = EditorLayer {
+        settings: own(r#"{"a.b": 1}"#),
+        ..EditorLayer::default()
+    };
+    let e = EffectiveEditor::resolve(&global, &EditorLayer::default());
+    assert_eq!(e.settings.source, Source::Global);
+    let workspace = EditorLayer {
+        settings: own(r#"{"a.b": 2}"#),
+        ..EditorLayer::default()
+    };
+    let e = EffectiveEditor::resolve(&global, &workspace);
+    assert_eq!(e.settings.value, own(r#"{"a.b": 2}"#));
+    assert_eq!(e.settings.source, Source::Workspace);
+}

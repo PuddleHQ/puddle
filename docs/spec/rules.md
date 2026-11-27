@@ -322,8 +322,10 @@ readable as JSONL (one record per line).
 - **R-26 Size caps.** One line is at most 4 KiB: `path` is cut to 1 KiB *(default)* with
   `path_truncated: true`, and any other oversize string field is cut the same way. The audit is kept
   for a number of days, 90 *(default)*, 1 to 3650, set by the owner: the sweeper deletes the records
-  older than that (checked at most once an hour) and writes one `audit_trimmed` record per
-  deletion. Nothing is deleted for size and there is no cap per workspace, because a workspace
+  older than that (checked at most once an hour) and writes an `audit_trimmed` record in the same
+  transaction as each batch of deletes. A pass that would delete every record waits for the next
+  pass (an hour later) to find the same, so a host clock stepped forward cannot empty the log at once.
+  Nothing is deleted for size and there is no cap per workspace, because a workspace
   that floods its own log could then push out its history. The size only warns: past 2 GiB
   *(default)* a problem is shown, and the admin sees the audit's size and growth. The database
   file gives the space of deleted records back in short steps. Per workspace, `connection` records are limited to 200 per second

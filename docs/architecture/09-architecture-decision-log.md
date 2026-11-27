@@ -230,7 +230,7 @@ every change: Microsoft's server hosts only when that server is chosen and conse
 for the bundled server, each editor's hosts only when direct SSH is on for it. The Rules screen
 lists each host with its reason.
 
-**Where:** `crates/puddle-api/src/system_managed.rs`, `crates/puddle-store/src/store/sets.rs`.
+**Where:** `crates/puddle-api/src/system_managed.rs`, `crates/puddle-store/src/store/sets/`.
 
 ### 9.2.6 Local destinations are allowed per category, and only by rules
 

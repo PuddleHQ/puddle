@@ -44,9 +44,18 @@ fn manual_clock_monotonic_follows_forward_moves_and_ignores_a_step_back() {
 #[test]
 fn system_clock_monotonic_counts_real_elapsed_time() {
     let first = SystemClock.monotonic_ms();
-    std::thread::sleep(std::time::Duration::from_millis(30));
-    let second = SystemClock.monotonic_ms();
-    assert!((30..5_000).contains(&(second - first)), "{first} {second}");
+    let started = std::time::Instant::now();
+    let mut second = first;
+    while second < first + 30 {
+        std::thread::yield_now();
+        second = SystemClock.monotonic_ms();
+        assert!(started.elapsed().as_secs() < 30, "the clock stopped");
+    }
+    let real = u64::try_from(started.elapsed().as_millis()).unwrap();
+    assert!(
+        second - first >= 30 && second - first <= real + 1,
+        "{first} {second} {real}"
+    );
 }
 
 #[test]

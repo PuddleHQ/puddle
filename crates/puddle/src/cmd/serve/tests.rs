@@ -338,19 +338,24 @@ fn the_secret_store_options_reach_the_hosts_setup_and_default_to_auto_and_not_he
 async fn a_confirmed_restore_and_a_request_to_stop_each_end_the_wait_and_say_which() {
     use puddle_lifecycle::ShutdownCause;
     let never = std::future::pending::<()>();
-    let stop = stop_cause(async { Ok(ShutdownCause::Interrupt) }, never).await;
+    let stop = stop_cause(async { ShutdownCause::Interrupt }, never).await;
     assert_eq!(stop, Stop::Request);
-    let stop = stop_cause(
-        std::future::pending::<std::io::Result<ShutdownCause>>(),
-        async {},
-    )
-    .await;
+    let stop = stop_cause(std::future::pending::<ShutdownCause>(), async {}).await;
     assert_eq!(stop, Stop::Restore);
-    // A signal handler that cannot be installed still stops the host.
-    let stop = stop_cause(
-        async { Err(std::io::Error::other("no signals")) },
-        std::future::pending::<()>(),
-    )
-    .await;
-    assert_eq!(stop, Stop::Request);
+}
+
+#[test]
+fn a_second_request_to_stop_is_a_failed_exit_even_when_nothing_was_left() {
+    let clean = puddle_lifecycle::ShutdownReport { sandboxes: vec![] };
+    assert_eq!(
+        format!("{:?}", exit_after_stop(&Ok(clean))),
+        format!("{:?}", ExitCode::SUCCESS)
+    );
+    assert_eq!(
+        format!(
+            "{:?}",
+            exit_after_stop(&Err(puddle_lifecycle::ShutdownCause::Interrupt))
+        ),
+        format!("{:?}", ExitCode::FAILURE)
+    );
 }

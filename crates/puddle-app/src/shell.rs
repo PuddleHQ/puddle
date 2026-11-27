@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use puddle_host::{
     HostError, HostOptions, HostShutdown, MsbFactory, RuntimeFactory, SystemPlatform,
 };
-use puddle_lifecycle::LifecycleError;
+use puddle_lifecycle::{LifecycleError, ShutdownSignals};
 use puddle_log::ScopedFilter;
 use puddle_types::Problems;
 use tauri::{AppHandle, Manager, RunEvent, Runtime};
@@ -21,6 +21,7 @@ use puddle_settings::ClipboardRead;
 use puddle_types::WorkspaceId;
 
 use crate::sandbox_window::{self, Hooks, NewWindowReport, SandboxWindows, Target, WindowSettings};
+use crate::signals::quit_on_signals;
 use crate::window::{MAIN_LABEL, OpenExternal, Refused, open_main};
 use crate::{crash, desktop, links};
 
@@ -719,6 +720,10 @@ pub fn run(options: &Options) -> Result<(), ShellError> {
     puddle_lifecycle::job::contain_this_process()?;
     // While this is the only thread: the host pins the process environment.
     let source = Source::prepare(options, &SystemPlatform::new().with_dev_override_from_env());
+    // Before anything starts: a signal during the start would end the process the default way.
+    let signals = tauri::async_runtime::block_on(async { ShutdownSignals::install() })
+        .inspect_err(|err| tracing::warn!(%err, "a shutdown signal will not stop the VMs"))
+        .ok();
     let options = options.clone();
     let setup_failure = Arc::new(Mutex::new(None));
     let kept = Arc::clone(&setup_failure);
@@ -736,6 +741,19 @@ pub fn run(options: &Options) -> Result<(), ShellError> {
                 // `run` return it to `main`, which shows it.
                 app.handle().exit(1);
                 return Ok(());
+            }
+            if let Some(signals) = signals {
+                let quitting = app.handle().clone();
+                #[expect(
+                    clippy::exit,
+                    reason = "a second signal means the stop hangs; the next start reconciles the VMs"
+                )]
+                let give_up = || std::process::exit(1);
+                tauri::async_runtime::spawn(quit_on_signals(
+                    signals,
+                    move || quitting.exit(0),
+                    give_up,
+                ));
             }
             if let Err(err) = desktop::install_quit_shortcut(app.handle()) {
                 tracing::warn!(%err, "Ctrl+Q will not quit");

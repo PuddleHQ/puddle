@@ -848,7 +848,7 @@ async fn a_record_lookup_that_times_out_is_unavailable() {
 
 #[tokio::test]
 async fn a_policy_that_only_knows_decide_allows_nothing() {
-    // The default `lookup` answers "no rule", so the stub never resolves for such a policy.
+    // A `lookup` that answers "no rule" means the stub never resolves for such a policy.
     struct DecideOnly;
     impl Policy for DecideOnly {
         fn decide(&self, _: &EgressRequest, _: SuffixAllows) -> Result<Decision, PolicyError> {
@@ -856,6 +856,14 @@ async fn a_policy_that_only_knows_decide_allows_nothing() {
                 rule_id: RuleId(1),
                 pattern: PatternKind::Exact,
             })
+        }
+
+        fn lookup(
+            &self,
+            _: &EgressRequest,
+            _: SuffixAllows,
+        ) -> Result<Option<Decision>, PolicyError> {
+            Ok(None)
         }
     }
     let resolver = Arc::new(StaticResolver::new().with("example.com", &[ip("93.184.215.14")]));

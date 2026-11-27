@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-use puddle_agent_proto::editor::MicrosoftOptions;
-
 use super::update_tests::Offline;
 use super::*;
 
@@ -288,6 +286,7 @@ fn a_server_run_as_the_session_user_gets_its_login_variables() {
 #[cfg(unix)]
 #[test]
 fn the_session_user_is_given_the_server_s_folders_and_the_password_file() {
+    use puddle_agent_proto::editor::MicrosoftOptions;
     use std::os::unix::fs::MetadataExt as _;
     let dir = tempfile::tempdir().unwrap();
     let me = std::fs::metadata(dir.path()).unwrap();

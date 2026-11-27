@@ -15,11 +15,11 @@ use crate::error::StoreError;
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
 const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24, V25, V26, V27, V28, V29, V30, V31, V32, V33,
+    V22, V23, V24, V25, V26, V27, V28, V29, V30, V31, V32, V33, V34,
 ];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 33;
+pub const SCHEMA_VERSION: u32 = 34;
 
 const V1: &str = "
 CREATE TABLE rules (
@@ -1011,6 +1011,14 @@ const V33: &str = "
 -- before this column, or one whose client the agent could not name, reads NULL.
 ALTER TABLE pending ADD COLUMN program TEXT
     CHECK (program IS NULL OR length(program) BETWEEN 1 AND 32);
+";
+
+const V34: &str = "
+-- Why a push to a repository cannot succeed, as its listing said when the row was made
+-- ('archived' on its host, or 'read' for an account that can only read it). A row made before
+-- this column, or from a listing that named no block, reads NULL.
+ALTER TABLE workspace_repos ADD COLUMN push_block TEXT
+    CHECK (push_block IS NULL OR push_block IN ('archived', 'read'));
 ";
 
 /// Migrates only up to `version`, to build the database an older Puddle left behind.

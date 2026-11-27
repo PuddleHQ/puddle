@@ -635,6 +635,7 @@ impl FakeWorkspaces {
                     identity,
                     pull: toggles.pull,
                     push: toggles.push,
+                    push_block: None,
                     local: None,
                 },
             )
@@ -1107,6 +1108,7 @@ impl WorkspaceService for FakeWorkspaces {
                     identity: None,
                     pull: true,
                     push: true,
+                    push_block: None,
                     local: None,
                 };
                 (record, new)
@@ -1409,6 +1411,7 @@ impl WorkspaceService for FakeWorkspaces {
                 identity: None,
                 pull: true,
                 push: true,
+                push_block: None,
                 local: None,
             };
             self.clone_into(id, new, false, git).await

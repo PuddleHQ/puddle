@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use puddle_proxy::{AnswerHead, ExchangeRewriter, Rewrite, SecretValue, StandIns, Want};
+use puddle_proxy::{AnswerHead, ExchangeRewriter, Rewrite, StandIns, Want};
 use puddle_secrets::MemoryStore;
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};

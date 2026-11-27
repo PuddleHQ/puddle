@@ -57,8 +57,7 @@ Unfinished parts of the product that are known and accepted for now.
 Small mismatches between the documents and the code, found while writing these pages. The code is
 right in each case.
 
-- Two ADRs carry the number 0007, and the [rules spec](../spec/rules.md) has two entries numbered
-  R-36 (SRV queries, and built-in groups).
+- Two ADRs carry the number 0007.
 - The intro text of rule sets in `ui/src/lib/rules/sets.ts` (`SETS_INTRO`) still describes the order
   before explicit precedence ("your rules decide first, and a set's allow only fills the gaps").
 - The local-destination labels differ between the settings search (`ui/src/lib/settings/pages.ts`:

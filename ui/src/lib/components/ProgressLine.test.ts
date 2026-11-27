@@ -6,6 +6,29 @@ import ProgressLine from "./ProgressLine.svelte";
 afterEach(cleanup);
 
 describe("ProgressLine", () => {
+  it("counts the seconds on a step that gives no count, once it runs long", async () => {
+    vi.useFakeTimers();
+    try {
+      render(ProgressLine, {
+        props: {
+          busy: "starting",
+          progress: {
+            step: "starting",
+            detail: null,
+            repository: null,
+            operation: "starting",
+            failed: false,
+          },
+        },
+      });
+      expect(screen.getByRole("status")).not.toHaveTextContent(/\d s\b/);
+      await vi.advanceTimersByTimeAsync(65_000);
+      expect(screen.getByRole("status")).toHaveTextContent("1 min 05 s");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("shows nothing when nothing is going on", () => {
     const { container } = render(ProgressLine, {
       props: { busy: null, progress: undefined },

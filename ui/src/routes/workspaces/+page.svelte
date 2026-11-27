@@ -31,36 +31,31 @@
       counts[row.request.workspace] = (counts[row.request.workspace] ?? 0) + 1;
     return counts;
   });
-  const first = $derived(
-    workspaces.status === "ready" && workspaces.list.length === 0,
-  );
   const running = $derived(
     workspaces.list.filter((w) => w.status === "running").length,
   );
 </script>
 
-{#if !first}
-  <div class="head">
-    <div>
-      <h1>Workspaces</h1>
-      {#if workspaces.status === "ready" && workspaces.list.length > 0}
-        <p class="sub">
-          {workspaces.list.length}
-          {workspaces.list.length === 1 ? "workspace" : "workspaces"}, {running} running
-        </p>
-      {/if}
-    </div>
-    {#if workspaces.list.length > 0}
-      <button
-        type="button"
-        class="btn primary"
-        onclick={() => actions.openCreate()}
-      >
-        <Plus aria-hidden="true" size={16} />New workspace
-      </button>
+<div class="head">
+  <div>
+    <h1>Workspaces</h1>
+    {#if workspaces.status === "ready" && workspaces.list.length > 0}
+      <p class="sub">
+        {workspaces.list.length}
+        {workspaces.list.length === 1 ? "workspace" : "workspaces"}, {running} running
+      </p>
     {/if}
   </div>
-{/if}
+  {#if workspaces.list.length > 0}
+    <button
+      type="button"
+      class="btn primary"
+      onclick={() => actions.openCreate()}
+    >
+      <Plus aria-hidden="true" size={16} />New workspace
+    </button>
+  {/if}
+</div>
 
 <OrphanVolumesNotice store={orphanVolumes} />
 
@@ -73,8 +68,8 @@
 {:else if workspaces.status === "failed"}
   <LoadNotice what="the workspaces" message={workspaces.loadError} />
 {:else if workspaces.list.length === 0}
-  <!-- The first workspace gets the whole form, like every later one. -->
-  <CreateWorkspaceForm />
+  <!-- The first workspace gets the whole form, like every later one, under the page's h1. -->
+  <CreateWorkspaceForm embedded />
 {:else}
   <div class="columns" aria-hidden="true">
     <span>State</span><span>Name</span><span>Repository</span><span>

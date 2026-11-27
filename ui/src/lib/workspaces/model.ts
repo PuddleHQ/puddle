@@ -131,6 +131,14 @@ export function byteCountText(
   return `${bytesLabel(bytes.done)} of ${bytesLabel(bytes.total)}, ${share} %`;
 }
 
+/** How long a step has run, for the steps that give no count: "8 s", "1 min 05 s". */
+export function elapsedText(seconds: number): string {
+  const whole = Math.max(0, Math.floor(seconds));
+  if (whole < 60) return `${whole} s`;
+  const minutes = Math.floor(whole / 60);
+  return `${minutes} min ${String(whole % 60).padStart(2, "0")} s`;
+}
+
 /** What a step takes long over, in words, for the steps people sit and wait through. */
 export const STEP_HINTS: Partial<Record<Step, string>> = {
   pulling_image:
@@ -138,7 +146,7 @@ export const STEP_HINTS: Partial<Record<Step, string>> = {
   unpacking_image:
     "Turning the download into the disk the workspace boots from.",
   starting:
-    "Booting the workspace's virtual machine takes a minute or two, every time it starts.",
+    "Booting the workspace's virtual machine and waiting for its agent takes a minute or two, every time it starts.",
 };
 
 /** The ordered steps each operation goes through, to show "step 2 of 3". */

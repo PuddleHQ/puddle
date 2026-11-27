@@ -316,11 +316,12 @@ fn problem(problem: &UpstreamProblem) -> ProxyProblem {
 fn pac_state(detected: Detected, pac_reachable: Option<bool>, auto_detect: bool) -> PacState {
     match (detected, pac_reachable) {
         (Detected::Pac, Some(false)) => PacState::Unreachable,
-        (_, Some(false)) => PacState::NotUsed,
         (_, Some(true)) => PacState::Answering,
         (Detected::Pac | Detected::Wpad, None) => PacState::NotAsked,
         (_, None) if auto_detect => PacState::NotAsked,
-        (Detected::Static | Detected::Env | Detected::Direct, None) => PacState::NotUsed,
+        (_, Some(false)) | (Detected::Static | Detected::Env | Detected::Direct, None) => {
+            PacState::NotUsed
+        }
         _ => PacState::Unknown,
     }
 }

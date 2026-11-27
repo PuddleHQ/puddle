@@ -85,10 +85,7 @@ fn changed(fx: &mut Vec<Event>, workspace: &WorkspaceId) {
 
 /// Tells every workspace the store knows (a global change reaches the ones that inherit it).
 fn changed_everywhere(tx: &Transaction<'_>, fx: &mut Vec<Event>) -> Result<(), StoreError> {
-    let mut stmt = tx.prepare(
-        "SELECT workspace_id FROM workspace_names
-         UNION SELECT workspace_id FROM workspace_interception",
-    )?;
+    let mut stmt = tx.prepare("SELECT workspace_id FROM workspace_owners")?;
     let names = stmt.query_map([], |r| r.get::<_, String>(0))?;
     for name in names.flatten() {
         if let Ok(workspace) = WorkspaceId::new(&name) {

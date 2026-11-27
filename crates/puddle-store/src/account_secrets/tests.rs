@@ -393,7 +393,7 @@ fn redeeming_an_invite_sets_the_password_and_signs_out_every_device_together() {
         .unwrap();
     assert_eq!(checked.user(), ann);
     assert_eq!(ended, vec![old.id]);
-    assert!(store.devices(ann).unwrap().is_empty());
+    assert_eq!(store.devices(ann).unwrap(), []);
     assert_eq!(secrets.session_for(&[4; 32]).unwrap(), None);
     assert!(
         secrets

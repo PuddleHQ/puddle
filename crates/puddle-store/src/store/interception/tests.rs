@@ -35,6 +35,9 @@ fn store() -> (Store, Arc<Seen>) {
     (store, seen)
 }
 
+/// How many workspaces [`store`] creates: a global change tells each one, whatever rows it has.
+const OWNED: usize = 7;
+
 fn changes(seen: &Seen) -> usize {
     seen.0
         .lock()
@@ -88,7 +91,7 @@ fn the_global_setting_is_an_unchosen_known_only_with_learning_on_until_saved() {
         store.interception_settings().unwrap().effective_mode(),
         InterceptionMode::AllExceptCurated
     );
-    assert_eq!(changes(&seen) - before, 1, "every workspace is told");
+    assert_eq!(changes(&seen) - before, OWNED, "every workspace is told");
 
     let seen_notice = InterceptionSettings {
         notice_seen: true,
@@ -97,7 +100,7 @@ fn the_global_setting_is_an_unchosen_known_only_with_learning_on_until_saved() {
     store.set_interception_settings(seen_notice).unwrap();
     assert_eq!(
         changes(&seen) - before,
-        1,
+        OWNED,
         "the notice flag changes nothing a workspace decrypts"
     );
     store
@@ -106,7 +109,7 @@ fn the_global_setting_is_an_unchosen_known_only_with_learning_on_until_saved() {
             ..seen_notice
         })
         .unwrap();
-    assert_eq!(changes(&seen) - before, 2);
+    assert_eq!(changes(&seen) - before, 2 * OWNED);
 }
 
 #[test]
@@ -149,7 +152,7 @@ fn never_decrypt_names_are_per_workspace_sorted_and_replaced_as_a_whole() {
 }
 
 #[test]
-fn the_global_list_tells_every_workspace_that_has_settings() {
+fn the_global_list_tells_every_workspace_even_one_with_no_settings_row() {
     let (store, seen) = store();
     store
         .set_workspace_mode(&ws("on"), Some(InterceptionMode::All))
@@ -162,7 +165,7 @@ fn the_global_list_tells_every_workspace_that_has_settings() {
         .set_global_never_decrypt(&strings(&["bank.example"]))
         .unwrap();
     assert_eq!(store.global_never_decrypt().unwrap(), ["bank.example"]);
-    assert_eq!(changes(&seen) - before, 2);
+    assert_eq!(changes(&seen) - before, OWNED);
     store.set_global_never_decrypt(&[]).unwrap();
     assert_eq!(store.global_never_decrypt().unwrap(), strings(&[]));
 }
@@ -183,11 +186,11 @@ fn the_learned_limits_are_twelve_hours_and_1024_until_saved_and_tell_the_workspa
     };
     store.set_learned_limits(mine).unwrap();
     assert_eq!(store.learned_limits().unwrap(), mine);
-    assert_eq!(changes(&seen) - before, 1, "the workspace the store knows");
+    assert_eq!(changes(&seen) - before, OWNED, "every workspace");
     store.set_learned_limits(mine).unwrap();
     assert_eq!(
         changes(&seen) - before,
-        1,
+        OWNED,
         "the same values are not a change"
     );
     store.set_learned_limits(built_in).unwrap();
@@ -366,7 +369,7 @@ fn a_settings_patch_changes_only_the_parts_it_gives() {
         }
     );
     assert_eq!(store.interception_settings().unwrap(), got);
-    assert_eq!(changes(&seen) - before, 1);
+    assert_eq!(changes(&seen) - before, OWNED);
 
     // Choosing a mode answers the notice, and keeps the learning switch another patch set.
     let got = store
@@ -380,7 +383,7 @@ fn a_settings_patch_changes_only_the_parts_it_gives() {
             notice_seen: true
         }
     );
-    assert_eq!(changes(&seen) - before, 2);
+    assert_eq!(changes(&seen) - before, 2 * OWNED);
 
     // An explicit notice answer wins over the mode's.
     let got = store
@@ -389,7 +392,7 @@ fn a_settings_patch_changes_only_the_parts_it_gives() {
     assert!(!got.notice_seen);
     assert_eq!(
         changes(&seen) - before,
-        2,
+        2 * OWNED,
         "same mode and learning: no event"
     );
 

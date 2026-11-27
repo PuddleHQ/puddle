@@ -74,6 +74,7 @@ mod inject;
 mod intercept;
 mod leg;
 mod pipeline;
+pub(crate) mod refused;
 pub(crate) mod request;
 pub(crate) mod request_rules;
 mod response;

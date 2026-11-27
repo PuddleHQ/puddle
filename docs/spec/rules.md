@@ -112,7 +112,13 @@ expires when its workspace is deleted (R-21): a waiting request never lapses by 
   keep `x-puddle-decision: pending` and, when a row exists, `x-puddle-pending: <id>`. The status line
   carries the words too (`403 Forbidden, waiting for approval in Puddle`): a client that discards the
   body and headers of a refused `CONNECT` (`curl`, `git`) still shows the code only, but Python, npm,
-  Go and apt print the reason phrase. For an
+  Go and apt print the reason phrase. So that `curl`, `cargo` and `rustup` show it too, a refused
+  `CONNECT` to a name on port 443 from the workspace's own tools (not a container's, not SSH) is
+  answered inside the tunnel: the proxy answers `200`, presents a certificate from the workspace's
+  CA for that name, and answers the first HTTPS request with the same 403 (status, headers, body).
+  Nothing reaches the real server, and the decision is the rules' own. A client that does not trust
+  the workspace's CA sees a TLS error instead; a name on the workspace's pass-through list keeps
+  the plain `CONNECT` 403. For an
   `unlisted` request (R-45) the body says instead that the host is not listed for approval yet
   because Puddle holds more waiting requests for the workspace than it lists, and that answering some
   lists this one on the next try. The connection

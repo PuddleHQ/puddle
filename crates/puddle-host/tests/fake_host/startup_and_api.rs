@@ -223,6 +223,7 @@ async fn the_daemon_serves_the_api_the_ui_and_the_event_stream() {
             "preparing_volume",
             "pulling_image",
             "starting",
+            "waiting_for_agent",
             "syncing",
             "cloning",
             "done"

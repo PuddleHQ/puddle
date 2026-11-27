@@ -327,6 +327,9 @@ pub struct Store {
     /// When the sweeper last pruned the audit by age ([`audit_retention::NEVER`] before the
     /// first pass).
     last_audit_prune: AtomicU64,
+    /// Set when a sweep's prune found that it would delete every record and waited; the next
+    /// pass that still finds so deletes (RS-13).
+    audit_wipe_deferred: AtomicBool,
 }
 
 impl std::fmt::Debug for Store {
@@ -430,6 +433,7 @@ impl Store {
             limits,
             events: Arc::new(NullSink),
             last_audit_prune: AtomicU64::new(audit_retention::NEVER),
+            audit_wipe_deferred: AtomicBool::new(false),
         })
     }
 

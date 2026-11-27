@@ -371,11 +371,20 @@ export function resolveRepoAddress(
   return { url: clean };
 }
 
-/** A workspace name suggested by a repository URL: its last path segment, as typed. */
+/** `text` with its `%XX` escapes read; text with a bad escape stays as typed. */
+function unescaped(text: string): string {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
+}
+
+/** A workspace name suggested by a repository URL: its last path segment, as typed, with `%20`-style escapes read (`qa%20repo` is `qa repo`). */
 export function suggestName(repoUrl: string): string {
   const path = repoUrl.trim().split(/[?#]/)[0] ?? "";
   const last = path.split("/").filter(Boolean).pop() ?? "";
-  const name = last.replace(/\.git$/i, "");
+  const name = unescaped(last).replace(/\.git$/i, "");
   return [...name].slice(0, MAX_NAME_LENGTH).join("");
 }
 

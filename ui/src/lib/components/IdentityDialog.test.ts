@@ -396,7 +396,7 @@ describe("editing an identity", () => {
     expect(screen.queryByLabelText(/Owners or organisations/)).toBeNull();
   });
 
-  it("removes the token of a credential the save took away, and only then", async () => {
+  it("leaves the token of a credential the save took away to the host, which keeps one another identity still reads", async () => {
     api.identities = [existing()];
     api.tokens = ["tok-old"];
     await store.refresh();
@@ -404,10 +404,11 @@ describe("editing an identity", () => {
     await fireEvent.click(
       screen.getByRole("button", { name: /^Remove Pasted token/ }),
     );
-    // Nothing is removed before Save: a cancel would otherwise lose a working credential.
-    expect(api.tokens).toEqual(["tok-old"]);
     await fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(api.tokens).toEqual([]));
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    await Promise.resolve();
+    expect(api.calls.filter((c) => c.startsWith("DELETE"))).toEqual([]);
+    expect(api.tokens).toEqual(["tok-old"]);
   });
 
   it("keeps the existing token when the edit is cancelled", async () => {

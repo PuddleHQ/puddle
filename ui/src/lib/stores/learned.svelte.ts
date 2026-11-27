@@ -9,7 +9,7 @@ import {
   asPassThroughLearned,
   onLearnedChanged,
 } from "#lib/interception/learned.ts";
-import { sentence } from "#lib/rules/model.ts";
+import { sentence } from "#lib/format/sentence.ts";
 import { live, type LiveSource } from "./live.svelte.ts";
 import { readFailure, SERVICE_DOWN } from "./read-failure.ts";
 

@@ -9,16 +9,27 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { components } from "#lib/api/schema.d.ts";
 
-const url = vi.hoisted(() => ({
-  pathname: "/workspaces/w-demo",
-  id: "w-demo",
-}));
+const url = await vi.hoisted(async () => {
+  // Reading `params` is tracked, so a test can change the id the way a navigation does.
+  const { SvelteMap } = await import("svelte/reactivity");
+  const navigations = new SvelteMap([["n", 0]]);
+  return {
+    pathname: "/workspaces/w-demo",
+    id: "w-demo",
+    navigations,
+    navigate(id: string) {
+      this.id = id;
+      navigations.set("n", (navigations.get("n") ?? 0) + 1);
+    },
+  };
+});
 vi.mock("$app/state", () => ({
   page: {
     get url() {
       return new URL(`http://127.0.0.1${url.pathname}`);
     },
     get params() {
+      url.navigations.get("n");
       return { id: url.id };
     },
   },
@@ -416,6 +427,18 @@ describe("the detail layout", () => {
     expect(
       await screen.findByText(/Couldn't read the workspace/),
     ).toBeInTheDocument();
+  });
+
+  it("says so for an id that never existed after another workspace was shown", async () => {
+    await load();
+    render(DetailLayout, { children: (() => {}) as never });
+    await screen.findByRole("heading", { level: 1, name: "demo" });
+    url.navigate("nope");
+    expect(
+      await screen.findByRole("heading", { name: "No such workspace" }),
+    ).toBeInTheDocument();
+    await workspaces.refresh();
+    expect(goto).not.toHaveBeenCalled();
   });
 
   it("goes back to the list when the workspace it showed is gone", async () => {

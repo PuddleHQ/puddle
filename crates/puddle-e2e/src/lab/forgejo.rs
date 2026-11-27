@@ -261,6 +261,11 @@ struct Ports {
     ssh: u16,
 }
 
+/// How long one readiness probe may take. A first start on a loaded runner answers `/version` in
+/// 3 to 8 s, and a probe that gives up at 2 s cancels the request Forgejo is still serving (it logs
+/// `context canceled` and answers 401), so no probe ever completes and the wait runs out.
+const PROBE_SECS: u32 = 15;
+
 /// Waits until Forgejo itself answers on both ports: the API over TLS with the run's root (the
 /// SSH one second, so a taken SSH port shows in the log before the instance is called ready). A
 /// port that merely accepts proves nothing: a stranger holding the port Forgejo failed to bind
@@ -283,7 +288,7 @@ fn await_up(
             port: ports.http,
             authorization: &authorization,
         };
-        call(&at, "GET", "/version", None, 2).is_ok_and(|(status, _)| status == 200)
+        call(&at, "GET", "/version", None, PROBE_SECS).is_ok_and(|(status, _)| status == 200)
     };
     let ssh_up = || ssh_greets(ports.ssh);
     let probes: [&dyn Fn() -> bool; 2] = [&http_up, &ssh_up];

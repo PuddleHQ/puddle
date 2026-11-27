@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use std::collections::BTreeSet;
-use std::path::Path;
-use std::process::Command;
+use std::path::{Path, PathBuf};
 
 use super::{PARENTS, covers_public_suffix};
 
@@ -32,34 +31,91 @@ fn parents(rules: &str) -> BTreeSet<String> {
     out
 }
 
+fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+/// The version `Cargo.lock` locks for `name`, or `None` unless it locks exactly one.
+/// Reading the lock file needs no dependency resolution, unlike `cargo metadata`, which
+/// wants every platform's crates in the registry.
+fn locked_version(lock: &str, name: &str) -> Option<String> {
+    let header = format!("name = \"{name}\"");
+    let mut versions = Vec::new();
+    let mut lines = lock.lines();
+    while let Some(line) = lines.next() {
+        if line == header {
+            let version = lines.next()?.strip_prefix("version = \"")?;
+            versions.push(version.strip_suffix('"')?.to_owned());
+        }
+    }
+    match versions.as_slice() {
+        [one] => Some(one.clone()),
+        _ => None,
+    }
+}
+
+/// The extracted source of `name-version` in any registry under `cargo_home`.
+fn registry_source(cargo_home: &Path, name: &str, version: &str) -> Option<PathBuf> {
+    std::fs::read_dir(cargo_home.join("registry/src"))
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|index| index.path().join(format!("{name}-{version}")))
+        .find(|dir| dir.is_dir())
+}
+
+#[test]
+fn locked_version_reads_the_single_locked_package() {
+    let lock = "[[package]]\nname = \"psl-types\"\nversion = \"2.0.11\"\n\n\
+                [[package]]\nname = \"psl\"\nversion = \"2.1.261\"\n";
+    assert_eq!(locked_version(lock, "psl").as_deref(), Some("2.1.261"));
+    assert_eq!(locked_version(lock, "psl-types").as_deref(), Some("2.0.11"));
+    assert_eq!(locked_version(lock, "absent"), None);
+    let twice = format!("{lock}\n[[package]]\nname = \"psl\"\nversion = \"2.1.1\"\n");
+    assert_eq!(locked_version(&twice, "psl"), None);
+    assert_eq!(locked_version("[[package]]\nname = \"psl\"\n", "psl"), None);
+    assert_eq!(
+        locked_version("[[package]]\nname = \"psl\"\nversion = 1\n", "psl"),
+        None
+    );
+}
+
+#[test]
+fn registry_source_finds_the_exact_version_in_any_index() {
+    let home = tempfile::tempdir().unwrap();
+    let src = home.path().join("registry/src");
+    std::fs::create_dir_all(src.join("index-a/psl-2.1.1")).unwrap();
+    std::fs::create_dir_all(src.join("index-b/psl-2.1.2")).unwrap();
+    std::fs::write(src.join("index-b/psl-2.1.3"), "a file, not a crate").unwrap();
+    assert_eq!(
+        registry_source(home.path(), "psl", "2.1.2"),
+        Some(src.join("index-b/psl-2.1.2"))
+    );
+    assert_eq!(
+        registry_source(home.path(), "psl", "2.1.1"),
+        Some(src.join("index-a/psl-2.1.1"))
+    );
+    assert_eq!(registry_source(home.path(), "psl", "2.1.3"), None);
+    assert_eq!(registry_source(home.path(), "psl", "9.9.9"), None);
+    assert_eq!(
+        registry_source(&home.path().join("none"), "psl", "2.1.1"),
+        None
+    );
+}
+
 /// The table is the parents of the list `psl` is built from. After a `psl` bump this fails
 /// until `UPDATE_PSL_PARENTS=1 cargo test -p puddle-proxy --lib public_suffix_parents_match`
 /// rewrites the file.
 #[test]
 fn public_suffix_parents_match_the_psl_crate_rules() {
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
-    let out = Command::new(cargo)
-        .args(["metadata", "--format-version", "1", "--offline"])
-        .arg("--manifest-path")
-        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"))
-        .output()
-        .expect("cargo metadata runs");
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let meta: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    let manifest = meta["packages"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|p| p["name"] == "psl")
-        .and_then(|p| p["manifest_path"].as_str())
-        .expect("psl is a dependency");
-    let rules =
-        std::fs::read_to_string(Path::new(manifest).parent().unwrap().join("data/rules.txt"))
-            .unwrap();
+    let lock = std::fs::read_to_string(workspace_root().join("Cargo.lock")).unwrap();
+    let version = locked_version(&lock, "psl").expect("Cargo.lock locks exactly one psl");
+    let cargo_home = std::env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| Path::new(&h).join(".cargo")))
+        .expect("CARGO_HOME or HOME is set");
+    let dir = registry_source(&cargo_home, "psl", &version)
+        .unwrap_or_else(|| panic!("psl-{version} is not extracted under {cargo_home:?}"));
+    let rules = std::fs::read_to_string(dir.join("data/rules.txt")).unwrap();
     let want = parents(&rules);
     let mut text = want
         .iter()

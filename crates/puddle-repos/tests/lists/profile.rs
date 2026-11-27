@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Who a credential's account is: the author and organisations an identity is prefilled with.
 
-use puddle_repos::{ApiReply, NoteKind, ProblemKind};
+use puddle_repos::{ApiReply, Freshness, NoteKind, ProblemKind};
 use puddle_secrets::SourceError;
 
 use crate::common::{Rig, T0, data, gcm, gh, ok_json, stored};
@@ -180,6 +180,35 @@ async fn a_limit_while_asking_stops_the_profile_and_blocks_the_next_ask() {
     assert_eq!(problem.kind, ProblemKind::RateLimited);
     assert_eq!(problem.retry_at, Some(T0 + 90_000));
     assert_eq!(rig.api.count(), asked);
+}
+
+#[tokio::test]
+async fn a_profile_limit_survives_a_listing_that_does_not_name_the_credential() {
+    let rig = rig_with_account();
+    rig.api.reply(
+        "api.github.com",
+        ORGS,
+        ApiReply::new(403, data("github_rate_limit_secondary.json"))
+            .with_header("retry-after", "90"),
+    );
+    let first = rig.repos.profile(&gh("github.com", "octocat")).await;
+    assert_eq!(first.problem.unwrap().kind, ProblemKind::RateLimited);
+    let asked = rig.api.count();
+
+    // No saved identity names the credential (the create form), so the listing forgets its slot.
+    rig.lists(&[], Freshness::Reload).await;
+
+    rig.clock.advance(30_000);
+    let again = rig.repos.profile(&gh("github.com", "octocat")).await;
+    let problem = again.problem.unwrap();
+    assert_eq!(problem.kind, ProblemKind::RateLimited);
+    assert_eq!(problem.retry_at, Some(T0 + 90_000));
+    assert_eq!(rig.api.count(), asked);
+
+    // The limit is dropped once its time has passed, and the ask goes out again.
+    rig.clock.advance(61_000);
+    rig.repos.profile(&gh("github.com", "octocat")).await;
+    assert!(rig.api.count() > asked);
 }
 
 #[tokio::test]

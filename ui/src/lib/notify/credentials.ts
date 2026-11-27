@@ -14,7 +14,7 @@ import {
 } from "#lib/identities/events.ts";
 import { isStoredLine } from "#lib/identities/model.ts";
 import { repoName } from "#lib/identities/repo.ts";
-import { sentence } from "#lib/rules/model.ts";
+import { sentence } from "#lib/format/sentence.ts";
 import type { Notifier } from "./notifier.ts";
 
 /** What the sign-in notice needs to know of the identities. */

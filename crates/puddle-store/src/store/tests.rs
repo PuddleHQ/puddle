@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+use std::time::Duration;
+
 use puddle_types::{ConnectionEvent, Host};
 
 use super::rows::{RawPending, RawRule, pending_from_raw, rule_from_raw};
@@ -971,4 +973,57 @@ fn the_entries_of_a_hidden_built_in_set_are_not_served() {
         store.built_in_entries(UserId::OWNER, github, "", 0, 10),
         Err(StoreError::UnknownRuleSet(_))
     ));
+}
+
+#[test]
+fn the_rule_set_list_never_mixes_a_switch_from_before_a_commit_with_rows_from_after() {
+    let (_, store) = store();
+    let before = store.rule_sets(UserId::OWNER).unwrap();
+    let target = before[0].id;
+    assert!(before[0].global.is_none(), "no switch yet");
+    let seen = std::thread::scope(|scope| {
+        // A commit in flight: it holds the lock and swaps the index before it lets go.
+        let conn = lock(&store.conn);
+        let reader = scope.spawn(|| store.rule_sets(UserId::OWNER).unwrap());
+        // Ordering with no signal: the reader has no event to say it reached the lock, so give it time to block on it.
+        std::thread::sleep(Duration::from_millis(300));
+        conn.execute(
+            "INSERT INTO rule_set_switches (rule_set, workspace_id, enabled, changed_at, user_id)
+             VALUES (?1, NULL, 1, 0, 1)",
+            [target.to_string()],
+        )
+        .unwrap();
+        let index = sets::load_index(&conn).unwrap();
+        *store.rules.write().unwrap() = Arc::new(index);
+        drop(conn);
+        reader.join().unwrap()
+    });
+    let listed = seen.iter().find(|s| s.id == target).unwrap();
+    assert_eq!(listed.global, Some(true), "the list reflects the commit");
+}
+
+#[test]
+fn one_rule_set_is_read_with_the_index_of_the_same_lock() {
+    let (_, store) = store();
+    let made = store
+        .create_rule_set(UserId::OWNER, "Mine", "", None, Actor::Ui)
+        .unwrap();
+    assert!(made.global.is_none());
+    let seen = std::thread::scope(|scope| {
+        let conn = lock(&store.conn);
+        let reader = scope.spawn(|| store.rule_set(UserId::OWNER, made.id).unwrap());
+        // Ordering with no signal: the reader has no event to say it reached the lock, so give it time to block on it.
+        std::thread::sleep(Duration::from_millis(300));
+        conn.execute(
+            "INSERT INTO rule_set_switches (rule_set, workspace_id, enabled, changed_at, user_id)
+             VALUES (?1, NULL, 0, 0, 1)",
+            [made.id.to_string()],
+        )
+        .unwrap();
+        let index = sets::load_index(&conn).unwrap();
+        *store.rules.write().unwrap() = Arc::new(index);
+        drop(conn);
+        reader.join().unwrap()
+    });
+    assert_eq!(seen.global, Some(false));
 }

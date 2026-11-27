@@ -4,7 +4,7 @@
 
 use rusqlite::{OptionalExtension, Row, params};
 
-use super::{Store, corrupt, lock, sql_ts, stored_ts};
+use super::{Store, corrupt, lock, sql_ts, stored_ts, write_tx};
 use crate::error::StoreError;
 use crate::users::{Device, DeviceId, DeviceSession, SignInMethod, UserId, UserName, device_name};
 
@@ -42,6 +42,39 @@ pub(crate) fn insert_device(
         last_seen_at: now,
         expires_at,
     }))
+}
+
+/// Revokes every device of `user` except `keep` and drops their refresh digests (a revoked
+/// device can't refresh any more), the ids revoked. Runs on the caller's connection, so a flow
+/// that must revoke together with another write puts both in one transaction.
+pub(crate) fn revoke_devices_in(
+    conn: &rusqlite::Connection,
+    user: UserId,
+    keep: Option<DeviceId>,
+    now: u64,
+) -> Result<Vec<DeviceId>, StoreError> {
+    let revoked: Vec<DeviceId> = {
+        let mut stmt = conn.prepare(
+            "UPDATE devices SET revoked_at = ?2
+             WHERE user_id = ?1 AND revoked_at IS NULL AND id IS NOT ?3
+             RETURNING id",
+        )?;
+        stmt.query_map(
+            params![user.get(), sql_ts(now), keep.map(DeviceId::get)],
+            |row| row.get::<_, i64>(0),
+        )
+        .and_then(Iterator::collect::<Result<Vec<i64>, _>>)?
+        .into_iter()
+        .map(DeviceId::from_stored)
+        .collect()
+    };
+    for id in &revoked {
+        conn.execute(
+            "DELETE FROM account_sessions WHERE device_id = ?1",
+            [id.get()],
+        )?;
+    }
+    Ok(revoked)
 }
 
 impl Store {
@@ -171,29 +204,10 @@ impl Store {
         user: UserId,
         keep: Option<DeviceId>,
     ) -> Result<Vec<DeviceId>, StoreError> {
-        let revoked: Vec<DeviceId> = {
-            let conn = lock(&self.conn);
-            let mut stmt = conn.prepare(
-                "UPDATE devices SET revoked_at = ?2
-                 WHERE user_id = ?1 AND revoked_at IS NULL AND id IS NOT ?3
-                 RETURNING id",
-            )?;
-            stmt.query_map(
-                params![
-                    user.get(),
-                    sql_ts(self.clock.now_ms()),
-                    keep.map(DeviceId::get)
-                ],
-                |row| row.get::<_, i64>(0),
-            )
-            .and_then(Iterator::collect::<Result<Vec<i64>, _>>)?
-            .into_iter()
-            .map(DeviceId::from_stored)
-            .collect()
-        };
-        for id in &revoked {
-            self.forget_session(*id)?;
-        }
+        let mut conn = lock(&self.conn);
+        let tx = write_tx(&mut conn)?;
+        let revoked = revoke_devices_in(&tx, user, keep, self.clock.now_ms())?;
+        tx.commit()?;
         Ok(revoked)
     }
 

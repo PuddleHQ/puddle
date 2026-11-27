@@ -365,7 +365,7 @@ through the workspace's own TLS termination (`crates/puddle-proxy/src/ssh_git/br
 `crates/puddle-proxy/src/ssh_git/https.rs`). The token is added there. SSH to any other host is
 refused with a reason.
 
-**Logins of tools.** Tools that sign in themselves (Claude Code, the GitHub CLI) go through the same
+**Logins of tools.** Tools that sign in themselves (Claude Code, GitHub, Microsoft Entra, OpenAI Codex, Docker Hub) go through the same
 termination. On a token endpoint, `crates/puddle-logins` (the `ExchangeRewriter` trait of
 `crates/puddle-proxy/src/terminate/exchange.rs`) stores the real token in the OS store and gives the
 tool a stand-in; later requests have the stand-in swapped for the real token on the way out. A token

@@ -341,12 +341,15 @@ impl HttpRequestLine {
     }
 
     /// A Git-over-SSH command (`git-receive-pack`) or refusal (`ssh-command`, `ssh-channel`) on
-    /// `path`, in the place of the method.
+    /// `path`, in the place of the method. It carries no [`GitOperation`]: the command says it,
+    /// and the guest picks the repository name, which must not.
     #[must_use]
     pub fn ssh(command: impl Into<String>, path: &str) -> Self {
         Self {
             protocol: ConnectionProtocol::Ssh,
-            ..Self::new(command, path)
+            method: command.into(),
+            path: request_path(path).to_owned(),
+            git_operation: None,
         }
     }
 

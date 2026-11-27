@@ -496,6 +496,7 @@ fn a_settings_write_that_fails_is_not_remembered_and_is_tried_again() {
     let rig = Rig::new();
     rig.plan(&dark(Some(14)));
     let folder = rig.user("");
+    let open = std::fs::metadata(&folder).unwrap().permissions();
     std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o500)).unwrap();
     assert!(
         std::fs::write(rig.user("probe"), "").is_err(),
@@ -503,7 +504,7 @@ fn a_settings_write_that_fails_is_not_remembered_and_is_tried_again() {
     );
     apply(&rig.server);
     assert_eq!(read_applied(&state_path(&rig.server)), Applied::default());
-    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::set_permissions(&folder, open).unwrap();
     apply(&rig.server);
     let settings = rig.settings();
     assert_eq!(settings["workbench.colorTheme"], "Solarized Dark");
@@ -519,6 +520,7 @@ fn a_key_bindings_write_that_fails_is_not_remembered_and_is_tried_again() {
         ..EditorDefaults::default()
     });
     let folder = rig.user("");
+    let open = std::fs::metadata(&folder).unwrap().permissions();
     std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o500)).unwrap();
     assert!(
         std::fs::write(rig.user("probe"), "").is_err(),
@@ -529,7 +531,7 @@ fn a_key_bindings_write_that_fails_is_not_remembered_and_is_tried_again() {
         read_applied(&state_path(&rig.server)).keybindings,
         Vec::<Value>::new()
     );
-    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::set_permissions(&folder, open).unwrap();
     apply(&rig.server);
     let list: Value =
         serde_json::from_slice(&std::fs::read(rig.user("keybindings.json")).unwrap()).unwrap();

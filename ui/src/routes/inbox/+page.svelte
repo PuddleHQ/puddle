@@ -258,7 +258,10 @@
   {#each shownGroups as group (group.domain)}
     <section class="group" aria-labelledby="group-{group.domain}">
       <div class="group-head">
-        <h2 id="group-{group.domain}" class="domain">{group.domain}</h2>
+        <h2 id="group-{group.domain}" class="domain">
+          {#each group.domain.split(/(?<=\.)/) as label, i (i)}{label}<wbr
+            />{/each}
+        </h2>
         <span class="chip">{group.total} waiting</span>
       </div>
       <ul>

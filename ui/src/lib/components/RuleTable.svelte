@@ -253,18 +253,21 @@
     text-align: end;
     white-space: nowrap;
   }
-  /* Below about 800 px the table must fit without a sideways scroll, since the row's menu sits at its
-     right end: the Created column steps aside and the host wraps. */
+  /* Below about 800 px the Created column steps aside. What still does not fit scrolls inside the
+     table's own box, never the page, and the row's menu stays pinned at the right end so it is
+     always in reach. */
   @media (max-width: 800px) {
     .created {
       display: none;
     }
-    .wrap {
-      overflow-x: visible;
-    }
     th,
     td {
       padding-inline: var(--space-1);
+    }
+    td.actions {
+      position: sticky;
+      inset-inline-end: 0;
+      background: var(--color-surface);
     }
   }
 </style>

@@ -142,6 +142,18 @@ fn log_lines_ahead_of_the_counter_claim_later_increases() {
 }
 
 #[test]
+fn a_counted_kill_claims_one_line_ahead_and_no_more() {
+    let t0 = Instant::now();
+    let mut c = Correlator::new(GRACE);
+    assert_eq!(c.on_logged(t0), Logged::New);
+    assert_eq!(c.on_logged(t0), Logged::New);
+    c.on_counted(1, t0);
+    c.on_counted(1, t0);
+    c.on_counted(1, t0);
+    assert_eq!(c.due(t0 + GRACE), 1);
+}
+
+#[test]
 fn a_counted_kill_claimed_by_a_line_leaves_nothing_for_the_next_line_to_claim() {
     let t0 = Instant::now();
     let mut c = Correlator::new(GRACE);

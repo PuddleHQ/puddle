@@ -17,7 +17,7 @@ puddle-ipc = { workspace = true }
 puddle-types = { workspace = true }
 puddle-vm-tests = { workspace = true }
 sha2 = { workspace = true }
-tokio = { workspace = true, features = ["io-util", "rt", "time"] }
+tokio = { workspace = true, features = ["io-util", "macros", "rt", "sync", "time"] }
 tracing-subscriber = { workspace = true }
 
 [lints]

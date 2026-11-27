@@ -38,7 +38,7 @@ mod admin;
 mod audit;
 mod audit_retention;
 mod devices;
-pub(crate) use devices::insert_device;
+pub(crate) use devices::{insert_device, revoke_devices_in};
 mod environment;
 #[cfg(test)]
 mod failures;

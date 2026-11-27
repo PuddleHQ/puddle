@@ -1454,6 +1454,13 @@ describe("the editor defaults", () => {
     });
     await save();
     expect(api.layer.editor.keybindings).toBe(bindings);
+
+    const own = '{"editor.tabSize": 2}';
+    await fireEvent.input(screen.getByLabelText("Custom editor settings"), {
+      target: { value: own },
+    });
+    await save();
+    expect(api.layer.editor.settings).toBe(own);
   });
 
   it("clears a field when its box is emptied", async () => {

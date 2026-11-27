@@ -187,6 +187,7 @@ describe("connecting", () => {
         font_size: null,
         extensions: null,
         keybindings: null,
+        settings: null,
       },
       clipboard_read: null,
       direct_ssh: null,

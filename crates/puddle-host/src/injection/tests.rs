@@ -1678,9 +1678,12 @@ async fn a_forget_that_arrives_while_a_start_reads_the_kept_logins_ends_with_the
         let (injection, ws) = (Arc::clone(&injection), ws.clone());
         async move { injection.begin(&ws, true).await.map(|_| ()) }
     });
-    while vault.held_reads() == 0 {
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
+    puddle_test_kit::eventually(
+        "the start's read of a kept token",
+        Duration::from_secs(5),
+        || vault.held_reads() > 0,
+    )
+    .await;
     // The workspace is not running yet, so this forget has no registry to remove from.
     let forget = tokio::spawn({
         let (injection, ws) = (Arc::clone(&injection), ws.clone());

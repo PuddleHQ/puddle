@@ -50,4 +50,9 @@ if (typeof globalThis.ResizeObserver === "undefined") {
 // stall that already ended does not fail the run and a test that really hangs still fails twice.
 // Only a timeout retries: a failed assertion fails at once. It is set here and not in the config
 // because a RegExp condition does not survive the config's trip to the workers.
-vi.setConfig({ retry: { count: 1, condition: /timed out/i } });
+// `vi.setConfig` copies every key onto the runner's config, `retry` included, but its `RuntimeOptions`
+// type omits it, so the value is typed as the parameter plus the key it really takes.
+const timeoutRetry: Parameters<typeof vi.setConfig>[0] & {
+  retry: { count: number; condition: RegExp };
+} = { retry: { count: 1, condition: /timed out/i } };
+vi.setConfig(timeoutRetry);

@@ -297,3 +297,105 @@ fn adding_a_never_decrypt_name_keeps_the_others_and_stops_at_the_limit() {
         strings(&["g.example"])
     );
 }
+
+#[test]
+fn a_workspace_patch_changes_only_the_parts_it_gives_and_returns_the_result() {
+    let (store, seen) = store();
+    store
+        .set_never_decrypt(&ws("a"), &strings(&["keep.example"]))
+        .unwrap();
+    let before = changes(&seen);
+    let got = store
+        .patch_workspace_interception(&ws("a"), Some(Some(InterceptionMode::All)), None)
+        .unwrap();
+    assert_eq!(got.mode, Some(InterceptionMode::All));
+    assert_eq!(got.never_decrypt, ["keep.example"], "names untouched");
+    assert_eq!(changes(&seen) - before, 1);
+
+    let got = store
+        .patch_workspace_interception(&ws("a"), None, Some(&strings(&["new.example"])))
+        .unwrap();
+    assert_eq!(got.mode, Some(InterceptionMode::All), "mode untouched");
+    assert_eq!(got.never_decrypt, ["new.example"]);
+    assert_eq!(changes(&seen) - before, 2);
+
+    let got = store
+        .patch_workspace_interception(&ws("a"), Some(None), Some(&[]))
+        .unwrap();
+    assert_eq!(got, WorkspaceInterception::default());
+    assert_eq!(changes(&seen) - before, 4, "each changed part tells once");
+
+    let got = store
+        .patch_workspace_interception(&ws("a"), None, None)
+        .unwrap();
+    assert_eq!(got, WorkspaceInterception::default());
+    assert_eq!(changes(&seen) - before, 4, "an empty patch is no change");
+}
+
+#[test]
+fn a_workspace_patch_that_fails_saves_neither_part() {
+    let (store, _) = store();
+    store.break_database("ALTER TABLE never_decrypt RENAME TO names_gone");
+    assert!(
+        store
+            .patch_workspace_interception(
+                &ws("a"),
+                Some(Some(InterceptionMode::All)),
+                Some(&strings(&["x.example"])),
+            )
+            .is_err()
+    );
+    store.break_database("ALTER TABLE names_gone RENAME TO never_decrypt");
+    assert_eq!(store.workspace_interception(&ws("a")).unwrap().mode, None);
+}
+
+#[test]
+fn a_settings_patch_changes_only_the_parts_it_gives() {
+    let (store, seen) = store();
+    store.set_workspace_mode(&ws("own"), None).unwrap();
+    let before = changes(&seen);
+    let got = store
+        .patch_interception_settings(None, Some(false), None)
+        .unwrap();
+    assert_eq!(
+        got,
+        InterceptionSettings {
+            mode: None,
+            learn_from_rejections: false,
+            notice_seen: false
+        }
+    );
+    assert_eq!(store.interception_settings().unwrap(), got);
+    assert_eq!(changes(&seen) - before, 1);
+
+    // Choosing a mode answers the notice, and keeps the learning switch another patch set.
+    let got = store
+        .patch_interception_settings(Some(InterceptionMode::All), None, None)
+        .unwrap();
+    assert_eq!(
+        got,
+        InterceptionSettings {
+            mode: Some(InterceptionMode::All),
+            learn_from_rejections: false,
+            notice_seen: true
+        }
+    );
+    assert_eq!(changes(&seen) - before, 2);
+
+    // An explicit notice answer wins over the mode's.
+    let got = store
+        .patch_interception_settings(Some(InterceptionMode::All), None, Some(false))
+        .unwrap();
+    assert!(!got.notice_seen);
+    assert_eq!(
+        changes(&seen) - before,
+        2,
+        "same mode and learning: no event"
+    );
+
+    let got = store
+        .patch_interception_settings(None, Some(true), Some(true))
+        .unwrap();
+    assert_eq!(got.mode, Some(InterceptionMode::All));
+    assert!(got.learn_from_rejections && got.notice_seen);
+}

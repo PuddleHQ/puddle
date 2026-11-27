@@ -1050,7 +1050,7 @@ async fn a_password_change_for_a_user_being_deleted_is_refused() {
         .unwrap_err();
     assert_eq!(code(&err), ErrorCode::Unauthorized);
     // A deletion that lands between the check and the write is refused by the store
-    // (`replace_password`, tested there), so no password is put back either way.
+    // (`change_password`, tested there), so no password is put back either way.
 }
 
 #[tokio::test]

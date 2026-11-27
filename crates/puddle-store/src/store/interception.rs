@@ -159,6 +159,74 @@ fn learned_limits_in(conn: &Connection) -> Result<LearnedLimits, StoreError> {
         .unwrap_or_default())
 }
 
+fn set_settings_in(
+    tx: &Transaction<'_>,
+    fx: &mut Vec<Event>,
+    settings: InterceptionSettings,
+) -> Result<(), StoreError> {
+    let before = interception_settings_in(tx)?;
+    tx.execute(
+        "INSERT INTO interception_settings (id, mode, learn, notice_seen)
+         VALUES (1, ?1, ?2, ?3)
+         ON CONFLICT (id) DO UPDATE SET mode = ?1, learn = ?2, notice_seen = ?3",
+        params![
+            settings.mode.map(InterceptionMode::as_str),
+            settings.learn_from_rejections,
+            settings.notice_seen
+        ],
+    )?;
+    if before.mode != settings.mode
+        || before.learn_from_rejections != settings.learn_from_rejections
+    {
+        changed_everywhere(tx, fx)?;
+    }
+    Ok(())
+}
+
+fn set_mode_in(
+    tx: &Transaction<'_>,
+    fx: &mut Vec<Event>,
+    workspace: &WorkspaceId,
+    mode: Option<InterceptionMode>,
+) -> Result<(), StoreError> {
+    let before = workspace_interception_in(tx, workspace)?.mode;
+    tx.execute(
+        "INSERT INTO workspace_interception (workspace_id, mode) VALUES (?1, ?2)
+         ON CONFLICT (workspace_id) DO UPDATE SET mode = ?2",
+        params![workspace.as_str(), mode.map(InterceptionMode::as_str)],
+    )?;
+    if before != mode {
+        changed(fx, workspace);
+    }
+    Ok(())
+}
+
+fn set_names_in(
+    tx: &Transaction<'_>,
+    fx: &mut Vec<Event>,
+    workspace: &WorkspaceId,
+    patterns: &[String],
+) -> Result<(), StoreError> {
+    let before = workspace_interception_in(tx, workspace)?.never_decrypt;
+    tx.execute(
+        "DELETE FROM never_decrypt WHERE workspace_id = ?1",
+        [workspace.as_str()],
+    )?;
+    for pattern in patterns {
+        tx.execute(
+            "INSERT OR IGNORE INTO never_decrypt (workspace_id, pattern) VALUES (?1, ?2)",
+            params![workspace.as_str(), pattern],
+        )?;
+    }
+    let mut now: Vec<&String> = patterns.iter().collect();
+    now.sort();
+    now.dedup();
+    if now.len() != before.len() || now.iter().zip(&before).any(|(a, b)| *a != b) {
+        changed(fx, workspace);
+    }
+    Ok(())
+}
+
 impl Store {
     /// `workspace`'s switch and its own never-decrypt names.
     ///
@@ -188,24 +256,36 @@ impl Store {
         &self,
         settings: InterceptionSettings,
     ) -> Result<(), StoreError> {
+        self.change(|tx, _now, fx| set_settings_in(tx, fx, settings))
+    }
+
+    /// Changes only the parts of the global interception setting that are `Some`, read and written
+    /// in one transaction, so two overlapping patches of different parts both stay. Choosing a mode
+    /// answers the notice (`notice_seen` becomes true) unless `notice_seen` says otherwise. The
+    /// events are those of [`Store::set_interception_settings`]. Returns the setting now.
+    ///
+    /// # Errors
+    /// A database error; nothing changes then.
+    pub fn patch_interception_settings(
+        &self,
+        mode: Option<InterceptionMode>,
+        learn_from_rejections: Option<bool>,
+        notice_seen: Option<bool>,
+    ) -> Result<InterceptionSettings, StoreError> {
         self.change(|tx, _now, fx| {
-            let before = interception_settings_in(tx)?;
-            tx.execute(
-                "INSERT INTO interception_settings (id, mode, learn, notice_seen)
-                 VALUES (1, ?1, ?2, ?3)
-                 ON CONFLICT (id) DO UPDATE SET mode = ?1, learn = ?2, notice_seen = ?3",
-                params![
-                    settings.mode.map(InterceptionMode::as_str),
-                    settings.learn_from_rejections,
-                    settings.notice_seen
-                ],
-            )?;
-            if before.mode != settings.mode
-                || before.learn_from_rejections != settings.learn_from_rejections
-            {
-                changed_everywhere(tx, fx)?;
+            let mut saved = interception_settings_in(tx)?;
+            if let Some(mode) = mode {
+                saved.mode = Some(mode);
+                saved.notice_seen = true;
             }
-            Ok(())
+            if let Some(on) = learn_from_rejections {
+                saved.learn_from_rejections = on;
+            }
+            if let Some(seen) = notice_seen {
+                saved.notice_seen = seen;
+            }
+            set_settings_in(tx, fx, saved)?;
+            Ok(saved)
         })
     }
 
@@ -285,18 +365,7 @@ impl Store {
         workspace: &WorkspaceId,
         mode: Option<InterceptionMode>,
     ) -> Result<(), StoreError> {
-        self.change(|tx, _now, fx| {
-            let before = workspace_interception_in(tx, workspace)?.mode;
-            tx.execute(
-                "INSERT INTO workspace_interception (workspace_id, mode) VALUES (?1, ?2)
-                 ON CONFLICT (workspace_id) DO UPDATE SET mode = ?2",
-                params![workspace.as_str(), mode.map(InterceptionMode::as_str)],
-            )?;
-            if before != mode {
-                changed(fx, workspace);
-            }
-            Ok(())
-        })
+        self.change(|tx, _now, fx| set_mode_in(tx, fx, workspace, mode))
     }
 
     /// Replaces `workspace`'s own never-decrypt names with `patterns` (the caller has checked
@@ -309,25 +378,29 @@ impl Store {
         workspace: &WorkspaceId,
         patterns: &[String],
     ) -> Result<(), StoreError> {
+        self.change(|tx, _now, fx| set_names_in(tx, fx, workspace, patterns))
+    }
+
+    /// Changes `workspace`'s own mode (`Some(None)` follows the global setting) and/or replaces
+    /// its never-decrypt names, each only when given, in one transaction: a concurrent change of
+    /// the other part is never lost and no half of the patch is saved alone. The settings now.
+    ///
+    /// # Errors
+    /// A database error; nothing changes then.
+    pub fn patch_workspace_interception(
+        &self,
+        workspace: &WorkspaceId,
+        mode: Option<Option<InterceptionMode>>,
+        never_decrypt: Option<&[String]>,
+    ) -> Result<WorkspaceInterception, StoreError> {
         self.change(|tx, _now, fx| {
-            let before = workspace_interception_in(tx, workspace)?.never_decrypt;
-            tx.execute(
-                "DELETE FROM never_decrypt WHERE workspace_id = ?1",
-                [workspace.as_str()],
-            )?;
-            for pattern in patterns {
-                tx.execute(
-                    "INSERT OR IGNORE INTO never_decrypt (workspace_id, pattern) VALUES (?1, ?2)",
-                    params![workspace.as_str(), pattern],
-                )?;
+            if let Some(mode) = mode {
+                set_mode_in(tx, fx, workspace, mode)?;
             }
-            let mut now: Vec<&String> = patterns.iter().collect();
-            now.sort();
-            now.dedup();
-            if now.len() != before.len() || now.iter().zip(&before).any(|(a, b)| *a != b) {
-                changed(fx, workspace);
+            if let Some(names) = never_decrypt {
+                set_names_in(tx, fx, workspace, names)?;
             }
-            Ok(())
+            workspace_interception_in(tx, workspace)
         })
     }
 

@@ -5448,6 +5448,12 @@ export interface components {
             decided_at: number | null;
             decided_by: components["schemas"]["Actor"] | null;
             /**
+             * @description Whether the name resolved to a local address: only an exact allow decides
+             *     it, so approving with a suffix or into a rule set is refused (rules spec R-16). A client
+             *     offers only the exact choice for an open one.
+             */
+            exact_only: boolean;
+            /**
              * Format: int64
              * @description Epoch ms of the first request.
              */

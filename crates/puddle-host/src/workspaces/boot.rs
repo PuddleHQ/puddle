@@ -740,5 +740,7 @@ fn multi_root_file(
         .map(|r| r.directory.clone())
         .collect();
     crate::editor_file::multi_root_folders(root, record.start_folder.as_ref(), found, &order)
-        .and_then(|folders| crate::editor_file::workspace_file(root, &record.id, &folders))
+        .and_then(|folders| {
+            crate::editor_file::workspace_file(root, &record.id, record.label(), &folders)
+        })
 }

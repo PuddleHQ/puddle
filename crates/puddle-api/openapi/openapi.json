@@ -20700,7 +20700,8 @@
           "rule_set",
           "program",
           "blocked_by",
-          "company_signal"
+          "company_signal",
+          "exact_only"
         ],
         "properties": {
           "attempts": {
@@ -20750,6 +20751,10 @@
                 "type": "null"
               }
             ]
+          },
+          "exact_only": {
+            "type": "boolean",
+            "description": "Whether the name resolved to a local address: only an exact allow decides\nit, so approving with a suffix or into a rule set is refused (rules spec R-16). A client\noffers only the exact choice for an open one."
           },
           "first_seen": {
             "type": "integer",

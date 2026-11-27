@@ -795,6 +795,61 @@ fn r14_a_row_that_needs_an_exact_allow_is_never_closed_by_a_suffix_allow() {
 }
 
 #[test]
+fn r16_approving_a_row_that_needs_an_exact_allow_with_a_suffix_or_a_set_is_refused() {
+    let (_, store) = fixture();
+    let local = req("a", "db.corp.example", 5432);
+    let id = new_pending(store.decide(&local, SuffixAllows::Ignore).unwrap());
+    assert!(store.pending(id).unwrap().exact_only);
+    let suffix = Resolution {
+        pattern: PatternChoice::Suffix(".corp.example".into()),
+        ..Resolution::allow()
+    };
+    assert!(matches!(
+        store.resolve_pending(id, &suffix, Actor::Ui),
+        Err(StoreError::ExactAllowOnly(refused)) if refused == id
+    ));
+    let into_set = Resolution {
+        scope: ScopeChoice::Set(1),
+        ..Resolution::allow()
+    };
+    assert!(matches!(
+        store.resolve_pending(id, &into_set, Actor::Ui),
+        Err(StoreError::ExactAllowOnly(_))
+    ));
+    // Nothing changed: the row is open and no rule exists.
+    assert_eq!(store.pending(id).unwrap().state, PendingState::Requested);
+    assert_eq!(store.rules(puddle_store::UserId::OWNER).len(), 0);
+    // A suffix deny and an exact allow still work.
+    let deny = Resolution {
+        pattern: PatternChoice::Suffix(".corp.example".into()),
+        ..Resolution::deny()
+    };
+    store.resolve_pending(id, &deny, Actor::Ui).unwrap();
+    let other = new_pending(
+        store
+            .decide(&req("a", "x.third.example", 22), SuffixAllows::Ignore)
+            .unwrap(),
+    );
+    store
+        .resolve_pending(other, &Resolution::allow(), Actor::Ui)
+        .unwrap();
+    assert_eq!(store.pending(other).unwrap().state, PendingState::Allowed);
+    // A row first seen as public is not exact-only and takes a suffix.
+    let public = new_pending(decide(&store, "a", "web.other.example"));
+    assert!(!store.pending(public).unwrap().exact_only);
+    store
+        .resolve_pending(
+            public,
+            &Resolution {
+                pattern: PatternChoice::Suffix(".other.example".into()),
+                ..Resolution::allow()
+            },
+            Actor::Ui,
+        )
+        .unwrap();
+}
+
+#[test]
 fn r14_a_row_once_asked_for_an_exact_allow_keeps_needing_one() {
     let (_, store) = fixture();
     // First seen as a public address, then the name resolved to a local one: the row now

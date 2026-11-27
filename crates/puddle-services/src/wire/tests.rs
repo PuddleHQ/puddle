@@ -491,6 +491,7 @@ fn pending_rows_always_carry_every_field() {
         rule_id: None,
         rule_set: Some("system".into()),
         program: puddle_types::Program::sanitise("pip"),
+        exact_only: false,
     };
     let v = serde_json::to_value(PendingRequest::from_store(row).unwrap()).unwrap();
     assert_eq!(v["rule_set"], "system");

@@ -10,13 +10,14 @@
 # one process, so this script runs the binary itself, the way plain `cargo test` does (the churn tests, which count the
 # whole process, run in a second invocation of it, alone).
 #
-# On a failing run it keeps the log of the FIRST failure (first-failure.log) and prints who held host.lock: the pid
+# Every failing run keeps its log (failure-<run>.log) and prints its failing tests and who held host.lock: the pid
 # the refusal names, and the processes a sampler (pinned off the starved CPUs) saw with a host.lock open during that
 # run, with their parent, so a forked copy of the test binary shows as a second holder whose parent is the first.
-# Exits 1 when any run failed. Output goes to $FAKE_HOST_OUT (default target/fake-host-starved):
-#   first-failure.log           the first failing run's log (the logs of passing runs are not kept)
-#   first-failure-holders.txt   the processes that had a host.lock open during it: "pid ppid command"
-#   result.env                  RUNS, FAILED, FIRST_FAILED_RUN, CPUS, BUSY
+# The job summary lists the failing tests of every failing run. Exits 1 when any run failed. Output goes to
+# $FAKE_HOST_OUT (default target/fake-host-starved):
+#   failure-<run>.log           the log of failing run <run> (the logs of passing runs are not kept)
+#   failure-<run>-holders.txt   the processes that had a host.lock open during it: "pid ppid command"
+#   result.env                  RUNS, FAILED, FIRST_FAILED_RUN, FAILED_RUNS (space separated), CPUS, BUSY
 # Overrides: FAKE_HOST_RUNS (20)  FAKE_HOST_CPUS (0-1)  FAKE_HOST_BUSY (4)  FAKE_HOST_OUT  FAKE_HOST_BIN (a built test binary,
 # skips the build; the self-test ci/fake-host-starved-test.sh uses it)  FAKE_HOST_DIR (the working directory of the runs,
 # default crates/puddle-host)  FAKE_HOST_SAMPLE_S (sampler period, 0.02).
@@ -32,7 +33,7 @@ workdir=${FAKE_HOST_DIR:-$root/crates/puddle-host}
 command -v taskset >/dev/null || { echo "fake-host-starved: taskset is Linux only" >&2; exit 2; }
 mkdir -p "$out"
 # A run that dies early must not leave the last run's result.
-rm -f "$out/first-failure.log" "$out/first-failure-holders.txt" "$out/result.env"
+rm -f "$out"/failure-*.log "$out"/failure-*-holders.txt "$out/result.env"
 
 bin=${FAKE_HOST_BIN:-}
 if [ -z "$bin" ]; then
@@ -101,8 +102,9 @@ while [ "$n" -lt "$busy" ]; do
     n=$((n + 1))
 done
 
-failed=0 first=0
+failed=0 first=0 failed_runs=""
 log="$out/current.log" holders="$out/current-holders.txt"
+summary_lines=""
 for ((i = 1; i <= runs; i++)); do
     taskset -c "$sampler_cpus" bash -c "$(declare -f sample_holders); period=$period; sample_holders $holders" &
     sampler_pid=$!
@@ -118,17 +120,19 @@ for ((i = 1; i <= runs; i++)); do
         continue
     fi
     failed=$((failed + 1))
+    failed_runs="${failed_runs:+$failed_runs }$i"
+    [ "$first" != 0 ] || first=$i
     echo "run $i of $runs: FAILED (exit $rc)"
-    [ "$first" = 0 ] || continue
-    first=$i
-    cp "$log" "$out/first-failure.log"
-    cp "$holders" "$out/first-failure-holders.txt"
-    echo "--- first failure: failing tests and panics"
-    grep -E -A1 '^test .* FAILED|panicked at' "$out/first-failure.log" | head -n 30 || true
-    named=$(grep -Eo 'holder: Some\([0-9]+\)' "$out/first-failure.log" | head -n 1 || true)
-    echo "--- host.lock holder named by the refusal: ${named:-none (the failure is not a data-folder refusal)}"
-    echo "--- processes seen with a host.lock open during that run (pid ppid command; a holder whose parent is also a holder is a forked copy):"
+    cp "$log" "$out/failure-$i.log"
+    cp "$holders" "$out/failure-$i-holders.txt"
+    echo "--- run $i: failing tests and panics"
+    grep -E -A1 '^test .* FAILED|panicked at' "$out/failure-$i.log" | head -n 30 || true
+    named=$(grep -Eo 'holder: Some\([0-9]+\)' "$out/failure-$i.log" | head -n 1 || true)
+    echo "--- run $i: host.lock holder named by the refusal: ${named:-none (the failure is not a data-folder refusal)}"
+    echo "--- run $i: processes seen with a host.lock open (pid ppid command; a holder whose parent is also a holder is a forked copy):"
     if [ -s "$holders" ]; then cat "$holders"; else echo "(none sampled)"; fi
+    names=$(sed -n 's/^test \(.*\) \.\.\. FAILED$/\1/p' "$out/failure-$i.log" | sort -u | tr '\n' ' ')
+    summary_lines="$summary_lines- run $i (exit $rc): ${names:-no failed test named in the log (see failure-$i.log)}"$'\n'
 done
 stop_busy
 
@@ -136,10 +140,17 @@ stop_busy
     echo "RUNS=$runs"
     echo "FAILED=$failed"
     echo "FIRST_FAILED_RUN=$first"
+    echo "FAILED_RUNS=\"$failed_runs\""
     echo "CPUS=$cpus"
     echo "BUSY=$busy"
 } >"$out/result.env"
 summary="fake_host starved loop: $failed of $runs runs failed (cpus $cpus, $busy busy loops)"
 echo "$summary"
-[ -z "${GITHUB_STEP_SUMMARY:-}" ] || echo "### $summary" >>"$GITHUB_STEP_SUMMARY"
+if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+    {
+        echo "### $summary"
+        [ -z "$summary_lines" ] || printf '%s' "$summary_lines"
+    } >>"$GITHUB_STEP_SUMMARY"
+fi
+[ -z "$summary_lines" ] || printf 'failing tests per run:\n%s' "$summary_lines"
 [ "$failed" = 0 ]

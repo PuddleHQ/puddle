@@ -11,11 +11,13 @@
     identityProblem,
     labelProblem,
     type AccountProfile,
+    type Coverage,
     type CredentialDraft,
     type Identity,
     type Source,
   } from "#lib/identities/model.ts";
   import type { IdentitiesStore } from "#lib/stores/identities.svelte.ts";
+  import CoverageEditor from "./CoverageEditor.svelte";
   import CredentialEditor from "./CredentialEditor.svelte";
   import FormDialog from "./FormDialog.svelte";
 
@@ -42,6 +44,8 @@
   let email = $state("");
   let credentials = $state.raw<CredentialDraft[]>([]);
   let adding = $state(false);
+  /** The credential whose coverage is being changed; its token stays where it is. */
+  let changing = $state.raw<CredentialDraft | null>(null);
   /** What the Git host said of the account being added: offered for the author, never forced. */
   let offered = $state.raw<AccountProfile | null>(null);
   let problem = $state<{
@@ -78,6 +82,7 @@
         email = identity?.author.email ?? "";
         credentials = identity?.credentials ?? [];
         adding = false;
+        changing = null;
         offered = null;
         problem = null;
         pasted = [];
@@ -97,6 +102,7 @@
   });
 
   function remove(credential: CredentialDraft) {
+    if (changing === credential) changing = null;
     credentials = credentials.filter((c) => c !== credential);
     const line = describeSource(credential.source);
     const mine = pasted.find((s) => describeSource(s) === line);
@@ -114,6 +120,13 @@
 
   function useAccount() {
     if (offered) ({ name, email } = authorFill({ name, email }, offered, true));
+  }
+
+  function recovered(credential: CredentialDraft, covers: Coverage) {
+    credentials = credentials.map((c) =>
+      c === credential ? { ...c, covers } : c,
+    );
+    changing = null;
   }
 
   function added(credential: CredentialDraft, stored: Source | null) {
@@ -242,11 +255,28 @@
             <button
               type="button"
               class="btn"
+              aria-label="Change coverage of {credentialChip(credential)}"
+              disabled={changing === credential}
+              onclick={() => (changing = credential)}
+            >
+              Change coverage
+            </button>
+            <button
+              type="button"
+              class="btn"
               aria-label="Remove {credentialChip(credential)}"
               onclick={() => remove(credential)}
             >
               <Trash2 aria-hidden="true" size={14} />Remove
             </button>
+            {#if changing === credential}
+              <CoverageEditor
+                host={credential.host}
+                covers={credential.covers}
+                onSave={(covers) => recovered(credential, covers)}
+                onCancel={() => (changing = null)}
+              />
+            {/if}
           </li>
         {/each}
       </ul>

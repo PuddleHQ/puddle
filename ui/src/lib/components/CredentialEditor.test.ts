@@ -230,24 +230,62 @@ describe("a pasted token", () => {
     expect(api.tokens).toHaveLength(1);
   });
 
-  it("belongs to one organisation on Azure DevOps", async () => {
+  it("belongs to one organisation on Azure DevOps, which it covers by default", async () => {
     await paste();
     await type("Git host", "dev.azure.com");
     expect(
       screen.getByLabelText("Azure DevOps organisation"),
     ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(/The rest of dev.azure.com/),
+    ).not.toBeChecked();
     await type("Token", "abc");
     await submit();
     expect(screen.getByRole("alert")).toHaveTextContent("organisation");
     await type("Azure DevOps organisation", "contoso");
-    await type(/Owners or organisations/, "contoso");
-    await fireEvent.click(screen.getByLabelText(/The rest of dev.azure.com/));
+    expect(screen.getByLabelText(/Owners or organisations/)).toHaveValue(
+      "contoso",
+    );
+    expect(
+      screen.getByLabelText(/The rest of dev.azure.com/),
+    ).not.toBeChecked();
     await submit();
     await waitFor(() => expect(onAdd).toHaveBeenCalled());
-    expect(onAdd.mock.calls[0]?.[0].source).toMatchObject({
-      kind: "stored",
-      org: "contoso",
+    expect(onAdd.mock.calls[0]?.[0]).toMatchObject({
+      source: { kind: "stored", org: "contoso" },
+      covers: { owners: ["contoso"], rest_of_host: false },
     });
+  });
+
+  it("stops following the host and organisation once the user changes the coverage", async () => {
+    await paste();
+    await type("Git host", "dev.azure.com");
+    await type("Azure DevOps organisation", "contoso");
+    await type(/Owners or organisations/, "contoso, other");
+    await type("Azure DevOps organisation", "contoso2");
+    expect(screen.getByLabelText(/Owners or organisations/)).toHaveValue(
+      "contoso, other",
+    );
+    await type("Git host", "github.com");
+    expect(screen.getByLabelText(/Owners or organisations/)).toHaveValue(
+      "contoso, other",
+    );
+    await fireEvent.click(screen.getByLabelText("Found on this computer"));
+    await fireEvent.click(screen.getByLabelText("Paste a token"));
+    await type("Git host", "dev.azure.com");
+    await type("Azure DevOps organisation", "fresh");
+    expect(screen.getByLabelText(/Owners or organisations/)).toHaveValue(
+      "fresh",
+    );
+  });
+
+  it("goes back to the rest of the host when the host is not Azure DevOps", async () => {
+    await paste();
+    await type("Git host", "dev.azure.com");
+    await type("Azure DevOps organisation", "contoso");
+    await type("Git host", "github.com");
+    expect(screen.getByLabelText(/Owners or organisations/)).toHaveValue("");
+    expect(screen.getByLabelText("The rest of github.com")).toBeChecked();
   });
 
   it("checks the host, the token and what is covered before it asks", async () => {
@@ -360,12 +398,22 @@ describe("the account behind a credential", () => {
         path: "contoso",
         username: null,
       })
-    ] = profile({ organisations: ["contoso"] });
+    ] = profile({
+      organisations: ["contoso"],
+      notes: [
+        {
+          code: "author_unavailable",
+          message:
+            "Azure DevOps gives an account's name and address only to a Microsoft Entra sign-in: type the author name and address yourself",
+        },
+      ],
+    });
     mount();
     await fireEvent.click(await screen.findByLabelText(/tijs@contoso.example/));
     expect(
       await screen.findByText(/type the author name and address yourself/),
     ).toBeInTheDocument();
+    expect(screen.queryByText(/doesn't tell Puddle/)).not.toBeInTheDocument();
     expect(onProfile).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "contoso" })).toHaveAttribute(
       "aria-pressed",

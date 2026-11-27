@@ -220,6 +220,19 @@ async fn an_attach_writes_the_multi_root_file_for_two_checkouts_and_a_file_it_ca
     for folder in ["/workspace/api", "/workspace/web", "workspace files"] {
         assert!(plan.contains(folder), "{folder}: {plan}");
     }
+    // The window is titled with the display name, not the id the file is named by, and a rename
+    // writes the file again with the new name.
+    assert!(plan.contains("${separator}acme${separator}"), "{plan}");
+    let renamed = api
+        .patch(
+            "/api/workspaces/acme",
+            &json!({"name": "Handbook"}).to_string(),
+        )
+        .await;
+    assert_eq!(renamed.status, 200, "{}", renamed.body);
+    let plan = last_plan(&rig);
+    assert!(plan.contains(file), "{plan}");
+    assert!(plan.contains("${separator}Handbook${separator}"), "{plan}");
     // A start keeps the file as the last attach wrote it, so the editor server opens it at once
     // (only a running guest can list the checkouts).
     stop_and_start(&api, &mut events, "acme").await;

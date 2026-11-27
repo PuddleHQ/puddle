@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The server's rule for which actions a workspace's state admits (`admits` and `actions` in
-// crates/puddle-api/src/workspaces/phase.rs), for the test fakes only, so a fake workspace
+// crates/puddle-services/src/workspaces/phase.rs), for the test fakes only, so a fake workspace
 // carries the `actions` the real API would send. The screens never decide this: they read
 // `Workspace.actions`. Keep it in step with the Rust table test
 // `the_actions_of_a_workspace_are_the_ones_its_phase_admits`.

@@ -16,7 +16,7 @@ use crate::rig;
 use std::sync::Arc;
 
 use puddle_e2e::lab::{BASIC_USER as USER, Squid, SquidOptions, basic_password};
-use puddle_upstream::{BasicAuth, Hop, ProxyAddr, ProxyAuth};
+use puddle_upstream::{BasicAuth, Hop, ProxyAddr};
 use rig::{
     allow, basic, connection_records, dead_proxy, echo_roundtrip, echo_server, rig,
     status_and_body, tunnel,
@@ -133,7 +133,7 @@ async fn a_wrong_or_missing_password_is_a_502_naming_upstream_auth_and_squid_nev
     };
     for auth in [
         basic(USER, &puddle_types::fixture::password("not-the")),
-        Arc::new(BasicAuth::new()) as Arc<dyn ProxyAuth>,
+        Arc::new(BasicAuth::new()),
     ] {
         let rig = rig(vec![Hop::Proxy(squid_addr(&squid)), Hop::Direct], auth).await;
         allow(&rig.store, "echo.corp.test");

@@ -34,23 +34,29 @@
     class="btn"
     disabled={!allows(workspace, "grow_root_disk") ||
       workspace.root_disk_size_mib === null}
-    onclick={() => (growOpen = true)}>Make root disk bigger…</button
+    onclick={() => (growOpen = true)}
   >
+    Make root disk bigger…
+  </button>
   {#if reclaim}
     <button
       type="button"
       class="btn"
       disabled={!allows(workspace, "reclaim")}
-      onclick={() => void actions.reclaim(workspace)}>Reclaim space</button
+      onclick={() => void actions.reclaim(workspace)}
     >
+      Reclaim space
+    </button>
   {/if}
   {#if reset}
     <button
       type="button"
       class="btn"
       disabled={!allows(workspace, "reset_root_disk")}
-      onclick={() => (resetOpen = true)}>Reset root disk…</button
+      onclick={() => (resetOpen = true)}
     >
+      Reset root disk…
+    </button>
   {/if}
 </div>
 {#if why}<p class="why">{why}</p>{/if}

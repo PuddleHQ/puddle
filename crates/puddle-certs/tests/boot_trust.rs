@@ -642,9 +642,10 @@ fn net_gets_the_certificate_in_the_session_users_home_and_again_when_the_user_ch
         "{owned}"
     );
     assert!(
-        !owned.contains("/home/agent/.aspnet"),
-        "not made, so not given: {owned}"
+        owned.lines().any(|l| l == "1000:1000 /home/agent/.aspnet"),
+        "the trust folder SSL_CERT_DIR names is made and given to the user: {owned}"
     );
+    assert!(g.p("/home/agent/.aspnet/dev-certs/trust").is_dir());
 
     // The same certificate for root: imported again, into root's home.
     let t = with_dev(&dev);
@@ -738,6 +739,10 @@ fn an_image_without_net_or_openssl_keeps_the_certificate_and_says_so() {
             .contains("certificate in place; no .NET SDK in this image")
     );
     assert!(g.p("/etc/puddle/dev-cert/localhost.key").exists());
+    assert!(
+        g.p("/root/.aspnet/dev-certs/trust").is_dir(),
+        "every folder SSL_CERT_DIR names exists, .NET or not"
+    );
 
     // dotnet without a working openssl: the import file can't be built.
     assert!(has_openssl());
@@ -1240,7 +1245,10 @@ fn many_refused_certificates_stop_at_the_import_cap_and_the_good_ones_still_arri
     let g = Guest::new(&shells()[0], "", false);
     g.jdk("/usr/lib/jvm/java-17", JDK17_STORE);
     let out = g.boot_with_extra_edited(&t, |pem| {
-        (0..100).fold(pem.to_owned(), |acc, n| acc + &garbage_pem(n))
+        (0..100).fold(pem.to_owned(), |mut acc, n| {
+            acc.push_str(&garbage_pem(n));
+            acc
+        })
     });
     assert!(out.status.success(), "{}", show(&out));
     assert_eq!(g.keytool_calls("-importkeystore"), 40, "the cap");

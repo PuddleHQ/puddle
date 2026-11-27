@@ -162,9 +162,24 @@ export function rootsLine(
       text: "Workspaces use the standard set of certificates.",
     };
   }
+  const names = [
+    ...new Set(
+      roots.certificates
+        .filter((c) => c.kind === "root" && c.subject)
+        .map((c) => c.subject as string),
+    ),
+  ];
+  const shown = names.slice(0, 3);
+  const more = roots.roots - shown.length;
+  const includes =
+    shown.length === 0
+      ? ""
+      : ` Includes ${shown.join(", ")}${more > 0 ? ` and ${more} more` : ""}.`;
   return {
     tone: "ok",
-    title: `${roots.roots} company root ${plural(roots.roots, "certificate", "certificates")} found`,
-    text: "Added to every workspace, so tools trust your network's TLS inspection.",
+    title: `${roots.roots} root ${plural(roots.roots, "certificate", "certificates")} copied from this computer`,
+    text: `From this computer's trust store, kept for company networks that inspect HTTPS, so tools in a workspace trust them.${includes}`,
+    impact:
+      "On a home computer these are usually added by Windows or by software you installed, not by a company. Puddle only copies them into your workspaces; nothing is sent anywhere.",
   };
 }

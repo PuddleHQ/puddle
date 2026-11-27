@@ -13,6 +13,7 @@ use std::time::Duration;
 use puddle_compute::{ExecRequest, Sandbox};
 use puddle_types::{CheckoutDir, WorkspaceId};
 
+use crate::guest_output::ScriptOutputError;
 use crate::{Layout, WorkspaceError};
 
 /// The listing script (POSIX sh, run as root with the mount point, and optionally one directory
@@ -147,7 +148,8 @@ pub(crate) async fn run<S: Sandbox>(
             clean(out.stderr_text().trim())
         )));
     }
-    parse(&out.whole_stdout_text().map_err(|e| fail(e.to_string()))?).map_err(fail)
+    parse(&out.whole_stdout_text().map_err(|e| fail(e.to_string()))?)
+        .map_err(|e| fail(e.to_string()))
 }
 
 /// A guest string made safe to keep and show: control characters replaced, cut at [`MAX_FIELD`].
@@ -205,20 +207,20 @@ fn judge_remote(raw: &str) -> (Option<String>, Option<RemoteNote>) {
 }
 
 /// Parses the script's output (see `guest/checkouts.sh`).
-pub(crate) fn parse(stdout: &str) -> Result<CheckoutList, String> {
+pub(crate) fn parse(stdout: &str) -> Result<CheckoutList, ScriptOutputError> {
     let mut list = CheckoutList::default();
     let mut errors = 0_usize;
     let mut done = false;
     for line in stdout.lines() {
         if done {
-            return Err("output after the end marker".into());
+            return Err(ScriptOutputError::AfterEnd);
         }
         let fields: Vec<&str> = line.split('\t').collect();
         match fields.as_slice() {
             ["D"] => done = true,
             ["C", dir, remote, branch, head, dirty @ ("0" | "1")] if !dir.is_empty() => {
                 if list.checkouts.len() == MAX_CHECKOUTS {
-                    return Err(format!("more than {MAX_CHECKOUTS} checkouts listed"));
+                    return Err(ScriptOutputError::TooManyCheckouts { max: MAX_CHECKOUTS });
                 }
                 let (remote_url, remote_note) = judge_remote(&clean(remote));
                 list.checkouts.push(FoundCheckout {
@@ -232,15 +234,15 @@ pub(crate) fn parse(stdout: &str) -> Result<CheckoutList, String> {
                 });
             }
             ["M", count] => {
-                let n: u64 = count
-                    .parse()
-                    .map_err(|_| format!("bad count line {:?}", truncate(line)))?;
+                let n: u64 = count.parse().map_err(|_| ScriptOutputError::BadCount {
+                    line: truncate(line),
+                })?;
                 list.more = list.more.saturating_add(n);
             }
             ["O", count] => {
-                let n: u64 = count
-                    .parse()
-                    .map_err(|_| format!("bad count line {:?}", truncate(line)))?;
+                let n: u64 = count.parse().map_err(|_| ScriptOutputError::BadCount {
+                    line: truncate(line),
+                })?;
                 list.others = list.others.saturating_add(n);
             }
             ["E", dir, message] if !dir.is_empty() => {
@@ -258,11 +260,17 @@ pub(crate) fn parse(stdout: &str) -> Result<CheckoutList, String> {
                     unreadable: Some(clean(message)),
                 });
             }
-            _ => return Err(format!("unexpected output line {:?}", truncate(line))),
+            _ => {
+                return Err(ScriptOutputError::UnexpectedLine {
+                    line: truncate(line),
+                });
+            }
         }
     }
     if !done {
-        return Err("the listing did not finish (no end marker)".into());
+        return Err(ScriptOutputError::Unfinished {
+            script: "the listing",
+        });
     }
     Ok(list)
 }

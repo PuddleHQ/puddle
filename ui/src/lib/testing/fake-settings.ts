@@ -58,6 +58,7 @@ const noUi = (): S["UiPrefs"] => ({
   disk_warn_free_gb: null,
   disk_fail_free_gb: null,
   ssh_agent_pipe: null,
+  log_level: null,
   confirm_global_rules: null,
   inbox_shortcuts: null,
   start_at_login: null,
@@ -233,7 +234,7 @@ export class FakeSettings {
         capture_logins: this.pick(l.capture_logins, true),
         warn_foreign_credentials: this.pick(l.warn_foreign_credentials, true),
         clipboard_read: {
-          value: l.clipboard_read ?? "ask",
+          value: l.clipboard_read ?? "allow",
           source: l.clipboard_read === null ? "default" : "global",
         },
         editor: {
@@ -293,9 +294,9 @@ export class FakeSettings {
           : this.reply(503, undefined, "unavailable", "no report");
       case "/api/app-icons":
         return this.reply(200, {
-          built_in: (
-            ["duck", "duck_pond", "duck_night", "duck_sun"] as const
-          ).map((choice) => ({ choice, png_base64: `${choice}-png` })),
+          built_in: (["duck", "rubber_duck", "duck_front"] as const).map(
+            (choice) => ({ choice, png_base64: `${choice}-png` }),
+          ),
           custom_png_base64: this.customIcon,
         } satisfies S["AppIcons"]);
       case "/api/restore/result":

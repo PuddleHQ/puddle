@@ -56,9 +56,9 @@
     <ul>
       {#each store.sets as ruleSet (ruleSet.id)}
         <li>
-          <span class="name"
-            ><SetChip name={ruleSet.name} fill={ruleSet.fill} /></span
-          >
+          <span class="name">
+            <SetChip name={ruleSet.name} fill={ruleSet.fill} />
+          </span>
           <ThreeWaySwitch
             label="{ruleSet.name} in {label}"
             value={ruleSet.overrides.find((o) => o.workspace === workspace)

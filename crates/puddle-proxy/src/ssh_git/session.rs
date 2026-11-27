@@ -403,6 +403,7 @@ impl russh::server::Handler for Conn {
     }
 
     async fn auth_succeeded(&mut self, _: &mut Session) -> Result<(), Self::Error> {
+        tracing::debug!(workspace = %self.ctx.workspace, "ssh session authenticated");
         self.ctx.open.authenticated();
         Ok(())
     }
@@ -539,6 +540,7 @@ impl russh::server::Handler for Conn {
         session.channel_success(channel)?;
         let ctx = Arc::clone(&self.ctx);
         let command = std::str::from_utf8(command).map(str::to_owned).ok();
+        tracing::debug!(workspace = %self.ctx.workspace, command = command.as_deref().unwrap_or("(not text)"), "ssh exec request");
         self.tasks.spawn(async move {
             run_exec(&ctx, taken.channel, command, taken.versions).await;
             ctx.open.remove(channel);

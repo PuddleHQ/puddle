@@ -113,9 +113,9 @@
       data-testid="restore-result"
     >
       <p>{result.message}</p>
-      <button type="button" class="btn" onclick={() => void dismiss()}
-        >Dismiss</button
-      >
+      <button type="button" class="btn" onclick={() => void dismiss()}>
+        Dismiss
+      </button>
     </div>
   {/if}
 
@@ -176,10 +176,10 @@
             bind:group={mode}
           />
           Add what is missing
-          <span class="desc"
-            >Nothing here is changed or removed. {differing(preview.parts)}
-            entries that differ stay as yours.</span
-          >
+          <span class="desc">
+            Nothing here is changed or removed. {differing(preview.parts)}
+            entries that differ stay as yours.
+          </span>
         </label>
         <label>
           <input
@@ -189,11 +189,11 @@
             bind:group={mode}
           />
           Replace
-          <span class="desc"
-            >Rules, settings, workspace list, identities and environment rows
+          <span class="desc">
+            Rules, settings, workspace list, identities and environment rows
             become the file's. {droppedByReplace(preview.parts)} entries that are
-            not in the file are dropped (they stay in the safety copy).</span
-          >
+            not in the file are dropped (they stay in the safety copy).
+          </span>
         </label>
       </fieldset>
       <div class="actions">
@@ -204,8 +204,10 @@
           onclick={() => {
             applyError = null;
             confirming = true;
-          }}>Continue…</button
+          }}
         >
+          Continue…
+        </button>
         <button type="button" class="btn" onclick={cancel}>Cancel</button>
       </div>
     </section>
@@ -232,8 +234,10 @@
             onclick={() => {
               deleteError = null;
               deleting = copy;
-            }}>Delete</button
+            }}
           >
+            Delete
+          </button>
         </li>
       {/each}
     </ul>

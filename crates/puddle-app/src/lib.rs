@@ -23,7 +23,7 @@
 //!   inside the job that ends the workspaces' machines with the shell if it dies. A debug build
 //!   with the `fixture` feature shows the in-memory fixture instead when `PUDDLE_APP_FIXTURE=1`.
 //! * An attach in the browser opens a workspace's editor window through [`launcher::AppLauncher`],
-//!   the host's [`puddle_api::Launcher`] in this app: the shell signs in for the window and opens it.
+//!   the host's [`puddle_services::workspaces::Launcher`] in this app: the shell signs in for the window and opens it.
 //! * Quitting runs [`shell::stop`]: the workspaces' editor windows close, then the host trims and
 //!   stops every workspace before its API ends.
 //! * The tray, the close and minimize buttons, the badge and the operating-system notifications

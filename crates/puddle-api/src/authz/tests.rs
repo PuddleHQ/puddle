@@ -10,12 +10,15 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 use super::*;
 use crate::events::EventHub;
-use crate::learned::LearnedService as _;
+use crate::openapi;
 use crate::server::{ApiConfig, ApiServer, RunningApi, Services};
-use crate::settings::{MemorySettings, SettingsRepo};
+use crate::settings::MemorySettings;
 use crate::token::ApiToken;
-use crate::{FakeCredentials, FakeLearned, FakeWorkspaces, openapi};
 use puddle_secrets::MemoryStore;
+use puddle_services::learned::LearnedService as _;
+use puddle_services::{
+    credentials::FakeCredentials, fake_workspaces::FakeWorkspaces, learned::FakeLearned,
+};
 
 const TOKEN_STEP: Duration = Duration::from_secs(10);
 
@@ -397,7 +400,7 @@ async fn pair() -> Pair {
     puddle_store::testing::own(&store, &ws("ownerbox"));
     let services = Services::new(
         store.clone(),
-        Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>,
+        Arc::new(MemorySettings::default()),
         events.clone(),
         clock.clone(),
     )

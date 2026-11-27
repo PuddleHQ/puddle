@@ -234,25 +234,19 @@ impl CorporateRoots {
 
         // Add intermediates issued by a synced certificate until nothing changes (a chain of
         // corporate intermediates comes in one at a time).
-        let mut subjects: BTreeSet<Vec<u8>> = out
-            .synced
-            .iter()
-            .filter_map(|c| der::parse(&c.der).ok().map(|f| f.subject.to_vec()))
-            .collect();
         loop {
-            let (issued, rest): (Vec<_>, Vec<_>) = pending
-                .into_iter()
-                .partition(|(_, issuer)| subjects.contains(issuer));
+            let (issued, rest): (Vec<_>, Vec<_>) =
+                pending.into_iter().partition(|(cert, issuer)| {
+                    out.synced.iter().any(|anchor| {
+                        der::parse(&anchor.der).is_ok_and(|f| f.subject == issuer.as_slice())
+                            && crate::pki::is_signed_by(&cert.der, &anchor.der)
+                    })
+                });
             pending = rest;
             if issued.is_empty() {
                 break;
             }
-            for (cert, _) in issued {
-                if let Ok(f) = der::parse(&cert.der) {
-                    subjects.insert(f.subject.to_vec());
-                }
-                out.synced.push(cert);
-            }
+            out.synced.extend(issued.into_iter().map(|(cert, _)| cert));
         }
         for (cert, _) in pending {
             out.skipped.push(SkippedCert {

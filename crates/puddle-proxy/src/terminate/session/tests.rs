@@ -111,6 +111,31 @@ mod stream_failures {
         assert!(!outcome.sni_mismatch && !outcome.certificate_refused);
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn a_guest_that_sends_no_hello_on_a_bound_host_is_dropped_at_its_budget_and_logged() {
+        let (logs, _guard) = capture_logs();
+        let (stream, _guest_end) = tokio::io::duplex(1 << 16);
+        let opened = Opened {
+            stream,
+            early: Vec::new(),
+            answered: false,
+        };
+        let cx = context(Mode::Bound);
+        let budget = cx.proxy.config.guest_handshake_timeout;
+        let started = tokio::time::Instant::now();
+        let outcome = tokio::time::timeout(budget * 2, run(cx, opened))
+            .await
+            .expect("the guest was held past its budget");
+        assert_eq!(started.elapsed(), budget);
+        assert!(
+            logs.text().contains("guest TLS hello timed out"),
+            "{}",
+            logs.text()
+        );
+        assert_eq!(outcome.connect, None);
+        assert!(!outcome.sni_mismatch && !outcome.certificate_refused);
+    }
+
     #[tokio::test]
     async fn a_guest_that_resets_at_the_100_continue_ends_the_body_read_and_is_logged() {
         let (logs, _guard) = capture_logs();

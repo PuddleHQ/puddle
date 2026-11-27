@@ -3,11 +3,12 @@
 //!
 //! With no start folder set and two or more checkouts on the volume, the editor opens a multi-root
 //! file, `.puddle/editor/<id>.code-workspace`, with one folder per checkout. Puddle owns only the
-//! file's `folders` key: the boot hook merges it into whatever the user saved there (settings from
-//! the editor, comments), and leaves a file it cannot parse as it is. The file sits inside
+//! file's `folders` key and its `settings.window.title` key (the display name, so the window is not
+//! named after the id the file is named by): the boot hook merges them into whatever the user saved
+//! there (other settings from the editor, comments), and leaves a file it cannot parse as it is. The file sits inside
 //! `.puddle`, which the delete check skips, so it can always be written again.
 
-use puddle_api::{StartFolder, WorkspaceRecord};
+use puddle_services::{workspaces::StartFolder, workspaces::WorkspaceRecord};
 use puddle_types::{
     CheckoutDir, FileMode, GuestFile, GuestPath, MergeEntry, MergeFormat, MergeSpec, WorkspaceId,
 };
@@ -111,11 +112,21 @@ pub(crate) fn workspace_file_path(root: &GuestPath, id: &WorkspaceId) -> Option<
     .ok()
 }
 
-/// The multi-root file of workspace `id` under `root`, with `folders` as the only key Puddle owns.
-/// Readable by every user of the guest, so the editor and a desktop editor over SSH can open it.
+/// The window title the multi-root file sets: VS Code's default title with the file's name (the
+/// workspace id) replaced by the display name `label`. `None` when `label` holds `${`, which the
+/// editor would read as a variable; the window then keeps the default title.
+fn window_title(label: &str) -> Option<String> {
+    (!label.contains("${")).then(|| {
+        format!("${{dirty}}${{activeEditorShort}}${{separator}}{label}${{separator}}${{appName}}")
+    })
+}
+
+/// The multi-root file of workspace `id` under `root`, with `folders` and the window title as the
+/// only keys Puddle owns. Readable by every user of the guest, so the editor and a desktop editor over SSH can open it.
 pub(crate) fn workspace_file(
     root: &GuestPath,
     id: &WorkspaceId,
+    label: &str,
     folders: &[(GuestPath, Option<&'static str>)],
 ) -> Option<GuestFile> {
     let path = workspace_file_path(root, id)?;
@@ -128,11 +139,14 @@ pub(crate) fn workspace_file(
             })
             .collect(),
     );
-    let spec = MergeSpec::new(
-        MergeFormat::Jsonc,
-        vec![MergeEntry::json(&["folders"], &value)],
-    )
-    .ok()?;
+    let mut entries = vec![MergeEntry::json(&["folders"], &value)];
+    if let Some(title) = window_title(label) {
+        entries.push(MergeEntry::json(
+            &["settings", "window.title"],
+            &serde_json::Value::String(title),
+        ));
+    }
+    let spec = MergeSpec::new(MergeFormat::Jsonc, entries).ok()?;
     Some(GuestFile::merged(path, spec).with_mode(FileMode::new(0o644)))
 }
 

@@ -79,14 +79,14 @@ impl GuestCertSource for NoDevCert {
     }
 }
 
-impl puddle_api::DevCertService for NoDevCert {
-    fn status(&self) -> puddle_api::wire::DevCertificate {
-        puddle_api::wire::DevCertificate::NotChecked
+impl puddle_services::dev_cert::DevCertService for NoDevCert {
+    fn status(&self) -> puddle_services::wire::DevCertificate {
+        puddle_services::wire::DevCertificate::NotChecked
     }
 
-    fn trust(&self) -> puddle_api::wire::DevCertTrustResult {
-        puddle_api::wire::DevCertTrustResult {
-            dev_certificate: puddle_api::wire::DevCertificate::NotChecked,
+    fn trust(&self) -> puddle_services::wire::DevCertTrustResult {
+        puddle_services::wire::DevCertTrustResult {
+            dev_certificate: puddle_services::wire::DevCertificate::NotChecked,
             detail: None,
             waiting: false,
         }
@@ -248,7 +248,7 @@ fn the_window_opens_on_the_hosts_api_with_its_token_and_the_system_check_answers
     let window = app.get_webview_window(MAIN_LABEL).unwrap();
     assert_eq!(&window.url().unwrap(), backend.url());
     assert_eq!(backend.url().host_str(), Some("127.0.0.1"));
-    // The command line reaches the same host through the connection file in the data folder.
+    // The host writes the connection file in the data folder on every start, desktop app included.
     let file = ConnectionInfo::read(&dir.path().join("data").join("api.json")).unwrap();
     assert_eq!(file.token.expose(), backend.token());
 
@@ -337,12 +337,12 @@ fn the_backend_asks_a_workspace_s_guest_to_end_its_extension_hosts_while_the_hos
 
     // No workspace of that name runs: the host says so, in words.
     let reason = tauri::async_runtime::block_on(ends(demo.clone())).unwrap_err();
-    assert_eq!(reason, "the workspace is not running");
+    assert_eq!(reason.to_string(), "the workspace is not running");
 
     // After the shutdown the host is gone and the handle, which does not keep it alive, says so.
     tauri::async_runtime::block_on(backend.shutdown()).unwrap();
     let reason = tauri::async_runtime::block_on(ends(demo)).unwrap_err();
-    assert_eq!(reason, "the host has stopped");
+    assert_eq!(reason.to_string(), "the host has stopped");
     drop(backend);
     // The handle kept nothing: the data folder is free for the next start.
     start(&options, &Machine::default()).unwrap();

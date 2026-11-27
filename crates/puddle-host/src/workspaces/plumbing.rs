@@ -7,15 +7,18 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use puddle_agent_proto::host_control::{HostMessage, HostReply};
-use puddle_api::phase::{Move, Next, Outcome, begin};
-use puddle_api::{Operation, Repository, WorkspaceError, WorkspaceRecord};
 use puddle_compute::{ImageConfig, PullPhase, PullProgress, Runtime};
 use puddle_ports::Ports;
+use puddle_services::workspaces::phase::{Move, Next, Outcome, begin};
+use puddle_services::{
+    workspaces::Operation, workspaces::Repository, workspaces::WorkspaceError,
+    workspaces::WorkspaceRecord,
+};
 use puddle_settings::{WorkspaceSettings, host_cpu_count, resolve, resolve_on_host};
 use puddle_store::{Actor, NewWorkspaceOp, WorkspaceOpKind, WorkspaceOpOutcome};
 use puddle_types::{
-    CpuCount, DiskKind, Event, EventSink, ImageRef, MemoryMib, WorkspaceId, WorkspaceStatus,
-    WorkspaceStep,
+    CpuCount, DiskKind, Event, EventSink, ImageRef, MemoryMib, Problem, WorkspaceId,
+    WorkspaceStatus, WorkspaceStep,
 };
 
 use tokio::sync::watch;
@@ -28,9 +31,30 @@ use super::{
     wait_until_downloaded,
 };
 use crate::HostError;
+
+/// Key prefix of the notice that the host drive is full, one per workspace.
+const HOST_DISK_FULL: &str = "host-disk-full:";
 use crate::files::Stored;
 use crate::op_error::OpError;
 use crate::settings_read::SettingsReadError;
+
+/// Why a create could not keep what it chose: the workspace's own CPU count in its settings file,
+/// then the workspace list. It displays as the reason shown to the user.
+#[derive(Debug, thiserror::Error)]
+pub(super) enum CreateSaveError {
+    /// The workspace's settings could not be read.
+    #[error(transparent)]
+    Read(#[from] SettingsReadError),
+    /// The settings could not be turned into a document.
+    #[error(transparent)]
+    Document(#[from] puddle_settings::SettingsError),
+    /// The settings store refused the document.
+    #[error(transparent)]
+    Store(#[from] puddle_api::SettingsRepoError),
+    /// The workspace list could not be saved.
+    #[error(transparent)]
+    List(#[from] HostError),
+}
 
 impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// The service over `parts`, with the workspaces the book held and the state each sandbox
@@ -450,7 +474,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         Some(ssh.endpoint().path().to_path_buf())
     }
 
-    /// Begins `op` on `id` when its phase admits it (see [`puddle_api::phase`]): the busy mark
+    /// Begins `op` on `id` when its phase admits it (see [`puddle_services::workspaces::phase`]): the busy mark
     /// goes on and the status becomes the one `op` shows while it runs.
     pub(super) fn accept(
         &self,
@@ -599,6 +623,38 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             Err(e) => tracing::debug!(error = %e, "the root disks' use of the disk is unknown"),
         }
         self.warn_about_full_disks();
+    }
+
+    /// Tells the user, per running workspace, that the drive holding Puddle's data is full, and
+    /// takes the notice back when space returns. A full drive makes a workspace's writes fail
+    /// with an input/output error while it still shows Running, so the notice says why.
+    pub(crate) fn note_host_disk(&self, level: puddle_types::DiskSpaceLevel) {
+        if level != puddle_types::DiskSpaceLevel::Critical {
+            self.inner.problems.clear_prefix(HOST_DISK_FULL);
+            return;
+        }
+        let running: Vec<WorkspaceId> = self
+            .state()
+            .slots
+            .values()
+            .filter(|s| s.record.status == WorkspaceStatus::Running)
+            .map(|s| s.record.id.clone())
+            .collect();
+        for id in running {
+            self.inner.problems.raise(
+                Problem::new(
+                    format!("{HOST_DISK_FULL}{id}"),
+                    format!(
+                        "{name} cannot save files: the disk Puddle stores workspaces on is full",
+                        name = self.label(&id)
+                    ),
+                    "Writes inside the workspace fail with an input/output error until space is \
+                     freed on that drive. Delete files outside Puddle, or stop other workspaces \
+                     and use Reclaim space. This notice ends when enough space is free again.",
+                )
+                .about(id),
+            );
+        }
     }
 
     /// Reads the sandboxes again for a while after `workspace`'s agent session ended, until the
@@ -850,14 +906,14 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         &self,
         name: &WorkspaceId,
         cpus: CpuCount,
-    ) -> Result<(), String> {
+    ) -> Result<(), CreateSaveError> {
         let repo = self.inner.settings.as_ref();
         let _lock = repo.lock().await;
-        let mut own = crate::settings_read::workspace(repo, name).map_err(|e| e.to_string())?;
+        let mut own = crate::settings_read::workspace(repo, name)?;
         own.overrides.cpus = Some(cpus);
-        let document = own.to_document().map_err(|e| e.to_string())?;
-        repo.save_workspace(name, document)
-            .map_err(|e| e.to_string())
+        let document = own.to_document()?;
+        repo.save_workspace(name, document)?;
+        Ok(())
     }
 
     /// The workspace's image and what the runtime says about it, pulled if it is not local yet.
@@ -914,9 +970,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
         let this = self.clone();
         self.spawn(async move {
-            let next = match ImageRef::new(puddle_api::DEFAULT_IMAGE) {
+            let next = match ImageRef::new(puddle_services::workspaces::DEFAULT_IMAGE) {
                 Ok(image) => match this.inner.runtime.pull_image(&image).await {
-                    Ok(config) => ImageNote::Read(puddle_api::describe_image(&config.labels)),
+                    Ok(config) => ImageNote::Read(puddle_services::workspaces::describe_image(&config.labels)),
                     Err(e) => {
                         tracing::warn!(image = %image, error = %e, "the default image was not downloaded to read its description");
                         ImageNote::Cold

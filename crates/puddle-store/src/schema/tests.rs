@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+use super::migrations::*;
 use super::*;
+use crate::error::StoreError;
+use rusqlite::Connection;
+use std::path::Path;
 
 fn version(conn: &Connection) -> u32 {
     conn.pragma_query_value(None, "user_version", |row| row.get(0))
@@ -1217,6 +1221,32 @@ fn v32_reads_every_existing_pending_row_as_not_needing_an_exact_allow() {
         conn.execute("UPDATE pending SET exact_only = 2", [])
             .is_err()
     );
+}
+
+#[test]
+fn v33_reads_every_existing_pending_row_as_asked_by_no_named_program() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    migrate_up_to(&mut conn, 32).unwrap();
+    conn.execute_batch(
+        "INSERT INTO pending (workspace_id, host, port, first_seen, last_seen)
+             VALUES ('a', 'db.corp.example', 5432, 1, 1);",
+    )
+    .unwrap();
+    assert_eq!(migrate(&mut conn).unwrap(), 32);
+    let program: Option<String> = conn
+        .query_row("SELECT program FROM pending", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(program, None);
+    assert!(
+        conn.execute("UPDATE pending SET program = ''", []).is_err(),
+        "an empty name is no name"
+    );
+    assert!(
+        conn.execute("UPDATE pending SET program = ?1", ["x".repeat(33)])
+            .is_err()
+    );
+    conn.execute("UPDATE pending SET program = 'pip'", [])
+        .unwrap();
 }
 
 #[test]

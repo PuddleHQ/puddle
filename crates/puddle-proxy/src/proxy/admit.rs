@@ -6,8 +6,8 @@ use std::net::{IpAddr, SocketAddr};
 
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionOutcome, ConnectionReason,
-    Decision, EgressRequest, Host, PatternKind, PendingOutcome, PolicyError, RefusedReason, RuleId,
-    SuffixAllows,
+    Decision, EgressRequest, Host, PatternKind, PendingOutcome, PolicyError, ReasonCode,
+    RefusedReason, RuleId, SuffixAllows,
 };
 
 use puddle_netpolicy::{LocalCategory, block_message, company_network_message};
@@ -32,6 +32,49 @@ pub(crate) async fn admit(
     );
     let admitted = admit_into(proxy, request, &mut event).await;
     (admitted, event)
+}
+
+/// The refusal of SSH to a Git host's name that Puddle does not serve
+/// ([`super::plan::ConnectionPlan::SshRefused`]), with its audit event. It comes instead of
+/// [`admit`]: before the name stage (so the reason is the protocol, not a toggle that turning on
+/// would only lead to the same refusal) and before any rule, so it never becomes a pending row or
+/// an allow.
+pub(crate) async fn refuse_ssh(
+    proxy: &Proxy,
+    request: &EgressRequest,
+) -> (Refusal, ConnectionEvent) {
+    let event = ConnectionEvent::new(
+        request,
+        ConnectionDecision::Blocked,
+        ConnectionReason::Blocked(BlockReason::SshUnsupported),
+    );
+    let mut refusal = block(request, &[BlockReason::SshUnsupported]);
+    if let Some(message) = proxy.azure_devops_ssh_message(request).await {
+        refusal.message = message;
+    }
+    (refusal, event)
+}
+
+/// The refusal of a connection of a workspace the host holds no termination for
+/// ([`super::plan::Seen::NotRunning`]), with its audit event. It comes instead of [`admit`]: no
+/// rule is read and no pending row is written for a workspace the host believes stopped.
+pub(crate) fn refuse_not_running(request: &EgressRequest) -> (Refusal, ConnectionEvent) {
+    let code = ReasonCode::WorkspaceNotRunning;
+    let event = ConnectionEvent::new(
+        request,
+        ConnectionDecision::Blocked,
+        ConnectionReason::Refused(code),
+    );
+    let refusal = Refusal::new(
+        "503 Service Unavailable",
+        format!(
+            "workspace {} is not running in Puddle's view, so it has no network; start it from Puddle",
+            request.workspace
+        ),
+    )
+    .coded(code)
+    .header("x-puddle-decision", "blocked");
+    (refusal, event)
 }
 
 /// Records each decision `admit` takes in `event`.
@@ -102,18 +145,6 @@ async fn admit_into(
 ) -> Result<Admitted, Refusal> {
     let host = &request.host;
     let port = request.port;
-    // SSH to a Git host's name is refused whatever the destination is: before the name stage (so
-    // the reason is the protocol, not a toggle that turning on would only lead to the same
-    // refusal) and before any rule, so it never becomes a pending row or an allow. SSH to any
-    // other name is decided below like every connection.
-    if proxy.refuses_ssh(request) {
-        note_block(event, BlockReason::SshUnsupported);
-        let mut refusal = block(request, &[BlockReason::SshUnsupported]);
-        if let Some(message) = proxy.azure_devops_ssh_message(request).await {
-            refusal.message = message;
-        }
-        return Err(refusal);
-    }
     // Name stage: a literal or a name that is blocked by itself never reaches the rules, so it
     // never becomes a pending row (R-14).
     let target = puddle_netpolicy::Target::from_host(host.clone());
@@ -122,7 +153,8 @@ async fn admit_into(
         .check_target(&request.workspace, &target, port)
     {
         note_block(event, reason);
-        return Err(block(request, &[reason]));
+        let label = proxy.workspace_label(&request.workspace).await;
+        return Err(block_at(request, &label, &[reason], None));
     }
     let decided = proxy.decide(request, SuffixAllows::Count).await;
     note(event, request, &decided);
@@ -151,9 +183,9 @@ async fn admit_into(
             }
             AddressVerdict::Block(reason) => {
                 if matches!(reason, BlockReason::CompanyNetwork(_)) {
-                    company_ip.get_or_insert(addr.ip());
+                    company_ip.get_or_insert_with(|| addr.ip());
                 }
-                refused_first.get_or_insert((addr.ip(), RefusedReason::Guard(reason)));
+                refused_first.get_or_insert_with(|| (addr.ip(), RefusedReason::Guard(reason)));
                 blocked.push(reason);
             }
         }
@@ -192,7 +224,8 @@ async fn admit_into(
             blocked.push(BlockReason::LocalAddress);
         }
         note_block(event, shown_reason(&blocked));
-        return Err(block_at(request, &blocked, company_ip));
+        let label = proxy.workspace_label(&request.workspace).await;
+        return Err(block_at(request, &label, &blocked, company_ip));
     }
     // A proxy may be told the name only when nothing the name resolved to was dropped: otherwise
     // it could pick the dropped address itself (R-14, R-27).
@@ -332,7 +365,11 @@ pub(crate) fn ip_rule(
     request: &EgressRequest,
     addr: SocketAddr,
 ) -> Result<IpRule, PolicyError> {
-    let by_ip = EgressRequest::new(request.workspace.clone(), Host::Ip(addr.ip()), request.port);
+    let by_ip = EgressRequest::new(
+        request.workspace.clone(),
+        Host::from_ip(addr.ip()),
+        request.port,
+    );
     Ok(match proxy.policy.lookup(&by_ip, SuffixAllows::Ignore)? {
         Some(Decision::Allow {
             rule_id,
@@ -487,11 +524,17 @@ fn allowed(
 /// The refusal for a blocked request; `reasons` holds every address's reason (at least one).
 /// The header names the first toggle if any (turning it on would help), else the first reason.
 fn block(request: &EgressRequest, reasons: &[BlockReason]) -> Refusal {
-    block_at(request, reasons, None)
+    block_at(request, request.workspace.as_str(), reasons, None)
 }
 
 /// [`block`] for a block at an address of the destination: a company-network refusal names it.
-fn block_at(request: &EgressRequest, reasons: &[BlockReason], ip: Option<IpAddr>) -> Refusal {
+/// `workspace` is how the message names the workspace (its name, or its id when it has none).
+fn block_at(
+    request: &EgressRequest,
+    workspace: &str,
+    reasons: &[BlockReason],
+    ip: Option<IpAddr>,
+) -> Refusal {
     let host = &request.host;
     let reason = shown_reason(reasons);
     tracing::info!(workspace = %request.workspace, %host, port = request.port, %reason, "blocked");
@@ -502,7 +545,7 @@ fn block_at(request: &EgressRequest, reasons: &[BlockReason], ip: Option<IpAddr>
         | BlockReason::PuddleEndpoint
         | BlockReason::LocalAddress
         | BlockReason::LocalToggle(_)
-        | BlockReason::SettingsUnreadable => block_message(host, &request.workspace, reasons),
+        | BlockReason::SettingsUnreadable => block_message(host, workspace, reasons),
     };
     Refusal::new("403 Forbidden", message)
         .header("x-puddle-decision", "blocked")

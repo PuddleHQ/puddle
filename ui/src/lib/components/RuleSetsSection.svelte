@@ -137,8 +137,10 @@
         dialogMode = "create";
         renaming = null;
         dialogOpen = true;
-      }}><Plus aria-hidden="true" size={16} />New rule set</button
+      }}
     >
+      <Plus aria-hidden="true" size={16} />New rule set
+    </button>
   </div>
   {#if store.status === "ready" && store.loadError}
     <LoadNotice what="the rule sets" message={store.loadError} stale />
@@ -225,9 +227,16 @@
   }
   .head {
     display: flex;
+    /* The button drops below the words when the line is too narrow; squeezed beside them it shrinks
+       under its label, which spills out of the box and widens the page. */
+    flex-wrap: wrap;
     justify-content: space-between;
     align-items: flex-start;
     gap: var(--space-4);
+  }
+  .head > :first-child {
+    flex: 1 1 20rem;
+    min-width: 0;
   }
   h3 {
     margin: var(--space-3) 0 0;

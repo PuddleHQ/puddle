@@ -68,7 +68,7 @@ fn sources(dir: &std::path::Path) -> Vec<(String, String)> {
     out
 }
 
-/// The wire types that hold a [`SecretText`](crate::wire::SecretText), directly or through
+/// The wire types that hold a [`SecretText`](puddle_services::wire::SecretText), directly or through
 /// another such type: a top-level `struct` or `enum` whose body (up to its closing `}` in the
 /// first column) names one.
 fn types_holding_a_secret(files: &[(String, String)]) -> std::collections::BTreeSet<String> {
@@ -151,14 +151,15 @@ fn json_bodies(files: &[(String, String)]) -> Vec<(String, String, String)> {
 
 /// A request body that holds a secret is read with [`SecretJson`], which wipes its buffer, never
 /// with [`Json`], which leaves the secret in a `Bytes` copy and a `Value` tree. A source check:
-/// it sees the handlers under `routes/` and the types under `wire/`, and a body read some other
+/// it sees the handlers under `routes/` and the types under `puddle-services`'s `wire/`, and a body read some other
 /// way (by hand, or with an extractor whose name does not end in `Json`) is not seen.
 #[test]
 fn every_request_body_that_holds_a_secret_is_read_with_secret_json() {
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let mut wire = sources(&src.join("wire"));
+    let services = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../puddle-services/src");
+    let mut wire = sources(&services.join("wire"));
     wire.extend(
-        sources(&src)
+        sources(&services)
             .into_iter()
             .filter(|(f, _)| f.ends_with("wire.rs")),
     );

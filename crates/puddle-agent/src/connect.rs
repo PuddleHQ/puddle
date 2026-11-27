@@ -33,6 +33,7 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use puddle_agent_proto::origin::{CONTAINER, ORIGIN_HEADER};
+use puddle_agent_proto::program::{PROGRAM_HEADER, Program};
 use puddle_agent_proto::ssh::{BANNER_MIN, PROTOCOL_HEADER, SSH, is_banner};
 use tokio::io::{
     AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader,
@@ -40,6 +41,7 @@ use tokio::io::{
 use tokio::net::TcpStream;
 use tokio::time::Instant;
 
+use crate::cli::UsageError;
 use crate::config::Config;
 
 /// Usage text.
@@ -102,23 +104,30 @@ impl Request {
     /// # Errors
     ///
     /// The usage text, or what is wrong with the host or port.
-    pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<Self, String> {
+    pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<Self, UsageError> {
         let mut args: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
         let mut local = Vec::new();
         while let ["--local-net", net, ..] = args.as_slice() {
-            local
-                .push(LocalNet::parse(net).ok_or_else(|| format!("bad network {net:?}\n{USAGE}"))?);
+            local.push(LocalNet::parse(net).ok_or_else(|| UsageError::BadValue {
+                what: "network",
+                value: (*net).to_owned(),
+                usage: USAGE,
+            })?);
             args.drain(..2);
         }
         let (host, port) = match args.as_slice() {
             [host, port] | [host, port, _] => (*host, *port),
-            _ => return Err(USAGE.to_owned()),
+            _ => return Err(UsageError::Shape(USAGE)),
         };
         let port = port
             .parse::<u16>()
             .ok()
             .filter(|p| *p != 0)
-            .ok_or_else(|| format!("bad port {port:?}\n{USAGE}"))?;
+            .ok_or_else(|| UsageError::BadValue {
+                what: "port",
+                value: port.to_owned(),
+                usage: USAGE,
+            })?;
         // `ssh user@[2001:db8::1]` hands the brackets on.
         let host = host
             .strip_prefix('[')
@@ -128,10 +137,11 @@ impl Request {
         let plain =
             |b: u8| b.is_ascii_graphic() && !matches!(b, b'/' | b'@' | b'?' | b'#' | b'[' | b']');
         if host.is_empty() || host.len() > 253 || !host.bytes().all(plain) {
-            return Err(format!(
-                "bad host {:?}\n{USAGE}",
-                host.chars().take(64).collect::<String>()
-            ));
+            return Err(UsageError::BadValue {
+                what: "host",
+                value: host.chars().take(64).collect::<String>(),
+                usage: USAGE,
+            });
         }
         Ok(Self {
             host: host.to_owned(),
@@ -414,8 +424,14 @@ pub(crate) async fn peek<I: AsyncRead + Unpin>(stdin: &mut I, limit: Duration) -
 
 /// A `CONNECT` for `authority` with the client's `first` bytes right behind it, the header that
 /// says "SSH" when they are an SSH identification line, so the proxy decides before it asks about
-/// the destination, and the one that says the client is in a container when `from_container`.
-pub(crate) fn connect_request(authority: &str, first: &[u8], from_container: bool) -> Vec<u8> {
+/// the destination, the one that says the client is in a container when `from_container`, and the
+/// one that names the client's `program`.
+pub(crate) fn connect_request(
+    authority: &str,
+    first: &[u8],
+    from_container: bool,
+    program: Option<&Program>,
+) -> Vec<u8> {
     let mut head = format!("CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n");
     if is_banner(first) {
         // writing into a `String` cannot fail
@@ -425,6 +441,10 @@ pub(crate) fn connect_request(authority: &str, first: &[u8], from_container: boo
         // writing into a `String` cannot fail
         let _ = write!(head, "{ORIGIN_HEADER}: {CONTAINER}\r\n");
     }
+    if let Some(program) = program {
+        // writing into a `String` cannot fail
+        let _ = write!(head, "{PROGRAM_HEADER}: {program}\r\n");
+    }
     head.push_str("\r\n");
     let mut out = head.into_bytes();
     out.extend_from_slice(first);
@@ -433,7 +453,7 @@ pub(crate) fn connect_request(authority: &str, first: &[u8], from_container: boo
 
 /// Sends the `CONNECT` (with the client's first bytes right behind it) and reads the answer.
 async fn open(settings: &Settings, request: &Request, first: &[u8]) -> io::Result<Opened> {
-    let out = connect_request(&request.authority(), first, false);
+    let out = connect_request(&request.authority(), first, false, None);
     let mut reader = BufReader::new(TcpStream::connect(settings.proxy).await?);
     reader.get_mut().write_all(&out).await?;
     let (status, body) = tokio::time::timeout(settings.answer, read_answer(&mut reader))

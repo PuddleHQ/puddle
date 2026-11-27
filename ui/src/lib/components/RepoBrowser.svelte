@@ -4,13 +4,7 @@
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
   import RepoSourceStatus from "./RepoSourceStatus.svelte";
   import type { Identity } from "#lib/identities/model.ts";
-  import {
-    roleWord,
-    tableCannotHold,
-    TABLE_CANNOT_HOLD,
-    traits,
-    type RepoView,
-  } from "#lib/repos/model.ts";
+  import { roleWord, traits, type RepoView } from "#lib/repos/model.ts";
   import type { RepoLists } from "#lib/stores/repos.svelte.ts";
   import "#lib/theme/controls.css";
 
@@ -160,15 +154,10 @@
             <td>
               <span class="name mono">{repo.full_name}</span>
               <span class="traits">
-                {#each traits(repo) as trait (trait)}<span class="trait"
-                    >{trait}</span
-                  >{/each}
+                {#each traits(repo) as trait (trait)}<span class="trait">
+                    {trait}
+                  </span>{/each}
               </span>
-              {#if tableCannotHold(repo.url)}
-                <span class="warn" data-testid="repo-table-warning"
-                  >{TABLE_CANNOT_HOLD}</span
-                >
-              {/if}
             </td>
             <td class="muted">{roleWord(repo.role)}</td>
             <td class="act">
@@ -177,8 +166,9 @@
                 class="btn primary"
                 aria-label="Create a workspace for this: {repo.full_name}"
                 onclick={() => onCreate(repo)}
-                >Create a workspace for this</button
               >
+                Create a workspace for this
+              </button>
             </td>
           </tr>
         {/each}
@@ -190,8 +180,9 @@
         class="btn more"
         disabled={store.loadingMore}
         onclick={() => store.more()}
-        >Show more ({listing.total - listing.repos.length} left)</button
       >
+        Show more ({listing.total - listing.repos.length} left)
+      </button>
     {/if}
   {/if}
 {/if}
@@ -264,10 +255,6 @@
   .trait {
     font-size: var(--text-sm);
     color: var(--color-text-muted);
-  }
-  .warn {
-    font-size: var(--text-sm);
-    color: var(--color-warning);
   }
   .act {
     text-align: right;

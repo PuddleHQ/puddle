@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Workspaces: list, create, detail, start, stop, reclaim space, the delete check, delete and
-//! attach. The routes only translate; [`crate::WorkspaceService`] does the work. Long
+//! attach. The routes only translate; [`puddle_services::workspaces::WorkspaceService`] does the work. Long
 //! operations answer 202 with the workspace marked busy and report through `status_changed` and
 //! `workspace_progress` events.
 
@@ -15,18 +15,20 @@ use puddle_settings::{DiskWarningPercent, resolve};
 use puddle_store::{IdentityId, RepoGitRequest, RepoRef, Role, Store, UserId};
 use puddle_types::WorkspaceId;
 
-use crate::ApiErrorBody;
-use crate::WorkspaceRecord;
 use crate::authz::{self, Principal};
-use crate::error::{ApiError, ErrorCode, ErrorField, blocking};
 use crate::extract::Path;
 use crate::routes::{AppState, repository_hosts};
-use crate::wire::{
+use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, ErrorCode, ErrorField, blocking};
+use puddle_services::wire::{
     AllowedHost, AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest,
     GrowRootDiskRequest, NewWorkspaceIdentity, NewWorkspaceRequest, RenameWorkspaceRequest,
     SessionUserRequest, Workspace, WorkspaceList, WorkspaceLookupConflict, WorkspaceMatch,
 };
-use crate::workspaces::{GitSetup, LocalCheckoutError, LocalSource, NewRepository, WorkspaceError};
+use puddle_services::workspaces::WorkspaceRecord;
+use puddle_services::workspaces::{
+    GitSetup, LocalCheckoutError, LocalSource, NewRepository, WorkspaceError,
+};
 
 /// The id in a path. A string that can't be an id names no workspace.
 pub(super) fn workspace_id(raw: &str) -> Result<WorkspaceId, ApiError> {
@@ -168,13 +170,13 @@ pub(crate) async fn list_workspaces(
     get,
     path = "/api/workspaces/default-image",
     tag = "workspaces",
-    responses((status = OK, description = "the default image", body = crate::wire::DefaultImage))
+    responses((status = OK, description = "the default image", body = puddle_services::wire::DefaultImage))
 )]
 pub(crate) async fn default_image(
     State(state): State<AppState>,
-) -> Json<crate::wire::DefaultImage> {
-    Json(crate::wire::DefaultImage {
-        image: crate::DEFAULT_IMAGE.to_owned(),
+) -> Json<puddle_services::wire::DefaultImage> {
+    Json(puddle_services::wire::DefaultImage {
+        image: puddle_services::workspaces::DEFAULT_IMAGE.to_owned(),
         description: state.workspaces.default_image_description(),
     })
 }
@@ -221,7 +223,7 @@ pub(crate) async fn lookup_workspace(
         return Err(ApiError::invalid("q must not be empty"));
     }
     let records = own(&state, principal, state.workspaces.list().await?).await?;
-    let found = crate::workspaces::lookup(&records, &query.q);
+    let found = puddle_services::workspaces::lookup(&records, &query.q);
     let matches: Vec<WorkspaceMatch> = found
         .iter()
         .map(|r| WorkspaceMatch {
@@ -260,6 +262,7 @@ pub(super) fn git_request(repository: &NewRepository) -> Option<RepoGitRequest> 
         identity: repository.identity,
         pull: repository.pull,
         push: repository.push,
+        push_block: repository.push_block,
     })
 }
 
@@ -443,7 +446,7 @@ pub(crate) async fn create_workspace(
     let known: BTreeSet<IdentityId> =
         blocking(move || Ok(store.identities(user)?.into_iter().map(|i| i.id).collect())).await?;
     // Looked at only for a list the create can take: each look reads the disk.
-    if body.repositories.len() > crate::workspaces::MAX_REPOSITORIES {
+    if body.repositories.len() > puddle_services::workspaces::MAX_REPOSITORIES {
         paths.clear();
     }
     paths.sort();
@@ -774,8 +777,8 @@ pub(crate) async fn attach_workspace(
             open_uri: None,
         }));
     }
-    let mode = crate::AttachMode::from(body.mode);
-    if mode == crate::AttachMode::Desktop {
+    let mode = puddle_services::workspaces::AttachMode::from(body.mode);
+    if mode == puddle_services::workspaces::AttachMode::Desktop {
         // Desktop editors connect over SSH, which Puddle only opens when the user allowed it.
         // A workspace that is not up gets the service's own "start it first" answer.
         let record = state.workspaces.get(&id).await?;

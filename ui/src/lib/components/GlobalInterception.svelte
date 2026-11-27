@@ -74,9 +74,9 @@
     onchange={learning}
   />
   <details class="curated">
-    <summary
-      >Passed through in "except a known list" ({store.curated.length})</summary
-    >
+    <summary>
+      Passed through in "except a known list" ({store.curated.length})
+    </summary>
     {#if store.curated.length === 0}
       <p class="muted">
         The list is empty for now. Puddle adds a host here once it is known to

@@ -141,9 +141,10 @@
         <p class="error" id="{id}-error" role="alert">{shown}</p>
       {:else}
         <p class="desc" id="{id}-hint">
-          A path under the workspace root, such as <span class="mono"
-            >api/services/web</span
-          >. Leave it empty for the root itself. The folder may not exist yet.
+          A path under the workspace root, such as <span class="mono">
+            api/services/web
+          </span>. Leave it empty for the root itself. The folder may not exist
+          yet.
         </p>
       {/if}
     </div>

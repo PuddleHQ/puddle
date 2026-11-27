@@ -40,7 +40,7 @@
 
 <StepHeading
   title="Which hosts should Puddle decrypt?"
-  lead="Puddle reads (MITMs) HTTPS traffic to monitor it, inject credentials and enable advanced filtering. You can change this later in Settings."
+  lead="Puddle decrypts HTTPS traffic from your workspaces so it can show you what they contact, add credentials for you and filter requests. You can change this later in Settings."
 />
 
 {#if store.status === "loading"}
@@ -100,8 +100,10 @@
     type="button"
     class="btn primary"
     disabled={busy || store.status !== "ready"}
-    onclick={() => void carryOn()}>Continue</button
+    onclick={() => void carryOn()}
   >
+    Continue
+  </button>
 </div>
 
 <style>

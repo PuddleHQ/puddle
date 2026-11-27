@@ -84,9 +84,9 @@
   {:else}
     {#if start.code && start.url}
       <p>
-        Open <a href={start.url} target="_blank" rel="noopener noreferrer"
-          >{start.url}</a
-        >
+        Open <a href={start.url} target="_blank" rel="noopener noreferrer">
+          {start.url}
+        </a>
         and enter this code:
       </p>
       <p class="code" data-testid="sign-in-code">{start.code}</p>
@@ -103,9 +103,9 @@
     </p>
   {/if}
   <div class="actions">
-    <button type="button" class="btn" onclick={() => (open = false)}
-      >{state === "done" ? "Done" : "Close"}</button
-    >
+    <button type="button" class="btn" onclick={() => (open = false)}>
+      {state === "done" ? "Done" : "Close"}
+    </button>
   </div>
 </FormDialog>
 

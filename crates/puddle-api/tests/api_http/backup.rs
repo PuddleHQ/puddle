@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use puddle_api::{FAKE_BACKUP_BYTES, FakeBackup};
+use puddle_services::{backup::FAKE_BACKUP_BYTES, backup::FakeBackup};
 
 use crate::common::{raw, start, start_with_backup};
 

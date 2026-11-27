@@ -37,6 +37,7 @@ different crates and rarely collides.
 | `crates/puddle-upstream` | lib | The company proxy in front of Puddle: discovery (WinINet, WinHTTP PAC/WPAD, policy, env, per-epoch cache, change notification) in `discovery`; the chained connect (route hops, `CONNECT`/absolute form, `407` loop, Basic, host-side `host::connect`) in `chain`; TLS on top of it (`TlsClient`, `tls_connect`: the platform verifier plus corporate roots) in `tls`; proxy sign-in: the portable Negotiate/NTLM protocol over a `TokenSource` in `negotiate`, Windows SSPI as the logged-on user in `windows/sspi.rs`, the `ProxyAuth` seam (`NoAuth` on Unix) in `auth`; a snapshot for the network-health report (`Discovery::health`, `Chain::sign_ins`) in `health` and `signin`, with `redact` for text that comes from outside; feature `testing` has `FakeOs` and a scripted `FakeProxy` |
 | `crates/puddle-store` | lib | SQLite schema and migrations, rules engine, grants, audit log, sweeper; Git identities (author, credential references, what each covers) and each workspace's identities, repository table and push and pull switches |
 | `crates/puddle-api` | lib | axum API on 127.0.0.1 (plus the opt-in TLS network listener of remote serving, one named interface), SSE, bearer token and Host/Origin guard, the OpenAPI contract and its generated TypeScript (`openapi/`, ADR 0004); serves the built UI from the same origin (feature `embedded-ui`); the network-health report (`GET /api/network-health`) is built from `puddle-upstream` and `puddle-certs` in `network_health` |
+| `crates/puddle-services` | lib | The service traits the host implements and the API serves (workspaces, credentials, repos, backup and restore, terminals, doctor, network health and the rest), the wire types they speak, `ApiError`, and the in-memory fakes and contract suite behind feature `testing`; `puddle-api` re-exports them while callers migrate |
 | `crates/puddle-agent` | bin | Guest agent (static musl binary, ADR 0005): vsock to the host proxy; the stub DNS and stand-in table for tools that ignore the proxy settings (`capture/`); the listening-ports report and the guest end of the host's port forwards |
 | `crates/puddle-agent-proto` | lib | Agent ↔ host wire protocol: yamux settings, stream kinds, control messages, the `resolve` lookup stream, the host-opened `forward` stream, host session, reset-preserving splice |
 | `crates/puddle` | bin + lib | Host program `puddle(.exe)`: CLI (`doctor`, `ssh-bridge`, `backup`, `serve` around `puddle-host`) |
@@ -49,7 +50,7 @@ different crates and rarely collides.
 | `crates/puddle-process` | lib | Starts a child process the one way the host does: `command(program)` is `std::process::Command::new` with `CREATE_NO_WINDOW` on Windows, so a console program the desktop app (a GUI program, no console) starts gets a console without a window instead of a terminal window on the user's desktop; tokio callers wrap it with `tokio::process::Command::from`. The `spawn` gate (`scripts/check-spawn.py`) fails any other `Command::new` in host-side production code. `tests/console_window.rs` starts a probe from a process without a console and checks it gets no window (Windows) |
 | `crates/puddle-fd-limit` | lib | The open-file limit: `raise_open_file_limit` lifts the soft `RLIMIT_NOFILE` to the hard limit once at start (the guest agent also tries to lift the hard limit, as root in the guest) and `OpenFileLimit::log` says what the process got, warning when it is below what a busy workspace needs. Safe `rustix` calls on Unix; nothing to do on Windows, which has no per-process descriptor cap. Used by `puddle-agent` and `puddle-host` |
 | `crates/puddle-freshness` | lib + bin | The signed freshness file of the update list: the JSON format (statement of project, sequence, issue and expiry times, signed with Ed25519 over the exact statement text), `verify` (trusted keys, expiry, a cap on the window, a sequence ceiling, no lower sequence than one already seen), `sign` and `refresh` (the next sequence, recovering after an expired file, never restarting over a file it cannot trust), and the `puddle-freshness` command the daily `freshness` workflow runs. Holds no key: the client compiles its public keys in, the workflow reads the seed from a repository secret |
-| `crates/puddle-log` | lib | The log filter of Puddle's programs (`puddle serve`, the desktop app, the guest agent): the level `PUDDLE_LOG` asks for applies to Puddle's own crates, every other crate stays at `info` unless named (`PUDDLE_LOG=trace,hyper=debug`), so a trace log never carries a dependency's internals |
+| `crates/puddle-log` | lib | The log filter of Puddle's programs (`puddle serve`, the desktop app, the guest agent): the level `PUDDLE_LOG` asks for applies to Puddle's own crates, every other crate stays at `info` unless named (`PUDDLE_LOG=trace,hyper=debug`), so a trace log never carries a dependency's internals; the level can change while the program runs (`apply_setting`), the log file (`logs/puddle.log`, rolling) and `redact` and the log bundle writer (`write_bundle`) |
 | `crates/puddle-ipc` | lib | Per-workspace host endpoints (named pipe / Unix socket) only the current user can open: owner-only DACL, first-instance check, random names, `0600` sockets in a `0700` dir. Its only `unsafe` is creating a pipe with a security descriptor (`windows/security.rs`); the descriptor helpers come from `puddle-fs` |
 | `crates/puddle-ports` | lib | A workspace's ports: what listens in the guest, forwards from the guest to the host's loopback (listeners registered as Puddle's own), pinned forwards kept through a `Pins` store, who holds a port |
 | `crates/puddle-front` | lib | The browser editor's front: one loopback listener (registered as Puddle's own) that routes `<workspace>.localhost` to the editor server in the guest through the agent's `editor` stream, with Microsoft's secret-key cookie, frame headers and a count of connected windows |
@@ -191,7 +192,7 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
 - **Lints** (`[workspace.lints]` in `Cargo.toml`): clippy `pedantic` plus a set of restriction
   lints (`unwrap_used`, `expect_used`, `panic`, `indexing_slicing`, `todo`, `print_stdout`, …),
   all denied in CI with `-D warnings`. To silence one, use `#[expect(lint, reason = "…")]` on the
-  smallest item; never `#[allow]` (itself linted), never crate-wide without a written reason.
+  smallest item; never `#[allow]` or `#![allow]` (the gate fails both, `ban-allow`; `cfg_attr(<cfg>, expect(..))` for a lint that fires under one cfg only), never crate-wide without a written reason. `fuzz/` is its own workspace and carries a copy of this table; `scripts/check.sh clippy` lints it too.
   Tests may unwrap, expect, panic and index (`clippy.toml`).
 - **Unsafe:** every crate root (`lib.rs`, `main.rs`, each `src/bin/*.rs` and `build.rs`) says `#![forbid(unsafe_code)]`, and the quality
   gate fails a root that does not. A crate that needs FFI on one platform (Windows pipe DACLs, say) says
@@ -280,7 +281,7 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
   that cross crates live in `puddle-types` or are converted at the boundary.
 - **Binaries:** `puddle` maps errors to a user message and an exit code at the top; it may use
   `anyhow` only in `main`-level glue, never in the libraries (`deny.toml` bans it with a list of the crates that may depend on it).
-- Don't stringly-type errors, don't discard them (`let _ =` on a `Result` needs a comment), and
+- Don't stringly-type errors (the gate fails a `Result<_, String>` in production code, `ban-result-string`; no comment excuses one: write a thiserror enum, or a boxed `dyn Error` for a closure the caller supplies), don't discard them (`let _ =` on a `Result` needs a comment), and
   don't log *and* return the same error (the handler that consumes it logs it).
 - Error messages are lower-case, no trailing period, and never contain secret values. The quality gate fails a `#[error("...")]` that starts with a capital or ends with a period (`ban-error-capital`, `ban-error-period`), and a `#[serde(untagged)]` (`ban-untagged`, ADR 0002).
 
@@ -296,7 +297,12 @@ the owner with a merge commit, then tagged `vX.Y.Z` on `main`.
 - `PUDDLE_LOG` (`puddle serve`, the desktop app; `PUDDLE_AGENT_LOG` for the guest agent) sets the
   level of Puddle's crates; dependencies stay at `info` unless named (`trace,hyper=debug`), because a
   dependency's trace output is not under the rule below. Build a filter only through `puddle-log`.
-  The desktop app also reads `RUST_LOG` when `PUDDLE_LOG` is not set.
+  The desktop app also reads `RUST_LOG` when `PUDDLE_LOG` is not set. The setting `ui.log_level`
+  (Settings, This computer) changes the level of a running program unless one of these pinned it;
+  `puddle logs bundle` and the app's "Export log bundle" collect the log file with secrets cut out
+  (`puddle_log::redact`). Levels and the log bundle are described in [logging.md](logging.md).
+- Put a `debug!` at each decision and before and after each step that talks to the outside, so a
+  failure leaves a trace; log which identity or source was used, never the value.
 - **Never log** header values, credentials, tokens, cookies, request bodies, or full URLs with
   query strings. Hostnames and ports are fine. Tests assert this (§8, redaction).
 - The **audit log** (store) is a product feature with its own schema and tests, not a
@@ -418,6 +424,15 @@ request (`Reverts #<number>` or the commit's 8-character SHA).
 
 - Measured by `cargo llvm-cov nextest` over the whole workspace on Linux, in every CI run; the UI by
   vitest's v8 coverage (`npm test`).
+- **The totals count only code compiled into what Puddle ships.** Every test runs, but the Rust totals (the
+  floors, the ratchet, the CI job summary) leave out the files of the crates no shipped binary depends on
+  (`cargo llvm-cov report --ignore-filename-regex`). `scripts/coverage-crates.txt` names the shipped binaries
+  (`ship`) and the workspace crates that are not part of one (`test-only`: test harnesses and build tooling);
+  `scripts/coverage-crates.py` takes the dependency closure of the shipped binaries from `cargo metadata`
+  (normal and build dependencies, all features) and fails the `coverage` gate when a workspace crate is neither
+  in it nor listed `test-only`, or a `test-only` crate is in it. A new crate needs no entry while a shipped binary
+  depends on it; a new harness crate gets a `test-only` line. The lcov report stays whole, so the diff gate
+  and the 100 % crates still see every file.
 - **Gate: lines ≥ 92 %, regions ≥ 90 %** (workspace totals, floors in `scripts/check.sh`), and a
   **ratchet**: coverage may not fall more than 0.05 points below `scripts/coverage-baseline.json`, the best
   value reached so far (rounded down to 0.1). The floors and the baseline only go up; lowering either needs
@@ -534,8 +549,9 @@ request (`Reverts #<number>` or the commit's 8-character SHA).
   branch of a decision (allow/deny/pending, each toggle) has a test. A change that lowers a
   crate's coverage says why in the commit.
 - Code that can't run in CI (Windows-only code on Linux, VM paths) is covered by its own tier
-  (Windows job, L3/L4), not excluded from the report. Exclusions from the report
-  (`--ignore-filename-regex`) only for generated code, listed in `scripts/check.sh` with a comment;
+  (Windows job, L3/L4), not excluded from the report. Exclusions from the totals are the test-only crates
+  above and nothing finer (no single file), so a shipped crate's unreachable file is covered by its tier or
+  listed in the diff-gate exclusions;
   exclusions from the diff gate are the file above.
 
 ### Mutation testing

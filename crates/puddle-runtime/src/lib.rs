@@ -49,7 +49,7 @@ pub use digest::{DigestStatus, RuntimeDigests, sha256_file};
 pub use env::{RuntimeEnv, is_msb_variable};
 pub use error::RuntimeError;
 pub use layout::{LIBKRUNFW_FILE_NAME, MSB_FILE_NAME, RUNTIME_DIR_NAME, RuntimeLayout};
-pub use msbver::{MAX_VERSION_BYTES, VERSION_SECTION, read_embedded_version};
+pub use msbver::{MAX_VERSION_BYTES, VERSION_SECTION, VersionReadError, read_embedded_version};
 pub use platform::{GuestArch, HostOs, RuntimeFiles};
 pub use runtime::BundledRuntime;
 pub use version::{

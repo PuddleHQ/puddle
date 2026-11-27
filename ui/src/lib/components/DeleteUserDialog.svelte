@@ -45,16 +45,17 @@
         cancelButton?.focus();
       }}
     >
-      <AlertDialog.Title class="confirm-title">Delete {name}?</AlertDialog.Title
-      >
+      <AlertDialog.Title class="confirm-title">
+        Delete {name}?
+      </AlertDialog.Title>
       <AlertDialog.Description class="confirm-body">
-        <strong class="confirm-summary"
-          >This deletes {name}'s workspaces and everything on their disks, their
-          devices, settings and rules.</strong
-        >
-        <span class="confirm-detail"
-          >It can't be undone. Their running workspaces are stopped first.</span
-        >
+        <strong class="confirm-summary">
+          This deletes {name}'s workspaces and everything on their disks, their
+          devices, settings and rules.
+        </strong>
+        <span class="confirm-detail">
+          It can't be undone. Their running workspaces are stopped first.
+        </span>
       </AlertDialog.Description>
       <div class="field">
         <label for="{id}-typed">Type <b>{name}</b> to confirm</label>
@@ -67,9 +68,9 @@
       </div>
       {#if error}<p class="confirm-error" role="alert">{error}</p>{/if}
       <div class="confirm-actions">
-        <AlertDialog.Cancel class="btn" bind:ref={cancelButton}
-          >Cancel</AlertDialog.Cancel
-        >
+        <AlertDialog.Cancel class="btn" bind:ref={cancelButton}>
+          Cancel
+        </AlertDialog.Cancel>
         <button
           type="button"
           class="btn deny"

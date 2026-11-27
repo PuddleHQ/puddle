@@ -178,7 +178,32 @@ ui_install() {
 # failure, with its message and stack). A failing run also leaves ui/vitest-out/vitest-failed-<UTC time>.log, which a
 # rerun never overwrites, and prints its path: a failure that happens once (it once lost its output, so the test that failed
 # stayed unknown) must stay diagnosable. CI uploads ui/vitest-out (ci.yml, job ui).
+# A shared host can run at many times its core count (2026-11-25: load about 500 on 40 cores, a 46 ms vitest
+# test lost 7.5 s to an 8142 ms event-loop stall). Before vitest, wait until the 1-minute load average is under
+# the core count, at most CHECK_LOAD_WAIT seconds (default 900; 0 turns it off; CI runners are skipped), then go
+# on and say so. A wait, never a longer test timeout: a stall of the machine is not a slow test.
+wait_for_load() {
+    [ -z "${CI:-}" ] || return 0
+    _lw_max=${CHECK_LOAD_WAIT:-900}
+    [ "$_lw_max" -gt 0 ] 2>/dev/null || return 0
+    _lw_cores=${CHECK_LOAD_CORES:-$(nproc 2>/dev/null || echo 1)}
+    _lw_t=0
+    while :; do
+        _lw_l=$(awk '{print $1}' "${CHECK_LOADAVG_FILE:-/proc/loadavg}" 2>/dev/null)
+        [ -n "$_lw_l" ] || return 0
+        awk -v l="$_lw_l" -v c="$_lw_cores" 'BEGIN { exit !(l + 0 < c + 0) }' && break
+        if [ "$_lw_t" -ge "$_lw_max" ]; then
+            echo "ui: load $_lw_l on $_lw_cores cores still not under the core count after ${_lw_t} s; running vitest anyway" >&2
+            return 0
+        fi
+        [ "$_lw_t" -gt 0 ] || echo "ui: load $_lw_l on $_lw_cores cores; waiting for it to drop below the core count before vitest (at most $_lw_max s; CHECK_LOAD_WAIT=0 skips)" >&2
+        sleep "${CHECK_LOAD_POLL:-10}"
+        _lw_t=$((_lw_t + ${CHECK_LOAD_POLL:-10}))
+    done
+}
+
 ui_test() {
+    wait_for_load
     mkdir -p ui/vitest-out
     # The pipe hides npm's status (a plain sh pipeline), so the status goes through a file.
     rm -f ui/vitest-out/vitest.rc
@@ -302,12 +327,18 @@ run_gate() {
     clippy)
         # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
         "$cargo" clippy --workspace $skip_app --all-targets --all-features --locked -- -D warnings
+        # fuzz/ is its own workspace (nightly libFuzzer), so the line above never sees it; it builds on stable
+        # for a lint run, and carries a copy of the workspace lint table (fuzz/Cargo.toml `[lints]`).
+        (cd fuzz && "$cargo" clippy --all-targets --locked -- -D warnings)
         ;;
     dormant)
         # the build that ships (default features, so the `serve` and `mise` cargo features
         # are off) shows nothing of `puddle serve`, mise or the built-in mise rule set: not in the
         # CLI help or usage, not in the rule list, and no stored switch turns the layer on. The
         # `test` gate runs these tests with every feature on, where they check the opposite.
+        # the shipped crates also compile as libraries with default features: the test builds below set cfg(test),
+        # which hides an item that is gated on the `testing` feature and re-exported without that gate
+        "$cargo" check --locked -p puddle -p puddle-api -p puddle-services
         "$cargo" test --locked -p puddle --test dormant
         # the advice (doctor findings, the vault warning) names no command this build refuses
         "$cargo" test --locked -p puddle-doctor --test snapshots the_no_desktop_advice_names_the_serve_command_only_when_it_is_built_in
@@ -321,7 +352,11 @@ run_gate() {
         "$cargo" test --locked --doc --workspace $skip_app --no-fail-fast
         # the fake-host and HTTP suites are the integration tests that exercise the layer; the
         # others of the workspace need a VM (vm_*) or a UI build
-        "$cargo" test --locked -p puddle-host --test fake_host
+        # The churn tests count the descriptors and threads of their whole process, so each runs
+        # alone, as under nextest (one process per test): beside 340 parallel tests in one
+        # process their counts drift by hundreds and the run fails without a leak.
+        "$cargo" test --locked -p puddle-host --test fake_host -- --skip churn::
+        "$cargo" test --locked -p puddle-host --test fake_host -- churn:: --test-threads=1
         "$cargo" test --locked -p puddle-api --test api_http
         "$cargo" test --locked -p puddle --test cli --test serve_config
         "$cargo" test --locked -p puddle-settings --test properties
@@ -382,6 +417,7 @@ run_gate() {
         # The committed API contract (openapi.json, schema.d.ts) matches the routes (ADR 0004).
         # The TypeScript half needs Node; without it locally the gate says so and checks the JSON
         # only. In CI (CI set) a missing Node fails.
+        scripts/check-wire-docs.sh --self-test && scripts/check-wire-docs.sh
         "$cargo" run --quiet --locked -p xtask -- openapi --check
         ;;
     ui)
@@ -443,6 +479,8 @@ run_gate() {
     rustdoc)
         # The doc build with every rustdoc warning an error (a public item whose docs link to a private one, a broken intra-doc link). It is
         # its own gate so the cheap half of `doc` runs where the doc tests do not: the pre-flight and the medium pre-check tier.
+        # A doc comment on a wire type is also part of the API contract: say `cargo xtask openapi` before the build, not after the tests.
+        scripts/check-wire-docs.sh
         # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
         RUSTDOCFLAGS="-D warnings" "$cargo" doc --workspace $skip_app --no-deps --all-features --locked
         ;;
@@ -459,12 +497,16 @@ run_gate() {
         ui_install
         target=${CARGO_TARGET_DIR:-target}
         coverage_unlock "$target"
+        # The totals count the crates compiled into the shipped binaries only; the check fails first when a
+        # workspace crate is neither (scripts/coverage-crates.txt). The lcov report stays whole: the diff gate reads it.
+        python3 -I scripts/coverage-crates.py --self-test
+        totals_ignore=$(CARGO="$plain_cargo" python3 -I scripts/coverage-crates.py)
         # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
         scripts/coverage-run.sh "$plain_cargo" --workspace $skip_app --all-features --locked \
             --profile "${NEXTEST_PROFILE:-default}"
         "$plain_cargo" llvm-cov report --lcov --output-path "$target/lcov.info"
-        "$plain_cargo" llvm-cov report --summary-only
-        "$plain_cargo" llvm-cov report --json --summary-only --output-path "$target/coverage-summary.json"
+        "$plain_cargo" llvm-cov report --summary-only --ignore-filename-regex "$totals_ignore"
+        "$plain_cargo" llvm-cov report --json --summary-only --ignore-filename-regex "$totals_ignore" --output-path "$target/coverage-summary.json"
         ratchet="--summary $target/coverage-summary.json --baseline scripts/coverage-baseline.json"
         ratchet="$ratchet --floor-lines $COV_LINES --floor-regions $COV_REGIONS"
         [ -n "${CI:-}" ] || ratchet="$ratchet --write"

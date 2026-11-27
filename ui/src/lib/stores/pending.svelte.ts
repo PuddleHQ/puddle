@@ -120,6 +120,8 @@ export class PendingStore {
   rows = $state.raw<Row[]>([]);
   /** The most open requests the service lists per workspace (R-45); a workspace at it has a full list. */
   openLimit = $state(Number.POSITIVE_INFINITY);
+  /** Connections a rule allowed since the start of the UTC day; the service counts in memory, so a restart resets it. */
+  allowedToday = $state(0);
   decided = $state.raw<Decided[]>([]);
   status = $state<Status>("loading");
   /** Why the last read of the inbox failed; `null` once a read works. */
@@ -203,6 +205,7 @@ export class PendingStore {
       }
       this.loadError = null;
       this.openLimit = data.open_limit;
+      this.allowedToday = data.allowed_today;
       const rows: Row[] = data.groups.flatMap((g) =>
         g.requests
           .filter((request) => !this.#decidedMeanwhile.includes(request.id))

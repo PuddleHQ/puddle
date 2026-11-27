@@ -322,7 +322,7 @@ impl ProxyAuth for NtlmAuth {
         Ok(offered
             .iter()
             .any(|s| s.eq_ignore_ascii_case("ntlm"))
-            .then(|| Box::new(NtlmSession) as Box<dyn AuthSession>))
+            .then(|| -> Box<dyn AuthSession> { Box::new(NtlmSession) }))
     }
 }
 
@@ -385,7 +385,7 @@ impl ProxyAuth for PreemptiveNtlm {
     ) -> Result<Option<Box<dyn AuthSession>>, AuthError> {
         Ok(
             (offered.is_empty() || offered.iter().any(|s| s.eq_ignore_ascii_case("ntlm")))
-                .then(|| Box::new(PreemptiveNtlmSession::default()) as Box<dyn AuthSession>),
+                .then(|| -> Box<dyn AuthSession> { Box::new(PreemptiveNtlmSession::default()) }),
         )
     }
 }
@@ -716,7 +716,7 @@ impl ProxyAuth for PreemptiveNegotiate {
     ) -> Result<Option<Box<dyn AuthSession>>, AuthError> {
         Ok(
             (offered.is_empty() || offered.iter().any(|s| s.eq_ignore_ascii_case("negotiate")))
-                .then(|| Box::new(NegotiateSession) as Box<dyn AuthSession>),
+                .then(|| -> Box<dyn AuthSession> { Box::new(NegotiateSession) }),
         )
     }
 }
@@ -948,11 +948,8 @@ async fn the_auth_is_told_once_per_new_epoch_before_its_first_connection() {
     let echo = start_echo().await;
     let flip = Flippable::new(vec![Hop::Direct]);
     let counter = Arc::new(CountsChanges::default());
-    let chain = Chain::with_config(
-        Arc::clone(&flip.discovery),
-        Arc::clone(&counter) as Arc<dyn ProxyAuth>,
-        fast(),
-    );
+    let counter_dyn: Arc<dyn ProxyAuth> = counter.clone();
+    let chain = Chain::with_config(Arc::clone(&flip.discovery), counter_dyn, fast());
     let dest = https("a.test");
     let checked = [echo.addr];
     let connect = || async {

@@ -5,6 +5,7 @@
   import DuckMark from "#lib/components/DuckMark.svelte";
   import Check from "@lucide/svelte/icons/check";
   import { APP_NAME } from "#lib/nav.ts";
+  import { firstRun } from "#lib/stores/first-run.svelte.ts";
   import { credentialStore } from "#lib/stores/credential-store.svelte.ts";
   import { STEPS, stepFor } from "#lib/welcome/steps.ts";
 
@@ -18,6 +19,12 @@
   );
   // The system check is also reached from Settings, outside the flow: no step bar there.
   const inFlow = $derived(page.url.searchParams.get("from") !== "settings");
+
+  // Puddle keeps the step the person is on, so leaving and reopening the app resumes there.
+  $effect(() => {
+    const step = stepFor(page.url.pathname);
+    if (inFlow && step) void firstRun.recordStep(step.id);
+  });
 </script>
 
 <!-- The duck and the step list stand where the app's sidebar will be, so the first run already

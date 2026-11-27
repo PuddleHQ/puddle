@@ -11,13 +11,15 @@ use puddle_store::{Actor, NewRequestRule, Precedence};
 use puddle_types::{Methods, PathPattern, WorkspaceId};
 use serde::Deserialize;
 
-use crate::ApiErrorBody;
 use crate::authz::{self, Principal};
-use crate::error::{ApiError, blocking};
 use crate::extract::{Path, Query};
 use crate::routes::AppState;
 use crate::routes::interception::pattern;
-use crate::wire::{NewRequestRuleRequest, RequestRule, RequestRuleList, RuleEnabledRequest};
+use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, blocking};
+use puddle_services::wire::{
+    NewRequestRuleRequest, RequestRule, RequestRuleList, RuleEnabledRequest,
+};
 
 /// Which rules to list.
 #[derive(Debug, Deserialize)]

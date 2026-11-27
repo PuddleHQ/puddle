@@ -102,8 +102,10 @@
           type="submit"
           class="btn primary"
           aria-label="Save {label}"
-          disabled={!parsed.ok || busy}>Save</button
+          disabled={!parsed.ok || busy}
         >
+          Save
+        </button>
       {/if}
     </form>
     {#if problem}<p class="problem" id="{id}-problem" role="alert">
@@ -111,16 +113,19 @@
       </p>{/if}
   </td>
   <td class="from">
-    {#if source !== "default"}<span class="chip">{sourceLabel(source)}</span
-      >{/if}
+    {#if source !== "default"}<span class="chip">
+        {sourceLabel(source)}
+      </span>{/if}
     {#if source === "workspace"}
       <button
         type="button"
         class="reset"
         disabled={busy}
         aria-label="Use the global setting again for {label}"
-        onclick={() => void reset()}>Use the global setting</button
+        onclick={() => void reset()}
       >
+        Use the global setting
+      </button>
     {/if}
   </td>
 </tr>

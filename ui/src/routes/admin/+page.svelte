@@ -144,9 +144,9 @@
   <div role="status">
     <p class="muted">Couldn't read the admin data.</p>
     {#if store.reason}<p class="error">{store.reason}</p>{/if}
-    <button type="button" class="btn" onclick={() => void store.load()}
-      >Try again</button
-    >
+    <button type="button" class="btn" onclick={() => void store.load()}>
+      Try again
+    </button>
   </div>
 {:else}
   {#if alone}
@@ -160,8 +160,9 @@
         class="btn"
         aria-expanded={showMore}
         onclick={() => (showMore = !showMore)}
-        >{showMore ? "Hide server details" : "Show server details"}</button
       >
+        {showMore ? "Hide server details" : "Show server details"}
+      </button>
     </div>
   {/if}
   {#if store.stats && details}
@@ -250,14 +251,18 @@
                 type="button"
                 class="btn"
                 aria-label="{inviteLabel(user)} for {user.name}"
-                onclick={() => reissue(user)}>{inviteLabel(user)}</button
+                onclick={() => reissue(user)}
               >
+                {inviteLabel(user)}
+              </button>
               <button
                 type="button"
                 class="btn deny"
                 aria-label="Delete {user.name}"
-                onclick={() => askDelete(user)}>Delete</button
+                onclick={() => askDelete(user)}
               >
+                Delete
+              </button>
             </div>
           {/if}
         </li>
@@ -282,9 +287,9 @@
           {#each store.audit as line, i (i)}
             <li>
               {auditText(line)}
-              <span class="muted" title={absoluteTime(line.at)}
-                >{relativeTime(line.at, Date.now())}</span
-              >
+              <span class="muted" title={absoluteTime(line.at)}>
+                {relativeTime(line.at, Date.now())}
+              </span>
             </li>
           {/each}
         </ul>

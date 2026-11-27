@@ -12,6 +12,7 @@
   } from "#lib/decision/model.ts";
   import AllowDenyPair from "./AllowDenyPair.svelte";
   import SetChip from "./SetChip.svelte";
+  import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import "#lib/theme/controls.css";
 
   /** Under this window width the buttons sit under the host and the box opens below them. */
@@ -124,7 +125,9 @@
             value="workspace"
             bind:group={who}
           />
-          <span class="text">Only <b class="mono">{workspace}</b></span>
+          <span class="text">
+            Only <b>{workspaces.spokenLabelOf(workspace)}</b>
+          </span>
         </label>
         <label>
           <input
@@ -133,9 +136,9 @@
             value="global"
             bind:group={who}
           />
-          <span class="text"
-            >Every workspace <span class="hint">(asks to confirm)</span></span
-          >
+          <span class="text">
+            Every workspace <span class="hint">(asks to confirm)</span>
+          </span>
         </label>
         {#each sets as set (set.id)}
           <label>
@@ -145,12 +148,13 @@
               value="set:{set.id}"
               bind:group={who}
             />
-            <span class="text"
-              >Into rule set
+            <span class="text">
+              Into rule set
               <b><SetChip name={set.name} fill={set.fill} /></b>
-              {#if set.everywhere}<span class="hint">(on everywhere; asks)</span
-                >{/if}</span
-            >
+              {#if set.everywhere}<span class="hint">
+                  (on everywhere; asks)
+                </span>{/if}
+            </span>
           </label>
         {/each}
       </fieldset>
@@ -173,10 +177,10 @@
               value="suffix"
               bind:group={match}
             />
-            <span class="text"
-              >Everything under
-              <span class="mono">{suffix.slice(1)}</span></span
-            >
+            <span class="text">
+              Everything under
+              <span class="mono">{suffix.slice(1)}</span>
+            </span>
           </label>
         {/if}
       </fieldset>

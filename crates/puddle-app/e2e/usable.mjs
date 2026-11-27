@@ -201,6 +201,8 @@ if (company) {
 // installed app one, which the Terminal tab's rendering check reads (terminal-render.mjs). The value is
 // removed at the end.
 const DEBUG_PORT = 9223;
+// With no start folder and one repository, a new terminal starts in that repository (the lab repository is cloned as app).
+const REPO_FOLDER = "/workspace/app";
 try {
   debugPortPolicy(DEBUG_PORT);
 } catch (err) {
@@ -457,14 +459,21 @@ async function firstRunToCreateForm() {
 
 /** Fills the New workspace form as a person does and presses Create. */
 async function createFromTheForm() {
-  // The empty list offers a one-line form; More options opens the full New workspace dialog.
-  await uia.click("More options", inMain("button", "More options"));
-  await uia.waitFor("the New workspace dialog", { window: MAIN, localized: "dialog", name: "New workspace" });
+  // The empty list shows the whole New workspace form under the page's heading.
+  await uia.waitFor("the New workspace form", { window: MAIN, localized: "heading", name: "New workspace" });
   await uia.fill("the repository address", { window: MAIN, role: "edit", nameRegex: "^Git repository \\(HTTPS" }, httpsUrl);
   await uia.fill("the name", { window: MAIN, role: "edit", name: "Name" }, WORKSPACE);
-  // Enter in the Name field submits the dialog's form: two buttons are called "Create workspace" (the Workspaces
-  // page's own one-line form sits behind the dialog), and a click by name may reach that one.
+  // Enter in the Name field submits the form. Real key presses go to the foreground window, so a key
+  // that a passing window or the app's own redraw swallowed leaves the form as it was (the app then
+  // logs no create at all). So the result is read from the list, and the Create button, which
+  // UI Automation presses without any focus, is the fallback.
   await uia.type("the Name field", { window: MAIN, role: "edit", name: "Name" }, "", { enter: true });
+  const listed = () => api("GET", "/api/workspaces").then((r) => r.json?.workspaces?.find((w) => w.name === WORKSPACE));
+  const first = await until("the workspace to be listed after Enter", listed, 10_000, 500).catch(() => undefined);
+  if (first) return first;
+  note(`Enter did not make the workspace in 10 s; the window: ${JSON.stringify(mainWindow()).slice(0, 300)}; pressing Create instead`);
+  await uia.click("Create workspace", inMain("button", "Create workspace"), 15_000).catch((err) => note(`the Create button was not pressable: ${err.message}`));
+  return until("the workspace to be listed after pressing Create", listed, 60_000, 1000);
 }
 
 /**
@@ -858,8 +867,7 @@ try {
 
   // 2. The real create, through the window: the first-run steps, then the New workspace form.
   await step("the first-run steps lead to the first workspace's form", firstRunToCreateForm);
-  await step("the New workspace form is filled and sent", createFromTheForm);
-  const created = await until("the workspace to be listed", async () => (await api("GET", "/api/workspaces")).json?.workspaces?.find((w) => w.name === WORKSPACE), 60_000, 1000);
+  const created = await step("the New workspace form is filled and sent", createFromTheForm);
   const id = created.id;
   note(`workspace ${WORKSPACE} has the id ${id}`);
   let started = false;
@@ -882,7 +890,7 @@ try {
   check("a workspace made from the lab forge's private repository is running", running.status === "running", `${running.status}, image ${running.image}`);
   // The create allowed the forge itself before the first clone, so nobody approves it and nobody
   // clones again: the checkout is there and the rule says who made it.
-  const checkout = `/workspace/app/package.json`;
+  const checkout = `${REPO_FOLDER}/package.json`;
   const rules = (await api("GET", "/api/rules")).json?.rules ?? [];
   const grant = rules.find((r) => r.pattern === forge && r.effect === "allow" && r.scope?.type === "workspace" && r.scope.workspace === id);
   check("the create made an allow rule for the forge, marked as made by the create", grant?.created_by === "workspace_create", JSON.stringify(grant ?? rules));
@@ -987,7 +995,7 @@ try {
   if (!company) {
     const listed = (await api("GET", "/api/workspaces")).json?.workspaces?.find((w) => w.id === id);
     const phase = (what, run) => run().catch((err) => check(`${what} ran to the end`, false, String(err?.message ?? err)));
-    await phase("the Terminal tab", () => terminalTab(listed?.start_folder ?? "/workspace"));
+    await phase("the Terminal tab", () => terminalTab(listed?.start_folder ?? REPO_FOLDER));
     await phase("the close button", () => closeToTray(id));
     await phase("the request notifications", () => requestNotifications(id));
     await phase("the Activity export", exportActivity);

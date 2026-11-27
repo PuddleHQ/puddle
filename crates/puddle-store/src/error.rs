@@ -58,6 +58,12 @@ pub enum StoreError {
         /// Its current state.
         state: PendingState,
     },
+    /// An allow for a row that only an exact allow decides came as a suffix or into a rule set
+    /// (R-16).
+    #[error(
+        "pending request {0} needs an exact allow: a suffix or rule set allow would not admit it"
+    )]
+    ExactAllowOnly(PendingId),
     /// No rule has this id.
     #[error("no rule {0}")]
     UnknownRule(RuleId),

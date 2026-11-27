@@ -2,13 +2,13 @@
 //! What the store does when SQLite fails in the middle of a change: the error comes back as it is
 //! and the change leaves nothing behind.
 
-use puddle_types::{ConnectionDecision, ConnectionReason, PatternKind, RuleSetId};
+use puddle_types::{ConnectionDecision, ConnectionReason, Host, PatternKind, RuleSetId};
 
 use puddle_types::{ConnectionEvent, ConnectionLog};
 
 use super::*;
 use crate::clock::ManualClock;
-use crate::rule::Effect;
+use crate::rule::{Effect, Precedence, RuleEdit};
 use crate::test_support::Logs;
 
 const DISK_FULL: &str = "database error: disk full";
@@ -493,21 +493,67 @@ fn waiting_records_stay_unmerged_when_their_summary_cannot_be_written() {
     assert_eq!(store.sweep().unwrap().waiting_records_merged, 2);
 }
 
-#[test]
-fn an_audit_prune_whose_record_cannot_be_written_still_pruned() {
+/// A store whose oldest audit record is two days old and whose retention is one day, with a
+/// newer record that stays, so a prune has something to delete and something to keep.
+fn store_with_one_old_record_and_one_new() -> (Arc<ManualClock>, Store) {
     let (clock, store) = store_with(Limits::default());
     store.set_audit_retention_days(1).unwrap();
     store
         .as_user(UserId::OWNER)
-        .add_rule(&workspace_rule("x.example"))
+        .add_rule(&workspace_rule("old.example"))
         .unwrap();
     clock.advance(2 * 24 * 60 * 60 * 1000);
+    store
+        .as_user(UserId::OWNER)
+        .add_rule(&workspace_rule("new.example"))
+        .unwrap();
+    (clock, store)
+}
+
+#[test]
+fn an_audit_prune_whose_record_cannot_be_written_deletes_nothing() {
+    let (_, store) = store_with_one_old_record_and_one_new();
+    let before = audit_kinds(&store);
     store.fail_audit_writes("audit_trimmed");
 
     let err = store.sweep().unwrap_err();
 
     assert_eq!(err.to_string(), DISK_FULL);
-    assert_eq!(store.audit_bytes().unwrap(), 0);
+    assert_eq!(audit_kinds(&store), before, "no record deleted unrecorded");
+    store.audit_writes_work_again();
+    assert_eq!(store.sweep().unwrap().audit_records_pruned, 1);
+    assert_eq!(
+        audit_kinds(&store),
+        ["rule_created", "audit_trimmed"],
+        "the delete and its record came together"
+    );
+}
+
+#[test]
+fn a_failing_sweep_step_does_not_starve_the_prune_and_keeps_its_error() {
+    let (clock, store) = store_with(Limits {
+        max_waiting_connection_records: 1,
+        ..Limits::default()
+    });
+    store.set_audit_retention_days(1).unwrap();
+    store
+        .as_user(UserId::OWNER)
+        .add_rule(&workspace_rule("old.example"))
+        .unwrap();
+    clock.advance(2 * 24 * 60 * 60 * 1000);
+    for host in ["a.example", "b.example", "c.example"] {
+        store.record_connection(&waiting_event(host)).unwrap();
+    }
+    store.fail_audit_writes("connection");
+
+    let err = store.sweep().unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL, "the merge's error comes back");
+    assert_eq!(
+        audit_kinds(&store),
+        ["connection", "connection", "connection", "audit_trimmed"],
+        "the prune ran although the merge before it failed"
+    );
 }
 
 #[test]

@@ -16,13 +16,13 @@
     clippy::print_stderr,
     reason = "VM test: a failed step fails the test; measurements go to stderr"
 )]
-#![allow(
+#![expect(
     clippy::indexing_slicing,
     reason = "VM test: JSON read from the API, a missing key fails the test"
 )]
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -103,18 +103,20 @@ fn vm_root_var() -> &'static str {
     puddle_vm_tests::ROOT_VAR
 }
 
-/// The free space of the file system that holds `dir`, in MiB, read the way an operator would.
+/// The free space of the file system that holds `dir`, in whole MiB (rounded down, as the host's
+/// own figure is), read the way an operator would.
 fn free_mib(dir: &Path) -> u64 {
     let out = Command::new("df")
-        .args(["--output=avail", "-B1M"])
+        .args(["--output=avail", "-B1"])
         .arg(dir)
         .output()
         .unwrap();
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .nth(1)
-        .and_then(|l| l.trim().parse().ok())
-        .expect("df prints the free MiB")
+        .and_then(|l| l.trim().parse::<u64>().ok())
+        .map(|bytes| bytes / (1024 * 1024))
+        .expect("df prints the free bytes")
 }
 
 /// Takes space with a file of its own until `leave_mib` are left. Returns the file.
@@ -193,7 +195,10 @@ fn vm_full_host_disk_stops_guest_writes_without_harming_other_files_and_recovers
 #[expect(clippy::too_many_lines, reason = "one story, read top to bottom")]
 async fn host_disk_fills_and_recovers(mount: PathBuf) {
     let net = github_internet(support::named_id_options()).await;
-    let vm = start_vm_host_platform("fulh", net.options.clone(), &net.platform, |c| {
+    // Hermetic options fake the free space at 512 GiB; this test is about the real drive.
+    let mut options = net.options.clone();
+    options.free_space = None;
+    let vm = start_vm_host_platform("fulh", options, &net.platform, |c| {
         quick_reads(c);
         c.workspaces.default_size = DiskSize::gib(3);
     })
@@ -207,7 +212,7 @@ async fn host_disk_fills_and_recovers(mount: PathBuf) {
         200
     );
     let (workspace, name, mut events) = running_workspace(&vm, &api, "fulh").await;
-    let dir = format!("/workspaces/{name}");
+    let dir = puddle_workspace::WORKSPACE_DIR;
 
     // Files that must come through the full disk unchanged.
     guest_ok(
@@ -300,7 +305,16 @@ async fn host_disk_fills_and_recovers(mount: PathBuf) {
     );
 
     // Freeing the space: the notice clears, the workspace starts, git is whole, the files are too.
+    // Removing the outside fill is not enough: the half-written `big.bin` still holds up to 1.5 GiB
+    // of the host's disk (the image is sparse and a guest `rm` gives nothing back by itself), so
+    // the free space can stay under the 5 GB warning line. The guest deletes it and trims.
     std::fs::remove_file(&fill).unwrap();
+    guest_ok(
+        &vm,
+        &workspace,
+        &format!("rm -f {dir}/big.bin && sync && fstrim {dir}"),
+    )
+    .await;
     events
         .until(disk_space("ok"), Duration::from_secs(60))
         .await;
@@ -317,7 +331,7 @@ async fn host_disk_fills_and_recovers(mount: PathBuf) {
         &vm,
         &workspace,
         &format!(
-            "cd {dir} && rm -f big.bin && git -c safe.directory='*' -C Hello-World fsck --full 2>&1 && sha256sum -c keep.sha 2>&1 && echo whole"
+            "cd {dir} && git -c safe.directory='*' -C Hello-World fsck --full 2>&1 && sha256sum -c keep.sha 2>&1 && echo whole"
         ),
     )
     .await;
@@ -344,7 +358,7 @@ async fn volume_and_root_fill() {
     .await;
     let api = Api::new(vm.host.url(), vm.host.token());
     let (workspace, name, mut events) = running_workspace(&vm, &api, "fulv").await;
-    let dir = format!("/workspaces/{name}");
+    let dir = puddle_workspace::WORKSPACE_DIR;
     let one = || async {
         let list = api.get("/api/workspaces").await.json();
         list["workspaces"]

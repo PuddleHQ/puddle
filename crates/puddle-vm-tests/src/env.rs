@@ -302,7 +302,7 @@ impl VmEnv {
                     && sandbox.stop_with_timeout(STOP_TIMEOUT).await.is_err()
                     && let Err(e) = sandbox.kill().await
                 {
-                    first_error.get_or_insert(HarnessError::from(e));
+                    first_error.get_or_insert_with(|| HarnessError::from(e));
                 }
                 keep_logs(
                     &self.sandboxes_dir.join(&name).join(MSB_LOGS_DIR),
@@ -311,7 +311,7 @@ impl VmEnv {
                 match Sandbox::remove(&name).await {
                     Ok(()) => removed.push(name),
                     Err(e) => {
-                        first_error.get_or_insert(HarnessError::from(e));
+                        first_error.get_or_insert_with(|| HarnessError::from(e));
                     }
                 }
             }

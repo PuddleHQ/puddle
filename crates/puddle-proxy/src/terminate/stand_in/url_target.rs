@@ -167,7 +167,7 @@ fn swap_query(
         let value = new
             .as_deref()
             .map(Vec::as_slice)
-            .or(param.value.map(str::as_bytes));
+            .or_else(|| param.value.map(str::as_bytes));
         if let Some(value) = value {
             out.push(b'=');
             out.extend_from_slice(value);

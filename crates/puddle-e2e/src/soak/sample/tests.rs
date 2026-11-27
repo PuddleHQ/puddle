@@ -202,33 +202,31 @@ async fn scripted(
 }
 
 #[tokio::test]
-async fn keep_alive_comments_are_not_events_and_data_lines_are() {
-    let (addr, _) = scripted(
-        "HTTP/1.0 200 OK\r\n\r\n: keep-alive\n\n",
-        Duration::from_secs(30),
-    )
-    .await;
+async fn a_keep_alive_comment_and_a_data_line_each_show_the_stream_is_alive() {
+    let (addr, _) = scripted("HTTP/1.0 200 OK\r\n\r\n", Duration::from_secs(30)).await;
     let state = SseState::new();
     let task = tokio::spawn(read_events(target(addr), state.clone()));
-    // an absence window: a comment line must not reset the age over 400 ms
+    // an absence window: a stream that sends nothing must not reset the age over 400 ms
     tokio::time::sleep(Duration::from_millis(400)).await;
     let (age, reconnects) = state.read();
-    assert!(age >= 0.4, "a comment must not reset the age: {age}");
+    assert!(age >= 0.4, "a silent stream must not reset the age: {age}");
     assert_eq!(reconnects, 0);
     task.abort();
 
-    let (addr, _) = scripted(
-        "HTTP/1.0 200 OK\r\n\r\n: keep-alive\n\n<pause>data: {}\n\n",
-        Duration::from_secs(30),
-    )
-    .await;
-    let state = SseState::new();
-    let task = tokio::spawn(read_events(target(addr), state.clone()));
-    // the data line arrives at 300 ms; the age is read 150 ms after it
-    tokio::time::sleep(Duration::from_millis(450)).await;
-    let age = state.read().0;
-    assert!(age < 0.3, "the data line at 300 ms resets the age: {age}");
-    task.abort();
+    // flake-ok: one fixed sleep per scripted stream, an absence/age window; no condition is polled
+    for script in [
+        "HTTP/1.0 200 OK\r\n\r\n<pause>: keep-alive\n\n",
+        "HTTP/1.0 200 OK\r\n\r\n<pause>data: {}\n\n",
+    ] {
+        let (addr, _) = scripted(script, Duration::from_secs(30)).await;
+        let state = SseState::new();
+        let task = tokio::spawn(read_events(target(addr), state.clone()));
+        // the line arrives at 300 ms; the age is read 150 ms after it
+        tokio::time::sleep(Duration::from_millis(450)).await;
+        let age = state.read().0;
+        assert!(age < 0.3, "{script:?} at 300 ms resets the age: {age}");
+        task.abort();
+    }
 }
 
 #[tokio::test]
@@ -470,4 +468,110 @@ async fn only_the_processes_of_the_runs_own_tree_are_measured() {
         rss(&all)
     );
     assert_eq!(rss(&mine), [format!("proc.sleep.{}.rss_kb", ours.id())]);
+}
+
+#[cfg(windows)]
+#[test]
+fn the_handle_count_follows_the_handles_a_process_opens() {
+    let me = std::process::id();
+    let (_, before) = winhost::native::process(me).unwrap();
+    let exe = std::env::current_exe().unwrap();
+    let held: Vec<_> = (0..100)
+        .map(|_| std::fs::File::open(&exe).unwrap())
+        .collect();
+    let (_, during) = winhost::native::process(me).unwrap();
+    assert!(
+        during >= before + 100.0,
+        "100 more open files, handles {before} -> {during}"
+    );
+    drop(held);
+    let (_, after) = winhost::native::process(me).unwrap();
+    assert!(after < during, "closed again, handles {during} -> {after}");
+}
+
+#[cfg(windows)]
+#[test]
+fn the_machine_has_a_commit_charge_below_its_limit() {
+    let mem = winhost::native::memory().unwrap();
+    let readings = mem.readings();
+    let get = |name: &str| readings.iter().find(|(n, _)| *n == name).map(|&(_, v)| v);
+    let (charge, limit) = (get("commit_kb").unwrap(), get("commit_limit_kb").unwrap());
+    assert!(charge > 0.0 && charge < limit, "charge {charge} of {limit}");
+    assert!(get("free_ram_kb").unwrap() > 0.0);
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn a_windows_sample_holds_handles_threads_commit_and_free_ram_for_the_run_tree() {
+    let dead = Target {
+        addr: "127.0.0.1:1".to_owned(),
+        token: None,
+    };
+    let exe = std::env::current_exe().unwrap();
+    let me = winhost::comm(exe.file_name().unwrap().to_str().unwrap());
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = Config {
+        api: dead,
+        w4: None,
+        process_prefixes: vec![format!("{me}$")],
+        db: None,
+        files: Vec::new(),
+        disk: Some(dir.path().to_owned()),
+    };
+    let mut sampler = Sampler::start(cfg, || 7);
+    sampler.only_below(Some(std::process::id()));
+    let mut s = Series::default();
+    sampler.sample(100, &mut s).await;
+    let pid = std::process::id();
+    for field in ["rss_kb", "threads", "handles"] {
+        let metric = format!("proc.{me}.{pid}.{field}");
+        assert!(
+            s.points(&metric).first().is_some_and(|p| p.1 > 0.0),
+            "{metric} missing"
+        );
+    }
+    for m in [
+        "host.free_ram_kb",
+        "host.commit_kb",
+        "host.commit_limit_kb",
+        "host.free_disk_kb",
+    ] {
+        assert!(
+            s.points(m).first().is_some_and(|p| p.1 > 0.0),
+            "{m} missing"
+        );
+    }
+}
+
+#[test]
+fn requests_during_a_planned_restart_are_not_counted() {
+    let mut w = W4Window::default();
+    w.record(10, true);
+    w.pause(true);
+    w.record(20, false);
+    w.record(30, false);
+    w.pause(false);
+    w.record(40, true);
+    assert_eq!(w.fail_share(50, 300), Some(0.0));
+}
+
+#[tokio::test]
+async fn the_recovery_time_is_the_time_the_app_takes_to_answer_and_none_past_the_bound() {
+    let up = serve(Router::new().route("/", get_route(|| async { "ok" }))).await;
+    let took = time_to_answer(
+        &target(up),
+        "/",
+        Duration::from_secs(5),
+        Duration::from_millis(10),
+    )
+    .await;
+    assert!(took.is_some(), "{took:?}");
+    let never = time_to_answer(
+        &target(up),
+        "/missing",
+        Duration::from_millis(100),
+        Duration::from_millis(10),
+    )
+    .await;
+    assert_eq!(never, None);
 }

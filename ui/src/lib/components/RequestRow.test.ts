@@ -46,6 +46,27 @@ describe("RequestRow", () => {
     expect(li).not.toHaveTextContent("attempt");
   });
 
+  it("names the program that asked next to the workspace, as text", () => {
+    mount({}, request(1, { attempts: 3, program: "pip" }));
+    expect(screen.getByRole("listitem")).toHaveTextContent(
+      /demo \(pip\) · 3 tries/,
+    );
+  });
+
+  it("shows a guest-supplied program as text, never as markup", () => {
+    mount({}, request(1, { program: "<img src=x onerror=alert(1)>" }));
+    const li = screen.getByRole("listitem");
+    expect(li.querySelector("img")).toBeNull();
+    expect(li).toHaveTextContent("(<img src=x onerror=alert(1)>)");
+  });
+
+  it("shows no program text when none is known", () => {
+    mount({}, request(1, { attempts: 3, program: null }));
+    const li = screen.getByRole("listitem");
+    expect(li.querySelector(".program")).toBeNull();
+    expect(li).toHaveTextContent(/demo · 3 tries/);
+  });
+
   it("adds when it first asked only when that differs from the last time", () => {
     mount(
       {},

@@ -255,10 +255,14 @@ impl StreamHandle {
 
     fn handle_window_update(&mut self, frame: &Frame) -> Result<(), Error> {
         self.process_flags(frame.flags())?;
+        // puddle: the peer's grant is capped at the window this side itself allows a stream. A
+        // peer that grants gigabytes and never reads would otherwise let the writer queue them all
+        // in the session's unbounded channel.
         self.send_window = self
             .send_window
             .checked_add(frame.length())
-            .ok_or(Error::InvalidMsgType)?;
+            .ok_or(Error::InvalidMsgType)?
+            .min(self.max_recv_window);
         // wake writer continue
         self.wakers.write.wake();
         Ok(())
@@ -299,7 +303,10 @@ impl StreamHandle {
             }
 
             let mut cx = Context::from_waker(&self.channel_waker);
-            match Pin::new(&mut self.frame_receiver).as_mut().poll_next(&mut cx) {
+            match Pin::new(&mut self.frame_receiver)
+                .as_mut()
+                .poll_next(&mut cx)
+            {
                 Poll::Ready(Some(frame)) => {
                     self.handle_frame(frame)?;
                     has_new_frame = true;

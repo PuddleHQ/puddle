@@ -144,3 +144,17 @@ fn a_root_folder_that_is_not_ours_alone_is_refused() {
     // A missing one is made 0700, and an existing 0700 one is reused.
     crate::IpcRoot::stable_in(parent.path(), state.path()).unwrap();
 }
+
+#[test]
+fn a_stable_root_sits_in_the_data_folder_not_in_the_launch_environment() {
+    // The same data folder must give the same socket path whether or not `XDG_RUNTIME_DIR` is
+    // set (a desktop session, ssh, sudo and cron differ), or sandboxes are made again.
+    let state = tempfile::tempdir().unwrap();
+    let root = crate::IpcRoot::stable(state.path()).unwrap();
+    let path = root.endpoint_named("acme").unwrap();
+    assert!(
+        path.path().starts_with(state.path()),
+        "{}",
+        path.path().display()
+    );
+}

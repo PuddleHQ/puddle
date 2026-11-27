@@ -177,19 +177,19 @@ test("a fresh install is led through every step and then opens on the workspaces
     page.getByRole("radio", { name: /Built-in VS Code server/ }),
   ).toBeChecked();
   const directSsh = page.getByRole("checkbox", {
-    name: /Allow direct SSH for new workspaces/,
+    name: /Allow direct SSH by default/,
   });
   await expect(directSsh).not.toBeChecked();
   await directSsh.click();
   const trust = page.getByRole("alertdialog", {
-    name: "Allow direct SSH for new workspaces?",
+    name: "Allow direct SSH by default?",
   });
   await expect(trust).toBeVisible();
   await expect(directSsh).not.toBeChecked();
   const saved = page.waitForResponse(
     (r) => r.request().method() === "PUT" && r.url().endsWith("/api/settings"),
   );
-  await trust.getByRole("button", { name: "Allow for new workspaces" }).click();
+  await trust.getByRole("button", { name: "Allow by default" }).click();
   await saved;
   await expect(directSsh).toBeChecked();
   const settings = (await (
@@ -323,8 +323,9 @@ test("a blocking finding stops the flow until it is fixed, and the report can be
   await page.getByRole("link", { name: "Leave setup for now" }).click();
   await expect(page).toHaveURL(/\/workspaces$/);
   expect((await firstRun(request, backend)).completed).toBe(false);
+  // Reopening the setup resumes on the step that was left.
   await page.goto("/");
-  await expect(page).toHaveURL(/\/welcome$/);
+  await expect(page).toHaveURL(/\/welcome\/check$/);
 });
 
 test("skipping the setup ends it for good", async ({
@@ -335,6 +336,10 @@ test("skipping the setup ends it for good", async ({
   await freshInstall(page, backend);
   await page.goto("/");
   await page.getByRole("button", { name: "Skip setup" }).click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Skip setup" })
+    .click();
   await expect(page).toHaveURL(/\/workspaces$/);
   expect((await firstRun(request, backend)).completed).toBe(true);
   await page.goto("/");
@@ -354,9 +359,11 @@ test("the certificates step counts the company roots Puddle will add", async ({
   await backend.signIn(page);
   await page.goto("/welcome/certificates");
   await expect(
-    page.getByText("2 company root certificates found"),
+    page.getByText("2 root certificates copied from this computer"),
   ).toBeVisible();
-  await expect(page.getByText(/Added to every workspace/)).toBeVisible();
+  await expect(
+    page.getByText(/From this computer's trust store/),
+  ).toBeVisible();
 });
 
 test("Trust it now shows a no and a failure in words, and ends the offer after a yes", async ({

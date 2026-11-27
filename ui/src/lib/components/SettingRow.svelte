@@ -40,18 +40,16 @@
 
 <div class="row" class:stacked id={plain ? id : undefined}>
   <div class="text">
-    {#if plain}<span class="name">{label}</span>{:else}<label for={id}
-        >{label}</label
-      >{/if}
+    {#if plain}<span class="name">{label}</span>{:else}<label for={id}>
+        {label}
+      </label>{/if}
     {#if desc}<p class="desc" id="{id}-desc">{desc}</p>{/if}
     {#if restart}<p class="desc restart">{RESTART_NOTE}</p>{/if}
     {#if how}
       <details class="how">
-        <summary
-          >How this works<span class="visually-hidden">
-            for {label}</span
-          ></summary
-        >
+        <summary>
+          How this works<span class="visually-hidden"> for {label}</span>
+        </summary>
         <p>{how}</p>
       </details>
     {/if}
@@ -69,8 +67,9 @@
             type="button"
             class="undo"
             onclick={() => void saver?.undo(id)}
-            >Undo<span class="visually-hidden"> {label}</span></button
           >
+            Undo<span class="visually-hidden"> {label}</span>
+          </button>
         {/if}
       {/if}
     </div>
@@ -81,10 +80,14 @@
 </div>
 
 <style>
+  /* The words take what is left of the line, but never less than 16rem: a control too wide to fit
+     beside them drops below, instead of squeezing the words into a narrow column that grows tall
+     (a card in a half-width column, a wide select). */
   .row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: start;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
     gap: var(--space-2) var(--space-6);
     padding-block: var(--space-2);
     border-top: 1px solid var(--color-border-subtle);
@@ -93,13 +96,19 @@
     border-top: 0;
   }
   .row.stacked {
-    grid-template-columns: minmax(0, 1fr);
+    flex-direction: column;
+    align-items: stretch;
+    flex-wrap: nowrap;
+  }
+  .row.stacked .text {
+    flex: none;
   }
   .row.stacked .control {
     justify-items: start;
   }
   .text {
     display: grid;
+    flex: 1 1 16rem;
     gap: var(--space-1);
     min-width: 0;
   }
@@ -125,6 +134,7 @@
   }
   .control {
     display: grid;
+    max-width: 100%;
     justify-items: end;
     gap: var(--space-1);
     min-width: 0;
@@ -156,8 +166,8 @@
     cursor: pointer;
   }
   @media (max-width: 760px) {
-    .row {
-      grid-template-columns: minmax(0, 1fr);
+    .text {
+      flex-basis: 100%;
     }
     .control {
       justify-items: start;

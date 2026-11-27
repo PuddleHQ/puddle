@@ -4,11 +4,13 @@
 use std::sync::Arc;
 
 use puddle_agent_proto::editor::{EDITOR_DEFAULTS_GUEST, EditorDefaults, ServerKind};
-use puddle_api::{
-    Attached, BrowserTarget, DesktopTarget, EditorLogin, EditorSignIn, OpenTarget, WorkspaceRecord,
-};
 use puddle_boot::GatedSandbox;
 use puddle_compute::{ComputeError, Runtime};
+use puddle_services::{
+    workspaces::Attached, workspaces::BrowserTarget, workspaces::DesktopTarget,
+    workspaces::EditorLogin, workspaces::EditorSignIn, workspaces::OpenTarget,
+    workspaces::WorkspaceRecord,
+};
 use puddle_settings::{Effective, ReconnectionGrace, ServerChoice, resolve};
 use puddle_ssh::SshEndpoint;
 use puddle_types::{GuestFile, Problem, SessionUser, WorkspaceId, guest_path};
@@ -235,6 +237,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     guests: Arc::clone(&self.inner.front_guests),
                     ports: self.inner.ports.clone(),
                     workspace: name.clone(),
+                    label: record.label().to_owned(),
                 });
                 // Microsoft's server takes the password file as its connection token;
                 // code-server takes it in its login form.
@@ -430,10 +433,15 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     }
 
     /// The keeper a boot hands its sandbox to: the lifecycle.
-    pub(super) fn keeper(&self) -> super::settle::LifecycleKeeper<'_, R> {
+    pub(super) fn keeper<'a>(
+        &'a self,
+        name: &'a WorkspaceId,
+    ) -> super::settle::LifecycleKeeper<'a, R> {
         super::settle::LifecycleKeeper {
             runtime: &self.inner.runtime,
             lifecycle: &self.inner.lifecycle,
+            events: self.inner.events.as_ref(),
+            workspace: name,
         }
     }
 

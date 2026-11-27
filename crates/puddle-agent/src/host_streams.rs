@@ -67,3 +67,6 @@ impl HostStreams {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -25,8 +25,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use puddle_logins::{LoginNotices, Logins, Problem, Profile, builtin};
-use puddle_proxy::{ExchangeRewriter, InjectDecision, StandIns};
-use puddle_secrets::{MemoryStore, SecretStore};
+use puddle_proxy::{InjectDecision, StandIns};
+use puddle_secrets::MemoryStore;
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 use terminate_support::{
@@ -331,8 +331,8 @@ impl Tools {
             true,
             builtin(),
             Arc::clone(&registry),
-            Arc::clone(&store) as Arc<dyn SecretStore>,
-            Arc::clone(&notices) as Arc<dyn LoginNotices>,
+            store.clone(),
+            notices.clone(),
             puddle_logins::Marker::none(),
         ));
         let rig = rig
@@ -340,7 +340,7 @@ impl Tools {
             .allow(bound)
             .injector(TestInjector::new(|_| InjectDecision::PassThrough))
             .stand_ins(&registry)
-            .exchanges(Arc::clone(&logins) as Arc<dyn ExchangeRewriter>)
+            .exchanges(logins.clone())
             .build();
         let guest = rig.guest();
         let (port, bridge) = guest.proxy_port().await;

@@ -2,11 +2,7 @@
 <script lang="ts">
   import { covering, type Identity } from "#lib/identities/model.ts";
   import { parseRepoUrl } from "#lib/identities/repo.ts";
-  import {
-    matchingUrl,
-    tableCannotHold,
-    TABLE_CANNOT_HOLD,
-  } from "#lib/repos/model.ts";
+  import { matchingUrl } from "#lib/repos/model.ts";
   import {
     identities as identityStore,
     type IdentitiesStore,
@@ -24,7 +20,7 @@
   import type { HostCheck } from "#lib/workspaces/hosts.ts";
   import FormDialog from "./FormDialog.svelte";
   import RepositoryHostsNotice from "./RepositoryHostsNotice.svelte";
-  import RepoPicker from "./RepoPicker.svelte";
+  import RepositoryAddress from "./RepositoryAddress.svelte";
 
   // "Add repository": one row of the create form, for a running workspace. The checks are the
   // create form's, plus the two a running workspace adds: the directory may not exist on the disk
@@ -86,11 +82,6 @@
   const resolved = $derived(resolveRepoAddress(url));
   /** The https:// address the field means, or what was typed while it names none. */
   const address = $derived("url" in resolved ? resolved.url : url.trim());
-  const willClone = $derived(
-    "url" in resolved && resolved.url !== url.trim()
-      ? `Will clone ${resolved.url}`
-      : null,
-  );
   const offered = $derived<Identity[]>(
     matchingUrl(identities.identities, address, listedBy),
   );
@@ -171,45 +162,21 @@
   description="Puddle clones it into the running workspace, next to what is already there."
 >
   <form onsubmit={submit} novalidate>
-    <div class="field">
-      <label for="{id}-url">Git repository (HTTPS)</label>
-      <input
-        id="{id}-url"
-        type="text"
-        inputmode="url"
-        autocomplete="off"
-        spellcheck="false"
-        placeholder="https://github.com/you/project.git"
-        bind:value={url}
-        oninput={() => {
-          listedBy = null;
-          identity = null;
-          refusal = null;
-        }}
-        onblur={() => (urlLeft = true)}
-        aria-invalid={shownUrl ? "true" : undefined}
-        aria-describedby={shownUrl ? `${id}-url-error` : `${id}-url-hint`}
-      />
-      {#if shownUrl}
-        <p class="error" id="{id}-url-error" role="alert">{shownUrl}</p>
-      {:else}
-        <p class="hint" id="{id}-url-hint" aria-live="polite">
-          {willClone ??
-            "An HTTPS URL, owner/repo for GitHub, or an SSH address of GitHub, GitLab, Bitbucket or Azure DevOps; the repository is cloned over HTTPS."}
-        </p>
-      {/if}
-    </div>
-
-    <RepoPicker
+    <RepositoryAddress
+      id="{id}-url"
+      bind:value={url}
+      label="Git repository (HTTPS)"
       identities={identities.identities}
+      error={shownUrl}
+      hint="An HTTPS URL, owner/repo for GitHub, or an SSH address of GitHub, GitLab, Bitbucket or Azure DevOps; the repository is cloned over HTTPS."
+      oninput={() => {
+        listedBy = null;
+        identity = null;
+        refusal = null;
+      }}
+      onblur={() => (urlLeft = true)}
       onPick={(repo, by) => picked(repo, by)}
     />
-
-    {#if tableCannotHold(address)}
-      <p class="hint warn" data-testid="table-cannot-hold">
-        {TABLE_CANNOT_HOLD}
-      </p>
-    {/if}
 
     <div class="field">
       <label for="{id}-directory">Directory</label>
@@ -251,11 +218,11 @@
         {#if offered.length > 0}
           <optgroup label="Cover this repository">
             {#each offered as option (option.id)}
-              <option value={String(option.id)}
-                >{option.label}{option.id === listedBy
+              <option value={String(option.id)}>
+                {option.label}{option.id === listedBy
                   ? " (listed this repository)"
-                  : ""}</option
-              >
+                  : ""}
+              </option>
             {/each}
           </optgroup>
         {/if}
@@ -294,12 +261,12 @@
 
     {#if refusal}<p class="error" role="alert">{refusal}</p>{/if}
     <div class="actions">
-      <button type="button" class="btn" onclick={() => (open = false)}
-        >Cancel</button
-      >
-      <button type="submit" class="btn primary" disabled={busy || hostBlocked}
-        >Clone</button
-      >
+      <button type="button" class="btn" onclick={() => (open = false)}>
+        Cancel
+      </button>
+      <button type="submit" class="btn primary" disabled={busy || hostBlocked}>
+        Clone
+      </button>
     </div>
 
     <!-- Below the buttons, so its late answer cannot move the button under a press. -->
@@ -319,8 +286,5 @@
   }
   .boxes .choice {
     min-height: var(--control-size);
-  }
-  .warn {
-    color: var(--color-warning);
   }
 </style>

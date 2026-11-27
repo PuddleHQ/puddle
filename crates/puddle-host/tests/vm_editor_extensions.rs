@@ -12,8 +12,8 @@
 //! Linux only: the pinned code-server release is a Linux build (`PUDDLE_CODE_SERVER_DIR`).
 #![cfg(target_os = "linux")]
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::time::Duration;
 

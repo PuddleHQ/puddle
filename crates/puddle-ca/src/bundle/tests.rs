@@ -8,7 +8,10 @@ fn cert(name: &str) -> CaCertificate {
 
 #[test]
 fn empty_bundle_writes_nothing() {
-    assert_eq!(TrustBundle::new().guest_files(), [] as [GuestFile; 0]);
+    assert_eq!(
+        TrustBundle::new().guest_files(),
+        <[GuestFile; 0]>::default()
+    );
 }
 
 #[test]

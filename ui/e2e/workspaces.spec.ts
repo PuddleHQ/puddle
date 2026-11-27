@@ -139,31 +139,28 @@ test.describe("the list and the start screen", () => {
   }) => {
     await backend.control.reset("empty");
     await openList(page, backend);
-    await expect(
-      page.getByRole("textbox", { name: "Repository address" }),
-    ).toBeVisible();
+    const form = page.getByRole("region", { name: "New workspace" });
+    await expect(form).toBeVisible();
+    await expect(form.getByLabel("Image")).toBeVisible();
     await expect(page.getByText("No workspaces yet")).toHaveCount(0);
     await expect(page.getByText("requests waiting")).toHaveCount(0);
-    await page.getByRole("button", { name: "More options" }).click();
     await expect(
-      page.getByRole("dialog", { name: "New workspace" }),
-    ).toBeVisible();
+      page.getByRole("button", { name: "More options" }),
+    ).toHaveCount(0);
   });
 
-  test("the first workspace is made from the address alone", async ({
+  test("the first workspace is made with the full form", async ({
     page,
     backend,
   }) => {
     await backend.control.reset("empty");
     await openList(page, backend);
     await page
-      .getByRole("textbox", { name: "Repository address" })
+      .getByLabel("Git repository (HTTPS)")
       .fill("https://github.com/acme/ledger.git");
     await page.getByRole("button", { name: "Create workspace" }).click();
     await expect(card(page, "ledger")).toContainText("acme/ledger");
-    await expect(
-      page.getByRole("textbox", { name: "Repository address" }),
-    ).toHaveCount(0);
+    await expect(page.getByLabel("Git repository (HTTPS)")).toHaveCount(0);
   });
 
   test("a row opens the details", async ({ page, backend }) => {
@@ -203,7 +200,7 @@ test.describe("the list and the start screen", () => {
 test.describe("creating", () => {
   async function openCreate(page: Page): Promise<Locator> {
     await page.getByRole("button", { name: "New workspace" }).first().click();
-    const dialog = page.getByRole("dialog", { name: "New workspace" });
+    const dialog = page.getByRole("region", { name: "New workspace" });
     await expect(dialog).toBeVisible();
     return dialog;
   }
@@ -250,9 +247,10 @@ test.describe("creating", () => {
     await expect(dialog).toHaveCount(0);
     const created = card(page, "Ledger_Service");
     await expect(created).toContainText("Creating");
+    // A workspace being created reads "created" but offers no Start until it is done.
     await expect(
       created.getByRole("button", { name: "Start Ledger_Service" }),
-    ).toBeDisabled();
+    ).toHaveCount(0);
     // The service reports where it is, with the bytes while an image comes down.
     await backend.control.emit({
       type: "workspace_progress",
@@ -299,7 +297,6 @@ test.describe("creating", () => {
       .getByLabel("Git repository (HTTPS)")
       .fill("https://example.org/other.git");
     await expect(dialog.getByLabel("Name")).toHaveValue("my-name");
-    await dialog.getByText("Start folder, image, memory and CPUs").click();
     await dialog.getByLabel("Memory (GiB)").fill("3");
     await dialog.getByLabel("Image").fill("ghcr.io/acme/dev:1");
     await dialog.getByRole("button", { name: "Create workspace" }).click();
@@ -322,7 +319,6 @@ test.describe("creating", () => {
     await dialog
       .getByLabel("Git repository (HTTPS)")
       .fill("https://example.org/slider.git");
-    await dialog.getByText("Start folder, image, memory and CPUs").click();
     const slider = dialog.getByLabel("CPUs", { exact: true });
     await expect(slider).toHaveAttribute("max", String(limits.max_cpus));
     await expect(slider).toHaveValue(String(limits.default_cpus));
@@ -446,22 +442,21 @@ test.describe("creating", () => {
     ).toBe(false);
   });
 
-  test("Cancel and Escape close it and forget what was typed", async ({
+  test("leaving keeps what was typed, and Cancel forgets it", async ({
     page,
     backend,
   }) => {
     await openList(page, backend);
-    const dialog = await openCreate(page);
-    await dialog.getByLabel("Name").fill("half-done");
-    await page.keyboard.press("Escape");
-    await expect(dialog).toHaveCount(0);
-    await expect(
-      page.getByRole("button", { name: "New workspace" }).first(),
-    ).toBeFocused();
+    const screen = await openCreate(page);
+    await screen.getByLabel("Name").fill("half-done");
+    await page.goBack();
+    await expect(screen).toHaveCount(0);
     const again = await openCreate(page);
-    await expect(again.getByLabel("Name")).toHaveValue("");
+    await expect(again.getByLabel("Name")).toHaveValue("half-done");
     await again.getByRole("button", { name: "Cancel" }).click();
     await expect(again).toHaveCount(0);
+    const fresh = await openCreate(page);
+    await expect(fresh.getByLabel("Name")).toHaveValue("");
   });
 });
 
@@ -484,7 +479,7 @@ test.describe("start and stop", () => {
       detail: null,
     });
     await expect(docs).toContainText("Syncing your settings");
-    await expect(docs).toContainText("step 2 of 2");
+    await expect(docs).toContainText("step 3 of 3");
     await backend.control.step({ do: "release_workspaces" });
     await expect(toast(page, "docs-site is running.")).toBeVisible();
     await expect(docs).toContainText("Running");
@@ -1211,7 +1206,7 @@ test.describe("renaming", () => {
   }) => {
     await openList(page, backend);
     await page.getByRole("button", { name: "New workspace" }).first().click();
-    const create = page.getByRole("dialog", { name: "New workspace" });
+    const create = page.getByRole("region", { name: "New workspace" });
     await create
       .getByLabel("Git repository (HTTPS)")
       .fill("https://github.com/acme/shop.git");
@@ -1265,7 +1260,7 @@ test.describe("renaming", () => {
     await openList(page, backend);
     await backend.control.step({ do: "hold_workspaces" });
     await page.getByRole("button", { name: "New workspace" }).first().click();
-    const create = page.getByRole("dialog", { name: "New workspace" });
+    const create = page.getByRole("region", { name: "New workspace" });
     await create
       .getByLabel("Git repository (HTTPS)")
       .fill("https://github.com/acme/slow.git");
@@ -1586,7 +1581,7 @@ test.describe("the settings tab", () => {
     const clipboard = page.getByLabel("Pages reading the clipboard", {
       exact: true,
     });
-    await expect(clipboard).toHaveValue("ask");
+    await expect(clipboard).toHaveValue("allow");
     await clipboard.selectOption("deny");
     await expect(page.getByText("Clipboard saved.")).toBeVisible();
     const stored = (await (
@@ -1840,16 +1835,13 @@ test.describe("keyboard only", () => {
     await openList(page, backend);
     await page.getByRole("button", { name: "New workspace" }).first().focus();
     await page.keyboard.press("Enter");
-    const dialog = page.getByRole("dialog", { name: "New workspace" });
+    const dialog = page.getByRole("region", { name: "New workspace" });
     await expect(dialog.getByLabel("Git repository (HTTPS)")).toBeFocused();
     await page.keyboard.type("https://github.com/acme/keys.git");
     await page.keyboard.press("Enter");
     await expect(dialog).toHaveCount(0);
     const created = card(page, "keys");
     await expect(created).toContainText("Not started");
-    await expect(
-      page.getByRole("button", { name: "New workspace" }).first(),
-    ).toBeFocused();
 
     await created.getByRole("button", { name: "Start keys" }).focus();
     await page.keyboard.press("Enter");
@@ -1925,10 +1917,9 @@ test.describe("accessibility", () => {
           .getByRole("button", { name: "New workspace" })
           .first()
           .click();
-        const create = page.getByRole("dialog", { name: "New workspace" });
+        const create = page.getByRole("region", { name: "New workspace" });
         await create.getByRole("button", { name: "Create workspace" }).click();
         await expect(create.getByRole("alert")).toHaveCount(2);
-        await create.getByText("Start folder, image, memory and CPUs").click();
         await scan(page, "create with errors");
         await create.getByRole("button", { name: "Cancel" }).click();
 

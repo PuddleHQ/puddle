@@ -24,9 +24,9 @@
 )]
 
 #[cfg(windows)]
-mod support;
+use puddle_host_test_support::support;
 #[cfg(windows)]
-mod vm_support;
+use puddle_host_test_support::vm_support;
 
 use std::process::ExitCode;
 
@@ -310,7 +310,7 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
                 let said =
                     shell(runtime, sandbox, "cat /tmp/u7c-ran.err 2>/dev/null || true").await;
                 copy_tree(logs, &out.join("vsc-logs-u7c-no-command"));
-                eprintln!("the extension said {said:?}; the window shows {shows}");
+                println!("the extension said {said:?}; the window shows {shows}");
                 std::panic::resume_unwind(panic);
             }
         };
@@ -557,7 +557,10 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
                 "the explorer has no root {folder}: {up:?}"
             );
         }
-        assert!(up.title.contains("(Workspace)"), "{up:?}");
+        // The multi-root file sets `window.title` to the display name, so the title shows it and
+        // no longer VS Code's "(Workspace)" suffix for a file name.
+        assert!(up.title.contains(&s.name), "{up:?}");
+        assert!(!up.title.contains("(Workspace)"), "{up:?}");
 
         s.wait_for_git_socket("ls /tmp/vscode-git-*.sock 2>/dev/null | head -n 1")
             .await;

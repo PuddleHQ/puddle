@@ -9,12 +9,15 @@
 
 use std::collections::BTreeMap;
 
-use puddle_api::phase::begin;
-use puddle_api::{
-    AddRepository, Checkouts, Found, FoundList, NewRepository, RemoteNote, RepoUrl, check_addition,
-    check_seen, checkouts_view, why_no_remote,
+use puddle_services::workspaces::phase::begin;
+use puddle_services::{
+    checkouts::AddRepository, checkouts::Checkouts, checkouts::Found, checkouts::FoundList,
+    checkouts::RemoteNote, checkouts::check_addition, checkouts::check_seen,
+    checkouts::checkouts_view, checkouts::why_no_remote, workspaces::NewRepository,
+    workspaces::RepoUrl,
 };
 
+use super::clone_detail::{clone_detail, url_host};
 use super::{
     Arc, CheckoutDir, EntryId, Event, EventSink, GatedSandbox, GitSetup, HostWorkspaces, Operation,
     PoisonError, Problem, Repository, Runtime, SAVE_HINT, State, WorkspaceError, WorkspaceId,
@@ -282,6 +285,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             identity: None,
             pull: true,
             push: true,
+            push_block: None,
             local: None,
         };
         self.begin_clone(id, new, false, git).await
@@ -408,6 +412,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         } else {
             ""
         };
+        let untrusted = self.passed_through_for_certificate(&record.id, repository);
         self.inner.problems.raise(
             Problem::new(
                 clone_problem_key(&record.id, &repository.entry),
@@ -416,15 +421,43 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     repository.url,
                     record.label()
                 ),
-                format!(
-                    "{reason}. {made}The repository stays on the list: use Clone again to try \
-                     once more, or Remove from the list. To get it yourself, clone it in a \
-                     terminal in the workspace: git clone {} /workspace/{}",
-                    repository.url, repository.directory
+                clone_detail(
+                    reason,
+                    untrusted,
+                    made,
+                    repository.url.as_str(),
+                    repository.directory.as_ref(),
                 ),
             )
             .about(record.id.clone()),
         );
+    }
+
+    /// Whether the proxy passed the repository's host through undecrypted in the last few
+    /// minutes because the server's certificate was not accepted: the cause of a clone that
+    /// git blames on a certificate. A store that cannot be read says no.
+    fn passed_through_for_certificate(&self, id: &WorkspaceId, repository: &Repository) -> bool {
+        const WINDOW_MS: u64 = 10 * 60 * 1000;
+        let Some(host) = url_host(repository.url.as_str()) else {
+            return false;
+        };
+        let filter = puddle_store::AuditFilter {
+            workspace: Some(id.clone()),
+            kind: Some("connection"),
+            host_contains: Some(host.to_owned()),
+            q: Some("pass_through:server_certificate".to_owned()),
+            from: Some(self.inner.clock.now_ms().saturating_sub(WINDOW_MS)),
+            ..puddle_store::AuditFilter::default()
+        };
+        self.inner
+            .store
+            .audit_query_every_user(
+                &self.inner.all_users,
+                &filter,
+                puddle_store::AuditCursor::Before(None),
+                1,
+            )
+            .is_ok_and(|rows| !rows.is_empty())
     }
 
     /// "Manage this": the checkout `directory` that is on the volume joins the list. Its remote
@@ -463,8 +496,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             }
         };
         check_seen(directory, seen, &url)?;
-        let entry = puddle_api::new_entry_id(|e| record.repositories.iter().any(|r| r.entry == *e))
-            .map_err(WorkspaceError::unavailable)?;
+        let entry = puddle_services::workspaces::new_entry_id(|e| {
+            record.repositories.iter().any(|r| r.entry == *e)
+        })
+        .map_err(WorkspaceError::unavailable)?;
         let new = NewRepository {
             repository: Repository {
                 entry,
@@ -474,6 +509,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             identity,
             pull,
             push,
+            push_block: None,
             local: None,
         };
         let record = {

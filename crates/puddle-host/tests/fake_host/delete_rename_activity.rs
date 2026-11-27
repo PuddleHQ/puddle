@@ -375,7 +375,8 @@ async fn a_rename_reaches_the_prompt_of_the_running_guest_and_a_start_reads_the_
         .patch("/api/workspaces/acme", &name_body("It's $(a) shop"))
         .await;
     assert_eq!(renamed.status, 200, "{}", renamed.body);
-    assert_eq!(rig.guest.boots(), boots + 1);
+    // The prompt's plan, then the editor file's, whose window title carries the name.
+    assert_eq!(rig.guest.boots(), boots + 2);
     assert!(
         prompt(boots).contains("__puddle_name='It'\\''s $(a) shop'"),
         "{}",
@@ -1027,7 +1028,7 @@ async fn a_delete_waits_for_a_settings_change_in_flight_so_it_cannot_bring_the_f
     let in_flight = host.settings().lock().await;
     // Straight to the service: the HTTP route reads settings under the same lock.
     let id = WorkspaceId::new("acme").unwrap();
-    puddle_api::WorkspaceService::delete(host.workspaces(), &id, None)
+    puddle_services::workspaces::WorkspaceService::delete(host.workspaces(), &id, None)
         .await
         .unwrap();
     // Everything but the settings file goes; that waits on the change in flight.

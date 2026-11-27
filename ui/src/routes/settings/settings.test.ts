@@ -14,6 +14,7 @@ const api = await vi.hoisted(async () => {
   return new mod.FakeSettings();
 });
 vi.mock("#lib/api/client.ts", () => ({ api }));
+vi.mock("$app/navigation", () => ({ goto: vi.fn() }));
 vi.mock("$app/state", () => ({
   page: {
     url: new URL("http://127.0.0.1/settings/appearance"),
@@ -33,25 +34,31 @@ import { palette } from "#lib/theme/palette.svelte.ts";
 import { NO_CUSTOM } from "#lib/theme/palette.ts";
 import { theme } from "#lib/theme/theme.svelte.ts";
 import Appearance from "./(pages)/appearance/+page.svelte";
+import Credentials from "./(pages)/credentials/+page.svelte";
 import Editor from "./(pages)/editor/+page.svelte";
-import EditorAndGit from "./(pages)/editor-and-git/+page.svelte";
+import EditorServer from "./(pages)/editor-server/+page.svelte";
+import Environment from "./(pages)/environment/+page.svelte";
+import Git from "./(pages)/git/+page.svelte";
 import Network from "./(pages)/network/+page.svelte";
 import Notifications from "./(pages)/notifications/+page.svelte";
 import ThisComputer from "./(pages)/this-computer/+page.svelte";
 import Workspaces from "./(pages)/workspaces/+page.svelte";
 
-// Every test here mounts all seven pages of Settings, so one test costs about a second on an idle
+// Every test here mounts all ten pages of Settings, so one test costs about a second on an idle
 // host and several times that on a loaded one; the default 5 s limit is under the loaded cost.
 vi.setConfig({ testTimeout: 30_000 });
 
 const ALL = [
   Appearance,
   Notifications,
-  Workspaces,
-  Network,
-  Editor,
-  EditorAndGit,
   ThisComputer,
+  Workspaces,
+  Editor,
+  Network,
+  Credentials,
+  Environment,
+  EditorServer,
+  Git,
 ];
 
 beforeEach(() => {
@@ -203,21 +210,24 @@ describe("the screen", () => {
       "Notifications",
       "Also notify when",
       "Inbox",
-      "Workspaces",
+      "Startup and window",
       "Disk space",
-      "Environment",
+      "Back up and restore",
+      "Devices and sign-in",
+      "Activity log",
+      "Diagnostic log",
+      "Checks and errors",
+      "Privacy and about",
+      "New workspaces",
+      "Editor defaults",
       "Proxy",
       "Local destinations",
       "Decrypting traffic",
-      "Editor defaults",
-      "Browser VS Code",
+      "Logins and credentials",
+      "Limits",
+      "Environment",
+      "Browser VS Code server",
       "Git and SSH",
-      "Startup and window",
-      "Devices and sign-in",
-      "Back up and restore",
-      "Activity log",
-      "Checks and errors",
-      "Privacy and about",
     ]);
     expect(screen.getByLabelText("Default memory")).toHaveValue("4096");
     expect(screen.getByLabelText("Theme")).toHaveValue("system");
@@ -269,6 +279,14 @@ describe("the screen", () => {
       selector: "pre",
     });
     expect(text.textContent).toMatch(/Third-party software shipped/);
+  });
+
+  it("shows a loading line until the licence text arrives", async () => {
+    await open();
+    await fireEvent.click(screen.getByText("Third-party licences"));
+    expect(screen.queryByText(/Loading/)).not.toBeNull();
+    await screen.findByLabelText("Third-party licences", { selector: "pre" });
+    expect(screen.queryByText(/Loading/)).toBeNull();
   });
 });
 
@@ -402,6 +420,21 @@ describe("appearance and notifications", () => {
     expect(screen.queryByText(/hard to read/)).toBeNull();
   });
 
+  it("keeps what only fails in the other theme apart from what is hard to read now", async () => {
+    await open();
+    await choose("Theme", "system");
+    await choose("Colours", "custom");
+    const accent = screen.getByLabelText("Accent colour") as HTMLInputElement;
+    // Pond's light accent: fine on the light theme showing now, short on the dark one.
+    accent.value = "#0a6a85";
+    await fireEvent.input(accent);
+    expect(screen.queryByText(/hard to read/)).toBeNull();
+    const note = screen.getByText(/harder to read/).closest("[role=status]");
+    expect(note).toHaveTextContent(/in the dark theme; it needs/);
+    expect(note).toHaveTextContent(/and \d+ more\./);
+    expect(note).not.toHaveTextContent(/in the light theme/);
+  });
+
   it("lists a short warning in full, for a pale accent", async () => {
     await open();
     await choose("Theme", "light");
@@ -427,6 +460,17 @@ describe("appearance and notifications", () => {
     expect(api.ui.notifications).toBe(false);
     expect(api.ui.sound).toBe(true);
     expect(api.ui.close_behaviour).toBe("quit");
+  });
+
+  it("saves the log detail, from the default and from a level already chosen", async () => {
+    await open();
+    expect(api.ui.log_level).toBeNull();
+    await choose("Log detail", "debug");
+    await save();
+    expect(api.ui.log_level).toBe("debug");
+    await choose("Log detail", "trace");
+    await save();
+    expect(api.ui.log_level).toBe("trace");
   });
 });
 
@@ -832,25 +876,21 @@ describe("workspace defaults and the network", () => {
 
   it("turns the global direct SSH default on only after the trust text, then saves it at once", async () => {
     await open();
-    const box = screen.getByLabelText("Allow direct SSH for new workspaces");
+    const box = screen.getByLabelText("Allow direct SSH by default");
     expect(box).not.toBeChecked();
     await fireEvent.click(box);
     const dialog = await screen.findByRole("alertdialog", {
-      name: "Allow direct SSH for new workspaces?",
+      name: "Allow direct SSH by default?",
     });
     expect(dialog).toHaveTextContent("signed-in GitHub token");
     expect(putBodies()).toHaveLength(0);
     await fireEvent.click(
-      within(dialog).getByRole("button", { name: "Allow for new workspaces" }),
+      within(dialog).getByRole("button", { name: "Allow by default" }),
     );
     await save();
     expect(api.layer.direct_ssh).toBe(true);
-    expect(
-      screen.getByLabelText("Allow direct SSH for new workspaces"),
-    ).toBeChecked();
-    await fireEvent.click(
-      screen.getByLabelText("Allow direct SSH for new workspaces"),
-    );
+    expect(screen.getByLabelText("Allow direct SSH by default")).toBeChecked();
+    await fireEvent.click(screen.getByLabelText("Allow direct SSH by default"));
     await save();
     expect(api.layer.direct_ssh).toBe(false);
   });
@@ -893,9 +933,7 @@ describe("workspace defaults and the network", () => {
 
   it("cancelling the global trust text changes nothing", async () => {
     await open();
-    await fireEvent.click(
-      screen.getByLabelText("Allow direct SSH for new workspaces"),
-    );
+    await fireEvent.click(screen.getByLabelText("Allow direct SSH by default"));
     await fireEvent.click(
       await screen.findByRole("button", { name: "Cancel" }),
     );

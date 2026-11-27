@@ -60,7 +60,7 @@ describe("RepoPicker", () => {
       screen.getByRole("button", { name: /tijs\/dotfiles/ }),
     ).toHaveTextContent("public · write · listed by Personal");
     expect(screen.getByRole("status")).toHaveTextContent("2 repositories.");
-    expect(api.queries[0]).toEqual({ limit: 20 });
+    expect(api.queries[0]).toEqual({ limit: 500 });
   });
 
   it("hands the pick to the form with the identity that listed it first", async () => {
@@ -91,7 +91,7 @@ describe("RepoPicker", () => {
     const search = await openFaked();
     await fireEvent.input(search, { target: { value: "zzz" } });
     await vi.advanceTimersByTimeAsync(300);
-    expect(api.queries.at(-1)).toEqual({ query: "zzz", limit: 20 });
+    expect(api.queries.at(-1)).toEqual({ query: "zzz", limit: 500 });
     expect(screen.getByRole("status")).toHaveTextContent(
       "No repository matches “zzz”.",
     );
@@ -107,13 +107,34 @@ describe("RepoPicker", () => {
     ).toBeVisible();
   });
 
-  it("says when the list was cut and asks for more of the name", async () => {
-    api.repos = Array.from({ length: 25 }, (_, i) => repoView("acme", `r${i}`));
+  it("lists every repository of a long list, with no cut", async () => {
+    api.repos = Array.from({ length: 41 }, (_, i) => repoView("acme", `r${i}`));
+    show();
+    await open();
+    expect(await screen.findByText("41 repositories.")).toBeVisible();
+    expect(screen.getAllByRole("button", { name: /acme\/r/ })).toHaveLength(41);
+  });
+
+  it("says when a very long list was cut and asks for more of the name", async () => {
+    api.repos = Array.from({ length: 520 }, (_, i) =>
+      repoView("acme", `r${i}`),
+    );
     show();
     await open();
     expect(
-      await screen.findByText(/Showing 20 of 25\. Type more of the name/),
+      await screen.findByText(/Showing 500 of 520\. Type more of the name/),
     ).toBeVisible();
+  });
+
+  it("stays open after a repository is picked", async () => {
+    const { onPick } = show();
+    await open();
+    await fireEvent.click(
+      await screen.findByRole("button", { name: /acme\/web/ }),
+    );
+    expect(onPick).toHaveBeenCalledOnce();
+    expect(document.querySelector("details.picker")).toHaveAttribute("open");
+    expect(screen.getByLabelText("Search your repositories")).toBeVisible();
   });
 
   it("shows progress while a list is slow", async () => {
@@ -150,7 +171,7 @@ describe("RepoPicker", () => {
     expect(await screen.findByText("More exist.")).toBeVisible();
     expect(screen.getByText("The token was rejected.")).toBeVisible();
     api.refuse = { status: 503, message: "repository lists are not available" };
-    await store.load({ limit: 20 });
+    await store.load({ limit: 500 });
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Repository lists are not available.",
     );
@@ -166,7 +187,7 @@ describe("RepoPicker", () => {
     expect(screen.getByRole("status").textContent?.trim()).toBe("");
   });
 
-  it("warns about a project with a space but still lists it", async () => {
+  it("lists a project with a space without a warning", async () => {
     api.repos = [
       repoView("contoso", "scanner", {
         host: "dev.azure.com",
@@ -176,7 +197,10 @@ describe("RepoPicker", () => {
     ];
     show();
     await open();
-    expect(await screen.findByText(/project name has a space/)).toBeVisible();
+    expect(
+      await screen.findByRole("button", { name: /Shop Floor\/scanner/ }),
+    ).toBeVisible();
+    expect(screen.queryByText(/project name has a space/)).toBeNull();
   });
 
   it("stops asking when closed again", async () => {

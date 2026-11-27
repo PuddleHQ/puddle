@@ -512,7 +512,7 @@ fn staging_ids_are_32_lowercase_hex_and_nothing_else() {
 #[tokio::test]
 async fn the_service_stages_an_upload_and_refuses_a_bad_file_leaving_nothing() {
     use futures_util::StreamExt as _;
-    use puddle_api::RestoreService as _;
+    use puddle_services::restore::RestoreService as _;
     let root = tempfile::tempdir().unwrap();
     let there = data_folder(root.path(), "there");
     let here = data_folder(root.path(), "here");
@@ -542,7 +542,7 @@ fn service_for(here: &HostPaths) -> DataFolderRestore {
     DataFolderRestore::new(here.clone(), Arc::default())
 }
 
-fn upload_of(bytes: Vec<u8>) -> puddle_api::UploadStream {
+fn upload_of(bytes: Vec<u8>) -> puddle_services::restore::UploadStream {
     use futures_util::StreamExt as _;
     futures_util::stream::iter([Ok(bytes)]).boxed()
 }
@@ -693,7 +693,7 @@ fn the_preview_lists_the_secret_variables_of_the_backup() {
 
 #[tokio::test]
 async fn a_machine_with_no_database_fails_the_preview_as_a_failure_not_a_refusal() {
-    use puddle_api::RestoreService as _;
+    use puddle_services::restore::RestoreService as _;
     let root = tempfile::tempdir().unwrap();
     let there = data_folder(root.path(), "there");
     let mut archive = crate::backup_archive(&there).unwrap();
@@ -712,7 +712,7 @@ async fn a_machine_with_no_database_fails_the_preview_as_a_failure_not_a_refusal
 #[tokio::test]
 async fn an_upload_that_stops_is_a_failure_that_says_so() {
     use futures_util::StreamExt as _;
-    use puddle_api::RestoreService as _;
+    use puddle_services::restore::RestoreService as _;
     let root = tempfile::tempdir().unwrap();
     let here = data_folder(root.path(), "here");
     let broken = futures_util::stream::iter([Err(io::Error::other("connection reset"))]).boxed();
@@ -725,8 +725,8 @@ async fn an_upload_that_stops_is_a_failure_that_says_so() {
 
 #[tokio::test]
 async fn confirming_names_what_is_wrong_in_the_words_of_the_failure() {
-    use puddle_api::RestoreService as _;
-    use puddle_api::wire::RestoreMode;
+    use puddle_services::restore::RestoreService as _;
+    use puddle_services::wire::RestoreMode;
     let root = tempfile::tempdir().unwrap();
     let there = data_folder(root.path(), "there");
     let here = data_folder(root.path(), "here");
@@ -771,14 +771,17 @@ async fn confirming_names_what_is_wrong_in_the_words_of_the_failure() {
 
 #[tokio::test]
 async fn the_result_is_read_in_either_mode_and_an_unreadable_one_is_a_failure() {
-    use puddle_api::RestoreService as _;
+    use puddle_services::restore::RestoreService as _;
     let root = tempfile::tempdir().unwrap();
     let here = data_folder(root.path(), "here");
     let service = service_for(&here);
     assert!(service.result().await.unwrap().is_none());
     for (mode, wire) in [
-        (ApplyMode::Add, puddle_api::wire::RestoreMode::Add),
-        (ApplyMode::Replace, puddle_api::wire::RestoreMode::Replace),
+        (ApplyMode::Add, puddle_services::wire::RestoreMode::Add),
+        (
+            ApplyMode::Replace,
+            puddle_services::wire::RestoreMode::Replace,
+        ),
     ] {
         let outcome = apply::RestoreOutcome {
             applied: true,
@@ -816,7 +819,7 @@ async fn the_result_is_read_in_either_mode_and_an_unreadable_one_is_a_failure() 
 
 #[tokio::test]
 async fn safety_copies_are_listed_newest_first_and_only_a_real_one_is_deleted() {
-    use puddle_api::RestoreService as _;
+    use puddle_services::restore::RestoreService as _;
     let root = tempfile::tempdir().unwrap();
     let here = data_folder(root.path(), "here");
     let service = service_for(&here);

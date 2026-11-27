@@ -81,17 +81,24 @@ v*) release=$tag ;;
 *) echo "fetch-msb: not a release tag: $tag" >&2; exit 2 ;;
 esac
 
-# fetch <repo> <tag> <asset> <out>: download one release asset and check its pinned SHA-256.
+# Downloads land here and move to their final path only after the checksum matches, so a mismatch
+# leaves nothing unverified in <dest-dir> (a developer's PUDDLE_VM_RUNTIME_DIR persists between runs).
+stage=$(mktemp -d)
+trap 'rm -rf "$stage"' EXIT
+
+# fetch <repo> <tag> <asset> <out>: download one release asset, check its pinned SHA-256, then move it to <out>.
 fetch() {
     want=$(pinned "$2" "$3")
     url="https://github.com/$1/releases/download/$2/$3"
-    download fetch-msb "$url" "$4" 300
+    download fetch-msb "$url" "$stage/$3" 300
     # Hash from stdin: for a path with backslashes, Git Bash's sha256sum puts a backslash before the hash.
-    got=$(sha256sum < "$4" | cut -d' ' -f1)
+    got=$(sha256sum < "$stage/$3" | cut -d' ' -f1)
     if [ "$got" != "$want" ]; then
         echo "fetch-msb: checksum mismatch for $2 $3: got $got, pinned $want" >&2
         exit 1
     fi
+    mkdir -p "$(dirname "$4")"
+    mv -f "$stage/$3" "$4"
     echo "fetch-msb: $1 $2 $3 verified ($got)" >&2
 }
 

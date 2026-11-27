@@ -35,17 +35,10 @@ use windows_sys::Win32::System::WindowsProgramming::{
 };
 
 use crate::facts::{
-    AgentService, CodeIntegrity, CodeIntegrityFacts, GsaFacts, HypervisorApi, HypervisorFacts,
-    JobFacts, ServiceStart, ServiceState,
+    AgentService, CodeIntegrity, CodeIntegrityFacts, HypervisorApi, HypervisorFacts, InstallState,
+    JobFacts, ServiceStart, ServiceState, SoftwareFacts,
 };
-
-/// The services of the Microsoft Entra Global Secure Access client.
-pub(crate) const GSA_SERVICES: [&str; 4] = [
-    "GlobalSecureAccessEngineService",
-    "GlobalSecureAccessTunnelingService",
-    "GlobalSecureAccessPolicyRetrieverService",
-    "GlobalSecureAccessClientManagerService",
-];
+use crate::software::PROBLEMATIC_SOFTWARE;
 
 /// `WHvCapabilityCodeHypervisorPresent`.
 const WHV_CAPABILITY_HYPERVISOR_PRESENT: i32 = 0;
@@ -243,21 +236,39 @@ fn job_facts(job: HANDLE) -> JobFacts {
     clippy::unnecessary_wraps,
     reason = "the same signature as the Unix probe, which reports nothing"
 )]
-pub(crate) fn global_secure_access() -> Option<GsaFacts> {
+pub(crate) fn problematic_software() -> Option<Vec<SoftwareFacts>> {
     // SAFETY: local machine, default database, connect right only (no admin needed).
     let scm = unsafe { OpenSCManagerW(std::ptr::null(), std::ptr::null(), SC_MANAGER_CONNECT) };
     if scm.is_null() {
-        return Some(GsaFacts::Unknown {
-            detail: format!("OpenSCManagerW: {}", io::Error::last_os_error()),
-        });
+        let detail = format!("OpenSCManagerW: {}", io::Error::last_os_error());
+        return Some(
+            PROBLEMATIC_SOFTWARE
+                .iter()
+                .map(|software| SoftwareFacts {
+                    software,
+                    state: InstallState::Unknown {
+                        detail: detail.clone(),
+                    },
+                })
+                .collect(),
+        );
     }
-    let states: Vec<ServiceState> = GSA_SERVICES
+    let found = PROBLEMATIC_SOFTWARE
         .iter()
-        .map(|name| service_state(scm, name))
+        .map(|software| SoftwareFacts {
+            software,
+            state: InstallState::from_services(
+                software
+                    .services
+                    .iter()
+                    .map(|name| service_state(scm, name))
+                    .collect::<Vec<ServiceState>>(),
+            ),
+        })
         .collect();
     // SAFETY: closes the manager handle opened above, once.
     unsafe { CloseServiceHandle(scm) };
-    Some(GsaFacts::from_services(states))
+    Some(found)
 }
 
 /// The service of the OpenSSH Authentication Agent.

@@ -61,7 +61,7 @@ async fn a_kept_login_is_forgotten_by_service_and_unknown_things_are_not_found()
 
 #[tokio::test]
 async fn the_kept_logins_are_listed_without_a_value_and_forgetting_one_takes_it_off_the_list() {
-    use puddle_api::{KeptLogin, KeptLogins};
+    use puddle_services::{workspaces::KeptLogin, workspaces::KeptLogins};
     let api = start().await;
     let reply = api
         .send(

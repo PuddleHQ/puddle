@@ -188,7 +188,7 @@ fn check_rule(g: &GlobalSettings, s: Option<&WorkspaceSettings>) {
         eff.clipboard_read,
         over.clipboard_read,
         glob.clipboard_read,
-        ClipboardRead::Ask,
+        ClipboardRead::Allow,
     );
     expect(eff.direct_ssh, over.direct_ssh, glob.direct_ssh, false);
 }

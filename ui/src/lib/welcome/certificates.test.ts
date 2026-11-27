@@ -203,10 +203,40 @@ describe("the company roots line", () => {
 
   it("counts the roots workspaces get", () => {
     const one = rootsLine(roots({ synced: true, roots: 1 }), false);
-    expect(one.title).toBe("1 company root certificate found");
+    expect(one.title).toBe("1 root certificate copied from this computer");
     expect(one.tone).toBe("ok");
     const two = rootsLine(roots({ synced: true, roots: 2 }), false);
-    expect(two.title).toBe("2 company root certificates found");
-    expect(two.text).toMatch(/Added to every workspace/);
+    expect(two.title).toBe("2 root certificates copied from this computer");
+    expect(two.text).toMatch(/From this computer's trust store/);
+    expect(two.text).not.toMatch(/Includes/);
+    expect(two.impact).toMatch(/home computer/);
+  });
+
+  it("names up to three of the roots and counts the rest", () => {
+    const cert = (subject: string | null, kind: "root" | "intermediate") => ({
+      subject,
+      fingerprint: subject ?? "x",
+      kind,
+      not_after: 0,
+      sources: [],
+    });
+    const line = rootsLine(
+      roots({
+        synced: true,
+        roots: 5,
+        certificates: [
+          cert("WatchGuard", "root"),
+          cert("AutoHotkey", "root"),
+          cert("WatchGuard", "root"),
+          cert("HOME-PC", "root"),
+          cert("Some Intermediate", "intermediate"),
+          cert(null, "root"),
+        ],
+      }),
+      false,
+    );
+    expect(line.text).toMatch(
+      /Includes WatchGuard, AutoHotkey, HOME-PC and 2 more\.$/,
+    );
   });
 });

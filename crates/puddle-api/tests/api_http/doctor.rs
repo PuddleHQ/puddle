@@ -4,9 +4,9 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use puddle_api::wire::DoctorStatus;
-use puddle_api::{FakeDoctor, HostDoctor};
 use puddle_doctor::{Check, CheckId, Finding, Report, Status};
+use puddle_services::wire::DoctorStatus;
+use puddle_services::{doctor::FakeDoctor, doctor::HostDoctor};
 use serde_json::{Value, json};
 
 use crate::common::{start, start_with_doctor};

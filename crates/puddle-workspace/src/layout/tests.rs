@@ -79,3 +79,27 @@ fn the_managed_tools_live_in_a_folder_of_the_puddle_directory() {
         "/workspace/.puddle/mise"
     );
 }
+
+#[test]
+fn the_older_mount_step_names_a_plain_older_folder_and_nothing_else() {
+    let l = layout();
+    let step = l
+        .older_mount_step(&GuestPath::new("/workspaces/acme-1_x.y").unwrap())
+        .unwrap();
+    assert_eq!(step.path().as_str(), OLDER_MOUNT_STEP_GUEST);
+    let text = String::from_utf8(step.contents().to_vec()).unwrap();
+    assert_eq!(
+        text,
+        format!(
+            "PUDDLE_OLDER_MOUNT='/workspaces/acme-1_x.y'\nexport PUDDLE_OLDER_MOUNT\n{OLDER_MOUNT_SH}"
+        )
+    );
+    assert_eq!(l.older_mount_step(l.mount()), None);
+    for odd in ["/workspaces/it's", "/workspaces/a b", "/workspaces/$(id)"] {
+        assert_eq!(
+            l.older_mount_step(&GuestPath::new(odd).unwrap()),
+            None,
+            "{odd}"
+        );
+    }
+}

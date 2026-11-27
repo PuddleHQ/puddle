@@ -13,7 +13,7 @@ use puddle_types::{Event, EventSink, PendingSummary};
 use tokio::sync::{broadcast, watch};
 
 use crate::events::EventHub;
-use crate::wire::{ClientKind, PresenceReport};
+use puddle_services::wire::{ClientKind, PresenceReport};
 
 /// A client that saw input this recently is the one the person is using.
 pub(crate) const ACTIVE_MS: u64 = 120_000;
@@ -184,7 +184,7 @@ async fn notify_about(
     let workspace = request.workspace.clone();
     // A workspace with no recorded user is nobody's: nobody is told.
     let Ok(Some(owner)) =
-        crate::error::blocking(move || Ok(lookup.workspace_owner(&workspace)?)).await
+        puddle_services::error::blocking(move || Ok(lookup.workspace_owner(&workspace)?)).await
     else {
         return;
     };

@@ -159,14 +159,15 @@ impl From<DiskWarningPercent> for u8 {
 
 /// What happens when a page in a workspace window reads the clipboard programmatically.
 ///
-/// The default asks once per workspace; the answer is stored as that workspace's override.
+/// The default allows it: the editor reads the clipboard when the user pastes into its terminal,
+/// and the webview's own prompt for it is noise. A workspace can still ask or refuse.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClipboardRead {
-    /// Show Puddle's prompt.
-    #[default]
+    /// Show the webview's prompt.
     Ask,
     /// Allow without a prompt.
+    #[default]
     Allow,
     /// Refuse without a prompt.
     Deny,
@@ -195,6 +196,39 @@ pub enum ThemeChoice {
     Light,
     /// Always dark.
     Dark,
+}
+
+/// How much Puddle writes to its log: `info` is what a user needs day to day, `debug` and `trace`
+/// are for finding out what Puddle did ("upload a debug log"). A log level in the environment
+/// (`PUDDLE_LOG`) wins over this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LogLevelChoice {
+    /// Only what went wrong.
+    Error,
+    /// Problems that were worked around, and errors.
+    Warn,
+    /// One line for each thing Puddle did or decided.
+    #[default]
+    Info,
+    /// Detail for each request and each step, without secrets.
+    Debug,
+    /// Every step and frame, without secrets; very long.
+    Trace,
+}
+
+impl LogLevelChoice {
+    /// The level's name as `PUDDLE_LOG` spells it.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Error => "error",
+            Self::Warn => "warn",
+            Self::Info => "info",
+            Self::Debug => "debug",
+            Self::Trace => "trace",
+        }
+    }
 }
 
 /// Which colour palette Puddle's window uses on top of the light or dark base.
@@ -285,12 +319,12 @@ pub enum AppIconChoice {
     /// The duck on its patch of water, on a clear background.
     #[default]
     Duck,
-    /// The duck on a pond-blue disc.
-    DuckPond,
-    /// The duck on a dark night-blue disc.
-    DuckNight,
-    /// A white duck on a sunny yellow disc.
-    DuckSun,
+    /// A rubber bath duck, side view.
+    #[serde(alias = "duck_pond", alias = "duck_sun")]
+    RubberDuck,
+    /// The duck seen from the front.
+    #[serde(alias = "duck_night")]
+    DuckFront,
     /// The image the user gave (kept per user, next to the settings).
     Custom,
 }

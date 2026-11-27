@@ -383,7 +383,7 @@ fn the_request_is_one_folder() {
         PathBuf::from("/v/.puddle/mise")
     );
     for bad in [&[][..], &[""], &["a", "b"]] {
-        assert_eq!(Request::parse(bad).unwrap_err(), USAGE);
+        assert_eq!(Request::parse(bad).unwrap_err(), UsageError::Shape(USAGE));
     }
 }
 

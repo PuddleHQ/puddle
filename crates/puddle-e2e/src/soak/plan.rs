@@ -4,7 +4,8 @@
 //! A profile only says how many real seconds a playbook hour lasts; the order of the day, the
 //! loops' rounds and the sample count per hour stay the playbook's.
 
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 /// Minutes of one playbook hour.
 const MINUTES: u64 = 60;
@@ -81,6 +82,20 @@ impl Profile {
         self.at(5).max(Duration::from_secs(1))
     }
 
+    /// The pause between the web-app requests: 10 s in the full profile, 1/6 playbook minute
+    /// elsewhere, never under a second.
+    #[must_use]
+    pub fn w4_every(self) -> Duration {
+        (self.at(1) / 6).max(Duration::from_secs(1))
+    }
+
+    /// Seconds the failed-request share covers: 5 playbook minutes (300 s in the full profile), at
+    /// least two requests.
+    #[must_use]
+    pub fn w4_window_secs(self) -> u64 {
+        self.at(5).max(self.w4_every() * 2).as_secs().max(2)
+    }
+
     /// How long the sampler runs alone before the workloads start: 15 playbook minutes.
     #[must_use]
     pub const fn sampler_alone(self) -> Duration {
@@ -125,6 +140,18 @@ impl Event {
         )
     }
 
+    /// Whether the event ends a round of `workload` that is in flight: a restart of the
+    /// JavaScript workspace cuts its round only; a restart or hard kill of `puddle serve` ends
+    /// every exec session, so it cuts all of them. The cut round is expected, not a finding.
+    #[must_use]
+    pub const fn cuts(self, workload: Workload) -> bool {
+        match self {
+            Self::RestartJs => matches!(workload, Workload::Js),
+            Self::RestartPuddle | Self::HardKill => true,
+            _ => false,
+        }
+    }
+
     /// The name the run log and the UI command use.
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -141,6 +168,28 @@ impl Event {
             Self::InboxKeys => "inbox-keys",
             Self::StopLoops => "stop-loops",
         }
+    }
+}
+
+/// The planned events that began during the day, to tell a round they cut from one that failed.
+#[derive(Debug, Clone, Default)]
+pub struct Cuts(Arc<Mutex<Vec<(Instant, Event)>>>);
+
+impl Cuts {
+    /// Notes that `event` begins now.
+    pub fn began(&self, event: Event) {
+        self.0.lock().unwrap().push((Instant::now(), event));
+    }
+
+    /// The event that cut a round of `workload` started at `started`: one that began after it
+    /// and ends its exec session. `None` for a round nothing planned touched.
+    #[must_use]
+    pub fn cut(&self, started: Instant, workload: Workload) -> Option<Event> {
+        let events = self.0.lock().unwrap();
+        events
+            .iter()
+            .find(|&&(at, e)| at >= started && e.cuts(workload))
+            .map(|&(_, e)| e)
     }
 }
 

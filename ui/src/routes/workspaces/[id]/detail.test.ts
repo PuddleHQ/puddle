@@ -186,7 +186,6 @@ function reset() {
   workspaces.status = "loading";
   workspaces.progress = {};
   workspaces.oom = {};
-  workspaceActions.createOpen = false;
   workspaceActions.connectOpen = false;
   workspaceActions.trustOpen = false;
   workspaceActions.deleteOpen = false;
@@ -2230,8 +2229,8 @@ describe("the settings tab", () => {
     const clipboard = screen.getByLabelText(
       "Pages reading the clipboard",
     ) as HTMLSelectElement;
-    await fireEvent.change(clipboard, { target: { value: "allow" } });
-    await vi.waitFor(() => expect(clipboard.value).toBe("ask"));
+    await fireEvent.change(clipboard, { target: { value: "deny" } });
+    await vi.waitFor(() => expect(clipboard.value).toBe("allow"));
   });
 
   it("says when the settings can't be read, and while they load", async () => {

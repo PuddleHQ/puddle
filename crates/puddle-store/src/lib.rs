@@ -49,8 +49,8 @@ pub use clock::{Clock, ManualClock, SystemClock};
 pub use environment::{
     EnvChange, EnvDraft, EnvEntry, EnvName, EnvRow, EnvScope, EnvSecret, EnvValue,
     MAX_ENTRIES_PER_SCOPE, MAX_NAME_LEN, MAX_PLAIN_VALUE_BYTES, MAX_SCOPE_BYTES, MAX_SECRET_HOSTS,
-    MAX_SECRET_VALUE_CHARS, PUDDLE_OWNED_NAMES, SecretHost, SecretPlace, StartValue, StartVar,
-    check_secret_value,
+    MAX_SECRET_VALUE_CHARS, MintError, PUDDLE_OWNED_NAMES, SecretHost, SecretPlace, StartValue,
+    StartVar, check_secret_value,
 };
 pub use error::StoreError;
 pub use identity::{
@@ -88,6 +88,6 @@ pub use users::{
     SignInMethod, User, UserId, UserName, device_name,
 };
 pub use workspace_git::{
-    GitDefaults, GitStart, RepoEntry, RepoGitRequest, RepoRef, RepoToggles, StartBasis,
+    GitDefaults, GitStart, PushBlock, RepoEntry, RepoGitRequest, RepoRef, RepoToggles, StartBasis,
     SwitchChange, SwitchSource, WorkspaceGit, is_bare_user,
 };

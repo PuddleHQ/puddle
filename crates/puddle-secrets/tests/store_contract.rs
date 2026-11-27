@@ -7,11 +7,7 @@
 //!
 //! Each backend gives a way to open another handle over the same storage (what a second process
 //! sees), and, where the storage can be made to fail, a way to break and mend it.
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    reason = "test code: a panic is how a test fails"
-)]
+#![expect(clippy::unwrap_used, reason = "test code: a panic is how a test fails")]
 
 use std::fmt::Write as _;
 use std::path::PathBuf;

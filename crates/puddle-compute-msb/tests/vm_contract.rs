@@ -3,7 +3,7 @@
 //! and W). One test per case; the binary's `vm_` name keeps them in the VM profile.
 #![expect(clippy::expect_used, reason = "a failed setup fails the test")]
 
-mod support;
+use puddle_compute_msb_test_support as support;
 
 use puddle_compute::contract::{CASES, ContractEnv};
 use puddle_compute_msb::MsbRuntime;

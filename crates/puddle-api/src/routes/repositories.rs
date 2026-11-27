@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! A workspace's checkouts, and adding, managing and removing the repositories on its list. The
-//! routes only translate; [`crate::WorkspaceService`] does the work.
+//! routes only translate; [`puddle_services::workspaces::WorkspaceService`] does the work.
 
 use std::collections::BTreeSet;
 
@@ -10,14 +10,14 @@ use axum::http::StatusCode;
 use puddle_store::{IdentityId, WorkspaceOpKind};
 use puddle_types::EntryId;
 
-use crate::ApiErrorBody;
 use crate::authz::Principal;
-use crate::checkouts::AddRepository;
-use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::workspaces::{StoreGitSetup, git_request, view, workspace_id};
 use crate::routes::{AppState, record_op, repository_hosts};
-use crate::wire::{AddRepositoryRequest, Checkouts, Workspace};
+use puddle_services::checkouts::AddRepository;
+use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, blocking};
+use puddle_services::wire::{AddRepositoryRequest, Checkouts, Workspace};
 
 /// The entry id in a path. A string that is not an entry id (a directory, say) names no entry.
 fn entry_id(raw: &str) -> Result<EntryId, ApiError> {

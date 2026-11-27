@@ -13,21 +13,12 @@ const DUCK: [u8; 3] = [0xf6, 0xc4, 0x31];
 const BEAK: [u8; 3] = [0xe8, 0x74, 0x2a];
 const INK: [u8; 3] = [0x3a, 0x2c, 0x00];
 const WATER: [u8; 3] = [0x8c, 0xc9, 0xdc];
-const POND: [u8; 3] = [0x2b, 0x74, 0x9b];
-const NIGHT: [u8; 3] = [0x14, 0x26, 0x3d];
 const WHITE: [u8; 3] = [0xff, 0xff, 0xff];
 
 /// The icon for a built-in choice, `size` pixels square. `None` for [`AppIconChoice::Custom`]:
 /// that one is the user's own image.
 #[must_use]
 pub fn built_in(choice: AppIconChoice, size: u32) -> Option<Icon> {
-    let (disc, body) = match choice {
-        AppIconChoice::Duck => (None, DUCK),
-        AppIconChoice::DuckPond => (Some(POND), DUCK),
-        AppIconChoice::DuckNight => (Some(NIGHT), DUCK),
-        AppIconChoice::DuckSun => (Some(DUCK), WHITE),
-        AppIconChoice::Custom => return None,
-    };
     let mut pixmap = Pixmap::new(size, size)?;
     #[expect(
         clippy::cast_precision_loss,
@@ -35,27 +26,49 @@ pub fn built_in(choice: AppIconChoice, size: u32) -> Option<Icon> {
     )]
     let scale = size as f32 / 64.0;
     let on_canvas = Transform::from_scale(scale, scale);
-    if let Some(disc) = disc {
-        fill(
-            &mut pixmap,
-            &circle(32.0, 32.0, 31.5)?,
-            disc,
-            1.0,
-            on_canvas,
-        );
-        // The duck without its water, a little smaller, centred in the disc.
-        let centred = on_canvas
-            .pre_translate(32.0, 32.0)
-            .pre_scale(0.8, 0.8)
-            .pre_translate(-34.5, -35.0);
-        draw_duck(&mut pixmap, body, centred, false)?;
-    } else {
-        draw_duck(&mut pixmap, body, on_canvas, true)?;
+    match choice {
+        AppIconChoice::Duck => draw_duck(&mut pixmap, DUCK, on_canvas, true)?,
+        AppIconChoice::RubberDuck => draw_rubber_duck(&mut pixmap, on_canvas)?,
+        AppIconChoice::DuckFront => draw_duck_front(&mut pixmap, on_canvas)?,
+        AppIconChoice::Custom => return None,
     }
     Some(Icon {
         size,
         rgba: demultiply(&pixmap),
     })
+}
+
+/// The bath toy: a round head on a plump body, a lifted tail, a glossy highlight.
+fn draw_rubber_duck(pixmap: &mut Pixmap, at: Transform) -> Option<()> {
+    fill(pixmap, &oval(8.0, 27.0, 44.0, 30.0)?, DUCK, 1.0, at);
+    fill(pixmap, &tail_path()?, DUCK, 1.0, at);
+    fill(pixmap, &oval(18.0, 36.0, 20.0, 12.0)?, INK, 0.12, at);
+    fill(pixmap, &circle(41.0, 21.0, 14.0)?, DUCK, 1.0, at);
+    fill(pixmap, &oval(50.0, 21.0, 11.0, 8.0)?, BEAK, 1.0, at);
+    fill(pixmap, &circle(46.0, 17.0, 2.4)?, INK, 1.0, at);
+    fill(pixmap, &circle(46.8, 16.2, 0.8)?, WHITE, 1.0, at);
+    fill(pixmap, &oval(30.0, 10.0, 8.0, 4.0)?, WHITE, 0.55, at);
+    fill(pixmap, &oval(13.0, 33.0, 7.0, 3.0)?, WHITE, 0.45, at);
+    Some(())
+}
+
+/// The duck seen from the front: two eyes, a broad beak, a wing at each side and orange feet.
+fn draw_duck_front(pixmap: &mut Pixmap, at: Transform) -> Option<()> {
+    fill(pixmap, &oval(24.0, 56.0, 12.0, 6.0)?, BEAK, 1.0, at);
+    fill(pixmap, &oval(28.0, 56.0, 12.0, 6.0)?, BEAK, 1.0, at);
+    for x in [5.0, 48.0] {
+        let wing = oval(x, 34.0, 11.0, 18.0)?;
+        fill(pixmap, &wing, DUCK, 1.0, at);
+        fill(pixmap, &wing, INK, 0.14, at);
+    }
+    fill(pixmap, &oval(10.0, 26.0, 44.0, 32.0)?, DUCK, 1.0, at);
+    fill(pixmap, &circle(32.0, 23.0, 16.0)?, DUCK, 1.0, at);
+    fill(pixmap, &oval(24.0, 24.0, 16.0, 9.0)?, BEAK, 1.0, at);
+    for x in [25.5, 38.5] {
+        fill(pixmap, &circle(x, 19.0, 2.4)?, INK, 1.0, at);
+        fill(pixmap, &circle(x + 0.8, 18.2, 0.8)?, DUCK, 1.0, at);
+    }
+    Some(())
 }
 
 fn draw_duck(pixmap: &mut Pixmap, body: [u8; 3], at: Transform, water: bool) -> Option<()> {
@@ -70,6 +83,19 @@ fn draw_duck(pixmap: &mut Pixmap, body: [u8; 3], at: Transform, water: bool) -> 
     fill(pixmap, &circle(43.0, 19.0, 2.0)?, INK, 1.0, at);
     fill(pixmap, &circle(43.6, 18.4, 0.6)?, body, 1.0, at);
     Some(())
+}
+
+fn oval(x: f32, y: f32, w: f32, h: f32) -> Option<Path> {
+    PathBuilder::from_oval(tiny_skia::Rect::from_xywh(x, y, w, h)?)
+}
+
+fn tail_path() -> Option<Path> {
+    let mut p = PathBuilder::new();
+    p.move_to(12.0, 38.0);
+    p.cubic_to(7.0, 34.0, 4.0, 30.0, 3.0, 25.0);
+    p.cubic_to(8.0, 26.0, 14.0, 28.0, 18.0, 32.0);
+    p.close();
+    p.finish()
 }
 
 fn circle(cx: f32, cy: f32, r: f32) -> Option<Path> {

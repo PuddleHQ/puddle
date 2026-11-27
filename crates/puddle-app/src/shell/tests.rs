@@ -4,23 +4,8 @@ use puddle_types::SandboxName;
 use std::sync::Mutex;
 
 use super::*;
+use crate::backend::EndExtensionHostsFailed;
 use tracing::Level;
-
-#[test]
-fn rust_log_sets_the_level_and_per_crate_overrides() {
-    let (unset, bad) = log_targets(None);
-    assert!(bad.is_none());
-    assert!(unset.would_enable("puddle_app", &Level::INFO));
-    assert!(!unset.would_enable("puddle_app", &Level::DEBUG));
-
-    let (debug, _) = log_targets(Some("debug"));
-    assert!(debug.would_enable("puddle_app", &Level::DEBUG));
-    assert!(!debug.would_enable("puddle_app", &Level::TRACE));
-
-    let (mixed, _) = log_targets(Some("warn,puddle_host=trace"));
-    assert!(mixed.would_enable("puddle_host", &Level::TRACE));
-    assert!(!mixed.would_enable("puddle_app", &Level::INFO));
-}
 
 #[test]
 fn puddle_log_wins_over_rust_log_and_scopes_the_level_to_puddle_crates() {
@@ -28,8 +13,22 @@ fn puddle_log_wins_over_rust_log_and_scopes_the_level_to_puddle_crates() {
     assert!(said.is_none());
     assert!(filter.would_enable("puddle_app", &Level::TRACE));
     assert!(!filter.would_enable("tauri", &Level::DEBUG));
-    let (filter, _) = log_filter(None, Some("debug"));
-    assert!(filter.would_enable("tauri", &Level::DEBUG));
+}
+
+#[test]
+fn rust_log_keeps_dependencies_at_the_ceiling_unless_it_names_them() {
+    let (filter, said) = log_filter(None, Some("trace"));
+    assert!(said.is_none());
+    assert!(filter.would_enable("puddle_app", &Level::TRACE));
+    for dep in ["hyper", "rustls", "h2", "russh", "tauri"] {
+        assert!(filter.would_enable(dep, &Level::INFO), "{dep}");
+        assert!(!filter.would_enable(dep, &Level::DEBUG), "{dep}");
+    }
+    let (filter, _) = log_filter(None, Some("warn,puddle_host=trace,hyper=debug"));
+    assert!(filter.would_enable("puddle_host", &Level::TRACE));
+    assert!(!filter.would_enable("puddle_app", &Level::INFO));
+    assert!(filter.would_enable("hyper", &Level::DEBUG));
+    assert!(!filter.would_enable("rustls", &Level::INFO));
 }
 
 #[test]
@@ -42,10 +41,10 @@ fn a_puddle_log_that_does_not_parse_gives_info_and_comes_back() {
 
 #[test]
 fn a_rust_log_that_does_not_parse_gives_info_and_comes_back() {
-    let (targets, bad) = log_targets(Some("puddle=loud"));
-    assert_eq!(bad.as_deref(), Some("puddle=loud"));
-    assert!(targets.would_enable("puddle_app", &Level::INFO));
-    assert!(!targets.would_enable("puddle_app", &Level::DEBUG));
+    let (filter, said) = log_filter(None, Some("puddle=loud"));
+    assert!(said.unwrap().starts_with("RUST_LOG=\"puddle=loud\""));
+    assert!(filter.would_enable("puddle_app", &Level::INFO));
+    assert!(!filter.would_enable("puddle_app", &Level::DEBUG));
 }
 
 #[test]
@@ -115,7 +114,9 @@ fn recording_ends() -> (EndExtensionHosts, Arc<Mutex<Vec<String>>>) {
         sink.lock().unwrap().push(workspace.to_string());
         Box::pin(async move {
             if workspace.as_str() == "stopped" {
-                Err("the workspace is not running".to_owned())
+                Err(EndExtensionHostsFailed::Guest(
+                    puddle_host::EndExtensionHostsError::NotRunning,
+                ))
             } else {
                 Ok(())
             }
@@ -195,7 +196,7 @@ fn closing_a_popup_asks_nothing_and_the_last_window_asks_once() {
     // A second window of the same workspace (the editor's "New Window"), counted as the
     // window system does.
     windows.opened(&demo);
-    let ended = windows.on_event(demo.clone());
+    let ended = windows.on_event(demo);
     ended(&tauri::WindowEvent::Destroyed);
     // An absence window: a call for the first window's end would have arrived by now.
     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -488,6 +489,40 @@ fn a_start_up_failure_is_recorded_in_the_data_folder_and_named_in_the_message() 
 }
 
 #[test]
+fn a_start_up_failure_lands_in_the_fallback_folder_when_the_data_folder_cannot_be_written() {
+    let dir = tempfile::tempdir().unwrap();
+    // a file where the data folder should be: it can be neither locked nor created
+    let blocker = dir.path().join("blocker");
+    std::fs::write(&blocker, "").unwrap();
+    let fallback = dir.path().join("fallback");
+    let written = crash::write_startup_error_or_fallback(
+        Some(&blocker.join("data")),
+        &fallback,
+        "the backend didn't start",
+    )
+    .unwrap();
+    assert_eq!(written, fallback.join(crash::STARTUP_ERROR_FILE));
+    assert!(
+        std::fs::read_to_string(written)
+            .unwrap()
+            .contains("the backend didn't start")
+    );
+}
+
+#[test]
+fn a_setup_failure_the_hook_stored_is_what_run_returns_after_the_loop_ends() {
+    let stored = Mutex::new(Some(ShellError::Containment(LifecycleError::Job {
+        op: "assign",
+        source: std::io::Error::other("denied"),
+    })));
+    assert!(matches!(
+        setup_outcome(&stored),
+        Err(ShellError::Containment(_))
+    ));
+    assert!(setup_outcome(&stored).is_ok());
+}
+
+#[test]
 fn a_failure_the_setup_hook_stored_is_what_run_returns_and_tauri_s_own_otherwise() {
     let stored = Mutex::new(Some(ShellError::Containment(LifecycleError::Job {
         op: "assign",
@@ -523,7 +558,7 @@ fn the_installer_refuses_to_replace_a_newer_version_with_an_older_one() {
 fn the_probe_opens_with_the_clipboard_setting_the_environment_names_and_refuses_a_typo() {
     let page = Some("http://probe.localhost:4900/");
     let with = |value| SandboxProbe::parse(page, Some("9444"), None, None, value);
-    assert_eq!(with(None).unwrap().clipboard_read, ClipboardRead::Ask);
+    assert_eq!(with(None).unwrap().clipboard_read, ClipboardRead::Allow);
     assert_eq!(
         with(Some("ask")).unwrap().clipboard_read,
         ClipboardRead::Ask

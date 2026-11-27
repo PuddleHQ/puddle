@@ -20,11 +20,24 @@ case $out in *"FAILED: echo the-reason >&2; exit 3 (status 3)"*) ;; *) fail "the
 case $out in *the-reason*"FAILED: false (status 1)"* | *"FAILED: false (status 1)"*the-reason*) ;; *) fail "the output of the failed command or the second failure is missing: $out" ;; esac
 case $out in *"2 of 4 commands failed"*) ;; *) fail "no count of failures: $out" ;; esac
 
-# the commands run in parallel: four one-second sleeps take well under four seconds with four jobs
-printf 'sleep 1\nsleep 1\nsleep 1\nsleep 1\n' >"$tmp/par.list"
-start=$(date +%s)
-HOOKS_GATE_JOBS=4 "$here/scripts/hooks-gate.sh" "$tmp/par.list" >/dev/null 2>&1 || fail "the parallel list failed"
-[ $(($(date +%s) - start)) -lt 4 ] || fail "four one-second commands with four jobs took 4 s or more: they did not run side by side"
+# the commands run in parallel: with four jobs, each of four commands announces itself and then waits until all four have, so the
+# list only passes when they ran side by side. The wait bounds only the failure case (a serial runner); load cannot fail a pass.
+rendezvous_list() { # <marker dir> <polls> <list file>
+    mkdir "$1"
+    : >"$3"
+    for i in 1 2 3 4; do
+        # shellcheck disable=SC2016 # the command text keeps its own $ for the sh that runs it
+        printf 'touch "%s/%s"; n=0; while [ "$(ls "%s" | wc -l)" -lt 4 ]; do n=$((n + 1)); [ "$n" -le %s ] || exit 9; sleep 0.1; done\n' "$1" "$i" "$1" "$2" >>"$3"
+    done
+}
+rendezvous_list "$tmp/rv-par" 600 "$tmp/par.list"
+HOOKS_GATE_JOBS=4 "$here/scripts/hooks-gate.sh" "$tmp/par.list" >/dev/null 2>&1 || fail "four commands that wait for each other did not pass with four jobs: they did not run side by side"
+
+# with one job the same list cannot pass (the first command gives up waiting), so the check above does prove parallelism
+rendezvous_list "$tmp/rv-ser" 3 "$tmp/ser.list"
+rc=0
+HOOKS_GATE_JOBS=1 "$here/scripts/hooks-gate.sh" "$tmp/ser.list" >/dev/null 2>&1 || rc=$?
+[ "$rc" = 1 ] || fail "the rendezvous list exited $rc with one job, not 1: the parallel check proves nothing"
 
 # a command runs from the repository root
 printf 'test -f scripts/hooks-gate.sh\n' >"$tmp/cwd.list"

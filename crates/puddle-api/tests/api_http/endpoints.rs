@@ -3,9 +3,7 @@
 
 use std::sync::Arc;
 
-use puddle_api::{
-    ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, Services, SettingsRepo,
-};
+use puddle_api::{ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, Services};
 use puddle_netpolicy::{EndpointKind, OwnAddresses, PuddleEndpoints};
 use puddle_store::{Limits, ManualClock, Store};
 
@@ -16,7 +14,7 @@ fn services(endpoints: &PuddleEndpoints) -> Services {
     let store = Arc::new(Store::open_in_memory(clock.clone(), Limits::default()).unwrap());
     Services::new(
         store,
-        Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>,
+        Arc::new(MemorySettings::default()),
         Arc::new(EventHub::default()),
         clock,
     )

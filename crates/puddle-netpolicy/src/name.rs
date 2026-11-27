@@ -182,7 +182,7 @@ pub fn normalise_host(raw: &str) -> Result<Target, NameError> {
 
 fn literal(ip: IpAddr) -> Target {
     Target {
-        host: Host::Ip(ip),
+        host: Host::from_ip(ip),
         named: None,
     }
 }

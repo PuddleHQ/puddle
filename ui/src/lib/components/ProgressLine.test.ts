@@ -6,6 +6,29 @@ import ProgressLine from "./ProgressLine.svelte";
 afterEach(cleanup);
 
 describe("ProgressLine", () => {
+  it("counts the seconds on a step that gives no count, once it runs long", async () => {
+    vi.useFakeTimers();
+    try {
+      render(ProgressLine, {
+        props: {
+          busy: "starting",
+          progress: {
+            step: "starting",
+            detail: null,
+            repository: null,
+            operation: "starting",
+            failed: false,
+          },
+        },
+      });
+      expect(screen.getByRole("status")).not.toHaveTextContent(/\d s\b/);
+      await vi.advanceTimersByTimeAsync(65_000);
+      expect(screen.getByRole("status")).toHaveTextContent("1 min 05 s");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("shows nothing when nothing is going on", () => {
     const { container } = render(ProgressLine, {
       props: { busy: null, progress: undefined },
@@ -36,6 +59,29 @@ describe("ProgressLine", () => {
     expect(line).toHaveTextContent("step 3 of 3");
     expect(line).toHaveTextContent("<b>https://example.org/x.git</b>");
     expect(line.querySelector("b b")).toBeNull();
+  });
+
+  it("shows a failed clone with git's message as text, in an alert that can be dismissed", () => {
+    render(ProgressLine, {
+      props: {
+        busy: null,
+        progress: {
+          step: "failed",
+          detail:
+            "mono-docs: fatal: unable to access 'https://forge.test/acme/mono-docs.git/': <b>403</b>",
+          repository: "mono-docs",
+          operation: "cloning",
+          failed: true,
+        },
+        onDismiss: () => {},
+      },
+    });
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("Cloning failed.");
+    expect(alert).toHaveTextContent("mono-docs: fatal: unable to access");
+    expect(alert).toHaveTextContent("<b>403</b>");
+    expect(alert.querySelector("b b")).toBeNull();
+    expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
   });
 
   it("shows how much of the image is downloaded, with a bar", () => {
@@ -81,12 +127,12 @@ describe("ProgressLine", () => {
     expect(screen.queryByRole("progressbar")).toBeNull();
   });
 
-  it("says why a start takes a while", () => {
+  it("names the agent wait of a start and says it takes a while", () => {
     render(ProgressLine, {
       props: {
         busy: "starting",
         progress: {
-          step: "starting",
+          step: "waiting_for_agent",
           detail: null,
           repository: null,
           operation: "starting",
@@ -94,9 +140,10 @@ describe("ProgressLine", () => {
         },
       },
     });
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "takes a minute or two, every time it starts",
-    );
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("Waiting for the workspace agent");
+    expect(status).toHaveTextContent("step 2 of 3");
+    expect(status).toHaveTextContent("takes up to a minute or two");
   });
 
   it("names the checkout a cloning step is on, and its place in a list of several", () => {

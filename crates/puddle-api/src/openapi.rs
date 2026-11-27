@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! The `OpenAPI` 3.1 contract (ADR 0004), generated from the routes and the [`crate::wire`]
+//! The `OpenAPI` 3.1 contract (ADR 0004), generated from the routes and the [`puddle_services::wire`]
 //! types. Committed as `crates/puddle-api/openapi/openapi.json`, with the TypeScript types
 //! generated from it; a test and the `openapi` gate fail when either is stale.
 
@@ -29,15 +29,16 @@ const BEARER: &str = "bearer";
     components(schemas(
         puddle_types::Event,
         crate::events::Lagged,
-        crate::error::ApiErrorBody,
-        crate::error::ErrorCode,
-        crate::error::ErrorField,
-        crate::wire::ConsentKind,
-        crate::wire::AuditType,
-        crate::wire::AuditOutcome,
-        crate::wire::ConnectionOrigin,
-        crate::wire::ConnectionProtocol,
-        crate::wire::ConnectionOutcome,
+        puddle_services::error::ApiErrorBody,
+        puddle_services::error::ErrorCode,
+        puddle_services::error::ErrorField,
+        puddle_services::wire::ConsentKind,
+        puddle_services::wire::AuditType,
+        puddle_services::wire::AuditOutcome,
+        puddle_services::wire::ConnectionOrigin,
+        puddle_services::wire::ConnectionProtocol,
+        puddle_services::wire::GitOperation,
+        puddle_services::wire::ConnectionOutcome,
         puddle_types::WorkspaceId,
         puddle_types::ReasonCode,
         puddle_types::ReasonPrefix,

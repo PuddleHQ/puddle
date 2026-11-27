@@ -40,11 +40,11 @@
     <p class="body">
       <strong>{MS_POPUP.statement}</strong>
       {MS_POPUP.rest}
-      <a href={MS_TERMS_URL} target="_blank" rel="noopener noreferrer"
-        >{MS_POPUP.licenceLink}<span class="visually-hidden">
-          (opens in your browser)</span
-        ></a
-      >
+      <a href={MS_TERMS_URL} target="_blank" rel="noopener noreferrer">
+        {MS_POPUP.licenceLink}<span class="visually-hidden">
+          (opens in your browser)
+        </span>
+      </a>
     </p>
     <label class="choice">
       <input type="checkbox" bind:checked={telemetry} />
@@ -52,12 +52,12 @@
     </label>
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     <div class="actions">
-      <button type="button" class="btn" onclick={() => (open = false)}
-        >{MS_POPUP.decline}</button
-      >
-      <button type="submit" class="btn primary" disabled={busy}
-        >{MS_POPUP.accept}</button
-      >
+      <button type="button" class="btn" onclick={() => (open = false)}>
+        {MS_POPUP.decline}
+      </button>
+      <button type="submit" class="btn primary" disabled={busy}>
+        {MS_POPUP.accept}
+      </button>
     </div>
   </form>
 </FormDialog>

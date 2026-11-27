@@ -25,9 +25,9 @@ async fn event_reader_sees_an_event_queued_past_the_deadline() {
 }
 
 async fn terminal_output_until(
-    link: &mut puddle_api::TerminalLink,
+    link: &mut puddle_services::terminals::TerminalLink,
     text: &str,
-) -> puddle_api::TerminalEnd {
+) -> puddle_services::terminals::TerminalEnd {
     let mut seen = String::new();
     loop {
         let item = tokio::time::timeout(Duration::from_secs(10), link.output.recv())
@@ -35,16 +35,20 @@ async fn terminal_output_until(
             .unwrap();
         // A link that closes without an end fails the caller's assertion on the reason.
         let Some(item) = item else {
-            return puddle_api::TerminalEnd::of(puddle_api::EndReason::Quitting);
+            return puddle_services::terminals::TerminalEnd::of(
+                puddle_services::terminals::EndReason::Quitting,
+            );
         };
         match item {
-            puddle_api::TerminalOutput::Bytes(b) => {
+            puddle_services::terminals::TerminalOutput::Bytes(b) => {
                 seen.push_str(&String::from_utf8_lossy(&b));
                 if seen.contains(text) {
-                    return puddle_api::TerminalEnd::of(puddle_api::EndReason::Exited);
+                    return puddle_services::terminals::TerminalEnd::of(
+                        puddle_services::terminals::EndReason::Exited,
+                    );
                 }
             }
-            puddle_api::TerminalOutput::Ended(end) => return end,
+            puddle_services::terminals::TerminalOutput::Ended(end) => return end,
         }
     }
 }
@@ -62,27 +66,37 @@ async fn a_terminal_runs_as_the_session_user_and_a_stop_ends_it_with_the_stopped
         .unwrap()
         .to_owned();
     let id = WorkspaceId::new("acme").unwrap();
-    let size = puddle_api::TerminalSize::new(80, 24).unwrap();
+    let size = puddle_services::terminals::TerminalSize::new(80, 24).unwrap();
 
     let service = host.workspaces();
-    puddle_api::TerminalService::check(service, &id)
+    puddle_services::terminals::TerminalService::check(service, &id)
         .await
         .unwrap();
-    let mut link = puddle_api::TerminalService::open(service, &id, size)
+    let mut link = puddle_services::terminals::TerminalService::open(service, &id, size)
         .await
         .unwrap();
     link.input
-        .send(puddle_api::TerminalInput::Bytes(b"whoami\r".to_vec()))
+        .send(puddle_services::terminals::TerminalInput::Bytes(
+            b"whoami\r".to_vec(),
+        ))
         .await
         .unwrap();
     let reached = terminal_output_until(&mut link, &format!("{user}\r\n")).await;
-    assert_eq!(reached.reason, puddle_api::EndReason::Exited, "{reached:?}");
+    assert_eq!(
+        reached.reason,
+        puddle_services::terminals::EndReason::Exited,
+        "{reached:?}"
+    );
     assert_eq!(service.open_terminals(), 1, "the shell counts as open");
 
     let stop = api.post("/api/workspaces/acme/stop", "").await;
     assert_eq!(stop.status, 202, "{}", stop.body);
     let end = terminal_output_until(&mut link, "never printed").await;
-    assert_eq!(end.reason, puddle_api::EndReason::Stopped, "{end:?}");
+    assert_eq!(
+        end.reason,
+        puddle_services::terminals::EndReason::Stopped,
+        "{end:?}"
+    );
     events.until(ended("acme"), Duration::from_secs(20)).await;
     eventually(
         "a stop leaves no terminal open",
@@ -92,16 +106,19 @@ async fn a_terminal_runs_as_the_session_user_and_a_stop_ends_it_with_the_stopped
     .await;
 
     // A stopped workspace has no terminal to open.
-    let refused = puddle_api::TerminalService::open(service, &id, size)
+    let refused = puddle_services::terminals::TerminalService::open(service, &id, size)
         .await
         .unwrap_err();
     assert!(
-        matches!(refused, puddle_api::TerminalError::NotRunning(_)),
+        matches!(
+            refused,
+            puddle_services::terminals::TerminalError::NotRunning(_)
+        ),
         "{refused:?}"
     );
     assert!(matches!(
-        puddle_api::TerminalService::check(service, &id).await,
-        Err(puddle_api::TerminalError::NotRunning(_))
+        puddle_services::terminals::TerminalService::check(service, &id).await,
+        Err(puddle_services::terminals::TerminalError::NotRunning(_))
     ));
     host.shutdown().await;
 }
@@ -112,12 +129,14 @@ async fn sandbox_a_terminal_reaches(
     workspace: &str,
 ) -> String {
     let id = WorkspaceId::new(workspace).unwrap();
-    let size = puddle_api::TerminalSize::new(80, 24).unwrap();
-    let mut link = puddle_api::TerminalService::open(service, &id, size)
+    let size = puddle_services::terminals::TerminalSize::new(80, 24).unwrap();
+    let mut link = puddle_services::terminals::TerminalService::open(service, &id, size)
         .await
         .unwrap();
     link.input
-        .send(puddle_api::TerminalInput::Bytes(b"hostname\r".to_vec()))
+        .send(puddle_services::terminals::TerminalInput::Bytes(
+            b"hostname\r".to_vec(),
+        ))
         .await
         .unwrap();
     let mut seen = String::new();
@@ -129,7 +148,7 @@ async fn sandbox_a_terminal_reaches(
         let Some(item) = item else {
             return format!("closed after {seen:?}");
         };
-        if let puddle_api::TerminalOutput::Bytes(b) = item {
+        if let puddle_services::terminals::TerminalOutput::Bytes(b) = item {
             seen.push_str(&String::from_utf8_lossy(&b));
             // The shell echoes the typed line, then answers with the name and a new prompt.
             if let Some((_, answer)) = seen.split_once("hostname\r\n")
@@ -344,6 +363,141 @@ async fn with_managed_tools_off_no_mise_variable_file_or_path_change_reaches_the
     assert_eq!(reply.status, 200, "{}", reply.body);
     restart(&api, &mut events, "acme").await;
     assert!(last_boot_guest_env(&rig).get("MISE_DATA_DIR").is_some());
+    host.shutdown().await;
+}
+
+/// Applies boot plan `n`'s merged files to the files under `root`, as the boot hook does through
+/// `puddle-agent merge-file`: a file the plan merges gets Puddle's block, one it dropped loses it.
+fn apply_plan_merges(rig: &Rig, n: usize, root: &std::path::Path, earlier: &[&str]) {
+    use puddle_agent::merge_file::{Action, Request, run};
+    let merges = rig.guest.plan_merges(n);
+    let state_dir = root.join("state");
+    let on_disk = |guest: &str| root.join(guest.trim_start_matches('/'));
+    for guest in earlier.iter().copied().filter(|g| !merges.contains_key(*g)) {
+        let request = Request {
+            action: Action::Remove,
+            state_dir: state_dir.clone(),
+            key: guest.to_owned(),
+            file: on_disk(guest),
+        };
+        run(&request, std::io::empty()).unwrap();
+    }
+    for (guest, spec) in &merges {
+        let request = Request {
+            action: Action::Apply { mode: 0o644 },
+            state_dir: state_dir.clone(),
+            key: guest.clone(),
+            file: on_disk(guest),
+        };
+        run(&request, spec.as_slice()).unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn turning_managed_tools_off_for_a_workspace_that_ran_with_them_takes_mise_out_at_its_next_start()
+ {
+    const SYSTEM_RC: [&str; 2] = ["/etc/bash.bashrc", "/etc/zsh/zshenv"];
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    global_mise(&api, true).await;
+    create(&api, &mut events, "acme").await;
+    let on_boot = rig.guest.boots() - 1;
+
+    // The guest's own files: the image's two system rc files and what the user keeps in the home.
+    let root = tempfile::tempdir().unwrap();
+    let image_rc = "# the image's own line\n";
+    let user_files = [
+        (
+            "home/agent/.bashrc",
+            "alias ll='ls -l'\nexport MISE_MINE=1\n",
+        ),
+        (
+            "home/agent/.config/mise/config.toml",
+            "[tools]\nnode = \"20\"\n",
+        ),
+    ];
+    for guest in SYSTEM_RC {
+        let path = root.path().join(guest.trim_start_matches('/'));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, image_rc).unwrap();
+    }
+    for (path, text) in user_files {
+        let path = root.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    let read = |guest: &str| {
+        std::fs::read_to_string(root.path().join(guest.trim_start_matches('/'))).unwrap()
+    };
+
+    // On: the plan has the variables, the shims first, the sudo file and the activate line.
+    assert!(!mise_names(&last_boot_guest_env(&rig)).is_empty());
+    let on_files = rig.guest.plan_files(on_boot);
+    assert!(on_files.contains_key(MISE_SUDOERS));
+    apply_plan_merges(&rig, on_boot, root.path(), &[]);
+    for guest in SYSTEM_RC {
+        let text = read(guest);
+        assert!(text.contains("export MISE_DATA_DIR="), "{guest}: {text}");
+        assert!(text.contains("mise activate"), "{guest}: {text}");
+    }
+
+    // Off, then the next start of the same workspace.
+    global_mise(&api, false).await;
+    restart(&api, &mut events, "acme").await;
+    let off_boot = rig.guest.boots() - 1;
+    assert!(off_boot > on_boot);
+    let env = last_boot_guest_env(&rig);
+    assert_eq!(mise_names(&env), Vec::<String>::new(), "no MISE_ variable");
+    assert_eq!(env.get("PATH"), None, "no shims: the image's PATH stays");
+    let off_files = rig.guest.plan_files(off_boot);
+    assert!(
+        !off_files.contains_key(MISE_SUDOERS),
+        "the hook deletes a file the plan no longer has"
+    );
+    for (path, bytes) in &off_files {
+        let text = String::from_utf8_lossy(bytes);
+        assert!(!text.contains("MISE_"), "{path}: {text}");
+        assert!(!text.contains("shims"), "{path}: {text}");
+    }
+    apply_plan_merges(&rig, off_boot, root.path(), &SYSTEM_RC);
+    for guest in SYSTEM_RC {
+        let text = read(guest);
+        assert!(
+            text.starts_with(image_rc),
+            "{guest} keeps the image's line: {text}"
+        );
+        assert!(
+            text.contains("export HTTPS_PROXY="),
+            "{guest} keeps the other env: {text}"
+        );
+        assert!(!text.contains("MISE_"), "{guest}: {text}");
+        assert!(!text.contains("mise"), "{guest}: {text}");
+    }
+
+    // Nothing the plan writes or merges is the user's own shell startup or mise configuration.
+    let touched: Vec<String> = off_files
+        .keys()
+        .chain(rig.guest.plan_merges(off_boot).keys())
+        .cloned()
+        .collect();
+    for path in &touched {
+        assert!(
+            !path.ends_with("/.bashrc")
+                && !path.ends_with("/.profile")
+                && !path.ends_with("/.zshrc")
+                && !path.contains("/mise/")
+                && !path.contains("/mise."),
+            "{path} is the user's"
+        );
+    }
+    for (path, text) in user_files {
+        assert_eq!(
+            std::fs::read_to_string(root.path().join(path)).unwrap(),
+            text
+        );
+    }
     host.shutdown().await;
 }
 

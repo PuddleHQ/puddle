@@ -25,8 +25,8 @@ use tokio::process::{Child, Command};
 use tokio::task::JoinHandle;
 
 use super::judge::{Schedule, Severity, judge};
-use super::plan::{Event, Profile, Workload, events, rounds};
-use super::sample::{Config, Sampler, Target, descendants};
+use super::plan::{Cuts, Event, Profile, Workload, events, rounds};
+use super::sample::{Config, Sampler, Target, W4_RECOVERY_BOUND, descendants};
 use super::series::Series;
 
 /// What a run needs.
@@ -290,6 +290,7 @@ struct Run {
     spaces: Vec<Space>,
     loops: Vec<(Workload, JoinHandle<()>)>,
     loop_failures: Arc<Mutex<Vec<String>>>,
+    cuts: Cuts,
     crashes: u32,
 }
 
@@ -448,6 +449,27 @@ impl Run {
         self.setup_web().await;
     }
 
+    /// The requests of a planned restart are not counted, so a web app that comes back slowly is
+    /// judged here: it must answer within `W4_RECOVERY_BOUND` of the workspaces being back.
+    async fn judge_web_recovery(&mut self, event: Event) {
+        let took = self
+            .sampler
+            .lock()
+            .await
+            .web_recovery(W4_RECOVERY_BOUND)
+            .await;
+        match took {
+            Some(d) => self.log.line(&format!(
+                "web app answered {} s after {event:?}",
+                d.as_secs()
+            )),
+            None => self.major(format!(
+                "the web app did not answer within {} s of the workspaces being back after {event:?}",
+                W4_RECOVERY_BOUND.as_secs()
+            )),
+        }
+    }
+
     fn space(&self, name: &str) -> Option<Space> {
         self.spaces.iter().find(|s| s.name == name).cloned()
     }
@@ -493,6 +515,8 @@ impl Run {
                 return Err(format!("setup of {}: exit {code}\n{out}", s.name));
             }
         }
+        // The web app answers on this computer's port 3000 only once it is forwarded.
+        self.setup_web().await;
         Ok(())
     }
 
@@ -514,16 +538,22 @@ impl Run {
             self.log.clone(),
             self.loop_failures.clone(),
         );
+        let cuts = self.cuts.clone();
         let handle = tokio::spawn(async move {
             let started = Instant::now();
             let (code, out) = guest(&opts, &data, &space, w.script(), &[round.to_string()]).await;
             let took = started.elapsed().as_secs();
-            log.line(&format!("{w:?} round {round}: exit {code} in {took} s"));
+            // A planned restart or kill that began while the round ran ends its exec session: that
+            // is the event working, and the rounds after it show the workspace came back.
+            let cut = cuts.cut(started, w);
+            let note = cut.map_or(String::new(), |e| format!(", cut by {}", e.name()));
+            let line = format!("{w:?} round {round}: exit {code} in {took} s{note}");
+            log.line(&line);
             append(
                 &opts.out.join("rounds.tsv"),
                 &format!("{}\t{w:?}\t{round}\t{code}\t{took}\n", now()),
             );
-            if code != 0 {
+            if code != 0 && cut.is_none() {
                 let tail: String = out.lines().rev().take(20).collect::<Vec<_>>().join(" | ");
                 failures
                     .lock()
@@ -583,6 +613,7 @@ impl Run {
 
     async fn event(&mut self, e: Event) -> Result<(), String> {
         self.log.line(&format!("event {}", e.name()));
+        self.cuts.began(e);
         match e {
             Event::Baseline | Event::StopLoops => {}
             Event::InboxBatch => self.inbox_batch().await,
@@ -607,6 +638,9 @@ impl Run {
                 }
             }
             Event::RestartPuddle => {
+                // The forwarded port is the server's: it cannot answer while the server is down,
+                // by plan. The restart's own time limits judge that gap, not the 1 % line.
+                self.sampler.lock().await.w4_paused(true);
                 let pid = self.serve.child.id().unwrap_or_default();
                 let _ = std::process::Command::new("kill")
                     .args(["-TERM", &pid.to_string()])
@@ -617,8 +651,11 @@ impl Run {
                 }
                 self.restart().await?;
                 self.start_spaces().await;
+                self.judge_web_recovery(e).await;
+                self.sampler.lock().await.w4_paused(false);
             }
             Event::HardKill => {
+                self.sampler.lock().await.w4_paused(true);
                 let pid = self.serve.child.id().unwrap_or_default();
                 let started = descendants(pid);
                 let _ = self.serve.child.kill().await;
@@ -634,6 +671,8 @@ impl Run {
                 }
                 self.restart().await?;
                 self.start_spaces().await;
+                self.judge_web_recovery(e).await;
+                self.sampler.lock().await.w4_paused(false);
             }
             Event::Backup => {
                 let (code, raw) = call(&self.api(), "POST", "/api/backup", None)
@@ -672,8 +711,11 @@ impl Run {
         match out {
             Ok(o) if o.status.success() => self.log.line(&format!("{}: passed", e.name())),
             Ok(o) => {
-                let text = String::from_utf8_lossy(&o.stdout).into_owned()
-                    + &String::from_utf8_lossy(&o.stderr);
+                let text = format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&o.stdout),
+                    String::from_utf8_lossy(&o.stderr)
+                );
                 append(&self.opts.out.join(format!("ui-{}.log", e.name())), &text);
                 self.major(format!(
                     "the {} event failed in the UI ({}); log ui-{}.log",
@@ -930,7 +972,11 @@ async fn guest(
     match out {
         Ok(o) => (
             o.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&o.stdout).into_owned() + &String::from_utf8_lossy(&o.stderr),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            ),
         ),
         Err(e) => (-1, format!("msb exec: {e}")),
     }
@@ -1004,10 +1050,8 @@ pub async fn run(opts: Options) -> Result<Outcome, String> {
     log.line(&format!("puddle serve is up on {}", serve.api.addr));
     let cfg = Config {
         api: serve.api.clone(),
-        w4: opts.workloads().then(|| Target {
-            addr: format!("127.0.0.1:{WEB_PORT}"),
-            token: None,
-        }),
+        // The web app is requested from `watch_web_app`, once it is up.
+        w4: None,
         // `puddle$`: the server alone, not this `puddle-soak`.
         process_prefixes: vec!["puddle$".to_owned(), "msb".to_owned()],
         db: Some(data.join("puddle.db")),
@@ -1032,6 +1076,7 @@ pub async fn run(opts: Options) -> Result<Outcome, String> {
         spaces: Vec::new(),
         loops: Vec::new(),
         loop_failures: Arc::new(Mutex::new(Vec::new())),
+        cuts: Cuts::default(),
         crashes: 0,
     };
 
@@ -1050,6 +1095,17 @@ pub async fn run(opts: Options) -> Result<Outcome, String> {
     if opts.workloads() {
         run.create_spaces().await?;
         run.setup().await?;
+        // Not before the app answers (`setup` started and forwarded it): the minutes it took to
+        // start are not failures.
+        sampler.lock().await.watch_web_app(
+            Target {
+                addr: format!("127.0.0.1:{WEB_PORT}"),
+                token: None,
+            },
+            opts.profile.w4_every(),
+            opts.profile.w4_window_secs(),
+            now,
+        );
     }
     let api_slot = Arc::new(Mutex::new(run.api()));
     let loads = tokio::spawn(page_loads(api_slot.clone(), opts.profile.at(1)));
@@ -1074,6 +1130,7 @@ pub async fn run(opts: Options) -> Result<Outcome, String> {
     let schedule = Schedule {
         start,
         active_secs: opts.profile.active().as_secs(),
+        idle_secs: opts.profile.idle().as_secs(),
         hour: opts.profile.hour_secs,
     };
     verdict(&opts.out, &metrics, schedule, &run.notes)

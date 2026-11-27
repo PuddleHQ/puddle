@@ -91,14 +91,19 @@ export function compareVersions(a, b) {
 
 /**
  * Whether the build now running is not older than the one before, by what `GET /api/health` says.
- * Every develop build reports 0.0.0, so the version only rules out a step back; the installer's own
- * package version (checked by msi-install-test.ps1) says it is newer. Returns the problems.
+ * Returns the problems. A build from before the version stamp (ci/build-msi.sh) reports 0.0.0 too,
+ * so use `buildIsNewer` for the strict check.
  */
 export function buildIsNotOlder(before, after) {
   const problems = [];
   if (!(compareVersions(before.version, after.version) <= 0)) problems.push(`health.version went from ${before.version} to ${after.version}`);
   if (!(compareVersions(before.api_version, after.api_version) <= 0)) problems.push(`health.api_version went from ${before.api_version} to ${after.api_version}`);
   return problems;
+}
+
+/** Whether `after.version` is strictly newer than `before.version`; the problem, or none. CI builds are stamped 0.0.<run number>. */
+export function buildIsNewer(before, after) {
+  return compareVersions(before.version, after.version) < 0 ? [] : [`health.version is ${after.version} after ${before.version}, not newer`];
 }
 
 /** The names a page shows when it failed to load, as the UI's error page and banners word them. */

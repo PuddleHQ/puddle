@@ -61,15 +61,45 @@ pub(super) struct AclEntry {
     pub(super) text: String,
 }
 
+/// Why `ls -lde` output could not be read. It displays as the finding's detail line.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub(super) enum AclParseError {
+    /// `ls` printed nothing.
+    #[error("ls printed nothing")]
+    Empty,
+    /// The first line is not a folder's listing line.
+    #[error("unexpected first line {line:?}")]
+    FirstLine {
+        /// The line.
+        line: String,
+    },
+    /// An entry line that does not parse.
+    #[error("unreadable ACL line {line:?}")]
+    Entry {
+        /// The line.
+        line: String,
+    },
+    /// An entry with a permission word this reader does not know.
+    #[error("unknown ACL permission {perm:?} in {line:?}")]
+    Permission {
+        /// The permission word.
+        perm: String,
+        /// The line.
+        line: String,
+    },
+}
+
 /// The entries in `ls -lde` output for one folder (empty when it has no ACL). An entry line the
 /// parser does not understand is an error, never "no grant".
-pub(super) fn parse_ls_lde(output: &str) -> Result<Vec<AclEntry>, String> {
+pub(super) fn parse_ls_lde(output: &str) -> Result<Vec<AclEntry>, AclParseError> {
     let mut lines = output.lines();
     let Some(head) = lines.next() else {
-        return Err("ls printed nothing".to_owned());
+        return Err(AclParseError::Empty);
     };
     if head.starts_with(' ') || head.is_empty() {
-        return Err(format!("unexpected first line {head:?}"));
+        return Err(AclParseError::FirstLine {
+            line: head.to_owned(),
+        });
     }
     lines
         .filter(|l| !l.trim().is_empty())
@@ -77,8 +107,10 @@ pub(super) fn parse_ls_lde(output: &str) -> Result<Vec<AclEntry>, String> {
         .collect()
 }
 
-fn parse_entry(line: &str) -> Result<AclEntry, String> {
-    let bad = || format!("unreadable ACL line {line:?}");
+fn parse_entry(line: &str) -> Result<AclEntry, AclParseError> {
+    let bad = || AclParseError::Entry {
+        line: line.to_owned(),
+    };
     let (index, rest) = line.trim().split_once(": ").ok_or_else(bad)?;
     let index: u32 = index.parse().map_err(|_| bad())?;
     let mut words = rest.split_whitespace();
@@ -101,7 +133,10 @@ fn parse_entry(line: &str) -> Result<AclEntry, String> {
         if MUTATING.contains(&perm) {
             mutating = true;
         } else if !HARMLESS.contains(&perm) {
-            return Err(format!("unknown ACL permission {perm:?} in {line:?}"));
+            return Err(AclParseError::Permission {
+                perm: perm.to_owned(),
+                line: line.to_owned(),
+            });
         }
     }
     let qualifier = match qualifier.strip_prefix("user:") {

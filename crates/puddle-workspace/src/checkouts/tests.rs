@@ -101,7 +101,7 @@ fn malformed_or_unfinished_output_is_refused_whole() {
         // A forged record kind that only differs in case.
         ("c\ta\t\t\t\t0\nD\n", "unexpected output line"),
     ] {
-        let err = parse(out).unwrap_err();
+        let err = parse(out).unwrap_err().to_string();
         assert!(err.contains(want), "{out:?}: {err}");
     }
 }
@@ -133,6 +133,7 @@ fn hostile_output_stays_bounded_and_printable() {
     assert!(
         parse(&format!("{many}D\n"))
             .unwrap_err()
+            .to_string()
             .contains("checkouts")
     );
 

@@ -248,12 +248,12 @@
       <p class="error" id="{id}-error" role="alert">{problem}</p>
     {/if}
     <div class="actions">
-      <button type="button" class="btn" onclick={() => (open = false)}
-        >Cancel</button
-      >
-      <button type="submit" class="btn primary" disabled={busy}
-        >{editing ? "Save" : "Add"}</button
-      >
+      <button type="button" class="btn" onclick={() => (open = false)}>
+        Cancel
+      </button>
+      <button type="submit" class="btn primary" disabled={busy}>
+        {editing ? "Save" : "Add"}
+      </button>
     </div>
   </form>
 </FormDialog>

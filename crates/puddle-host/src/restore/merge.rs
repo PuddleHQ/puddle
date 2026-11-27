@@ -6,7 +6,7 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use puddle_fs::private;
 use puddle_store::RestoredDatabase;
@@ -154,15 +154,60 @@ fn merge_documents(ours: &[u8], theirs: &[u8]) -> Option<Vec<u8>> {
         .flatten()
 }
 
-fn read_book(path: &Path) -> Result<Option<Map<String, Value>>, String> {
+/// Why a backup's workspace list and this machine's cannot be merged. It displays as the refusal
+/// shown to the user before a restore starts.
+#[derive(Debug, thiserror::Error)]
+pub enum BookRefusal {
+    /// A list exists but could not be read.
+    #[error("cannot read {}: {source}", path.display())]
+    Unreadable {
+        /// The list.
+        path: PathBuf,
+        /// What went wrong.
+        source: io::Error,
+    },
+    /// The file is not a JSON object.
+    #[error("{} is not a workspace list", path.display())]
+    NotAList {
+        /// The file.
+        path: PathBuf,
+    },
+    /// One list is in a format whose entries have another shape.
+    #[error(
+        "the workspace list in the backup is in format {theirs} and this machine's in format \
+         {ours}. Puddle can merge formats {OLDEST_MERGEABLE} and {BOOK_VERSION}, but {whose} \
+         format {old} describes workspaces differently, so adding would risk losing their \
+         settings. Start the Puddle that made the backup once and back up again, choose Replace, \
+         or restore on a machine with no workspaces"
+    )]
+    FormatsDiffer {
+        /// The backup's format.
+        theirs: u64,
+        /// This machine's format.
+        ours: u64,
+        /// Whose format is too old to merge: `the backup's` or `this machine's`.
+        whose: &'static str,
+        /// That format.
+        old: u64,
+    },
+}
+
+fn read_book(path: &Path) -> Result<Option<Map<String, Value>>, BookRefusal> {
     let body = match fs::read(path) {
         Ok(body) => body,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+        Err(source) => {
+            return Err(BookRefusal::Unreadable {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
     };
     match serde_json::from_slice::<Value>(&body) {
         Ok(Value::Object(map)) => Ok(Some(map)),
-        _ => Err(format!("{} is not a workspace list", path.display())),
+        _ => Err(BookRefusal::NotAList {
+            path: path.to_path_buf(),
+        }),
     }
 }
 
@@ -184,7 +229,7 @@ const OLDEST_MERGEABLE: u64 = 3;
 
 /// Whether the present and the backup's workspace lists can be merged: one of them has no
 /// workspaces, or both are in a format whose entries have the current shape (3 or 4).
-pub(super) fn check_book_versions(here: &Path, there: &Path) -> Result<(), String> {
+pub(super) fn check_book_versions(here: &Path, there: &Path) -> Result<(), BookRefusal> {
     let (Some(here), Some(there)) = (read_book(here)?, read_book(there)?) else {
         return Ok(());
     };
@@ -206,13 +251,12 @@ pub(super) fn check_book_versions(here: &Path, there: &Path) -> Result<(), Strin
     } else {
         "this machine's"
     };
-    Err(format!(
-        "the workspace list in the backup is in format {theirs} and this machine's in format \
-         {ours}. Puddle can merge formats {OLDEST_MERGEABLE} and {BOOK_VERSION}, but {whose} \
-         format {old} describes workspaces differently, so adding would risk losing their \
-         settings. Start the Puddle that made the backup once and back up again, choose Replace, \
-         or restore on a machine with no workspaces"
-    ))
+    Err(BookRefusal::FormatsDiffer {
+        theirs,
+        ours,
+        whose,
+        old,
+    })
 }
 
 /// The entries of a list with the owner `owner` given to each that names none.

@@ -23,8 +23,8 @@ use puddle_proxy::testing::{
 };
 use puddle_proxy::{AddressCheck, AddressVerdict, Proxy, ProxyConfig, Route};
 use puddle_types::{
-    BlockReason, CompanySignal, ConnectionDecision, ConnectionEvent, ConnectionReason, Host,
-    LocalCategory, NullSink, PendingId, RefusedReason, WorkspaceId,
+    BlockReason, CompanySignal, ConnectionDecision, ConnectionEvent, ConnectionOutcome,
+    ConnectionReason, Host, LocalCategory, NullSink, PendingId, RefusedReason, WorkspaceId,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
@@ -450,6 +450,66 @@ async fn a_connection_is_open_until_its_record_is_written() {
     );
 }
 
+/// The agent session ends while a tunnel is open: the proxy aborts the tunnel's task mid-splice,
+/// and the connection still leaves its one record, with what had passed and the decision made.
+#[tokio::test]
+async fn a_tunnel_cut_with_its_agent_session_is_still_recorded() {
+    let echo = echo_server().await;
+    let rig = Rig::with_resolver(
+        &ProxyConfig::default(),
+        StaticResolver::new().with("echo.test", &[LOCAL]),
+    );
+    let rule = rig.policy.allow(&host("echo.test"));
+    let mut guest = rig.guest().await;
+    let head = format!(
+        "CONNECT echo.test:{0} HTTP/1.1\r\nHost: echo.test:{0}\r\n\r\n",
+        echo.port()
+    );
+    let mut stream = guest.stream().await;
+    stream.write_all(head.as_bytes()).await.unwrap();
+    let mut reader = BufReader::new(stream);
+    assert_eq!(status(&mut reader).await.unwrap(), 200);
+    reader.get_mut().write_all(b"ping").await.unwrap();
+    let mut back = [0u8; 4];
+    reader.read_exact(&mut back).await.unwrap();
+    assert!(rig.log.events().is_empty(), "the tunnel is still open");
+
+    // The session dies with the tunnel open: no shutdown, no close.
+    drop(reader);
+    drop(guest);
+
+    let events = rig.events(1).await;
+    // Nothing else follows: the cut is recorded once.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(rig.log.events().len(), 1, "one record per connection");
+    let event = &events[0];
+    assert_eq!(
+        (event.host.to_string(), event.port),
+        ("echo.test".to_owned(), echo.port())
+    );
+    assert_eq!(
+        (
+            event.decision,
+            event.reason,
+            event.rule_id,
+            event.outcome,
+            event.resolved_ip
+        ),
+        (
+            ConnectionDecision::Allow,
+            ConnectionReason::Rule,
+            Some(rule),
+            Some(ConnectionOutcome::Connected),
+            Some(LOCAL)
+        )
+    );
+    let established = "HTTP/1.1 200 Connection Established\r\n\r\n".len() as u64;
+    assert_eq!(
+        (event.bytes_up, event.bytes_down),
+        (head.len() as u64 + 4, established + 4)
+    );
+}
+
 #[tokio::test]
 async fn refusals_carry_decision_headers_and_end_cleanly() {
     let rig = Rig::new(&ProxyConfig::default());
@@ -493,6 +553,31 @@ async fn refusals_carry_decision_headers_and_end_cleanly() {
         .parse()
         .unwrap();
     assert_eq!(rig.policy.pending()[0].id, PendingId(id));
+}
+
+/// The program the agent names on a `CONNECT` reaches the policy with the request; a copy that
+/// is not the first, or a name with nothing usable in it, does not.
+#[tokio::test]
+async fn the_program_named_on_a_connect_reaches_the_policy() {
+    let rig = Rig::new(&ProxyConfig::default());
+    let mut guest = rig.guest().await;
+    for head in [
+        "CONNECT named.test:443 HTTP/1.1\r\nx-puddle-program: pip\r\nx-puddle-program: sh\r\n\r\n",
+        "CONNECT unnamed.test:443 HTTP/1.1\r\nx-puddle-program: /\r\n\r\n",
+    ] {
+        let mut stream = guest.stream().await;
+        stream.write_all(head.as_bytes()).await.unwrap();
+        let mut reader = BufReader::new(stream);
+        let (code, _) = response_head(&mut reader).await.unwrap();
+        assert_eq!(code, 403);
+    }
+    let programs: Vec<Option<String>> = rig
+        .policy
+        .pending()
+        .into_iter()
+        .map(|p| p.program.map(|p| p.to_string()))
+        .collect();
+    assert_eq!(programs, vec![Some("pip".to_owned()), None]);
 }
 
 #[tokio::test]
@@ -950,7 +1035,7 @@ async fn a_cloud_metadata_destination_is_refused_naming_its_toggle_and_waits_for
         assert_eq!(header_value(&headers, "x-puddle-pending"), None, "{target}");
         let body = String::from_utf8(read_all(&mut reader).await.unwrap()).unwrap();
         assert!(
-            body.contains("'metadata' (cloud metadata)") && body.contains("toggle is off"),
+            body.contains("turn on 'Cloud metadata'") && body.contains("toggle is off"),
             "{target}: {body}"
         );
     }

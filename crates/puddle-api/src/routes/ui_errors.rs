@@ -6,12 +6,12 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 
-use crate::ApiErrorBody;
 use crate::authz::Principal;
-use crate::error::ApiError;
 use crate::routes::AppState;
 use crate::ui_errors::{Outcome, PER_WINDOW, WINDOW_MS};
-use crate::wire::{UiErrorList, UiErrorReport};
+use puddle_services::error::ApiError;
+use puddle_services::error::ApiErrorBody;
+use puddle_services::wire::{UiErrorList, UiErrorReport};
 
 /// The rate's window in seconds, for the log line.
 const WINDOW_S: u64 = WINDOW_MS / 1000;

@@ -54,9 +54,9 @@
     >
       <Dialog.Title class="confirm-title">{title}</Dialog.Title>
       {#if description}
-        <Dialog.Description class="confirm-detail"
-          >{description}</Dialog.Description
-        >
+        <Dialog.Description class="confirm-detail">
+          {description}
+        </Dialog.Description>
       {:else}
         <Dialog.Description class="visually-hidden">{title}</Dialog.Description>
       {/if}

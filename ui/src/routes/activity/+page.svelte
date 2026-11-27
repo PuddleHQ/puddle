@@ -23,6 +23,7 @@
   import { toasts } from "#lib/stores/toasts.svelte.ts";
   import Toast from "#lib/components/Toast.svelte";
   import "#lib/theme/controls.css";
+  import { plantedRouteThrow } from "#lib/plant.ts";
 
   /** How long typing in "Search" waits before the log is read again. */
   const TYPING_MS = 250;
@@ -170,6 +171,8 @@
       `Saved ${result.records.toLocaleString()} ${result.records === 1 ? "record" : "records"} as ${name}.`,
     );
   }
+
+  plantedRouteThrow("activity");
 </script>
 
 <div class="head">
@@ -219,32 +222,36 @@
     <label for="f-workspace">Workspace</label>
     <select id="f-workspace" bind:value={filter.workspace} onchange={apply}>
       <option value="">All workspaces</option>
-      {#each workspaces as w (w.id)}<option value={w.id}>{w.label}</option
-        >{/each}
+      {#each workspaces as w (w.id)}<option value={w.id}>
+          {w.label}
+        </option>{/each}
     </select>
   </div>
   <div class="field">
     <label for="f-type">Type</label>
     <select id="f-type" bind:value={filter.type} onchange={apply}>
       <option value="">All types</option>
-      {#each TYPES as t (t.value)}<option value={t.value}>{t.label}</option
-        >{/each}
+      {#each TYPES as t (t.value)}<option value={t.value}>
+          {t.label}
+        </option>{/each}
     </select>
   </div>
   <div class="field">
     <label for="f-outcome">Outcome</label>
     <select id="f-outcome" bind:value={filter.outcome} onchange={apply}>
       <option value="">Any outcome</option>
-      {#each OUTCOMES as o (o.value)}<option value={o.value}>{o.label}</option
-        >{/each}
+      {#each OUTCOMES as o (o.value)}<option value={o.value}>
+          {o.label}
+        </option>{/each}
     </select>
   </div>
   <div class="field">
     <label for="f-category">Destination</label>
     <select id="f-category" bind:value={filter.category} onchange={apply}>
       <option value="">Any destination</option>
-      {#each CATEGORIES as c (c.value)}<option value={c.value}>{c.label}</option
-        >{/each}
+      {#each CATEGORIES as c (c.value)}<option value={c.value}>
+          {c.label}
+        </option>{/each}
     </select>
   </div>
   <div class="field">
@@ -270,8 +277,10 @@
         class="btn"
         onclick={() => {
           cancelExport = true;
-        }}>Cancel</button
+        }}
       >
+        Cancel
+      </button>
     </p>
   {/if}
   {#if store.held.length > 0}

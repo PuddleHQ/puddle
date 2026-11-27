@@ -83,17 +83,27 @@ fn an_older_file_with_little_free_space_is_not_rebuilt_on_open() {
 
 /// A file store, incremental as every new file is, with most of its file free after a prune.
 fn store_with_much_free(path: &std::path::Path, limits: Limits, tag: &str) -> Store {
+    store_with_records_pruned(path, limits, tag, 3000)
+}
+
+/// [`store_with_much_free`] with `records` decisions written, then all pruned.
+fn store_with_records_pruned(
+    path: &std::path::Path,
+    limits: Limits,
+    tag: &str,
+    records: u32,
+) -> Store {
     let clock = Arc::new(ManualClock::new(1_800_000_000_000));
     let store = Store::open(path, clock.clone(), limits).unwrap();
     let workspace = WorkspaceId::new("a").unwrap();
     crate::testing::own(&store, &workspace);
-    for n in 0..3000 {
+    for n in 0..records {
         let host = Host::parse_normalised(&format!("{tag}{n}.example")).unwrap();
         let request = EgressRequest::new(workspace.clone(), host, 443);
         store.decide(&request, SuffixAllows::Count).unwrap();
     }
     clock.advance(10 * DAY);
-    assert!(store.prune_audit(5).unwrap().deleted >= 3000);
+    assert!(store.prune_audit(5).unwrap().deleted >= u64::from(records));
     let stats = store.audit_stats().unwrap();
     assert!(stats.free_bytes * 4 > stats.file_bytes, "{stats:?}");
     store
@@ -116,6 +126,20 @@ fn a_shrink_that_fails_still_leaves_the_size_warning_in_the_sweep_report() {
     let report = store.sweep().unwrap();
     assert!(report.audit_over_warn_size, "{report:?}");
     assert_eq!(report.audit_file_shrunk_bytes, 0);
+}
+
+#[test]
+fn a_log_truncation_that_fails_does_not_fail_the_sweep() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(
+        &dir.path().join("puddle.db"),
+        Arc::new(ManualClock::new(1_800_000_000_000)),
+        Limits::default(),
+    )
+    .unwrap();
+    store.refuse_pragma("wal_checkpoint");
+    assert!(store.checkpoint_wal().is_err());
+    store.sweep().unwrap();
 }
 
 #[test]
@@ -220,4 +244,123 @@ fn a_sweep_empties_a_write_ahead_log_that_a_long_reader_let_grow() {
         "the sweep left the log at {after}, its peak was {peak}"
     );
     assert!(after < WAL_LIMIT_BYTES as u64, "{after}");
+}
+
+#[test]
+fn a_shrink_frees_all_its_pages_and_reports_the_bytes_it_freed() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    let limits = Limits {
+        max_open_rows: 100_000,
+        ..Limits::default()
+    };
+    let store = store_with_records_pruned(&path, limits, "h", 9000);
+    let page_size = pragma_u64(&lock(&store.conn), "page_size").unwrap();
+    let free_pages = pragma_u64(&lock(&store.conn), "freelist_count").unwrap();
+    assert!(
+        free_pages > u64::from(SHRINK_STEPS_PER_SWEEP),
+        "{free_pages} free pages: the test needs more than one page per step could free"
+    );
+    assert!(
+        free_pages < u64::from(SHRINK_STEP_PAGES),
+        "{free_pages} free pages"
+    );
+    let pages_before = pragma_u64(&lock(&store.conn), "page_count").unwrap();
+    let shrunk = store.shrink_file(0).unwrap();
+    let pages_after = pragma_u64(&lock(&store.conn), "page_count").unwrap();
+    assert_eq!(shrunk, (pages_before - pages_after) * page_size);
+    // Every free page went, and the pointer-map pages that covered them with it.
+    assert!(
+        shrunk >= free_pages * page_size,
+        "{shrunk} bytes, {free_pages} free pages"
+    );
+    assert_eq!(pragma_u64(&lock(&store.conn), "freelist_count").unwrap(), 0);
+}
+
+fn a_store_with_old_records_only() -> (Arc<ManualClock>, Store) {
+    let clock = Arc::new(ManualClock::new(1_800_000_000_000));
+    let store = Store::open_in_memory(clock.clone(), Limits::default()).unwrap();
+    let workspace = WorkspaceId::new("a").unwrap();
+    crate::testing::own(&store, &workspace);
+    let host = Host::parse_normalised("x.example").unwrap();
+    store
+        .decide(
+            &EgressRequest::new(workspace, host, 443),
+            SuffixAllows::Count,
+        )
+        .unwrap();
+    store.set_audit_retention_days(1).unwrap();
+    (clock, store)
+}
+
+#[test]
+fn a_sweep_that_would_delete_the_whole_audit_waits_for_a_second_pass_to_confirm() {
+    let (clock, store) = a_store_with_old_records_only();
+    let records = store.audit_stats().unwrap().records;
+    assert!(records > 0);
+    // The clock stepped forward past the retention: every record looks old.
+    clock.advance(10 * DAY);
+
+    assert_eq!(store.sweep().unwrap().audit_records_pruned, 0);
+    assert_eq!(store.audit_stats().unwrap().records, records, "kept");
+    // Within the hour nothing looks again.
+    assert_eq!(store.sweep().unwrap().audit_records_pruned, 0);
+
+    clock.advance(2 * 60 * 60 * 1000);
+    assert_eq!(store.sweep().unwrap().audit_records_pruned, records);
+}
+
+#[test]
+fn a_clock_that_steps_back_before_the_second_pass_cancels_the_deferred_delete() {
+    let (clock, store) = a_store_with_old_records_only();
+    let records = store.audit_stats().unwrap().records;
+    clock.advance(10 * DAY);
+    store.sweep().unwrap();
+    // The step was wrong; a record now survives the cutoff, so a later pass starts over.
+    clock.set(1_800_000_000_000 + 1000);
+    clock.advance(2 * 60 * 60 * 1000);
+    assert_eq!(store.sweep().unwrap().audit_records_pruned, 0);
+    clock.advance(10 * DAY);
+    clock.advance(2 * 60 * 60 * 1000);
+    assert_eq!(
+        store.sweep().unwrap().audit_records_pruned,
+        0,
+        "all old again, so it waits again"
+    );
+    assert_eq!(store.audit_stats().unwrap().records, records);
+}
+
+#[test]
+fn a_manual_prune_deletes_at_once() {
+    let (clock, store) = a_store_with_old_records_only();
+    let records = store.audit_stats().unwrap().records;
+    clock.advance(10 * DAY);
+    assert_eq!(store.prune_audit(1).unwrap().deleted, records);
+}
+
+#[test]
+fn a_prune_logs_what_it_deleted_and_stays_quiet_when_it_deleted_nothing() {
+    let (clock, store) = a_store_with_old_records_only();
+    let records = store.audit_stats().unwrap().records;
+    let logs = crate::test_support::Logs::capture();
+
+    // Nothing is past retention yet.
+    assert_eq!(store.prune_audit(1).unwrap().deleted, 0);
+    assert!(
+        !logs
+            .lines()
+            .iter()
+            .any(|line| line.contains("audit records past their retention deleted")),
+        "a prune that deleted nothing says nothing: {:?}",
+        logs.lines()
+    );
+
+    clock.advance(10 * DAY);
+    assert_eq!(store.prune_audit(1).unwrap().deleted, records);
+    let lines = logs.lines();
+    let line = lines
+        .iter()
+        .find(|line| line.contains("audit records past their retention deleted"))
+        .unwrap_or_else(|| panic!("a prune that deleted records says so: {lines:?}"));
+    assert!(line.contains(&format!("deleted={records}")), "{line}");
 }

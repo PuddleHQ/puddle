@@ -4,13 +4,15 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use puddle_api::EndReason;
-use puddle_api::{DisplayName, WorkspaceError, WorkspaceRecord};
 use puddle_boot::{BootError, Gate, GatedSandbox};
 use puddle_compute::SandboxInfo;
 use puddle_compute::{ComputeError, Runtime, Sandbox as _, StartRefusal, VsockRoute};
-use puddle_types::{GuestEnv, ImageRef, Problem, WorkspaceId, WorkspaceStep};
-use puddle_workspace::WORKSPACE_DIR;
+use puddle_services::terminals::EndReason;
+use puddle_services::{
+    workspaces::DisplayName, workspaces::WorkspaceError, workspaces::WorkspaceRecord,
+};
+use puddle_types::{GuestEnv, GuestFile, GuestPath, ImageRef, Problem, WorkspaceId, WorkspaceStep};
+use puddle_workspace::{Layout, WORKSPACE_DIR};
 
 use super::access::Undo;
 use super::boot::BootFor;
@@ -34,14 +36,26 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .into_iter()
             .find(|s| s.name == name.as_str());
         let exists = sandbox.is_some();
-        let moved = sandbox.as_ref().is_some_and(mounts_the_volume_elsewhere);
+        // A sandbox an older Puddle made mounts the volume at `/workspaces/<id>`. msb cannot move
+        // the mount, and a new sandbox would lose the root disk (the home folder, installed
+        // packages): the sandbox is kept and a boot step shows the volume at the mount point too.
+        let older = sandbox.as_ref().and_then(older_volume_mount);
+        let older_mount = older
+            .as_ref()
+            .and_then(|at| Layout::new().ok()?.older_mount_step(at));
+        let moved = older.is_some() && older_mount.is_none();
         let mut route_alive = inner.live.lock().await.contains_key(name);
         if let Some(sandbox) = sandbox.filter(|_| !route_alive && !moved) {
             // An earlier run of Puddle made it: it is kept when this run can serve its route.
-            route_alive = self.adopt_sandbox(name, &sandbox.routes).await;
+            route_alive = self.adopt_sandbox(name, &sandbox.routes).await?;
         }
         let looked = began.elapsed();
-        let restarted = exists && route_alive && !moved && self.restart_in_place(&record).await?;
+        tracing::debug!(workspace = %name, sandbox_exists = exists, route_alive, moved, "workspace start: what was found");
+        let restarted =
+            exists && route_alive && !moved && self.restart_in_place(&record, older_mount).await?;
+        if let Some(at) = older.as_ref().filter(|_| restarted) {
+            tracing::info!(workspace = %name, older = %at, "kept the sandbox an older Puddle made; its volume is bound at {WORKSPACE_DIR} too");
+        }
         if moved {
             // A runtime cannot move the mount of a sandbox it already made.
             self.progress(
@@ -74,10 +88,16 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             // A route left from an earlier boot belongs to a sandbox that no longer exists.
             self.quiesce(name, true).await;
             let mut created_volume = false;
+            tracing::debug!(workspace = %name, "workspace start: booting a new sandbox");
             self.boot_new(&record, &mut created_volume, BootFor::Start)
                 .await?;
+            if exists {
+                // The progress notice above ends with the start; this one stays.
+                self.raise_rebuilt(&record.id, moved, route_alive);
+            }
         }
         let booted = began.elapsed();
+        tracing::debug!(workspace = %name, restarted_in_place = restarted, boot_ms = millis(booted), "workspace start: sandbox up, settling");
         if let Err(reason) = self.settle(&record).await {
             return Err(self.undo_boot(&record, Undo::Keep, reason).await);
         }
@@ -96,9 +116,14 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// Takes over the sandbox an earlier run of Puddle made, so it starts again with its root disk
     /// (home directory, installed packages): binds the workspace's route and keeps the sandbox only
     /// if that is the endpoint the sandbox was made with (`routes`, from the runtime). Otherwise
-    /// (a sandbox from before routes were stable, a name another process holds) nothing is kept
-    /// and the caller makes a new sandbox on the same volume, as before.
-    async fn adopt_sandbox(&self, name: &WorkspaceId, routes: &[VsockRoute]) -> bool {
+    /// (a sandbox from before routes were stable) nothing is kept and the caller makes a new
+    /// sandbox on the same volume, as before. A name another process holds is an error, not
+    /// "otherwise": making the sandbox again would drop its root disk.
+    async fn adopt_sandbox(
+        &self,
+        name: &WorkspaceId,
+        routes: &[VsockRoute],
+    ) -> Result<bool, OpError> {
         let inner = &self.inner;
         // A sandbox whose volume is gone cannot start: the new-sandbox path refuses that with the
         // volume-missing state, which is the answer to give.
@@ -107,34 +132,23 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 if volumes
                     .iter()
                     .any(|v| v.name == name.volume_name().as_str()) => {}
-            _ => return false,
+            _ => return Ok(false),
         }
-        let bound = match inner.kit.route(name) {
-            Ok(route) => Some(route),
-            Err(reason) => {
-                tracing::warn!(workspace = %name, %reason, "no route for the sandbox of an earlier run");
-                None
-            }
-        };
-        let route = match bound {
-            Some(route) if BootKit::serves(routes, &route) => route,
-            other => {
-                if let Some(route) = other {
-                    route.shutdown().await;
-                }
-                self.progress(
-                    name,
-                    WorkspaceStep::Starting,
-                    Some(
-                        "its sandbox was made with a route this run of Puddle cannot serve, so \
-                         it is made again; the volume with your work is kept, what was installed \
-                         outside it is not"
-                            .to_owned(),
-                    ),
-                );
-                return false;
-            }
-        };
+        let route = inner.kit.route(name)?;
+        if !BootKit::serves(routes, &route) {
+            route.shutdown().await;
+            self.progress(
+                name,
+                WorkspaceStep::Starting,
+                Some(
+                    "its sandbox was made with a route this run of Puddle cannot serve, so it \
+                     is made again; the volume with your work is kept, what was installed \
+                     outside it is not"
+                        .to_owned(),
+                ),
+            );
+            return Ok(false);
+        }
         inner.live.lock().await.insert(
             name.clone(),
             Live {
@@ -149,20 +163,24 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 rewrite: Arc::default(),
             },
         );
-        true
+        Ok(true)
     }
 
     /// Starts the stopped sandbox again, with the workspace's variables as they are now: a changed
     /// set is written to the stopped sandbox first (`Runtime::set_env`), so the root disk (home
     /// directory, installed packages) is kept. `Ok(false)` only when that write failed: the caller
     /// then makes a new sandbox on the same volume, the volume holding the work, not the sandbox.
-    pub(super) async fn restart_in_place(&self, record: &WorkspaceRecord) -> Result<bool, OpError> {
+    pub(super) async fn restart_in_place(
+        &self,
+        record: &WorkspaceRecord,
+        older_mount: Option<GuestFile>,
+    ) -> Result<bool, OpError> {
         let inner = &self.inner;
         let name = &record.id;
         let image = ImageRef::new(&record.image)?;
         let config = self.image_config(&image).await?;
         self.publish_shell_init(&record.id)?;
-        let (plan, spec_env, guest) = self.plan_guest_for(record, config).await?;
+        let (plan, spec_env, guest) = self.plan_guest_for(record, config, older_mount).await?;
         let made_with = inner
             .live
             .lock()
@@ -231,7 +249,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 &name.sandbox_name(),
                 plan,
                 &gate,
-                &self.keeper(),
+                &self.keeper(name),
             )
             .await
             .map_err(|e| {
@@ -245,6 +263,31 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 }
                 OpError::from(e)
             })
+    }
+
+    /// Raises the problem that a start made the sandbox of `name` again, so its root disk (the
+    /// home folder, installed packages) is gone and only the volume with the work is left.
+    /// It stays until the workspace is deleted, or a later rebuild replaces it.
+    fn raise_rebuilt(&self, name: &WorkspaceId, moved: bool, route_alive: bool) {
+        let why = if moved {
+            "its sandbox mounted the volume at an older folder that cannot be bound at the new one"
+        } else if !route_alive {
+            "its sandbox was made with a route this run of Puddle cannot serve"
+        } else {
+            "the workspace's variables could not be applied to its sandbox"
+        };
+        self.inner.problems.raise(
+            Problem::new(
+                problem_key("rebuilt", name),
+                format!("{} was made again", self.label(name)),
+                format!(
+                    "Puddle made its sandbox again at the last start because {why}. The volume \
+                     with your work is kept. What was installed outside it (the home folder, \
+                     installed packages and toolchains) is gone: install it again."
+                ),
+            )
+            .about(name.clone()),
+        );
     }
 
     /// Raises the problem that the runtime refused to start `name` and why.
@@ -264,6 +307,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     pub(super) async fn stop_work(&self, record: WorkspaceRecord) -> Result<(), OpError> {
         let name = &record.id;
+        tracing::debug!(workspace = %name, "workspace stop: ending terminals and windows, then trim and stop");
         // The terminals end first, with the stop as their reason, while the guest can still answer.
         self.inner.terminals.end(name, EndReason::Stopped);
         // The windows go first, so the editor can disconnect and the guest end its extension hosts
@@ -317,6 +361,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
         self.quiesce(name, false).await;
         self.inner.reports.end(name);
+        tracing::debug!(workspace = %name, "workspace stop: done");
         Ok(())
     }
 
@@ -462,6 +507,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         report: puddle_workspace::DeleteReport,
     ) -> Result<(), OpError> {
         let inner = &self.inner;
+        tracing::debug!(workspace = %record.id, "workspace delete: starting");
         self.progress(&record.id, WorkspaceStep::Checking, None);
         inner.launcher.close_browser(&record.id).await;
         let _guest = self.hold_guest(&record.id).await;
@@ -476,6 +522,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         inner
             .problems
             .clear_prefix(&format!("{}:", problem_key("clone", &record.id)));
+        inner.problems.clear(&problem_key("rebuilt", &record.id));
         // A step that failed is a notice; the sweep at the next start tries it again. When all
         // went, `conclude` notes the id as cleaned and the next start skips it.
         let gone = self
@@ -548,12 +595,16 @@ fn millis(d: Duration) -> u64 {
     u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
 }
 
-/// Whether `sandbox` mounts its volume somewhere other than [`WORKSPACE_DIR`], as one made by an
-/// earlier version does. A runtime that cannot tell says no.
-fn mounts_the_volume_elsewhere(sandbox: &SandboxInfo) -> bool {
-    !sandbox.volume_mounts.is_empty()
-        && !sandbox
-            .volume_mounts
-            .iter()
-            .any(|m| m.as_str() == WORKSPACE_DIR)
+/// Where `sandbox` mounts its volume when that is not [`WORKSPACE_DIR`], as in one an older
+/// Puddle made (`/workspaces/<id>`). `None` when it mounts a volume at [`WORKSPACE_DIR`], and when
+/// the runtime cannot tell.
+fn older_volume_mount(sandbox: &SandboxInfo) -> Option<GuestPath> {
+    if sandbox
+        .volume_mounts
+        .iter()
+        .any(|m| m.as_str() == WORKSPACE_DIR)
+    {
+        return None;
+    }
+    sandbox.volume_mounts.first().cloned()
 }

@@ -8,6 +8,7 @@ import {
 } from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Choice, Target } from "#lib/decision/model.ts";
+import { workspaces } from "#lib/stores/workspaces.svelte.ts";
 import OptionsPopover from "./OptionsPopover.svelte";
 
 afterEach(cleanup);
@@ -55,6 +56,20 @@ await fireEvent.click(
 cleanup();
 
 describe("OptionsPopover", () => {
+  it("names the workspace by its display name, not its id", async () => {
+    workspaces.list = [{ id: "vm19gtbp", name: "qa-first" } as never];
+    try {
+      mount({ workspace: "vm19gtbp" });
+      const dialog = await show();
+      expect(
+        within(dialog).getByRole("radio", { name: /^Only qa-first/ }),
+      ).toBeInTheDocument();
+      expect(dialog).not.toHaveTextContent("vm19gtbp");
+    } finally {
+      workspaces.list = [];
+    }
+  });
+
   it("shows a set's colour beside its name, and the name still names the choice", async () => {
     mount({
       sets: [

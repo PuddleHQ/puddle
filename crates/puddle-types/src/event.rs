@@ -648,6 +648,9 @@ pub enum WorkspaceStep {
     Cloning,
     /// Booting the workspace's virtual machine.
     Starting,
+    /// The virtual machine is up; waiting for the agent inside it to answer and for the boot
+    /// script to finish.
+    WaitingForAgent,
     /// Bringing the checkouts in line with the volume after a boot.
     Syncing,
     /// Looking for work that is not on a remote.

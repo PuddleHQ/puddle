@@ -6,6 +6,7 @@
 )]
 
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use puddle_compute::fake::{ExecContext, FakeConfig, FakeRuntime, Fault, Op};
 use puddle_compute::{
@@ -16,6 +17,9 @@ use puddle_types::{GuestPath, ImageRef, SandboxName, SessionUser, WorkspaceId, W
 use puddle_workspace::{
     DELETE_CHECK_SH, HoldKind, PREPARE_SH, WorkspaceConfig, WorkspaceError, Workspaces,
 };
+
+mod spy;
+use spy::{Spy, Step};
 
 fn ws(s: &str) -> WorkspaceId {
     WorkspaceId::new(s).unwrap()
@@ -1459,4 +1463,106 @@ async fn a_maintenance_sandbox_that_cannot_be_removed_after_a_job_that_worked_is
         "{err}"
     );
     assert!(err.to_string().contains("record is locked"), "{err}");
+}
+
+/// The fake behind a hook that records the holder of `id` at each sandbox listing.
+fn spy_on_holder_at_listings(
+    rt: &FakeRuntime,
+    w: &Arc<Workspaces>,
+    id: &WorkspaceId,
+) -> (Arc<Mutex<Vec<Option<HoldKind>>>>, Spy) {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let (log, w, id) = (Arc::clone(&seen), Arc::clone(w), id.clone());
+    let spy = Spy::new(rt.clone(), move |op| {
+        if op == Op::List {
+            log.lock().unwrap().push(w.holder(&id).map(|h| h.kind));
+        }
+        Step::Pass
+    });
+    (seen, spy)
+}
+
+#[tokio::test]
+async fn delete_reads_the_owner_while_it_holds_the_workspace() {
+    let rt = FakeRuntime::new();
+    CheckStub::install(&rt, CLEAN);
+    let w = Arc::new(Workspaces::default());
+    let id = ws("acme");
+    let sb = w.create(&rt, &id, spec("box"), None).await.unwrap();
+    sb.stop().await.unwrap();
+    drop(sb);
+    let report = w.check_delete(&rt, &id).await.unwrap();
+    let (seen, spy) = spy_on_holder_at_listings(&rt, &w, &id);
+    w.delete(&spy, &id, &report.confirm()).await.unwrap();
+    // The first listing is the owner's lookup; the next is the maintenance sandbox's leftover
+    // check. A create that started between a lookup and the loan would be missed.
+    assert_eq!(
+        seen.lock().unwrap()[..2],
+        [Some(HoldKind::Maintenance), Some(HoldKind::Maintenance)]
+    );
+    assert_eq!(names(&rt).await, NONE);
+}
+
+#[tokio::test]
+async fn a_delete_that_fails_keeps_the_owner_and_a_good_one_forgets_it() {
+    let rt = FakeRuntime::new();
+    let stub = CheckStub::install(&rt, CLEAN);
+    let w = Workspaces::default();
+    let id = ws("acme");
+    let sb = w.create(&rt, &id, spec("box"), None).await.unwrap();
+    sb.stop().await.unwrap();
+    drop(sb);
+    let report = w.check_delete(&rt, &id).await.unwrap();
+    stub.set(DIRTY);
+    let err = w.delete(&rt, &id, &report.confirm()).await.unwrap_err();
+    assert!(matches!(err, WorkspaceError::Changed { .. }), "{err:?}");
+    let holder = w.holder(&id).unwrap();
+    assert_eq!(
+        (holder.sandbox, holder.kind),
+        (name("box"), HoldKind::Attached)
+    );
+    let now = w.check_delete(&rt, &id).await.unwrap();
+    w.delete(&rt, &id, &now.confirm()).await.unwrap();
+    assert_eq!(w.holder(&id), None);
+}
+
+#[tokio::test]
+async fn a_maintenance_sandbox_cut_off_with_its_request_is_down_and_the_workspace_is_free() {
+    let rt = FakeRuntime::new();
+    stub_fstrim(&rt, 0);
+    let w = Workspaces::default();
+    let id = ws("acme");
+    let sb = w
+        .create(&rt, &id, spec("box"), Some(DiskSize::gib(3)))
+        .await
+        .unwrap();
+    sb.stop().await.unwrap();
+    drop(sb);
+    // The maintenance sandbox is up and the request is dropped before its job began, as the
+    // service does when it ends the tasks it owns at shutdown. The future holds the handle.
+    let spy = Spy::new(rt.clone(), |op| {
+        if op == Op::Create {
+            Step::HangAfter
+        } else {
+            Step::Pass
+        }
+    });
+    // The owner's own create went through the fake directly; hang only the maintenance one.
+    let held = w.reclaim_space(&spy, &id);
+    let cut = tokio::time::timeout(Duration::from_millis(50), held).await;
+    assert!(cut.is_err(), "the request never ends");
+    assert_eq!(
+        status(&rt, "m--acme").await,
+        Some(WorkspaceStatus::Stopped),
+        "dropping the handle shuts the VM down"
+    );
+    assert_eq!(
+        w.holder(&id).unwrap().sandbox,
+        name("box"),
+        "no loan is left"
+    );
+    // The next run clears the record and works.
+    stub_fstrim(&rt, 0);
+    w.reclaim_space(&rt, &id).await.unwrap();
+    assert_eq!(names(&rt).await, ["box"]);
 }

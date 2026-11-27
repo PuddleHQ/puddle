@@ -4,13 +4,17 @@
 //! real service would answer with.
 
 use futures_util::future::BoxFuture;
-use puddle_api::wire::{RepoListState, RepoNoteCode, RepoProblemCode, RepoRole, RepoVisibility};
-use puddle_api::{FakeCredentials, FakeRepos, RepoService, ReposError};
 use puddle_repos::{
     ListState, Note, NoteKind, Problem, ProblemKind, Profile, ProfileRead, Read, Repository, Role,
     SourceList, Visibility,
 };
 use puddle_secrets::SourceSpec;
+use puddle_services::wire::{
+    RepoListState, RepoNoteCode, RepoProblemCode, RepoRole, RepoVisibility,
+};
+use puddle_services::{
+    credentials::FakeCredentials, repos::FakeRepos, repos::RepoService, repos::ReposError,
+};
 use puddle_store::{Identity, IdentityId};
 use std::sync::{Arc, Mutex, PoisonError};
 

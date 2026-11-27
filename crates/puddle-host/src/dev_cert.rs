@@ -6,18 +6,18 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
-use puddle_api::DevCertService;
-use puddle_api::wire::{DevCertTrustResult, DevCertificate};
 use puddle_certs::devcert::{
     DevCertManager, DevCertReport, DevCertStatus, DevCertTrust, GuestDevCert, HostTrust,
 };
+use puddle_services::dev_cert::DevCertService;
+use puddle_services::wire::{DevCertTrustResult, DevCertificate};
 use puddle_store::Clock;
 
 /// Where a workspace's guest gets the development certificate from, at every boot.
 pub trait GuestCertSource: Send + Sync {
     /// The certificate and key for the next boot, or `None` when there is none to give (the
-    /// reason is logged). May block: the system can ask the user once (the first time Puddle's
-    /// own certificate is trusted), so callers run it off the async threads.
+    /// reason is logged). Never asks the user to trust it (only the first-run screen does); may
+    /// block on the stores and the data folder, so callers run it off the async threads.
     fn guest_cert(&self) -> Option<GuestDevCert>;
 }
 
@@ -57,7 +57,7 @@ impl<T: DevCertTrust> GuestCertSource for HostDevCert<T> {
             .ensuring
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        match self.manager.ensure(self.now()) {
+        match self.manager.prepare(self.now()) {
             Ok(report) => {
                 log_report(&report);
                 Some(GuestDevCert::new(&report.material))

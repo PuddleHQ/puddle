@@ -11,13 +11,13 @@ use puddle_netpolicy::normalise_host;
 use puddle_store::InterceptionSettings;
 use puddle_types::{CURATED_PASS_THROUGH, Host, InterceptionMode, WorkspaceId};
 
-use crate::ApiErrorBody;
 use crate::authz::{self, Action, Principal, ResourceRef};
-use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
 use crate::routes::workspaces::named;
-use crate::wire::{
+use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, blocking};
+use puddle_services::wire::{
     GlobalNeverDecrypt, InterceptionRequest, InterceptionSettingsRequest, InterceptionSettingsView,
     InterceptionView, LearnedHosts, LearnedLimits, MakePermanentRequest, PermanentScope,
     WorkspaceMode,
@@ -32,7 +32,7 @@ pub(super) fn pattern(raw: &str) -> Result<String, ApiError> {
     let (wild, name) = raw
         .trim()
         .strip_prefix("*.")
-        .map_or((false, raw.trim()), |rest| (true, rest));
+        .map_or_else(|| (false, raw.trim()), |rest| (true, rest));
     let host = normalise_host(name)
         .map_err(|_| ApiError::invalid(format!("{raw:?} is not a host name")))?
         .into_host();

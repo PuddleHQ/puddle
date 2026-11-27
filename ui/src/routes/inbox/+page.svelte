@@ -219,16 +219,22 @@
     Requests that matched no rule. Each stays here until you decide. Meanwhile
     the tool that asked is told the host is waiting for approval, and can retry.
   </p>
+  {#if pending.status === "ready" && pending.allowedToday > 0}
+    <p class="muted" data-testid="allowed-today">
+      {pending.allowedToday}
+      {pending.allowedToday === 1 ? "request" : "requests"} allowed by rules today.
+    </p>
+  {/if}
 </div>
 
 {#each pending.full as workspace (workspace)}
   <p class="full" role="status">
-    <b
-      ><span class="mono">{workspaces.labelOf(workspace)}</span> has {pending.openLimit}
-      waiting requests</b
-    >, the most Puddle lists. If it asks about more hosts, they are listed once
-    you answer some. Allowing or denying a domain with its subdomains clears
-    many at once.
+    <b>
+      <span class="mono">{workspaces.labelOf(workspace)}</span> has {pending.openLimit}
+      waiting requests
+    </b>, the most Puddle lists. If it asks about more hosts, they are listed
+    once you answer some. Allowing or denying a domain with its subdomains
+    clears many at once.
   </p>
 {/each}
 
@@ -252,7 +258,10 @@
   {#each shownGroups as group (group.domain)}
     <section class="group" aria-labelledby="group-{group.domain}">
       <div class="group-head">
-        <h2 id="group-{group.domain}" class="domain">{group.domain}</h2>
+        <h2 id="group-{group.domain}" class="domain">
+          {#each group.domain.split(/(?<=\.)/) as label, i (i)}{label}<wbr
+            />{/each}
+        </h2>
         <span class="chip">{group.total} waiting</span>
       </div>
       <ul>
@@ -281,9 +290,9 @@
     <ul>
       {#each pending.decided as d (d.ruleId)}
         <li>
-          <span class="chip {d.effect}"
-            >{d.effect === "allow" ? "allowed" : "denied"}</span
-          >
+          <span class="chip {d.effect}">
+            {d.effect === "allow" ? "allowed" : "denied"}
+          </span>
           <span class="what">
             <span class="mono">{decidedPattern(d)}</span>
             for {d.workspace === null
@@ -292,9 +301,9 @@
             {d.expiresAt === null
               ? "permanently"
               : `until ${relativeTime(d.expiresAt, now)}`}
-            {#if d.alsoClosed > 0}<span class="muted"
-                >· also closed {d.alsoClosed} other</span
-              >{/if}
+            {#if d.alsoClosed > 0}<span class="muted">
+                · also closed {d.alsoClosed} other
+              </span>{/if}
           </span>
           <button
             type="button"
@@ -356,6 +365,8 @@
   }
   .group-head {
     display: flex;
+    /* The count drops below the domain before the domain is squeezed into breaking inside a label. */
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--space-3);
     padding: var(--space-3) var(--space-4);

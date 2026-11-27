@@ -46,7 +46,7 @@ const create = (page: Page, name: string) =>
     exact: true,
   });
 const dialog = (page: Page) =>
-  page.getByRole("dialog", { name: "New workspace" });
+  page.getByRole("region", { name: "New workspace" });
 
 test("lists what the identity reaches on every host, with role and traits, and says what the list leaves out", async ({
   page,
@@ -131,20 +131,17 @@ test("an account that reaches nothing says so", async ({ page, backend }) => {
   await expect(repos(page).getByRole("table")).toHaveCount(0);
 });
 
-test("an Azure DevOps project with a space is listed, with what that costs and the way out", async ({
+test("an Azure DevOps project with a space is listed and creates a workspace", async ({
   page,
   backend,
 }) => {
   await open(page, backend, WORK);
   const row = rowOf(page, "contoso/Shop Floor/scanner");
-  await expect(row.getByTestId("repo-table-warning")).toContainText(
-    "turn that off on the workspace's Git tab",
-  );
+  await expect(row.getByTestId("repo-table-warning")).toHaveCount(0);
   await create(page, "contoso/Shop Floor/scanner").click();
   await expect(dialog(page).getByLabel("Git repository (HTTPS)")).toHaveValue(
     "https://dev.azure.com/contoso/Shop%20Floor/_git/scanner",
   );
-  await expect(dialog(page).getByTestId("table-cannot-hold")).toBeVisible();
 });
 
 test("Refresh asks the host again and shows what changed", async ({
@@ -269,9 +266,11 @@ test("keyboard only: from the repository row to the finished form", async ({
   await expect(form.getByLabel("Git repository (HTTPS)")).toHaveValue(
     "https://github.com/tijs-demo/dotfiles",
   );
-  await page.keyboard.press("Escape");
+  // Esc doesn't close the screen (it isn't a dialog); Cancel does, and returns to the list.
+  await form.getByRole("button", { name: "Cancel" }).focus();
+  await page.keyboard.press("Enter");
   await expect(form).toBeHidden();
-  await expectFocused(page, create(page, "tijs-demo/dotfiles"));
+  await expect(page).toHaveURL(/\/workspaces$/);
 
   // Open the picker with the keyboard from the workspaces list.
   await page.goto("/workspaces");

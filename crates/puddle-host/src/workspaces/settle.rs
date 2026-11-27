@@ -6,9 +6,9 @@ use crate::git_hosts::Authors;
 use crate::op_error::OpError;
 use std::sync::{Arc, PoisonError};
 
-use puddle_api::WorkspaceRecord;
 use puddle_boot::GatedSandbox;
 use puddle_compute::{ComputeError, Runtime, Sandbox as _};
+use puddle_services::workspaces::WorkspaceRecord;
 use puddle_store::{Actor, NewWorkspaceOp, WorkspaceOpKind, WorkspaceOpOutcome};
 use puddle_types::{Event, EventSink, GuestEnv, Problem, WorkspaceId, WorkspaceStep};
 
@@ -87,10 +87,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             session_user: guest.session_user,
             ssh_agent: guest.ssh_agent,
             mise: guest.mise.as_ref(),
+            older_mount: guest.older_mount.as_ref(),
             label: &guest.label,
         };
         let (plan, _) = kit.plan(&guest.image, &inputs)?;
-        let report = kit.hook().run(gated.ungated(), &plan).await?;
+        let report = kit.hook().run(gated, &plan).await?;
         self.settle_after_hook(name, &report, Some(&guest.authors), HookRun::Rewrite);
         Ok(report)
     }
@@ -518,6 +519,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 pub(super) struct LifecycleKeeper<'a, R: Runtime> {
     pub(super) runtime: &'a R,
     pub(super) lifecycle: &'a Lifecycle<R>,
+    /// Told the workspace waits for its agent once the VM is up (the boot hook runs next).
+    pub(super) events: &'a dyn EventSink,
+    pub(super) workspace: &'a WorkspaceId,
 }
 
 impl<R: Runtime> puddle_boot::Keeper<R::Sandbox> for LifecycleKeeper<'_, R> {
@@ -532,7 +536,17 @@ impl<R: Runtime> puddle_boot::Keeper<R::Sandbox> for LifecycleKeeper<'_, R> {
             Err(e) => return Err((owning, e.to_string())),
         };
         match self.lifecycle.manage(owning, vec![mount]) {
-            Ok(_) => Ok(borrowed),
+            Ok(_) => {
+                self.events.emit(Event::WorkspaceProgress {
+                    workspace: self.workspace.clone(),
+                    step: WorkspaceStep::WaitingForAgent,
+                    detail: None,
+                    repository: None,
+                    bytes_done: None,
+                    bytes_total: None,
+                });
+                Ok(borrowed)
+            }
             Err(owning) => Err((owning, OpError::ShuttingDown.to_string())),
         }
     }

@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! axum extractors whose rejections are [`ApiErrorBody`](crate::ApiErrorBody) JSON like every
+//! axum extractors whose rejections are [`ApiErrorBody`](puddle_services::error::ApiErrorBody) JSON like every
 //! other error, instead of axum's plain-text ones.
 
 use axum::RequestExt as _;
-use axum::extract::rejection::{JsonRejection, PathRejection, QueryRejection};
 use axum::extract::{FromRequest, FromRequestParts, Request};
 use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE};
 use axum::http::{HeaderMap, StatusCode};
@@ -12,7 +11,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use zeroize::Zeroizing;
 
-use crate::error::{ApiError, ErrorCode};
+use puddle_services::error::{ApiError, ErrorCode};
 
 /// A JSON object body (`Content-Type: application/json` required). Anything but an object is
 /// refused, so serde can't read a struct from an array.
@@ -177,41 +176,6 @@ pub(crate) struct Path<T>(pub(crate) T);
 #[derive(Debug, FromRequestParts)]
 #[from_request(via(axum::extract::Query), rejection(ApiError))]
 pub(crate) struct Query<T>(pub(crate) T);
-
-impl From<JsonRejection> for ApiError {
-    fn from(rejection: JsonRejection) -> Self {
-        let message = rejection.body_text();
-        match rejection {
-            JsonRejection::MissingJsonContentType(_) => Self::new(
-                StatusCode::UNSUPPORTED_MEDIA_TYPE,
-                ErrorCode::UnsupportedMediaType,
-                "the body must be application/json",
-            ),
-            JsonRejection::BytesRejection(ref bytes)
-                if bytes.status() == StatusCode::PAYLOAD_TOO_LARGE =>
-            {
-                Self::new(
-                    StatusCode::PAYLOAD_TOO_LARGE,
-                    ErrorCode::PayloadTooLarge,
-                    "the body is too large",
-                )
-            }
-            _ => Self::bad_request(message),
-        }
-    }
-}
-
-impl From<PathRejection> for ApiError {
-    fn from(rejection: PathRejection) -> Self {
-        Self::bad_request(rejection.body_text())
-    }
-}
-
-impl From<QueryRejection> for ApiError {
-    fn from(rejection: QueryRejection) -> Self {
-        Self::bad_request(rejection.body_text())
-    }
-}
 
 #[cfg(test)]
 mod tests;

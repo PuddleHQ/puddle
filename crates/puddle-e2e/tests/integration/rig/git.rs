@@ -179,7 +179,7 @@ impl GitRig {
             .with_resolver(Arc::new(Fixed(reach.unwrap_or_else(|| host.addr()))))
             .with_address_check(Arc::new(AnyAddress))
             .with_termination(
-                terminations as Arc<dyn puddle_proxy::TerminationSource>,
+                terminations,
                 TlsClient::new(
                     via.as_ref()
                         .and_then(|(_, _, trust)| trust.clone())

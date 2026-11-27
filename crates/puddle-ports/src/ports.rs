@@ -6,8 +6,13 @@
 //! (see [`crate::forward`]). A **pinned** forward is kept in the store and comes back at every
 //! start of the workspace; a plain one lives until the workspace stops or the user stops it.
 //! Pinned or not, a forward never takes a port something else holds: it says who has it.
+//!
+//! A port that starts listening in a running workspace is also forwarded on its own, to the same
+//! number on this computer when that is free, and the forward closes again when the listener goes
+//! (see [`Ports::ports`](GuestWatcher::ports)). That is what lets a tool in the workspace finish a
+//! sign-in: it listens on a loopback port and the browser on this computer is sent back to it.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -15,7 +20,6 @@ use puddle_agent_proto::forward::GuestLink;
 use puddle_agent_proto::host::GuestWatcher;
 use puddle_netpolicy::{HostAddrs, OwnAddresses, PuddleEndpoints};
 use puddle_types::{Event, EventSink, WorkspaceId};
-use tokio::net::TcpListener;
 
 use crate::forward::{Forward, LinkCell, MAX_CONNECTIONS, link_cell};
 use crate::owner::{PortOwner, ProgramLookup, SystemPrograms};
@@ -123,6 +127,12 @@ struct Failed {
 struct Entry {
     running: bool,
     listening: Vec<u16>,
+    /// The agent has reported its ports at least once. What it listens on at that first report was
+    /// there before anyone asked, and is not forwarded on its own.
+    reported: bool,
+    /// Ports the user stopped the forward of while they listen: not forwarded again on their own
+    /// until the listener goes.
+    declined: BTreeSet<u16>,
     link: Option<LinkCell>,
     forwards: BTreeMap<u16, Active>,
     failed: BTreeMap<u16, Failed>,
@@ -151,6 +161,8 @@ impl EndedSessions {
 struct Active {
     host_port: u16,
     forward: Forward,
+    /// Opened by [`Ports::auto_forward`], not by the user: it closes when the listener goes.
+    auto: bool,
 }
 
 /// What [`Ports::open`] did.
@@ -184,6 +196,8 @@ pub struct Ports {
     inner: Arc<Inner>,
     /// Connections one forward carries at once; set before the ports are shared.
     max_connections: usize,
+    /// New listeners are forwarded on their own ([`Self::with_auto_forward`]).
+    auto_forward: bool,
 }
 
 impl std::fmt::Debug for Ports {
@@ -225,6 +239,7 @@ impl Ports {
                 ended: tokio::sync::broadcast::channel(64).0,
             }),
             max_connections: MAX_CONNECTIONS,
+            auto_forward: false,
         }
     }
 
@@ -233,6 +248,15 @@ impl Ports {
     #[must_use]
     pub const fn with_connection_limit(mut self, limit: usize) -> Self {
         self.max_connections = limit;
+        self
+    }
+
+    /// The same ports, forwarding every port that starts listening in a running workspace on its
+    /// own. Off by default so a test that reports ports never opens ports of the real computer.
+    /// Call it before the ports are cloned.
+    #[must_use]
+    pub const fn with_auto_forward(mut self) -> Self {
+        self.auto_forward = true;
         self
     }
 
@@ -278,7 +302,7 @@ impl Ports {
             Ok(pins) => {
                 for pin in pins {
                     // Nothing runs yet, so no forward is moved here.
-                    if let Err(err) = self.open(workspace, pin).await {
+                    if let Err(err) = self.open(workspace, pin, false) {
                         self.fail(workspace, pin, err.to_string());
                     }
                 }
@@ -454,7 +478,7 @@ impl Ports {
             .pinned(workspace)?
             .iter()
             .any(|p| p.guest_port == guest_port);
-        let opened = self.open(workspace, pin).await?;
+        let opened = self.open(workspace, pin, false)?;
         let saved = if pinned {
             self.inner.pins.pin(workspace, pin)
         } else if was_pinned {
@@ -510,6 +534,9 @@ impl Ports {
         // Unpin first: when the pins cannot be changed the forward that works stays.
         let unpinned = self.inner.pins.unpin(workspace, guest_port)?;
         let (active, failed) = self.entries().get_mut(workspace).map_or((None, None), |e| {
+            if e.listening.contains(&guest_port) {
+                e.declined.insert(guest_port);
+            }
             (e.forwards.remove(&guest_port), e.failed.remove(&guest_port))
         });
         if active.is_none() && failed.is_none() && !unpinned {
@@ -523,11 +550,17 @@ impl Ports {
     }
 
     /// Opens (or keeps, or moves) the forward for `pin`; a forward it moved is not closed.
-    async fn open(&self, workspace: &WorkspaceId, pin: Pin) -> Result<Opened, PortsError> {
+    fn open(&self, workspace: &WorkspaceId, pin: Pin, auto: bool) -> Result<Opened, PortsError> {
         let link = {
             let mut entries = self.entries();
             let entry = entries.entry(workspace.clone()).or_default();
-            if entry.forwards.get(&pin.guest_port).map(|a| a.host_port) == Some(pin.host_port) {
+            if let Some(active) = entry
+                .forwards
+                .get_mut(&pin.guest_port)
+                .filter(|a| a.host_port == pin.host_port)
+            {
+                // The user asking for what an automatic forward already is makes it theirs.
+                active.auto &= auto;
                 entry.failed.remove(&pin.guest_port);
                 return Ok(Opened::Kept);
             }
@@ -539,11 +572,8 @@ impl Ports {
                 owner,
             });
         }
-        let listener = TcpListener::bind(("127.0.0.1", pin.host_port))
-            .await
-            .map_err(|err| self.bind_failed(pin.host_port, &err))?;
         let forward = Forward::start(
-            listener,
+            pin.host_port,
             pin.guest_port,
             &link,
             &self.inner.endpoints,
@@ -559,6 +589,7 @@ impl Ports {
                 Active {
                     host_port: pin.host_port,
                     forward,
+                    auto,
                 },
             )
         };
@@ -639,20 +670,102 @@ impl GuestWatcher for Ports {
     }
 
     fn ports(&self, workspace: &WorkspaceId, ports: Vec<u16>) {
-        let changed = {
+        let (changed, fresh, gone) = {
             let mut entries = self.entries();
             if self.stopped_set().contains(workspace) {
                 return;
             }
             let entry = entries.entry(workspace.clone()).or_default();
-            if entry.listening == ports {
-                false
+            if entry.listening == ports && entry.reported {
+                (false, Vec::new(), Vec::new())
             } else {
+                let fresh: Vec<u16> = if entry.reported {
+                    ports
+                        .iter()
+                        .copied()
+                        .filter(|p| !entry.listening.contains(p))
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                let gone: Vec<u16> = entry
+                    .listening
+                    .iter()
+                    .copied()
+                    .filter(|p| !ports.contains(p))
+                    .collect();
+                entry.declined.retain(|p| ports.contains(p));
+                entry.reported = true;
                 entry.listening = ports;
-                true
+                (true, fresh, gone)
             }
         };
         if changed {
+            self.changed(workspace);
+        }
+        if self.auto_forward && !(fresh.is_empty() && gone.is_empty()) {
+            // The report arrives on the agent's control task; the forwards are opened and closed
+            // beside it, so a slow bind never holds the next report up.
+            if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+                let ports = self.clone();
+                let workspace = workspace.clone();
+                runtime.spawn(async move { ports.auto_forward(&workspace, &fresh, &gone).await });
+            }
+        }
+    }
+}
+
+impl Ports {
+    /// Forwards the ports that began to listen, each to its own number on this computer, and closes
+    /// the automatic forwards of the ports that stopped. A port of this computer that is taken is
+    /// left alone without a word: the user did not ask for this forward, and the Ports tab still
+    /// offers it.
+    async fn auto_forward(&self, workspace: &WorkspaceId, fresh: &[u16], gone: &[u16]) {
+        let _changing = self.inner.changing.lock().await;
+        let mut closing = Vec::new();
+        let mut opened = false;
+        {
+            let mut entries = self.entries();
+            if let Some(entry) = entries.get_mut(workspace) {
+                for port in gone {
+                    if entry.forwards.get(port).is_some_and(|a| a.auto)
+                        && let Some(active) = entry.forwards.remove(port)
+                    {
+                        closing.push(active);
+                    }
+                }
+            }
+        }
+        let pinned = self.inner.pins.pinned(workspace).unwrap_or_default();
+        for &port in fresh {
+            let wanted = {
+                let entries = self.entries();
+                entries.get(workspace).is_some_and(|e| {
+                    e.running
+                        && e.listening.contains(&port)
+                        && !e.declined.contains(&port)
+                        && !e.forwards.contains_key(&port)
+                }) && pinned.iter().all(|p| p.guest_port != port)
+            };
+            if !wanted {
+                continue;
+            }
+            let pin = Pin {
+                guest_port: port,
+                host_port: port,
+            };
+            match self.open(workspace, pin, true) {
+                Ok(_) => opened = true,
+                Err(err) => {
+                    tracing::debug!(%workspace, port, error = %err, "a port was not forwarded on its own");
+                }
+            }
+        }
+        let had_closed = !closing.is_empty();
+        for active in closing {
+            active.forward.close().await;
+        }
+        if opened || had_closed {
             self.changed(workspace);
         }
     }

@@ -232,14 +232,15 @@ fn a_panic_while_making_the_icon_is_an_answer_not_a_crash() {
 // overwrote a crash hook installed at the same moment. The rounds chain a hook that only sets
 // a flag, as `crash::install` does through `panic_hook::chain`: the real one writes a crash
 // file with a backtrace and an fsync per panic, and under a busy disk 300 of those took over
-// 120 s. A silent base hook keeps the closing panic off stderr. One last round uses
+// 120 s. A silent base hook keeps the closing panic off stderr; it goes in through `panic_hook::replace`,
+// under the same lock, because a bare `set_hook` beside another test's `guarded` could lose it. One last round uses
 // the real `crash::install`.
 #[test]
 fn a_hook_installed_while_the_icon_is_made_survives_it() {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    let silent = || std::panic::set_hook(Box::new(|_| {}));
+    let silent = || puddle_types::panic_hook::replace(|_| {});
     silent();
     for round in 0..300 {
         let ran = Arc::new(AtomicBool::new(false));
@@ -279,5 +280,5 @@ fn a_hook_installed_while_the_icon_is_made_survives_it() {
     });
     let _ = std::thread::spawn(|| panic!("after both")).join();
     assert!(folder.exists(), "the crash hook was lost");
-    drop(std::panic::take_hook());
+    puddle_types::panic_hook::reset();
 }

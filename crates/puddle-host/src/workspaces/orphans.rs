@@ -6,7 +6,7 @@
 //! adds a list entry and writes nothing to the disk. What it reads from the disk (a checkout's
 //! remote address) is guest input: it is parsed as an address and used only as one.
 
-use puddle_api::{NewRepository, RepoUrl};
+use puddle_services::{workspaces::NewRepository, workspaces::RepoUrl};
 use puddle_store::UserId;
 use puddle_types::VolumeName;
 use puddle_workspace::{CheckoutList, FoundCheckout};
@@ -101,7 +101,7 @@ fn entries_for(
 
 /// A new entry id that none of `found` has.
 fn fresh_entry(found: &[Repository]) -> Result<EntryId, WorkspaceError> {
-    puddle_api::new_entry_id(|e| found.iter().any(|f| f.entry == *e))
+    puddle_services::workspaces::new_entry_id(|e| found.iter().any(|f| f.entry == *e))
         .map_err(WorkspaceError::unavailable)
 }
 
@@ -121,7 +121,7 @@ fn readable(checkout: &FoundCheckout) -> Option<(RepoUrl, CheckoutDir)> {
 /// name.
 fn free_name(state: &State, owner: UserId, base: &str) -> DisplayName {
     let taken = |name: &DisplayName| {
-        puddle_api::label_taken(
+        puddle_services::workspaces::label_taken(
             state.slots.values().map(|s| &s.record),
             owner,
             name.as_str(),
@@ -299,6 +299,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 identity: None,
                 pull: true,
                 push: true,
+                push_block: None,
                 local: None,
             })
             .collect();

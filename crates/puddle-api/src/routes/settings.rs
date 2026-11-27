@@ -12,12 +12,12 @@ use puddle_settings::{
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 
-use crate::ApiErrorBody;
-use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
 use crate::settings::SettingsRepo;
-use crate::wire::{
+use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, blocking};
+use puddle_services::wire::{
     ConsentKind, ConsentRequest, Consents, GlobalSettingsRequest, GlobalSettingsView,
     SettingsLayer, WorkspaceSettingsRequest, WorkspaceSettingsView,
 };
@@ -32,6 +32,24 @@ fn unreadable(what: &str, err: SettingsError) -> ApiError {
     match err {
         SettingsError::NewerSchema { .. } => err.into(),
         _ => ApiError::settings_unreadable(what, &err),
+    }
+}
+
+/// Puts the log at the level the settings ask for (unless the environment set one), from start-up
+/// on and at every change.
+pub(crate) fn apply_log_level(settings: &GlobalSettings) {
+    use puddle_settings::LogLevelChoice as Level;
+    use tracing::level_filters::LevelFilter;
+    let level = settings.ui.log_level();
+    let changed = puddle_log::apply_setting(match level {
+        Level::Error => LevelFilter::ERROR,
+        Level::Warn => LevelFilter::WARN,
+        Level::Info => LevelFilter::INFO,
+        Level::Debug => LevelFilter::DEBUG,
+        Level::Trace => LevelFilter::TRACE,
+    });
+    if changed {
+        tracing::info!(level = level.as_str(), "log level set from the settings");
     }
 }
 
@@ -83,7 +101,7 @@ pub(crate) fn check_new_workspace_cpus(
         return Ok(());
     }
     check_cpus_within(cpus, &load_global(repo)?.settings.limits, "cpus")
-        .map_err(|e| e.at_field(crate::ErrorField::Cpus))
+        .map_err(|e| e.at_field(puddle_services::error::ErrorField::Cpus))
 }
 
 /// A CPU count above the global maximum is refused where it is set, so the user hears it then
@@ -189,6 +207,7 @@ pub(crate) async fn put_global(
     })
     .await?;
     tracing::info!("global settings changed");
+    apply_log_level(&loaded.settings);
     workspaces.settings_changed().await;
     drop(lock);
     crate::system_managed::refresh(&after).await;

@@ -130,9 +130,9 @@
   </div>
   <div class="acts">
     {#if store.identities.length > 0}
-      <button type="button" class="btn" disabled={testing} onclick={testAll}
-        >{testing ? "Testing…" : "Test all"}</button
-      >
+      <button type="button" class="btn" disabled={testing} onclick={testAll}>
+        {testing ? "Testing…" : "Test all"}
+      </button>
     {/if}
     <button type="button" class="btn primary" onclick={() => (addOpen = true)}>
       <Plus aria-hidden="true" size={16} />Add identity
@@ -154,115 +154,129 @@
     </p>
   </section>
 {:else}
-  <table class="rows">
-    <caption class="visually-hidden">Identities, in your order</caption>
-    <thead>
-      <tr>
-        <th scope="col">Name</th>
-        <th scope="col">Commit author</th>
-        <th scope="col">Covers</th>
-        <th scope="col">Last test</th>
-        <th scope="col">Used by</th>
-        <th scope="col">Order (first match is the commit author)</th>
-        <th scope="col"><span class="visually-hidden">Actions</span></th>
-      </tr>
-    </thead>
-    <tbody>
-      {#each store.identities as identity, index (identity.id)}
-        {@const status = identityStatus(
-          identity.credentials.map((c) => store.checkOf(c)),
-        )}
-        <tr
-          class="row"
-          class:over={dragging !== null && dragging !== identity.id}
-          data-identity-id={identity.id}
-          draggable="true"
-          ondragstart={() => (dragging = identity.id)}
-          ondragend={() => (dragging = null)}
-          ondragover={(e) => dragging !== null && e.preventDefault()}
-          ondrop={(e) => {
-            e.preventDefault();
-            void dropOn(identity);
-          }}
-        >
-          <th scope="row">
-            <a href="/identities/{identity.id}">{identity.label}</a>
-            {#if identity.is_default}<span class="meta">Default</span>{/if}
+  <!-- Seven columns do not fit a phone: the table scrolls inside its own frame, which a key reaches. -->
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+  <div class="wrap" role="region" aria-label="Identities table" tabindex="0">
+    <table class="rows">
+      <caption class="visually-hidden">Identities, in your order</caption>
+      <thead>
+        <tr>
+          <th scope="col">Name</th>
+          <th scope="col">Commit author</th>
+          <th scope="col">Covers</th>
+          <th scope="col">Last test</th>
+          <th scope="col">Used by</th>
+          <th scope="col">
+            Order <span class="visually-hidden">
+              (first match is the commit author)
+            </span>
           </th>
-          <td>{identity.author.name} &lt;{identity.author.email}&gt;</td>
-          <td>
-            {#if identity.credentials.length === 0}
-              <span class="muted">No credentials: commits only.</span>
-            {:else}
-              <ul class="covers" aria-label="Credentials of {identity.label}">
-                {#each identity.credentials as credential, at (at)}
-                  <li>
-                    {credential.host}: {coverageText(
-                      credential.covers,
-                      credential.host,
-                    )}
-                    <span class="muted">({sourceLabel(credential.source)})</span
-                    >
-                  </li>
-                {/each}
-              </ul>
-            {/if}
-          </td>
-          <td>
-            {#if identity.credentials.length > 0}<CheckChip
-                check={status}
-              />{:else}<span class="muted">-</span>{/if}
-          </td>
-          <td>{usedBy(identity)}</td>
-          <td class="order">
-            <GripVertical aria-hidden="true" size={16} class="grip" />
-            <button
-              type="button"
-              class="btn"
-              data-move="up"
-              aria-label="Move {identity.label} up"
-              disabled={index === 0}
-              onclick={() => move(identity, -1)}
-            >
-              <ArrowUp aria-hidden="true" size={16} />
-            </button>
-            <button
-              type="button"
-              class="btn"
-              data-move="down"
-              aria-label="Move {identity.label} down"
-              disabled={index === store.identities.length - 1}
-              onclick={() => move(identity, 1)}
-            >
-              <ArrowDown aria-hidden="true" size={16} />
-            </button>
-          </td>
-          <td class="acts">
-            {#if !identity.is_default}
+          <th scope="col"><span class="visually-hidden">Actions</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {#each store.identities as identity, index (identity.id)}
+          {@const status = identityStatus(
+            identity.credentials.map((c) => store.checkOf(c)),
+          )}
+          <tr
+            class="row"
+            class:over={dragging !== null && dragging !== identity.id}
+            data-identity-id={identity.id}
+            draggable="true"
+            ondragstart={() => (dragging = identity.id)}
+            ondragend={() => (dragging = null)}
+            ondragover={(e) => dragging !== null && e.preventDefault()}
+            ondrop={(e) => {
+              e.preventDefault();
+              void dropOn(identity);
+            }}
+          >
+            <th scope="row">
+              <a href="/identities/{identity.id}">{identity.label}</a>
+              {#if identity.is_default}<span class="meta">Default</span>{/if}
+            </th>
+            <td>{identity.author.name} &lt;{identity.author.email}&gt;</td>
+            <td>
+              {#if identity.credentials.length === 0}
+                <span class="muted">No credentials: commits only.</span>
+              {:else}
+                <ul class="covers" aria-label="Credentials of {identity.label}">
+                  {#each identity.credentials as credential, at (at)}
+                    <li>
+                      {credential.host}: {coverageText(
+                        credential.covers,
+                        credential.host,
+                      )}
+                      <span class="muted">
+                        ({sourceLabel(credential.source)})
+                      </span>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
+            </td>
+            <td>
+              {#if identity.credentials.length > 0}<CheckChip
+                  check={status}
+                />{:else}<span class="muted">-</span>{/if}
+            </td>
+            <td>{usedBy(identity)}</td>
+            <td class="order">
+              <GripVertical aria-hidden="true" size={16} class="grip" />
               <button
                 type="button"
                 class="btn"
-                onclick={() => makeDefault(identity)}
-                >Set {identity.label} as default</button
+                data-move="up"
+                aria-label="Move {identity.label} up"
+                disabled={index === 0}
+                onclick={() => move(identity, -1)}
               >
-            {/if}
-            <button
-              type="button"
-              class="btn deny"
-              aria-label="Delete {identity.label}"
-              onclick={() => askDelete(identity)}>Delete</button
-            >
-          </td>
-        </tr>
-      {/each}
-    </tbody>
-  </table>
+                <ArrowUp aria-hidden="true" size={16} />
+              </button>
+              <button
+                type="button"
+                class="btn"
+                data-move="down"
+                aria-label="Move {identity.label} down"
+                disabled={index === store.identities.length - 1}
+                onclick={() => move(identity, 1)}
+              >
+                <ArrowDown aria-hidden="true" size={16} />
+              </button>
+            </td>
+            <td class="acts">
+              {#if !identity.is_default}
+                <button
+                  type="button"
+                  class="btn"
+                  onclick={() => makeDefault(identity)}
+                >
+                  Set {identity.label} as default
+                </button>
+              {/if}
+              <button
+                type="button"
+                class="btn deny"
+                aria-label="Delete {identity.label}"
+                onclick={() => askDelete(identity)}
+              >
+                Delete
+              </button>
+            </td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+  </div>
 {/if}
 
 <p class="muted settings-link">
   Whether new workspaces may push to or pull from any repository is set in <a
-    href="/settings/editor-and-git">Settings, Git</a
-  >.
+    href="/settings/git"
+  >
+    Settings, Git
+  </a>.
 </p>
 
 <IdentityDialog
@@ -310,6 +324,11 @@
     flex-wrap: wrap;
     align-items: flex-start;
     gap: var(--space-2);
+  }
+  /* Positioned so a visually-hidden label inside a cell is clipped with the table, not the page. */
+  .wrap {
+    position: relative;
+    overflow-x: auto;
   }
   .rows {
     width: 100%;

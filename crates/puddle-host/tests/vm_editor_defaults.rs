@@ -4,8 +4,8 @@
 //! overwrites a key the user changed in the guest.
 #![cfg(target_os = "linux")]
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::time::Duration;
 
@@ -36,7 +36,7 @@ async fn vm_editor_defaults_are_merged_before_the_server_starts_and_a_users_own_
     let name = format!("{}-edef", settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
     let api = Api::new(host.url(), host.token());
-    let user_dir = "/workspace/.puddle/code-server/user-data/User".to_string();
+    let user_dir = "/workspace/.puddle/code-server/user-data/User".to_owned();
 
     let put = |editor: Value| {
         let api = &api;

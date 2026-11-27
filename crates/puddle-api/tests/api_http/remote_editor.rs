@@ -9,9 +9,12 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use puddle_api::{
-    ApiConfig, ApiServer, ApiToken, DisplayName, EventHub, FakeWorkspaces, MemorySettings, NoNames,
-    PublicHost, Remote, RemoteServing, RunningApi, Services, SettingsRepo, Unsaved,
-    WorkspaceRecord, WorkspaceService,
+    ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, NoNames, PublicHost, Remote,
+    RemoteServing, RunningApi, Services,
+};
+use puddle_services::{
+    fake_workspaces::FakeWorkspaces, fake_workspaces::Unsaved, workspaces::DisplayName,
+    workspaces::WorkspaceRecord,
 };
 use puddle_store::{Limits, ManualClock, Store, UserId};
 use puddle_types::WorkspaceId;
@@ -47,12 +50,12 @@ async fn site(remote: bool, seeded: &[(&str, &str)]) -> Site {
     }
     let services = Services::new(
         store.clone(),
-        Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>,
+        Arc::new(MemorySettings::default()),
         events,
         clock,
     )
     .with_front_resolver(Arc::new(NoNames))
-    .with_workspaces(workspaces.clone() as Arc<dyn WorkspaceService>)
+    .with_workspaces(workspaces.clone())
     .with_account_secrets(store.take_account_secrets().unwrap());
     let mut config = ApiConfig::default();
     if remote {

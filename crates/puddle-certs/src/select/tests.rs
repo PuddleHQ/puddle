@@ -197,6 +197,42 @@ fn intermediates_need_a_synced_issuer_and_chain_in_any_order() {
 }
 
 #[test]
+fn an_intermediate_that_names_a_synced_issuer_but_is_signed_by_another_key_is_not_synced() {
+    let corp = root("Corp Root", 2040);
+    let attacker = rcgen::KeyPair::generate().unwrap();
+    let forged = {
+        let key = rcgen::KeyPair::generate().unwrap();
+        let p = params("Forged Intermediate", 2039);
+        let issuer = rcgen::Issuer::from_params(&corp.params, &attacker);
+        let cert = p.signed_by(&key, &issuer).unwrap();
+        Ca {
+            key,
+            cert,
+            params: p,
+        }
+    };
+    let genuine = issued("Genuine Intermediate", 2039, &corp);
+    let under_forged = issued("Below Forged", 2038, &forged);
+    let mut s = StoreSnapshot::new();
+    s.add(LM_ROOT, der(&corp));
+    s.add(CU_CA, der(&forged));
+    s.add(CU_CA, der(&under_forged));
+    s.add(CU_CA, der(&genuine));
+    let r = CorporateRoots::select(&s, now());
+    assert_eq!(names(&r), ["Corp Root", "Genuine Intermediate"]);
+    assert_eq!(
+        skipped(&r),
+        [
+            ("Below Forged".to_owned(), SkipReason::NotIssuedBySyncedCert),
+            (
+                "Forged Intermediate".to_owned(),
+                SkipReason::NotIssuedBySyncedCert
+            ),
+        ]
+    );
+}
+
+#[test]
 fn an_intermediate_under_a_disallowed_root_is_not_synced() {
     let corp = root("Corp Root", 2040);
     let issuing = issued("Corp Issuing CA", 2039, &corp);

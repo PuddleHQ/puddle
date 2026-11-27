@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use puddle_types::{Host, PendingId, RuleId, WorkspaceId};
+use puddle_types::{Host, PendingId, Program, RuleId, WorkspaceId};
 use serde::{Deserialize, Serialize};
 
 use crate::rule::{Actor, Effect, Rule};
@@ -81,6 +81,13 @@ pub struct PendingRow {
     /// The rule set whose entry decided it (`system`, `builtin:<slug>`, `user:<id>`), when a
     /// set's entry did (R-37, R-41).
     pub rule_set: Option<String>,
+    /// The program that asked first, as the agent named it: a display hint the guest can fake,
+    /// never an input to a rule. `None` when the agent named none.
+    pub program: Option<Program>,
+    /// The name resolved to a local address (R-14), so only an exact allow decides the row
+    /// (R-16): a suffix allow or a rule set's allow never closes it, and approving with one is
+    /// refused.
+    pub exact_only: bool,
 }
 
 /// Rule scope for a decision (R-15). Defaults to the row's workspace.

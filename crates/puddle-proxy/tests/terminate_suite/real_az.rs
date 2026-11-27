@@ -24,7 +24,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use puddle_logins::{LoginNotices, Logins, Marker, Problem, Profile, builtin};
 use puddle_proxy::{InjectDecision, StandIns};
-use puddle_secrets::{MemoryStore, SecretStore};
+use puddle_secrets::MemoryStore;
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 use terminate_support::{
@@ -212,8 +212,8 @@ impl Az {
             true,
             builtin(),
             Arc::clone(&registry),
-            Arc::new(MemoryStore::new()) as Arc<dyn SecretStore>,
-            Arc::clone(&notices) as Arc<dyn LoginNotices>,
+            Arc::new(MemoryStore::new()),
+            notices.clone(),
             Marker::none(),
         );
         let rig = rig

@@ -5,7 +5,7 @@
   import { page } from "$app/state";
   import { onMount, tick } from "svelte";
   import CheckChip from "#lib/components/CheckChip.svelte";
-  import CreateWorkspaceDialog from "#lib/components/CreateWorkspaceDialog.svelte";
+  import { workspaceActions } from "#lib/stores/workspace-actions.svelte.ts";
   import RepoBrowser from "#lib/components/RepoBrowser.svelte";
   import ConfirmDialog from "#lib/components/ConfirmDialog.svelte";
   import IdentityDialog from "#lib/components/IdentityDialog.svelte";
@@ -25,7 +25,7 @@
     identities as store,
     type SignInStart,
   } from "#lib/stores/identities.svelte.ts";
-  import type { RepoView } from "#lib/repos/model.ts";
+  import { pushBlock, type RepoView } from "#lib/repos/model.ts";
   import { RepoLists } from "#lib/stores/repos.svelte.ts";
   import { toasts } from "#lib/stores/toasts.svelte.ts";
   import "#lib/theme/controls.css";
@@ -41,8 +41,6 @@
   let started = $state<SignInStart | null>(null);
   let startError = $state<string | null>(null);
   const repos = new RepoLists();
-  let createOpen = $state(false);
-  let createFor = $state<{ url: string; identity: number | null } | null>(null);
 
   // An identity that was here and is gone (deleted here or elsewhere) takes you back to the list.
   let seen = false;
@@ -54,7 +52,7 @@
   onMount(() => store.start());
 
   async function test(credential: Credential) {
-    await store.check(credential);
+    await store.check(credential, identity ?? undefined);
   }
 
   // The click on Sign in is what starts it; nothing else does.
@@ -68,10 +66,13 @@
     else startError = result.message;
   }
 
-  // "Create a workspace for this" opens the create form on this page with the repository filled in.
+  // "Create a workspace for this" opens the New workspace screen with the repository filled in.
   function createFrom(repo: RepoView) {
-    createFor = { url: repo.url, identity: identity?.id ?? null };
-    createOpen = true;
+    workspaceActions.openCreate({
+      url: repo.url,
+      identity: identity?.id ?? null,
+      pushBlock: pushBlock(repo),
+    });
   }
 
   // The identity page's Sign in, for the credential a list says is signed out.
@@ -119,16 +120,20 @@
     </div>
     <div class="acts">
       {#if !identity.is_default}
-        <button type="button" class="btn" onclick={makeDefault}
-          >Set as default</button
-        >
+        <button type="button" class="btn" onclick={makeDefault}>
+          Set as default
+        </button>
       {/if}
-      <button type="button" class="btn" onclick={() => (editOpen = true)}
-        >Edit</button
+      <button type="button" class="btn" onclick={() => (editOpen = true)}>
+        Edit
+      </button>
+      <button
+        type="button"
+        class="btn deny"
+        onclick={() => (deleteOpen = true)}
       >
-      <button type="button" class="btn deny" onclick={() => (deleteOpen = true)}
-        >Delete</button
-      >
+        Delete
+      </button>
     </div>
   </div>
 
@@ -190,8 +195,10 @@
                 aria-label="Test {sourceLabel(
                   credential.source,
                 )} on {credential.host}"
-                onclick={() => test(credential)}>Test</button
+                onclick={() => test(credential)}
               >
+                Test
+              </button>
               {#if canSignIn(credential.source) && check.state === "problem" && check.needsSignIn}
                 <button
                   type="button"
@@ -199,8 +206,10 @@
                   aria-label="Sign in to {sourceLabel(
                     credential.source,
                   )} on {credential.host}"
-                  onclick={() => signIn(credential)}>Sign in&hellip;</button
+                  onclick={() => signIn(credential)}
                 >
+                  Sign in&hellip;
+                </button>
               {/if}
             </div>
           </li>
@@ -231,9 +240,9 @@
       <ul class="plain">
         {#each identity.workspaces as wid (wid)}
           <li>
-            <a href="/workspaces/{encodeURIComponent(wid)}/git"
-              >{workspaces.labelOf(wid)}</a
-            >
+            <a href="/workspaces/{encodeURIComponent(wid)}/git">
+              {workspaces.labelOf(wid)}
+            </a>
           </li>
         {/each}
       </ul>
@@ -261,12 +270,6 @@
     tone="deny"
     onConfirm={confirmDelete}
   />
-  <CreateWorkspaceDialog
-    bind:open={createOpen}
-    prefill={createFor}
-    onCreated={(workspace) =>
-      void goto(`/workspaces/${encodeURIComponent(workspace.id)}`)}
-  />
   <SignInDialog
     bind:open={signInOpen}
     credential={signingIn}
@@ -277,9 +280,9 @@
 {:else if store.status === "ready"}
   <h1>No such identity</h1>
   <p class="muted">
-    There is no identity with that number. <a href="/identities"
-      >Back to the identities</a
-    >.
+    There is no identity with that number. <a href="/identities">
+      Back to the identities
+    </a>.
   </p>
 {:else if store.status === "failed"}
   <p class="muted">Couldn't read the identity yet. Trying again.</p>

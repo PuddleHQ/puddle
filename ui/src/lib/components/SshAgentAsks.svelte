@@ -44,39 +44,47 @@
         <p class="facts">
           {ask.attempts}
           {ask.attempts === 1 ? "attempt" : "attempts"} · First seen
-          <time datetime={new Date(ask.first_seen).toISOString()}
-            >{relativeTime(ask.first_seen, now)}</time
-          >
+          <time datetime={new Date(ask.first_seen).toISOString()}>
+            {relativeTime(ask.first_seen, now)}
+          </time>
         </p>
         <div class="acts">
           <button
             type="button"
             class="btn allow"
             aria-label="Allow once: {label(ask)} to log in to {ask.host}"
-            onclick={() => onAnswer(ask, "once")}>Allow once</button
+            onclick={() => onAnswer(ask, "once")}
           >
+            Allow once
+          </button>
           <button
             type="button"
             class="btn allow"
             aria-label="Allow for this run: {label(
               ask,
             )} to log in to {ask.host} until the workspace stops"
-            onclick={() => onAnswer(ask, "run")}>Allow for this run</button
+            onclick={() => onAnswer(ask, "run")}
           >
+            Allow for this run
+          </button>
           <button
             type="button"
             class="btn allow"
             aria-label="Always allow: {label(
               ask,
             )} to log in to {ask.host} with this key"
-            onclick={() => onAnswer(ask, "always")}>Always allow</button
+            onclick={() => onAnswer(ask, "always")}
           >
+            Always allow
+          </button>
           <button
             type="button"
             class="btn deny"
             aria-label="Deny: {label(ask)} to log in to {ask.host}"
-            onclick={() => onAnswer(ask, "deny")}>Deny</button
+            onclick={() => onAnswer(ask, "deny")}
           >
+            Deny
+          </button>
         </div>
       </li>
     {/each}

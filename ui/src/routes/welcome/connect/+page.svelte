@@ -15,6 +15,7 @@
   import { around } from "#lib/welcome/steps.ts";
   import {
     DIRECT_SSH_HINT,
+    DIRECT_SSH_DEFAULT_LABEL,
     DIRECT_SSH_LABEL,
     TRUST_WORDS_GLOBAL,
   } from "#lib/workspaces/direct-ssh.ts";
@@ -124,15 +125,15 @@
       />
       <span>
         <b>Microsoft's VS Code server (downloaded)</b>
-        <span class="desc"
-          >{MICROSOFT_NOTE} You accept Microsoft's licence terms.</span
-        >
+        <span class="desc">
+          {MICROSOFT_NOTE} You accept Microsoft's licence terms.
+        </span>
       </span>
     </label>
   </fieldset>
 
   <fieldset class="card">
-    <legend>Desktop VS Code</legend>
+    <legend>Direct SSH attach</legend>
     <label class="choice">
       <input
         type="checkbox"
@@ -154,8 +155,11 @@
         }}
       />
       <span>
-        <b>{DIRECT_SSH_LABEL} for new workspaces</b>
-        <span class="desc">{DIRECT_SSH_HINT} Off by default.</span>
+        <b>{DIRECT_SSH_DEFAULT_LABEL}</b>
+        <span class="desc">
+          {DIRECT_SSH_HINT} Off by default; each workspace can set its own switch
+          later.
+        </span>
       </span>
     </label>
   </fieldset>

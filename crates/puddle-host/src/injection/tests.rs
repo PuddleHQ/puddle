@@ -476,7 +476,7 @@ async fn the_switch_and_the_never_decrypt_names_apply_to_the_running_workspace_a
 
 #[tokio::test]
 async fn a_host_a_tool_refused_is_announced_with_its_count_and_listed_with_its_history() {
-    use puddle_api::LearnedService;
+    use puddle_services::learned::LearnedService;
 
     let store = store();
     let (injection, terminations, _, events) = injection_with_events(&store);
@@ -570,7 +570,7 @@ async fn a_host_a_tool_refused_is_announced_with_its_count_and_listed_with_its_h
 
 #[tokio::test]
 async fn a_store_that_cannot_keep_the_history_still_passes_the_host_through_and_lists_it() {
-    use puddle_api::LearnedService;
+    use puddle_services::learned::LearnedService;
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("puddle.db");
@@ -629,7 +629,7 @@ async fn a_store_that_cannot_keep_the_history_still_passes_the_host_through_and_
 
 #[tokio::test]
 async fn the_history_of_a_refused_host_outlives_the_workspace_run_but_the_pass_through_does_not() {
-    use puddle_api::LearnedService;
+    use puddle_services::learned::LearnedService;
 
     let store = store();
     let (injection, terminations) = injection(&store);
@@ -1599,6 +1599,104 @@ async fn forgetting_a_login_ends_its_notice_and_in_a_running_workspace_its_stand
     vault.break_it();
     injection.begin(&ws, false).await.unwrap();
     assert!(events.0.lock().unwrap().is_empty());
+}
+
+/// A store whose reads, once `hold` is called, return their value only after `release`.
+struct HeldReads {
+    inner: MemoryStore,
+    state: Arc<(Mutex<(bool, usize)>, std::sync::Condvar)>,
+}
+
+impl HeldReads {
+    fn new() -> Self {
+        Self {
+            inner: MemoryStore::new(),
+            state: Arc::default(),
+        }
+    }
+
+    fn hold(&self) {
+        self.state.0.lock().unwrap().0 = true;
+    }
+
+    fn release(&self) {
+        self.state.0.lock().unwrap().0 = false;
+        self.state.1.notify_all();
+    }
+
+    /// How many reads have started while held.
+    fn held_reads(&self) -> usize {
+        self.state.0.lock().unwrap().1
+    }
+}
+
+impl SecretStore for HeldReads {
+    fn get(&self, id: &StoredId) -> Result<Option<Secret>, puddle_secrets::StoreError> {
+        let read = self.inner.get(id);
+        let mut guard = self.state.0.lock().unwrap();
+        if guard.0 {
+            guard.1 += 1;
+            while guard.0 {
+                guard = self.state.1.wait(guard).unwrap();
+            }
+        }
+        read
+    }
+
+    fn set(&self, id: &StoredId, secret: &Secret) -> Result<(), puddle_secrets::StoreError> {
+        self.inner.set(id, secret)
+    }
+
+    fn delete(&self, id: &StoredId) -> Result<(), puddle_secrets::StoreError> {
+        self.inner.delete(id)
+    }
+}
+
+#[tokio::test]
+async fn a_forget_that_arrives_while_a_start_reads_the_kept_logins_ends_with_the_login_gone() {
+    let store = store();
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(HeldReads::new());
+    let terminations = Arc::new(Terminations::new());
+    let injection = Arc::new(
+        Injection::new(
+            Arc::clone(&terminations),
+            inputs(&store),
+            None,
+            vault.clone(),
+        )
+        .with_login_markers(dir.path().to_owned()),
+    );
+    let ws = workspace("alpha");
+    injection.begin(&ws, true).await.unwrap();
+    claude_answer(&terminations, &ws).await.unwrap();
+    injection.end(&ws);
+
+    // The next start has read a kept token and waits on the store.
+    vault.hold();
+    let start = tokio::spawn({
+        let (injection, ws) = (Arc::clone(&injection), ws.clone());
+        async move { injection.begin(&ws, true).await.map(|_| ()) }
+    });
+    puddle_test_kit::eventually(
+        "the start's read of a kept token",
+        Duration::from_secs(5),
+        || vault.held_reads() > 0,
+    )
+    .await;
+    // The workspace is not running yet, so this forget has no registry to remove from.
+    let forget = tokio::spawn({
+        let (injection, ws) = (Arc::clone(&injection), ws.clone());
+        async move { injection.forget_login(&ws, "claude").await }
+    });
+    // An absence window: a forget that does not wait for the start would finish in this time.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    vault.release();
+    start.await.unwrap().unwrap();
+    assert_eq!(forget.await.unwrap(), Ok(true));
+
+    assert_eq!(login_ids(&terminations, &ws).len(), 0, "still swapped");
+    assert_eq!(injection.kept_logins(&ws).await.logins.len(), 0);
 }
 
 #[tokio::test]

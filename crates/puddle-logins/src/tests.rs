@@ -66,8 +66,8 @@ fn rig_marked(store: &Arc<MemoryStore>, enabled: bool, marker: Marker) -> Rig {
         enabled,
         builtin(),
         Arc::clone(&registry),
-        Arc::clone(store) as Arc<dyn SecretStore>,
-        Arc::clone(&notices) as Arc<dyn LoginNotices>,
+        store.clone(),
+        notices.clone(),
         marker,
     );
     Rig {
@@ -87,7 +87,7 @@ fn host(name: &str) -> Host {
 }
 
 fn vault(rig: &Rig) -> Vault {
-    Vault::new(Arc::clone(&rig.store) as Arc<dyn SecretStore>, &workspace())
+    Vault::new(rig.store.clone(), &workspace())
 }
 
 fn claude_answer(access: &str, refresh: &str) -> Vec<u8> {
@@ -906,12 +906,12 @@ async fn deleting_the_workspace_deletes_every_token_kept_for_it() {
             true,
             builtin(),
             registry,
-            Arc::clone(&rig.store) as Arc<dyn SecretStore>,
-            Arc::clone(&rig.notices) as Arc<dyn LoginNotices>,
+            rig.store.clone(),
+            rig.notices.clone(),
             Marker::none(),
         )
     };
-    let store: Arc<dyn SecretStore> = Arc::clone(&rig.store) as Arc<dyn SecretStore>;
+    let store: Arc<dyn SecretStore> = rig.store.clone();
     other.forget("github").await.unwrap();
     assert_eq!(Logins::delete_workspace(&store, &workspace(), builtin()), 0);
     assert!(vault(&rig).read(&CLAUDE, Role::Access).unwrap().is_none());
@@ -936,7 +936,7 @@ async fn a_workspaces_logins_never_reach_another_workspace() {
         true,
         builtin(),
         Arc::new(StandIns::new()),
-        Arc::clone(&one.store) as Arc<dyn SecretStore>,
+        one.store.clone(),
         Arc::new(Notices::default()),
         Marker::none(),
     );
@@ -1104,7 +1104,7 @@ async fn a_credential_store_that_does_not_answer_is_given_up_on_and_the_start_go
         builtin(),
         Arc::new(StandIns::new()),
         store,
-        Arc::clone(&notices) as Arc<dyn LoginNotices>,
+        notices.clone(),
         Marker::none(),
     );
     logins.set_store_timeout(std::time::Duration::from_millis(50));
@@ -1190,7 +1190,7 @@ fn logins_on(store: &Arc<Scripted>, registry: &Arc<StandIns>) -> Logins {
         true,
         builtin(),
         Arc::clone(registry),
-        Arc::clone(store) as Arc<dyn SecretStore>,
+        store.clone(),
         Arc::new(Notices::default()),
         Marker::none(),
     )
@@ -1215,7 +1215,7 @@ async fn a_capture_that_cannot_store_every_token_leaves_the_earlier_pair_in_the_
     // The refresh's new access token is stored, its new refresh token is not.
     store.then([SetStep::Pass, SetStep::Fail]);
     assert_eq!(capture_claude(&logins, ACCESS_B, REFRESH_B).await, None);
-    let vault = Vault::new(Arc::clone(&store) as Arc<dyn SecretStore>, &workspace());
+    let vault = Vault::new(store.clone(), &workspace());
     for (role, real, given) in [
         (Role::Access, REAL_ACCESS, &first["access_token"]),
         (Role::Refresh, REAL_REFRESH, &first["refresh_token"]),
@@ -1241,17 +1241,26 @@ async fn a_token_the_store_writes_after_it_timed_out_does_not_outlast_the_put_ba
     // The refresh's new refresh token is written late: after the capture gave up on it.
     let (started, parked) = tokio::sync::oneshot::channel();
     let (go, wait) = std::sync::mpsc::channel();
+    let released = Arc::new(std::sync::atomic::AtomicBool::new(false));
     store.then([SetStep::Pass, SetStep::Park(started, wait)]);
-    tokio::spawn(async move {
-        parked.await.unwrap();
-        // simulated latency: the write returns after the capture's 100 ms limit
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        let _ = go.send(());
+    tokio::spawn({
+        let released = Arc::clone(&released);
+        async move {
+            parked.await.unwrap();
+            // simulated latency: the write returns after the capture's 100 ms limit
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            released.store(true, std::sync::atomic::Ordering::SeqCst);
+            let _ = go.send(());
+        }
     });
     assert_eq!(capture_claude(&logins, ACCESS_B, REFRESH_B).await, None);
-    // An absence window: a late write that the capture did not wait for would land in it.
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    let vault = Vault::new(Arc::clone(&store) as Arc<dyn SecretStore>, &workspace());
+    assert!(
+        !released.load(std::sync::atomic::Ordering::SeqCst),
+        "the tool waited for the late write instead of being answered first"
+    );
+    // An absence window: a late write must land before the put back, which runs after it.
+    tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+    let vault = Vault::new(store.clone(), &workspace());
     for (role, real, given) in [
         (Role::Access, REAL_ACCESS, &first["access_token"]),
         (Role::Refresh, REAL_REFRESH, &first["refresh_token"]),
@@ -1263,6 +1272,51 @@ async fn a_token_the_store_writes_after_it_timed_out_does_not_outlast_the_put_ba
             "a write that finished after the put back left a pair that never went together"
         );
     }
+}
+
+/// A Claude token answer with an access token only: one slot, so a failed write has nothing to put back.
+fn claude_access_only_answer(access: &str) -> Vec<u8> {
+    serde_json::to_vec(&json!({
+        "token_type": "Bearer",
+        "access_token": access,
+        "expires_in": 28800,
+        "scope": "user:inference user:profile",
+        "account": {"uuid": "u-1", "email_address": "me@example.invalid"},
+    }))
+    .unwrap()
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_write_that_times_out_with_nothing_to_put_back_refuses_after_one_timeout() {
+    let store = Arc::new(Scripted::new([]));
+    let registry = Arc::new(StandIns::new());
+    let logins = logins_on(&store, &registry);
+    let limit = std::time::Duration::from_secs(10);
+    logins.set_store_timeout(limit);
+    let (started, parked) = tokio::sync::oneshot::channel();
+    let (go, wait) = std::sync::mpsc::channel();
+    store.then([SetStep::Park(started, wait)]);
+    let exchange = logins.begin(&host("platform.claude.com"), "POST", "/v1/oauth/token");
+    let answer = claude_access_only_answer(REAL_ACCESS);
+    let mut capture = Box::pin(answered(exchange, 200, Some("application/json"), &answer));
+    // A parked blocking call stops the paused clock from advancing by itself: move it by hand,
+    // once the write is parked, by one store timeout and no more.
+    tokio::select! {
+        _ = &mut capture => panic!("the capture ended with its write parked"),
+        parked = parked => parked.unwrap(),
+    }
+    tokio::time::advance(limit + std::time::Duration::from_millis(1)).await;
+    let given = tokio::select! {
+        given = &mut capture => Some(given),
+        () = async { for _ in 0..200 { tokio::task::yield_now().await } } => None,
+    };
+    // Let the parked write go, so the blocking thread ends with the test.
+    let _ = go.send(());
+    assert_eq!(
+        given,
+        Some(None),
+        "the capture lock was still held a store timeout after a write that left nothing to put back"
+    );
 }
 
 #[tokio::test]
@@ -1297,7 +1351,7 @@ async fn an_entry_that_cannot_be_read_is_not_put_back_and_one_the_store_refuses_
     // The damaged access entry is not put back: it goes, and the refresh entry stays as it was.
     store.then([SetStep::Pass, SetStep::Fail]);
     assert_eq!(capture_claude(&logins, ACCESS_B, REFRESH_B).await, None);
-    let vault = Vault::new(Arc::clone(&store) as Arc<dyn SecretStore>, &workspace());
+    let vault = Vault::new(store.clone(), &workspace());
     assert!(vault.read(&CLAUDE, Role::Access).unwrap().is_none());
     let refresh = vault.read(&CLAUDE, Role::Refresh).unwrap().unwrap();
     assert_eq!(refresh.real.as_str(), REAL_REFRESH);
@@ -1452,6 +1506,29 @@ async fn a_long_token_in_a_field_the_profile_does_not_name_is_refused() {
         rig.notices.seen(),
         [("claude".to_owned(), Problem::UnnamedToken)]
     );
+}
+
+#[tokio::test]
+async fn an_identifier_in_a_token_named_field_does_not_stop_the_login() {
+    let rig = rig();
+    let mut answer: Value =
+        serde_json::from_slice(&claude_answer(REAL_ACCESS, REAL_REFRESH)).unwrap();
+    answer["token_uuid"] = json!("7a1b2c3d-0e4f-4a5b-8c6d-9e0f1a2b3c4d");
+    let exchange = rig
+        .logins
+        .begin(&host("platform.claude.com"), "POST", "/v1/oauth/token");
+    let body = answered(
+        exchange,
+        200,
+        Some("application/json"),
+        answer.to_string().as_bytes(),
+    )
+    .await
+    .expect("the login passes");
+    let given: Value = serde_json::from_slice(&body).unwrap();
+    assert_ne!(given["access_token"], REAL_ACCESS);
+    assert_eq!(given["token_uuid"], "7a1b2c3d-0e4f-4a5b-8c6d-9e0f1a2b3c4d");
+    assert_eq!(rig.notices.seen(), []);
 }
 
 const SESSION_FIELDS: &str = "tid=7a1b;exp=1790000000;sku=free_limited_copilot;proxy-ep=proxy.individual.githubcopilot.com;chat=1";

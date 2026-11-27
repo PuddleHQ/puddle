@@ -77,24 +77,28 @@ impl Front {
     /// # Errors
     ///
     /// No loopback port could be bound.
-    pub async fn bind(
+    pub fn bind(
         preferred: Option<u16>,
         endpoints: &PuddleEndpoints,
         guests: Arc<dyn Guests>,
         halves: Arc<dyn ServerHalves>,
     ) -> io::Result<Self> {
-        let (listener, taken) = match preferred {
-            Some(port) => match TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await {
-                Ok(listener) => (listener, false),
-                Err(err) => {
+        let kind = EndpointKind::BrowserFront;
+        let usual = preferred.and_then(|port| {
+            endpoints
+                .bind((Ipv4Addr::LOCALHOST, port), kind)
+                .inspect_err(|err| {
                     tracing::info!(port, error = %err, "the front's usual port is not free; taking another");
-                    (TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?, true)
-                }
-            },
-            None => (TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?, false),
+                })
+                .ok()
+        });
+        let taken = preferred.is_some() && usual.is_none();
+        let (listener, registration) = match usual {
+            Some(bound) => bound,
+            None => endpoints.bind((Ipv4Addr::LOCALHOST, 0), kind)?,
         };
         let addr = listener.local_addr()?;
-        let registration = endpoints.register(addr, EndpointKind::BrowserFront);
+        let listener = TcpListener::from_std(listener)?;
         let windows = Windows::default();
         let (stop_tx, stop) = watch::channel(false);
         let shared = Arc::new(Shared {

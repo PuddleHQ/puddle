@@ -59,8 +59,9 @@
     class="btn"
     disabled={store.reading}
     onclick={() => void store.refresh()}
-    >{store.reading ? "Checking…" : "Check again"}</button
   >
+    {store.reading ? "Checking…" : "Check again"}
+  </button>
 </div>
 
 {#if store.status === "loading"}
@@ -89,9 +90,9 @@
         {#each list as f (f.id)}
           <li class="finding" class:problem={f.level === "problem"}>
             <p class="what">
-              <span class="tag"
-                >{f.level === "problem" ? "Problem" : "Note"}</span
-              >
+              <span class="tag">
+                {f.level === "problem" ? "Problem" : "Note"}
+              </span>
               {f.title}
             </p>
             {#if f.fix}<p class="fix"><b>What to do:</b> {f.fix}</p>{/if}
@@ -126,8 +127,10 @@
         <dt>Fixed proxy</dt>
         <dd>
           {#each fixedProxies(report.proxy) as p, i (p)}{i > 0 ? ", " : ""}<span
-              class="mono">{p}</span
-            >{:else}None{/each}
+              class="mono"
+            >
+              {p}
+            </span>{:else}None{/each}
         </dd>
         <dt>Bypass list</dt>
         <dd>
@@ -138,9 +141,9 @@
         <dt>Last network change</dt>
         <dd>
           {#if report.proxy.last_change_at !== null}
-            <span title={absoluteTime(report.proxy.last_change_at)}
-              >{when(report.proxy.last_change_at)}</span
-            >
+            <span title={absoluteTime(report.proxy.last_change_at)}>
+              {when(report.proxy.last_change_at)}
+            </span>
             (change number {report.proxy.epoch})
           {:else}
             None since Puddle started
@@ -158,9 +161,9 @@
       {:else}
         <table>
           <thead>
-            <tr
-              ><th scope="col">Proxy</th><th scope="col">Tried again in</th></tr
-            >
+            <tr>
+              <th scope="col">Proxy</th><th scope="col">Tried again in</th>
+            </tr>
           </thead>
           <tbody>
             {#each report.proxy.dead_proxies as dead (dead.proxy)}
@@ -199,8 +202,10 @@
       {:else}
         <p class="muted">
           No user name and password is stored for a proxy. <a
-            href="/settings/network">Enter one in Settings, Network.</a
+            href="/settings/network"
           >
+            Enter one in Settings, Network.
+          </a>
         </p>
       {/if}
       {#if report.sign_in.attempts.length === 0}
@@ -245,9 +250,9 @@
           {report.roots.intermediates === 1 ? "intermediate" : "intermediates"},
           read
           {#if report.roots.synced_at !== null}
-            <span title={absoluteTime(report.roots.synced_at)}
-              >{when(report.roots.synced_at)}</span
-            >{/if}.
+            <span title={absoluteTime(report.roots.synced_at)}>
+              {when(report.roots.synced_at)}
+            </span>{/if}.
         </p>
       {:else}
         <p class="muted">Not read yet.</p>
@@ -268,9 +273,9 @@
               <tr>
                 <td class="wrap">
                   {c.subject ?? "(no name)"}
-                  <span class="muted mono small block"
-                    >{c.fingerprint.slice(0, 16)}</span
-                  >
+                  <span class="muted mono small block">
+                    {c.fingerprint.slice(0, 16)}
+                  </span>
                 </td>
                 <td>{ROOT_KIND_LABEL[c.kind]}</td>
                 <td>{expiryText(c.not_after, now)}</td>
@@ -288,8 +293,9 @@
           {#each report.roots.skipped as s (s.fingerprint)}
             <li class="wrap">
               {s.subject ?? "(no name)"}
-              <span class="muted mono small">{s.fingerprint.slice(0, 16)}</span
-              >:
+              <span class="muted mono small">
+                {s.fingerprint.slice(0, 16)}
+              </span>:
               {s.reason}
             </li>
           {/each}
@@ -303,8 +309,9 @@
           {#each report.roots.left_out_of_tls as s (s.fingerprint)}
             <li class="error wrap">
               {s.subject ?? "(no name)"}
-              <span class="muted mono small">{s.fingerprint.slice(0, 16)}</span
-              >:
+              <span class="muted mono small">
+                {s.fingerprint.slice(0, 16)}
+              </span>:
               {s.reason}
             </li>
           {/each}
@@ -329,9 +336,9 @@
       <p class="muted small">
         Destinations that your company's VPN, private-access client or DNS
         suffixes mark as internal. They are off by default; you can turn them on
-        under <a href="/settings/network#local-destinations"
-          >Settings, Network, Local destinations</a
-        >. Puddle reads those signals on Windows only; on other systems "None
+        under <a href="/settings/network#local-destinations">
+          Settings, Network, Local destinations
+        </a>. Puddle reads those signals on Windows only; on other systems "None
         found" below means "not looked at" and the switch changes nothing.
       </p>
       <dl>

@@ -6,34 +6,67 @@
 export type PageId =
   | "appearance"
   | "notifications"
+  | "this-computer"
   | "workspaces"
-  | "network"
   | "editor"
-  | "editor-and-git"
-  | "this-computer";
+  | "network"
+  | "credentials"
+  | "environment"
+  | "editor-server"
+  | "git";
+
+/** Who a setting reaches: the three headings of the left list. */
+export type GroupId = "app" | "new" | "all";
+
+export const GROUPS: Readonly<
+  Record<GroupId, { heading: string; note: string }>
+> = {
+  app: {
+    heading: "Puddle",
+    note: "About Puddle on this computer. No workspace sees these.",
+  },
+  new: {
+    heading: "Defaults for new workspaces",
+    note: "Starting values for workspaces you create from now on. A workspace can change its own; existing workspaces are not touched.",
+  },
+  all: {
+    heading: "Rules for all workspaces",
+    note: "Apply to every workspace, including the ones that exist and are running.",
+  },
+};
 
 export interface SettingsPage {
   id: PageId;
   label: string;
+  group: GroupId;
   /** The path of the page. */
   href: string;
 }
 
-const page = (id: PageId, label: string): SettingsPage => ({
+const page = (id: PageId, group: GroupId, label: string): SettingsPage => ({
   id,
   label,
+  group,
   href: `/settings/${id}`,
 });
 
-export const PAGES: readonly SettingsPage[] = [
-  page("appearance", "Appearance"),
-  page("notifications", "Notifications"),
-  page("workspaces", "Workspaces"),
-  page("network", "Network"),
-  page("editor", "Editor"),
-  page("editor-and-git", "Editor and Git"),
-  page("this-computer", "This computer"),
-];
+const PAGE_BY_ID = {
+  appearance: page("appearance", "app", "Appearance"),
+  notifications: page("notifications", "app", "Notifications"),
+  "this-computer": page("this-computer", "app", "This computer"),
+  workspaces: page("workspaces", "new", "Resources and access"),
+  editor: page("editor", "new", "Editor"),
+  network: page("network", "all", "Network"),
+  credentials: page("credentials", "all", "Logins and credentials"),
+  environment: page("environment", "all", "Limits and environment"),
+  "editor-server": page("editor-server", "all", "Editor server"),
+  git: page("git", "all", "Git and SSH"),
+} satisfies Record<PageId, SettingsPage>;
+
+/** The pages in the order of the left list. */
+export const PAGES: readonly SettingsPage[] = Object.values(PAGE_BY_ID);
+
+export const pageGroup = (id: PageId): GroupId => PAGE_BY_ID[id].group;
 
 export interface SettingEntry {
   /** The element id of the setting on its page; the search links to `<page>#<id>`. */
@@ -133,7 +166,7 @@ export const SETTINGS: readonly SettingEntry[] = [
   entry("workspaces", "set-memory", "Default memory", "ram"),
   entry("workspaces", "set-cpus", "Default CPUs", "cores processors"),
   entry(
-    "workspaces",
+    "environment",
     "set-max-cpus",
     "Most CPUs a workspace may have",
     "cores limit",
@@ -147,35 +180,35 @@ export const SETTINGS: readonly SettingEntry[] = [
   entry(
     "workspaces",
     "set-direct-ssh",
-    "Direct SSH for new workspaces",
+    "Direct SSH by default",
     "ssh port trust",
   ),
   entry(
-    "workspaces",
+    "credentials",
     "set-capture",
     "Keep logins made in workspaces",
     "sign in token claude github copilot capture",
   ),
   entry(
-    "workspaces",
+    "credentials",
     "set-foreign-warning",
     "Warn about a credential Puddle did not add",
     "token leak foreign",
   ),
   entry(
-    "workspaces",
+    "this-computer",
     "set-disk-warn",
     "Warn when free space is under (GB)",
     "drive disk space",
   ),
   entry(
-    "workspaces",
+    "this-computer",
     "set-disk-fail",
     "Fail when free space is under (GB)",
     "drive disk space",
   ),
   entry(
-    "workspaces",
+    "environment",
     "set-env",
     "Environment of every workspace",
     "variables secrets env",
@@ -286,61 +319,61 @@ export const SETTINGS: readonly SettingEntry[] = [
   ),
 
   entry(
-    "editor-and-git",
+    "editor-server",
     "set-server",
     "Server",
     "code-server microsoft vs code browser",
   ),
   entry(
-    "editor-and-git",
+    "editor-server",
     "set-ms-telemetry",
     "Send Microsoft telemetry",
     "microsoft",
   ),
   entry(
-    "editor-and-git",
+    "editor-server",
     "set-update",
     "Update the server automatically",
     "auto update",
   ),
   entry(
-    "editor-and-git",
+    "editor-server",
     "set-grace",
     "Reconnection grace (seconds)",
     "session reconnect",
   ),
   entry(
-    "editor-and-git",
+    "this-computer",
     "set-zoom",
     "Zoom shortcuts",
     "ctrl plus minus hotkeys",
   ),
   entry(
-    "editor-and-git",
+    "workspaces",
     "set-clip",
     "Clipboard reads by pages",
     "paste clipboard",
   ),
   entry(
-    "editor-and-git",
+    "git",
     "set-ssh-agent",
     "SSH agent pipe or socket",
     "pageant 1password openssh keys",
   ),
   entry(
-    "editor-and-git",
+    "git",
     "set-identities",
     "Git and credentials",
     "identities name email commit",
   ),
   entry(
-    "editor-and-git",
+    "git",
     "set-push-listed",
     "Only push to allowed repositories",
     "git push default new workspaces repositories",
   ),
   entry(
-    "editor-and-git",
+    "git",
     "set-pull-listed",
     "Only pull from allowed repositories",
     "git fetch pull default new workspaces repositories",
@@ -411,14 +444,14 @@ export const LEGACY_ANCHORS: Readonly<Record<string, string>> = {
   "s-notify": "notifications#set-notify",
   "s-inbox": "notifications#set-confirm-global",
   "s-ws": "workspaces#set-memory",
-  "s-disk": "workspaces#set-disk-warn",
+  "s-disk": "this-computer#set-disk-warn",
   "s-audit": "this-computer#set-audit",
-  "s-ssh": "editor-and-git#set-ssh-agent",
+  "s-ssh": "git#set-ssh-agent",
   "s-net": "network#set-net-health",
   "local-destinations": "network#set-local-loopback",
-  "s-vsc": "editor-and-git#set-server",
-  "s-git": "editor-and-git#set-identities",
-  "s-env": "workspaces#set-env",
+  "s-vsc": "editor-server#set-server",
+  "s-git": "git#set-identities",
+  "s-env": "environment#set-env",
   "s-dev": "this-computer#set-devices",
   "s-backup": "this-computer#set-backup",
   "s-priv": "this-computer#set-privacy",
@@ -429,6 +462,19 @@ export const LEGACY_ANCHORS: Readonly<Record<string, string>> = {
 export function legacyTarget(hash: string): string {
   const target = LEGACY_ANCHORS[hash.replace(/^#/, "")];
   return `/settings/${target ?? "appearance"}`;
+}
+
+/**
+ * Where an old link to a setting that has moved now goes: the new path with its hash, or null when
+ * the hash names nothing, or names a setting that is on the page already. Old page paths with no
+ * hash still open their page.
+ */
+export function movedTarget(pathname: string, hash: string): string | null {
+  const id = hash.replace(/^#/, "");
+  const home = SETTINGS.find((s) => s.id === id)?.page;
+  if (home === undefined) return null;
+  const here = pathname.replace(/\/$/, "");
+  return here === `/settings/${home}` ? null : `/settings/${home}#${id}`;
 }
 
 const norm = (text: string) => text.toLowerCase();
@@ -443,8 +489,11 @@ export function searchSettings(query: string): SettingEntry[] {
   });
 }
 
-export const pageLabel = (id: PageId): string =>
-  PAGES.find((p) => p.id === id)?.label ?? id;
+export const pageLabel = (id: PageId): string => PAGE_BY_ID[id].label;
+
+/** A page as a search result names it: its heading, then its label. */
+export const pageWhere = (id: PageId): string =>
+  `${GROUPS[pageGroup(id)].heading}: ${pageLabel(id)}`;
 
 /** The path a search result opens. */
 export const settingHref = (s: SettingEntry): string =>

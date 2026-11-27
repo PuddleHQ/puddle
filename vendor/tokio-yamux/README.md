@@ -1,6 +1,6 @@
 # Vendored tokio-yamux (temporary)
 
-A copy of tokio-yamux 0.3.20 with two fixes, wired in through `[patch.crates-io]` in the workspace
+A copy of tokio-yamux 0.3.20 with three fixes, wired in through `[patch.crates-io]` in the workspace
 `Cargo.toml`. `NOTICE` says what differs from the release and the conditions for deleting this
 directory. The licence is the upstream MIT licence (`LICENSE`).
 
@@ -37,6 +37,11 @@ took 30 s against 5 s up. Regression tests:
   `a_stream_holding_a_full_window_and_a_close_while_unread_still_reads_to_the_end` and
   `a_window_of_small_frames_held_for_a_late_reader_moves_in_linear_time`
 - `crates/puddle-e2e/tests/transparency.rs`: `a_client_reading_one_kibibyte_a_second_for_a_minute_is_not_cut_off`
+
+**Third fix, why:** a peer's window update added to the send window with no ceiling, so a guest that
+granted nearly 4 GiB on a stream and never read let the host's writer queue whatever its upstream sent
+(measured: 512 MiB queued, 526 MiB resident, for one stream, and the test stopped there). The grant
+is now cut to the stream's own `max_stream_window_size`. Regression test: `crates/puddle-agent-proto/tests/yamux_hostile_guest.rs`.
 
 **What is not here:** upstream's tests, benches and examples. The regression tests live in the
 product's own crates and move 40 MiB through a half-closed connection:

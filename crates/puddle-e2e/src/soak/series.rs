@@ -12,7 +12,7 @@
 //! | `api.<call>.ms` | latency of one call: `health`, `workspaces`, `pending`, `audit` |
 //! | `sse.age_s`, `sse.reconnects` | seconds since the last event, reconnects so far |
 //! | `count.pending`, `count.audit`, `count.notices` | records now |
-//! | `w4.fail_share` | share of the last 5 minutes' 10-second requests that failed (0 to 1) |
+//! | `w4.fail_share` | share of the requests of the last 5 playbook minutes that failed (0 to 1); none before the app is up, none during a planned restart |
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;

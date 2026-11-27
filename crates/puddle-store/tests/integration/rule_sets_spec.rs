@@ -17,7 +17,7 @@ use puddle_store::{
 };
 use puddle_types::{
     ConnectionDecision, ConnectionEvent, ConnectionLog, Decision, EgressRequest, Fill, Host,
-    PatternKind, PendingId, PendingOutcome, Rgb, RuleId, RuleSetId, SuffixAllows, WorkspaceId,
+    PatternKind, PendingId, PendingOutcome, Rgb, RuleSetId, SuffixAllows, WorkspaceId,
 };
 use serde_json::Value;
 
@@ -840,11 +840,7 @@ fn r43_connection_records_name_the_set_that_decided() {
     assert_eq!(record["rule_id"], Value::Null);
     assert_eq!(record["rule_set"], "system");
     assert_eq!(event.decision, ConnectionDecision::Allow);
-    let rows: Vec<RuleId> = store
-        .rules_every_user(&puddle_store::testing::all_users())
-        .iter()
-        .map(|r| r.id)
-        .collect();
+    let rows = store.rules_every_user(&puddle_store::testing::all_users());
     assert!(rows.is_empty(), "System managed writes no rule rows");
 }
 

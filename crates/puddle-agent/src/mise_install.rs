@@ -28,6 +28,8 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::cli::UsageError;
+
 /// The files that make a folder one with a mise config (idiomatic files such as `.nvmrc` stay
 /// off, as mise's own default).
 pub const CONFIG_FILES: [&str; 5] = [
@@ -59,14 +61,14 @@ impl Request {
     /// # Errors
     ///
     /// The usage text for anything else.
-    pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<Self, String> {
+    pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<Self, UsageError> {
         let (root, report_only) = match args {
             [root] => (root.as_ref(), false),
             [root, flag] if flag.as_ref() == "--missing" => (root.as_ref(), true),
-            _ => return Err(USAGE.to_owned()),
+            _ => return Err(UsageError::Shape(USAGE)),
         };
         if root.is_empty() {
-            return Err(USAGE.to_owned());
+            return Err(UsageError::Shape(USAGE));
         }
         Ok(Self {
             root: PathBuf::from(root),

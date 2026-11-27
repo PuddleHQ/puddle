@@ -56,6 +56,17 @@ fn winner(set: &RuleIndex, workspace: &str, h: &str) -> Option<i64> {
 }
 
 #[test]
+fn an_ip_rule_decides_both_spellings_of_the_address() {
+    let deny_v4 = index(vec![rule(1, None, "10.0.0.2", Effect::Deny)]);
+    assert_eq!(winner(&deny_v4, "a", "10.0.0.2"), Some(1));
+    assert_eq!(winner(&deny_v4, "a", "::ffff:10.0.0.2"), Some(1));
+    let deny_mapped = index(vec![rule(2, None, "::ffff:10.0.0.3", Effect::Deny)]);
+    assert_eq!(winner(&deny_mapped, "a", "10.0.0.3"), Some(2));
+    assert_eq!(winner(&deny_mapped, "a", "::ffff:10.0.0.3"), Some(2));
+    assert_eq!(winner(&deny_v4, "a", "10.0.0.9"), None);
+}
+
+#[test]
 fn r01_empty_rule_set_decides_nothing() {
     let set = RuleIndex::default();
     assert_eq!(set.rules().len(), 0);
@@ -941,7 +952,10 @@ fn arb_index() -> impl Strategy<Value = RuleIndex> {
             owners.insert(sb("b"), UserId::from_stored(user));
         }
         let user_of = |scope: &Scope, user: i64| match scope.workspace() {
-            Some(w) => owners.get(w).copied().unwrap_or(UserId::from_stored(user)),
+            Some(w) => owners
+                .get(w)
+                .copied()
+                .unwrap_or_else(|| UserId::from_stored(user)),
             None => UserId::from_stored(user),
         };
         let rules = rules

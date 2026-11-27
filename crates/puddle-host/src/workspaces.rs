@@ -31,17 +31,19 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 use puddle_agent_proto::editor::{EditorServer, NEEDS_GLIBC};
 use puddle_agent_proto::forward::OpenError;
-use puddle_api::{
-    DeleteCheck, DisplayName, EditorLogin, GitSetup, KeptLogin, LaunchError, Launcher, Listing,
-    LocalCheckoutError, Operation, RepoFindings, Repository, StartFolder, WorkspaceError,
-    WorkspaceRecord, not_found,
-};
 use puddle_boot::{Gate, GatedSandbox};
 use puddle_ca::CaCertificate;
 use puddle_compute::{ComputeError, ImageConfig, Runtime};
 use puddle_lifecycle::Lifecycle;
 use puddle_ports::{NoLink, Ports};
 use puddle_proxy::Route;
+use puddle_services::{
+    workspaces::DeleteCheck, workspaces::DisplayName, workspaces::EditorLogin,
+    workspaces::GitSetup, workspaces::KeptLogin, workspaces::LaunchError, workspaces::Launcher,
+    workspaces::Listing, workspaces::LocalCheckoutError, workspaces::Operation,
+    workspaces::RepoFindings, workspaces::Repository, workspaces::StartFolder,
+    workspaces::WorkspaceError, workspaces::WorkspaceRecord, workspaces::not_found,
+};
 use puddle_ssh::SshEndpoint;
 use puddle_store::{AllUsers, Clock, Store};
 use puddle_types::{
@@ -61,6 +63,7 @@ use crate::git_hosts::{Authors, SshListing};
 use crate::injection::Injection;
 use crate::op_error::{OpError, SAVE_HINT};
 
+mod clone_detail;
 mod repositories;
 
 pub(crate) mod orphans;
@@ -159,7 +162,7 @@ pub(crate) struct Parts<R: Runtime + Clone> {
     pub(crate) front_guests: Arc<dyn puddle_front::Guests>,
     pub(crate) front_halves: Arc<dyn puddle_front::ServerHalves>,
     /// Where new workspace ids come from.
-    pub(crate) ids: Arc<dyn puddle_api::IdSource>,
+    pub(crate) ids: Arc<dyn puddle_services::workspaces::IdSource>,
     /// The folder of the login markers, which a new id must not find one of its own in.
     pub(crate) login_markers: std::path::PathBuf,
     /// The free space of the drive that holds Puddle's data: the one a root disk grows into.
@@ -301,6 +304,10 @@ struct GuestState {
     ssh_agent: bool,
     /// The managed mise layer the guest was planned with: the settings as of this start.
     mise: Option<MiseLayer>,
+    /// The boot step that binds the volume at `/workspace` in a sandbox an older Puddle made with
+    /// it at `/workspaces/<id>` ([`puddle_workspace::Layout::older_mount_step`]); `None` for a
+    /// sandbox with the volume at `/workspace`.
+    older_mount: Option<GuestFile>,
 }
 
 /// How long a terminal opened while its workspace starts waits for the boot hook.
@@ -354,7 +361,7 @@ struct Inner<R: Runtime + Clone> {
     front_addr: std::net::SocketAddr,
     front_guests: Arc<dyn puddle_front::Guests>,
     front_halves: Arc<dyn puddle_front::ServerHalves>,
-    ids: Arc<dyn puddle_api::IdSource>,
+    ids: Arc<dyn puddle_services::workspaces::IdSource>,
     login_markers: std::path::PathBuf,
     space: Arc<dyn crate::Space>,
     state: Mutex<State>,
@@ -657,10 +664,12 @@ struct GuestLogin {
     guests: Arc<dyn puddle_front::Guests>,
     ports: Ports,
     workspace: WorkspaceId,
+    /// The name the user gave the workspace, for what a window is told.
+    label: String,
 }
 
 /// What the user is told when `workspace` has no agent link to sign in through.
-fn no_link_message(workspace: &WorkspaceId, why: NoLink) -> String {
+fn no_link_message(workspace: &str, why: NoLink) -> String {
     match why {
         NoLink::NotRunning => format!("{workspace} is not running; start it first"),
         NoLink::NotConnected => format!(
@@ -691,7 +700,7 @@ impl EditorLogin for GuestLogin {
                         .ports
                         .guest_link_within(&self.workspace, AGENT_HELLO_WAIT)
                         .await
-                        .map_err(|why| LaunchError::new(no_link_message(&self.workspace, why)))?;
+                        .map_err(|why| LaunchError::new(no_link_message(&self.label, why)))?;
                     Arc::new(link)
                 };
             editor
@@ -733,6 +742,9 @@ fn kept_login_row(login: &puddle_logins::KeptLogin) -> KeptLogin {
         since: login.since_ms,
     }
 }
+
+#[cfg(test)]
+mod clone_detail_tests;
 
 #[cfg(test)]
 mod room_for_a_grow_tests;

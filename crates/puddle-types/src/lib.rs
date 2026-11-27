@@ -38,10 +38,12 @@ mod local;
 mod memory;
 mod merge;
 mod name;
+mod origin_refusal;
 pub mod panic_hook;
 mod percent;
 mod policy;
 mod problems;
+mod program;
 mod query_name;
 mod reason_code;
 mod request_match;
@@ -52,8 +54,8 @@ mod tool;
 
 pub use connection::{
     ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOrigin, ConnectionOutcome,
-    ConnectionProtocol, ConnectionReason, HttpRequestLine, NullConnectionLog, RefusedReason,
-    request_path,
+    ConnectionProtocol, ConnectionReason, GitOperation, HttpRequestLine, NullConnectionLog,
+    RefusedReason, request_path,
 };
 pub use cpus::CpuCount;
 pub use error::ValidationError;
@@ -84,12 +86,14 @@ pub use source_name::{
 pub use source_spec::{AZURE_DEVOPS_HOST, SourceSpec, TokenScope};
 
 pub use hex::hex_lower;
+pub use origin_refusal::OriginRefusal;
 pub use percent::{escape_at, hex_digit, percent_decoded, percent_decoded_bytes};
 pub use policy::{
     BlockReason, Decision, EgressRequest, PatternKind, PendingId, PendingOutcome, Policy,
     PolicyError, ProtocolHint, RuleId, RuleSetId, SuffixAllows,
 };
 pub use problems::{Problem, Problems};
+pub use program::{PROGRAM_MAX_CHARS, Program};
 pub use query_name::{MAX_QUERY_NAME_LEN, QueryName};
 pub use reason_code::{FailedRequestCode, LimitCode, PassThroughCode, ReasonCode, ReasonPrefix};
 pub use request_match::{
@@ -99,8 +103,13 @@ pub use request_match::{
 pub use session_user::SessionUser;
 pub use tool::{ToolName, ToolVersion, ToolsFileHash};
 
-/// Puddle's version, from the workspace manifest.
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Puddle's version: `PUDDLE_BUILD_VERSION` when the build sets it (ci/build-msi.sh stamps a CI build
+/// of the unversioned develop line `0.0.<run number>`, so an upgrade test can require a newer build),
+/// else the workspace manifest's.
+pub const VERSION: &str = match option_env!("PUDDLE_BUILD_VERSION") {
+    Some(stamped) => stamped,
+    None => env!("CARGO_PKG_VERSION"),
+};
 
 /// The line a Puddle binary prints for `--version`: the program name and Puddle's version.
 ///

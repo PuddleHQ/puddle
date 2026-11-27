@@ -7,17 +7,22 @@
   import "#lib/theme/controls.css";
 
   let busy = $state(false);
-  let done = $state<{ name: string; bytes: number } | null>(null);
-  let problem = $state<string | null>(null);
+  let outcome = $state<{ ok: boolean; text: string } | null>(null);
 
   async function run() {
     busy = true;
-    done = null;
-    problem = null;
+    outcome = null;
     const result = await exportLogBundle();
     busy = false;
-    if (result.ok) done = { name: result.name, bytes: result.bytes };
-    else problem = result.reason;
+    outcome = result.ok
+      ? {
+          ok: true,
+          text: `Saved ${result.name} (${sizeText(result.bytes)}) to your downloads.`,
+        }
+      : {
+          ok: false,
+          text: `The log bundle could not be made: ${result.reason}`,
+        };
   }
 </script>
 
@@ -37,14 +42,13 @@
       {busy ? "Exporting…" : "Export log bundle"}
     </button>
   </div>
-  {#if done}
-    <p class="ok" role="status" data-testid="log-bundle-done">
-      Saved {done.name} ({sizeText(done.bytes)}) to your downloads.
-    </p>
-  {/if}
-  {#if problem}
-    <p class="error" role="alert" data-testid="log-bundle-problem">
-      The log bundle could not be made: {problem}
+  {#if outcome}
+    <p
+      class={outcome.ok ? "ok" : "error"}
+      role={outcome.ok ? "status" : "alert"}
+      data-testid={outcome.ok ? "log-bundle-done" : "log-bundle-problem"}
+    >
+      {outcome.text}
     </p>
   {/if}
   <p class="desc">

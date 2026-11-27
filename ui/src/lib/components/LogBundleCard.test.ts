@@ -47,4 +47,15 @@ describe("LogBundleCard", () => {
     expect(await screen.findByTestId("log-bundle-done")).toBeTruthy();
     expect(screen.queryByTestId("log-bundle-problem")).toBeNull();
   });
+
+  it("drops the saved-file line when the next try fails", async () => {
+    logs.run.mockResolvedValueOnce({ ok: true, name: "a.tar.gz", bytes: 5 });
+    render(LogBundleCard);
+    await fireEvent.click(screen.getByTestId("export-log-bundle"));
+    expect(await screen.findByTestId("log-bundle-done")).toBeTruthy();
+    logs.run.mockResolvedValueOnce({ ok: false, reason: "No space." });
+    await fireEvent.click(screen.getByTestId("export-log-bundle"));
+    expect(await screen.findByTestId("log-bundle-problem")).toBeTruthy();
+    expect(screen.queryByTestId("log-bundle-done")).toBeNull();
+  });
 });

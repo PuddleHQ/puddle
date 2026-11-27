@@ -280,6 +280,14 @@ describe("the screen", () => {
     });
     expect(text.textContent).toMatch(/Third-party software shipped/);
   });
+
+  it("shows a loading line until the licence text arrives", async () => {
+    await open();
+    await fireEvent.click(screen.getByText("Third-party licences"));
+    expect(screen.queryByText(/Loading/)).not.toBeNull();
+    await screen.findByLabelText("Third-party licences", { selector: "pre" });
+    expect(screen.queryByText(/Loading/)).toBeNull();
+  });
 });
 
 /*EXPLICIT*/

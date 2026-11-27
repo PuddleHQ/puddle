@@ -1007,31 +1007,33 @@ impl Workspaces {
         } else {
             rt.volume(&volume).await.map(|found| found.is_some())
         };
-        match (result, made) {
+        match result {
             // A lookup that fails after a good import: the import ran on the volume it made.
-            (Ok(failed), made) => Ok(ImportReport {
+            Ok(failed) => Ok(ImportReport {
                 created_volume: made.unwrap_or(true),
                 failed,
             }),
             // The sandbox is still there and holds the volume: removing it now would fail or
             // pull it from under a running guest. The error names the sandbox left behind.
-            (Err(e @ WorkspaceError::Leftover { .. }), _) => Err(e),
-            (Err(e), Ok(true)) => match rt.remove_volume(&volume).await {
-                Ok(()) => Err(e),
-                Err(left) => Err(WorkspaceError::Leftover {
+            Err(e @ WorkspaceError::Leftover { .. }) => Err(e),
+            Err(e) => match made {
+                Ok(true) => match rt.remove_volume(&volume).await {
+                    Ok(()) => Err(e),
+                    Err(left) => Err(WorkspaceError::Leftover {
+                        workspace: id.to_string(),
+                        job: e.to_string(),
+                        leftover: format!("the new volume {volume} was not removed ({left})"),
+                    }),
+                },
+                Ok(false) => Err(e),
+                Err(lookup) => Err(WorkspaceError::Leftover {
                     workspace: id.to_string(),
                     job: e.to_string(),
-                    leftover: format!("the new volume {volume} was not removed ({left})"),
+                    leftover: format!(
+                        "the new volume {volume} may not have been removed (looking it up failed: {lookup})"
+                    ),
                 }),
             },
-            (Err(e), Ok(false)) => Err(e),
-            (Err(e), Err(lookup)) => Err(WorkspaceError::Leftover {
-                workspace: id.to_string(),
-                job: e.to_string(),
-                leftover: format!(
-                    "the new volume {volume} may not have been removed (looking it up failed: {lookup})"
-                ),
-            }),
         }
     }
 

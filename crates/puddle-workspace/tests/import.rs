@@ -512,15 +512,15 @@ async fn a_dropped_import_gives_the_workspace_back() {
     );
 }
 
+/// What `holders_seen` collects: the op, and who held the workspace when it was called.
+type HoldersSeen = Arc<Mutex<Vec<(Op, Option<HoldKind>)>>>;
+
 /// The holder of `id` at each call of `ops`, as the runtime sees it.
 fn holders_seen(
     workspaces: &Arc<Workspaces>,
     id: &WorkspaceId,
     ops: &'static [Op],
-) -> (
-    Arc<Mutex<Vec<(Op, Option<HoldKind>)>>>,
-    impl Fn(Op) -> Step + Send + Sync + 'static,
-) {
+) -> (HoldersSeen, impl Fn(Op) -> Step + Send + Sync + 'static) {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let (w, id, log) = (Arc::clone(workspaces), id.clone(), Arc::clone(&seen));
     let hook = move |op| {

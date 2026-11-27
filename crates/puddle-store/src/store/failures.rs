@@ -2,13 +2,13 @@
 //! What the store does when SQLite fails in the middle of a change: the error comes back as it is
 //! and the change leaves nothing behind.
 
-use puddle_types::{ConnectionDecision, ConnectionReason, PatternKind, RuleSetId};
+use puddle_types::{ConnectionDecision, ConnectionReason, Host, PatternKind, RuleSetId};
 
 use puddle_types::{ConnectionEvent, ConnectionLog};
 
 use super::*;
 use crate::clock::ManualClock;
-use crate::rule::Effect;
+use crate::rule::{Effect, Precedence, RuleEdit};
 use crate::test_support::Logs;
 
 const DISK_FULL: &str = "database error: disk full";

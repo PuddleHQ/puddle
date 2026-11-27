@@ -244,7 +244,7 @@ with this process as their only writer.
 transaction. Store calls run on `spawn_blocking`, never on the async runtime's threads. The WAL needs
 a local disk, so the data folder must not be on a network share ([docs/backup.md](../backup.md)).
 
-**Migrations** (`crates/puddle-store/src/schema.rs`) are an append-only list of SQL steps; the
+**Migrations** (the steps in `crates/puddle-store/src/schema.rs`, the runner in `schema/migrations.rs`) are an append-only list of SQL steps; the
 version is `PRAGMA user_version` (33 today). A step is never edited once released, because an
 installed database already ran it. Before an upgrade the store copies the database with
 `VACUUM INTO` to `puddle.db.pre-v<N>` (the two newest copies are kept), then runs all pending steps

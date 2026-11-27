@@ -521,7 +521,7 @@ the API. *Added 2026-10-08.*
   (R-1). Instead the browser editor does not ask for them: its first-open settings turn telemetry
   and experiments off (`telemetry.telemetryLevel`, `workbench.enableExperiments`), so
   `mobile.events.data.microsoft.com` and `default.exp-tas.com` no longer wait in the Inbox on a
-  first open (T-2374; a workspace whose settings file already exists keeps its own). When the reasons change, one `system_managed_changed` record per scope says which reasons
+  first open (a workspace whose settings file already exists keeps its own). When the reasons change, one `system_managed_changed` record per scope says which reasons
   were added and removed, and open requests the new hosts decide are closed by `system` (R-37).
   Direct SSH is the workspace's effective `direct_ssh` setting (its own value, else the global
   default). The mise hosts follow the managed tools layer the same way: on unless the global

@@ -97,12 +97,15 @@ impl PackageKit {
         packages: &'static str,
         mirror: &'static str,
     ) -> Self {
-        use std::hash::{DefaultHasher, Hash, Hasher};
-        let mut hasher = DefaultHasher::new();
-        (KIT_VERSION, image, packages, flavour.build(packages)).hash(&mut hasher);
+        let key = cache_key(&[
+            &KIT_VERSION.to_string(),
+            image,
+            packages,
+            &flavour.build(packages),
+        ]);
         let file = super::cache_root().map(|root| {
             root.join("capture-kits")
-                .join(format!("kit-{:016x}.tar", hasher.finish()))
+                .join(format!("kit-{key:016x}.tar"))
         });
         let cached = file
             .as_ref()
@@ -205,6 +208,37 @@ impl PackageKit {
             self.flavour.install()
         );
         exec(vm, workspace, &script, Duration::from_secs(180), false).await
+    }
+}
+
+/// FNV-1a over each part and its length. `DefaultHasher` may change between Rust releases and
+/// would silently turn every warm cache cold; this one is fixed by its definition.
+fn cache_key(parts: &[&str]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for part in parts {
+        for byte in (part.len() as u64)
+            .to_le_bytes()
+            .into_iter()
+            .chain(part.bytes())
+        {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+    hash
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cache_key;
+
+    #[test]
+    fn the_cache_key_is_fixed_and_tells_the_parts_apart() {
+        assert_eq!(
+            cache_key(&["1", "img", "nft", "script"]),
+            0x5669_5061_04ff_b5b5
+        );
+        assert_ne!(cache_key(&["ab", "c"]), cache_key(&["a", "bc"]));
     }
 }
 

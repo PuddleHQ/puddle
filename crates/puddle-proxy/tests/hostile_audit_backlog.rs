@@ -89,7 +89,11 @@ async fn hostile_hg11_refusals_waiting_for_their_audit_row_hold_no_stream() {
     let rig = rig_logged(&config, log.clone()).await;
     let mut guest = Guest::connect(&rig.attacked).await;
     let (code, _held) = guest.connect_status(rig.echo).await;
-    assert_eq!(code, 200, "the workspace's one slot is taken");
+    assert_eq!(
+        code.code(),
+        Some(200),
+        "the workspace's one slot is taken: {code:?}"
+    );
     log.set_open(false);
 
     let before = HEAP.live();

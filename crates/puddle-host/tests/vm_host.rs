@@ -1953,6 +1953,7 @@ async fn boot_env_story() -> EnvStory {
         settings,
         secrets,
         root: _,
+        ..
     } = start_vm_host_platform("env", internet.options, &internet.platform, |_| {}).await;
     let name = format!("{}-env", settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
@@ -2290,6 +2291,7 @@ async fn vm_host_decrypts_the_login_hosts_while_capture_is_on_and_leaves_them_al
         settings,
         secrets: _,
         root: _,
+        ..
     } = start_vm_host_platform("login", internet.options, &internet.platform, |_| {}).await;
     let name = format!("{}-login", settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
@@ -4613,6 +4615,7 @@ async fn boot_shell_init_story() -> ShellInitStory {
         settings,
         root,
         secrets: _,
+        ..
     } = start_vm_host("shi").await;
     let name = format!("{}-shi", settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();
@@ -4907,6 +4910,7 @@ async fn vm_host_a_login_shell_lands_in_the_start_folder_and_a_missing_one_opens
         settings,
         root: _,
         secrets: _,
+        ..
     } = start_vm_host("sf").await;
     let name = format!("{}-sf", settings.prefix.as_str());
     let sandbox = WorkspaceId::new(&name).unwrap();

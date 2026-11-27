@@ -21,7 +21,7 @@ use puddle_test_kit::{EventSource, next_event_within};
 use puddle_types::{ConnectionLog, Host, NullConnectionLog, NullSink, WorkspaceId};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::net::TcpListener;
-use tokio::process::{Child, ChildStderr, ChildStdout, Command};
+use tokio::process::{Child, ChildStdout, Command};
 use tokio::task::JoinHandle;
 
 const LOCAL: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
@@ -51,7 +51,8 @@ impl EventSource for GuestLines {
 pub struct Guests {
     child: Child,
     lines: GuestLines,
-    stderr: ChildStderr,
+    /// Drains the child's stderr as it prints, so a chatty child never blocks on a full pipe.
+    stderr: JoinHandle<String>,
     said: String,
 }
 
@@ -67,9 +68,15 @@ impl Guests {
             .kill_on_drop(true)
             .spawn()
             .unwrap();
+        let mut stderr = child.stderr.take().unwrap();
+        let stderr = tokio::spawn(async move {
+            let mut text = String::new();
+            let _ = stderr.read_to_string(&mut text).await;
+            text
+        });
         Self {
             lines: GuestLines(BufReader::new(child.stdout.take().unwrap()).lines()),
-            stderr: child.stderr.take().unwrap(),
+            stderr,
             child,
             said: String::new(),
         }
@@ -96,18 +103,20 @@ impl Guests {
     /// Waits up to `limit` for the guests to end: whether they succeeded, and all they printed.
     pub async fn finish(mut self, limit: Duration) -> (bool, String) {
         // The rest goes into its own strings: a read cut off by the timeout drops what it was filling.
-        let (mut rest, mut stderr) = (String::new(), String::new());
+        let mut rest = String::new();
         let status = tokio::time::timeout(limit, async {
-            let (out, err) = tokio::join!(
-                self.lines.0.get_mut().read_to_string(&mut rest),
-                self.stderr.read_to_string(&mut stderr)
-            );
-            out.unwrap();
-            err.unwrap();
-            self.child.wait().await.unwrap()
+            self.lines
+                .0
+                .get_mut()
+                .read_to_string(&mut rest)
+                .await
+                .unwrap();
+            let status = self.child.wait().await.unwrap();
+            let stderr = (&mut self.stderr).await.unwrap();
+            (status, stderr)
         })
         .await;
-        let Ok(status) = status else {
+        let Ok((status, stderr)) = status else {
             return (
                 false,
                 format!(
@@ -216,8 +225,8 @@ impl Guest {
     }
 
     /// Sends `bytes` (a writer task, so a refusal that comes before the guest has finished
-    /// writing is still read) and returns the status code (0 when no status line came back) and the response body.
-    pub async fn refused(&mut self, bytes: Arc<[u8]>) -> (u16, String) {
+    /// writing is still read) and returns what came back within 10 s.
+    pub async fn refused(&mut self, bytes: Arc<[u8]>) -> Reply {
         let stream: StreamHandle = self.control.open_stream().await.unwrap();
         let (mut read, mut write) = tokio::io::split(stream);
         let writer = tokio::spawn(async move {
@@ -229,7 +238,7 @@ impl Guest {
             let _ = write.shutdown().await;
         });
         let mut raw = Vec::new();
-        let _ = tokio::time::timeout(Duration::from_secs(10), async {
+        let finished = tokio::time::timeout(REPLY_WITHIN, async {
             let mut chunk = [0_u8; 4096];
             loop {
                 match read.read(&mut chunk).await {
@@ -248,14 +257,59 @@ impl Guest {
         })
         .await;
         writer.abort();
-        let text = String::from_utf8_lossy(&raw).into_owned();
-        let code = text
-            .split(' ')
-            .nth(1)
-            .and_then(|c| c.parse().ok())
-            .unwrap_or(0);
-        let body = text.split("\r\n\r\n").nth(1).unwrap_or_default().to_owned();
-        (code, body)
+        Reply::from_raw(&raw, finished.is_err())
+    }
+}
+
+/// How long a guest waits for the proxy's answer to one request.
+const REPLY_WITHIN: Duration = Duration::from_secs(10);
+
+/// What the proxy sent back to a request: an answer, a close with none, or nothing in time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Reply {
+    /// A status line and head (and the body read so far).
+    Answered {
+        /// The status code.
+        code: u16,
+        /// What followed the head.
+        body: String,
+    },
+    /// The stream ended before a status line came back.
+    Closed,
+    /// No complete answer and no end of stream within the limit.
+    TimedOut,
+}
+
+impl Reply {
+    fn from_raw(raw: &[u8], timed_out: bool) -> Self {
+        let text = String::from_utf8_lossy(raw);
+        let code = text.split(' ').nth(1).and_then(|c| c.parse().ok());
+        match code {
+            Some(code) if text.starts_with("HTTP/") => Self::Answered {
+                code,
+                body: text.split("\r\n\r\n").nth(1).unwrap_or_default().to_owned(),
+            },
+            _ if timed_out => Self::TimedOut,
+            _ => Self::Closed,
+        }
+    }
+
+    /// The status code, when the proxy answered.
+    #[must_use]
+    pub fn code(&self) -> Option<u16> {
+        match self {
+            Self::Answered { code, .. } => Some(*code),
+            Self::Closed | Self::TimedOut => None,
+        }
+    }
+
+    /// The status code and body; panics, naming which, when the proxy did not answer.
+    #[must_use]
+    pub fn answered(self) -> (u16, String) {
+        match self {
+            Self::Answered { code, body } => (code, body),
+            other => panic!("the proxy did not answer: {other:?}"),
+        }
     }
 }
 
@@ -298,26 +352,25 @@ impl Guest {
         )
     }
 
-    /// Opens `CONNECT echo` and returns the status code and the stream (open, for the caller to hold).
-    pub async fn connect_status(&mut self, echo: SocketAddr) -> (u16, StreamHandle) {
+    /// Opens `CONNECT echo` and returns the proxy's answer (within 10 s) and the stream (open, for
+    /// the caller to hold).
+    pub async fn connect_status(&mut self, echo: SocketAddr) -> (Reply, StreamHandle) {
         let mut stream = self.control.open_stream().await.unwrap();
         stream
             .write_all(format!("CONNECT {echo} HTTP/1.1\r\n\r\n").as_bytes())
             .await
             .unwrap();
         let mut head = Vec::new();
-        while !head.ends_with(b"\r\n\r\n") {
-            match stream.read_u8().await {
-                Ok(byte) => head.push(byte),
-                Err(_) => break,
+        let finished = tokio::time::timeout(REPLY_WITHIN, async {
+            while !head.ends_with(b"\r\n\r\n") {
+                match stream.read_u8().await {
+                    Ok(byte) => head.push(byte),
+                    Err(_) => break,
+                }
             }
-        }
-        let code = String::from_utf8_lossy(&head)
-            .split(' ')
-            .nth(1)
-            .and_then(|c| c.parse().ok())
-            .unwrap_or(0);
-        (code, stream)
+        })
+        .await;
+        (Reply::from_raw(&head, finished.is_err()), stream)
     }
 }
 

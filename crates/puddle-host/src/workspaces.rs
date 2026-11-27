@@ -303,6 +303,10 @@ struct GuestState {
     ssh_agent: bool,
     /// The managed mise layer the guest was planned with: the settings as of this start.
     mise: Option<MiseLayer>,
+    /// The boot step that binds the volume at `/workspace` in a sandbox an older Puddle made with
+    /// it at `/workspaces/<id>` ([`puddle_workspace::Layout::older_mount_step`]); `None` for a
+    /// sandbox with the volume at `/workspace`.
+    older_mount: Option<GuestFile>,
 }
 
 /// How long a terminal opened while its workspace starts waits for the boot hook.

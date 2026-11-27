@@ -8,7 +8,7 @@ use puddle_boot::{Gate, GatedSandbox};
 use puddle_compute::{DiskSize, ExecRequest, ImageConfig, Runtime, Sandbox as _};
 use puddle_services::{workspaces::StartFolder, workspaces::WorkspaceRecord};
 use puddle_types::{
-    CheckoutDir, GuestEnv, GuestFile, GuestPath, Problem, SessionUser, WorkspaceId, WorkspaceStep,
+    CheckoutDir, GuestEnv, GuestFile, GuestPath, Problem, WorkspaceId, WorkspaceStep,
 };
 
 use puddle_workspace::{Layout, WorkspaceError};
@@ -78,7 +78,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             Err(reason) => return Err(self.abort_attachment(attachment, reason).await),
         };
         // The CA comes after the route: a start that fails here has nothing else to take back.
-        let (plan, env, guest) = match self.plan_guest_for(record, config).await {
+        let (plan, env, guest) = match self.plan_guest_for(record, config, None).await {
             Ok(ready) => ready,
             Err(reason) => {
                 route.shutdown().await;
@@ -139,35 +139,22 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
     }
 
-    /// [`Self::plan_guest`] for `record`'s workspace and saved start folder.
+    /// Makes this start's CA for `record`'s workspace, registers what it decrypts and its secrets'
+    /// stand-ins and plans the guest's boot with the CA in its trust, the authors of the
+    /// workspace's identities, its environment and its saved start folder, plus `older_mount`'s
+    /// step for a sandbox an older Puddle made. A start that fails after this must call
+    /// `Injection::end`.
     pub(super) async fn plan_guest_for(
         &self,
         record: &WorkspaceRecord,
         image: ImageConfig,
+        older_mount: Option<GuestFile>,
     ) -> Result<(puddle_boot::BootPlan, GuestEnv, GuestState), OpError> {
-        self.plan_guest(
-            &record.id,
-            image,
-            record.start_folder.as_ref(),
-            crate::editor_file::terminal_folder(record),
-            record.session_user,
-            record.label(),
-        )
-        .await
-    }
-
-    /// Makes this start's CA for `name`, registers what it decrypts and its secrets' stand-ins and
-    /// plans the guest's boot with the CA in its trust, the authors of the workspace's identities
-    /// and its environment. A start that fails after this must call `Injection::end`.
-    pub(super) async fn plan_guest(
-        &self,
-        name: &WorkspaceId,
-        image: ImageConfig,
-        start_folder: Option<&StartFolder>,
-        terminals: Option<StartFolder>,
-        session_user: SessionUser,
-        label: &str,
-    ) -> Result<(puddle_boot::BootPlan, GuestEnv, GuestState), OpError> {
+        let name = &record.id;
+        let start_folder = record.start_folder.as_ref();
+        let terminals = crate::editor_file::terminal_folder(record);
+        let session_user = record.session_user;
+        let label = record.label();
         let inner = &self.inner;
         let capture = crate::logins::capture_enabled(inner.settings.as_ref(), name);
         let editor = inner
@@ -208,6 +195,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             session_user,
             ssh_agent: began.ssh_agent,
             mise,
+            older_mount,
         };
         match inner.kit.plan(
             &state.image,
@@ -225,6 +213,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 session_user: state.session_user,
                 ssh_agent: state.ssh_agent,
                 mise: state.mise.as_ref(),
+                older_mount: state.older_mount.as_ref(),
                 label: &state.label,
             },
         ) {

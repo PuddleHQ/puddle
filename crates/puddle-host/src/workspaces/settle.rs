@@ -87,6 +87,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             session_user: guest.session_user,
             ssh_agent: guest.ssh_agent,
             mise: guest.mise.as_ref(),
+            older_mount: guest.older_mount.as_ref(),
             label: &guest.label,
         };
         let (plan, _) = kit.plan(&guest.image, &inputs)?;

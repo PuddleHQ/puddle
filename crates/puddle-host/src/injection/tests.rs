@@ -1689,6 +1689,7 @@ async fn a_forget_that_arrives_while_a_start_reads_the_kept_logins_ends_with_the
         let (injection, ws) = (Arc::clone(&injection), ws.clone());
         async move { injection.forget_login(&ws, "claude").await }
     });
+    // An absence window: a forget that does not wait for the start would finish in this time.
     tokio::time::sleep(Duration::from_millis(100)).await;
     vault.release();
     start.await.unwrap().unwrap();

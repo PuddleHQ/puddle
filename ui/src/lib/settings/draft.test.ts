@@ -72,10 +72,13 @@ describe("the change a save sends", () => {
     };
   };
 
-  it("adds a changed category to the stored ones", () => {
+  it("adds a changed category to the stored ones when the save is sent", () => {
     const d = setToggle(EMPTY_DRAFT, "private", true, false);
-    const patch = savePatch(view(), d);
-    expect(patch.layer.local_toggles).toMatchObject({
+    const patch = savePatch(d);
+    expect(patch.toggles).toEqual({ private: true });
+    expect(
+      bodyFrom(view(), patch).workspace_defaults.local_toggles,
+    ).toMatchObject({
       loopback: true,
       private: true,
       metadata: null,
@@ -85,16 +88,18 @@ describe("the change a save sends", () => {
   it("sends the global mise switch only when it was changed, and putting it back is no change", () => {
     const on = setTools(EMPTY_DRAFT, "mise", false, true);
     expect(isDirty(on)).toBe(true);
-    expect(savePatch(view(), on).tools).toEqual({ mise: false });
+    expect(savePatch(on).tools).toEqual({ mise: false });
     expect(isDirty(setTools(on, "mise", true, true))).toBe(false);
-    expect(bodyFrom(view(), savePatch(view(), on)).tools).toEqual({
+    expect(bodyFrom(view(), savePatch(on)).tools).toEqual({
       mise: false,
     });
     expect(bodyFrom(view()).tools).toEqual({ mise: null });
   });
 
-  it("leaves the toggles out when none changed", () => {
-    expect(savePatch(view(), EMPTY_DRAFT).layer).toEqual({});
+  it("keeps the stored categories when none changed", () => {
+    expect(
+      bodyFrom(view(), savePatch(EMPTY_DRAFT)).workspace_defaults.local_toggles,
+    ).toEqual(view().workspace_defaults.local_toggles);
   });
 });
 

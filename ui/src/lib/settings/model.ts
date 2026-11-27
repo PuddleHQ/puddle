@@ -153,6 +153,7 @@ export function bodyFrom(
   view: GlobalView,
   patch: {
     layer?: Partial<Layer>;
+    toggles?: Partial<NonNullable<Layer["local_toggles"]>>;
     server?: Partial<VsCodeServer>;
     ui?: Partial<Ui>;
     tools?: Partial<GlobalTools>;
@@ -160,7 +161,15 @@ export function bodyFrom(
   } = {},
 ): GlobalBody {
   return {
-    workspace_defaults: { ...view.workspace_defaults, ...patch.layer },
+    workspace_defaults: {
+      ...view.workspace_defaults,
+      ...patch.layer,
+      local_toggles: {
+        ...view.workspace_defaults.local_toggles,
+        ...patch.layer?.local_toggles,
+        ...patch.toggles,
+      },
+    },
     vscode_server: { ...view.vscode_server, ...patch.server },
     ui: { ...view.ui, ...patch.ui },
     tools: { ...view.tools, ...patch.tools },

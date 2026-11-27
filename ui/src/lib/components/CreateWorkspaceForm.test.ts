@@ -214,6 +214,17 @@ describe("CreateWorkspaceForm", () => {
     expect([name.selectionStart, name.selectionEnd]).toEqual([4, 4]);
   });
 
+  it("keeps the suggested name selected through the mouse-up of the focusing click only", async () => {
+    mount();
+    await screen.findByRole("region");
+    await type("Git repository (HTTPS)", "https://github.com/acme/shop");
+    const name = field("Name");
+    expect(await fireEvent.mouseUp(name)).toBe(true);
+    name.focus();
+    expect(await fireEvent.mouseUp(name)).toBe(false);
+    expect(await fireEvent.mouseUp(name)).toBe(true);
+  });
+
   it("is a dialog with the repository first", async () => {
     mount();
     const dialog = await screen.findByRole("region", { name: "New workspace" });

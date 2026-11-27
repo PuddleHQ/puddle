@@ -3,7 +3,7 @@
 # Self-test of ci/fetch-baseline-msi.sh with a fake `gh` (no network): a release's MSI wins; a
 # release without one fails; with no release, the newest develop run with a passing msi job on another commit that
 # kept an MSI is taken, and runs of this commit, of other branches, expired ones and red ones are
-# passed over; no candidate fails with the reason. The fake answers `--jq` with jq over a fixture,
+# passed over, as are runs that started after this one (a higher package version); no candidate fails with the reason. The fake answers `--jq` with jq over a fixture,
 # so the script's own filter is what selects. Prints ok only when every case passes.
 set -uo pipefail
 
@@ -68,7 +68,7 @@ run() {
     : >"$tmp/log"
     : >"$tmp/summary"
     rc=0
-    out=$(env PATH="$tmp/bin:$PATH" GITHUB_REPOSITORY=o/r GITHUB_SHA=thiscommit GITHUB_STEP_SUMMARY="$tmp/summary" \
+    out=$(env PATH="$tmp/bin:$PATH" GITHUB_REPOSITORY=o/r GITHUB_SHA=thiscommit GITHUB_RUN_ID=61 GITHUB_STEP_SUMMARY="$tmp/summary" \
         FAKE_LOG="$tmp/log" FAKE_ARTIFACTS="$tmp/artifacts.json" FAKE_CONCLUSIONS="$tmp/green" "$@" \
         "$script" "$dir" 2>"$tmp/err") || rc=$?
     err=$(cat "$tmp/err")
@@ -90,6 +90,12 @@ run "no release" FAKE_TAG=
 grep -q "^run download 56 " "$tmp/log" || bad "no release: did not take run 56 (the newest develop run with a passing msi job on another commit): $(cat "$tmp/log")"
 grep -qE "^run view (60|59|58) " "$tmp/log" && bad "no release: looked at a run of this commit, another branch or an expired MSI"
 [[ $err == *"develop at ddddddddd (msi run 56; no release yet)"* ]] || bad "no release: the source is not named: $err"
+
+# Runs 60 and 59 started after run 58 here: their versions are higher than this build's.
+run "a develop run that started later" FAKE_TAG= GITHUB_RUN_ID=56
+[ "$rc" = 0 ] || bad "a later develop run: exit $rc ($err)"
+grep -q "^run download 55 " "$tmp/log" || bad "a later develop run: did not take run 55 (run 56 is this run's own number): $(cat "$tmp/log")"
+grep -qE "^run view (60|59|58|57|56) " "$tmp/log" && bad "a later develop run: looked at a run that is not older than this one"
 
 run "no green run" FAKE_TAG= FAKE_CONCLUSIONS="$tmp/red"
 [ "$rc" = 1 ] || bad "no green run: exit $rc, want 1"

@@ -6,16 +6,19 @@
 #
 # That is the MSI of the newest published release. While there is no release yet, it is the MSI
 # the newest msi workflow run on develop whose `msi` job passed kept (the `puddle-msi` artifact, 14
-# days; the run's other jobs may be red, the upgrade job among them), from a commit other than this one, so the upgrade still crosses commits. Prints the MSI's path on the
+# days; the run's other jobs may be red, the upgrade job among them), from a commit other than this one, so the upgrade still crosses commits,
+# and from a run that started before this one: the package version is 0.0.<run number>, so a develop run
+# that started later holds a higher version, and Windows Installer refuses to upgrade down to this build (1603, T-2351, PR 1509). Prints the MSI's path on the
 # last line of stdout and says where it came from on stderr; with GITHUB_STEP_SUMMARY set, the
 # source also goes into the run's summary. Exits 1 when there is no baseline (a release without
-# an MSI, or no kept develop MSI), naming why. Needs GH_TOKEN, GITHUB_REPOSITORY, GITHUB_SHA and
+# an MSI, or no kept develop MSI), naming why. Needs GH_TOKEN, GITHUB_REPOSITORY, GITHUB_SHA, GITHUB_RUN_ID and
 # `actions: read`. Self-test: ci/fetch-baseline-msi-test.sh.
 set -euo pipefail
 
 out=${1:?usage: fetch-baseline-msi.sh <out-dir>}
 repo=${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is not set}
 sha=${GITHUB_SHA:?GITHUB_SHA is not set}
+run_id=${GITHUB_RUN_ID:?GITHUB_RUN_ID is not set}
 # Kept develop MSIs looked at, newest first, for one whose msi job passed.
 max_candidates=${BASELINE_MAX_CANDIDATES:-10}
 pattern='Puddle_*_x64_en-US.msi'
@@ -34,7 +37,8 @@ if [ -n "$tag" ]; then
 else
     candidates=$(gh api "repos/$repo/actions/artifacts?name=puddle-msi&per_page=100" --jq \
         ".artifacts[] | select(.expired | not) | select(.workflow_run.head_branch == \"develop\")
-         | select(.workflow_run.head_sha != \"$sha\") | \"\(.workflow_run.id) \(.workflow_run.head_sha)\"") ||
+         | select(.workflow_run.head_sha != \"$sha\")
+         | select(.workflow_run.id < $run_id) | \"\(.workflow_run.id) \(.workflow_run.head_sha)\"") ||
         die "could not list the kept MSIs of $repo"
     run="" from=""
     while read -r id head; do

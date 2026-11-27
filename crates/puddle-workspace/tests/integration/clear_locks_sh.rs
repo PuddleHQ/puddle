@@ -480,6 +480,38 @@ async fn a_checkout_s_config_and_hooks_cannot_make_the_repair_run_a_program() {
     }
 }
 
+/// Rebuilding an index reads HEAD's tree; when a partial clone lacks it, git must not fetch it by
+/// running the program the remote names (the script runs as root).
+#[tokio::test]
+async fn a_promisor_remote_cannot_make_the_repair_run_a_program() {
+    for shell in shells() {
+        let fx = repair_fixture();
+        let api = fx.vol.join("api");
+        let ran = fx.tmp.path().join("ran");
+        let program = fx.tmp.path().join("uploadpack");
+        puddle_test_kit::write_executable(
+            &program,
+            &format!("#!/bin/sh\n: > '{}'\nexit 1\n", ran.display()),
+        );
+        let tree = git_text(&api, &["rev-parse", "HEAD^{tree}"]);
+        std::fs::remove_file(api.join(".git/objects").join(&tree[..2]).join(&tree[2..])).unwrap();
+        for (key, value) in [
+            ("extensions.partialClone", "origin".to_owned()),
+            ("remote.origin.promisor", "true".to_owned()),
+            (
+                "remote.origin.url",
+                fx.tmp.path().join("nowhere").display().to_string(),
+            ),
+            ("remote.origin.uploadpack", program.display().to_string()),
+        ] {
+            git_ok(&api, &["config", key, &value]);
+        }
+        zero_fill(&api.join(".git/index"), 1234);
+        run(shell, &fx).await;
+        assert!(!ran.exists(), "{shell}: the uploadpack ran");
+    }
+}
+
 #[tokio::test]
 async fn a_corrupt_index_is_rebuilt_and_the_damaged_file_is_kept() {
     for shell in shells() {

@@ -434,6 +434,18 @@ fn a_protocol_is_its_wire_name_and_an_ssh_line_carries_it() {
 }
 
 #[test]
+fn an_ssh_line_has_no_git_operation_even_when_the_repository_is_named_like_one() {
+    for path in ["/o/git-receive-pack", "/o/git-upload-pack", "/o/r.git"] {
+        let line = HttpRequestLine::ssh("git-upload-pack", path);
+        assert_eq!(line.git_operation(), None, "{path}");
+    }
+    assert_eq!(
+        HttpRequestLine::new("POST", "/o/r.git/git-receive-pack").git_operation(),
+        Some(GitOperation::Push)
+    );
+}
+
+#[test]
 fn git_smart_http_targets_name_their_operation() {
     let op = GitOperation::of_target;
     assert_eq!(

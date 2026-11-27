@@ -10,6 +10,7 @@
 //!
 //! - Settings (`User/settings.json`, JSON with comments): `workbench.colorTheme`, with
 //!   `window.autoDetectColorScheme` off while a theme is set, and `editor.fontSize`.
+//!   The user's own custom settings (`EditorDefaults::settings`, top-level keys) take the same path.
 //! - Key bindings (`User/keybindings.json`, an array): each planned entry is added when the file
 //!   has none with the same key, command and `when`, and not added again once the user removed it.
 //! - Extensions: an id that is not installed and that Puddle did not install before is installed
@@ -163,10 +164,7 @@ struct Run<'a> {
 }
 
 /// What Puddle wants each owned setting to be: `Some(value)` sets it, `None` removes it.
-fn wanted_settings(
-    defaults: &EditorDefaults,
-    applied: &Applied,
-) -> Vec<(&'static str, Option<Value>)> {
+fn wanted_settings(defaults: &EditorDefaults, applied: &Applied) -> Vec<(String, Option<Value>)> {
     let auto = if defaults.colour_theme.is_some() {
         Some(json!(false))
     } else if applied.settings.get(AUTO_DETECT) == Some(&json!(false)) {
@@ -175,11 +173,39 @@ fn wanted_settings(
     } else {
         applied.settings.get(AUTO_DETECT).cloned()
     };
-    vec![
-        (THEME, defaults.colour_theme.as_ref().map(|t| json!(t))),
-        (AUTO_DETECT, auto),
-        (FONT_SIZE, defaults.font_size.map(|px| json!(px))),
-    ]
+    let mut wanted = vec![
+        (
+            THEME.to_owned(),
+            defaults.colour_theme.as_ref().map(|t| json!(t)),
+        ),
+        (AUTO_DETECT.to_owned(), auto),
+        (FONT_SIZE.to_owned(), defaults.font_size.map(|px| json!(px))),
+    ];
+    let custom = planned_custom_settings(defaults);
+    // A key Puddle wrote before that is no longer planned is handed back.
+    let gone = applied
+        .settings
+        .keys()
+        .filter(|k| !OWNED.contains(&k.as_str()) && !custom.contains_key(*k));
+    wanted.extend(gone.map(|k| (k.clone(), None)));
+    wanted.extend(custom.into_iter().map(|(k, v)| (k, Some(v))));
+    wanted
+}
+
+/// The keys Puddle owns through their own fields; a custom entry for one is ignored.
+const OWNED: [&str; 3] = [THEME, AUTO_DETECT, FONT_SIZE];
+
+/// The user's own planned settings (a text that is not a JSON object plans none), without the
+/// owned keys.
+fn planned_custom_settings(defaults: &EditorDefaults) -> BTreeMap<String, Value> {
+    defaults
+        .settings
+        .as_deref()
+        .and_then(|text| serde_json::from_str::<BTreeMap<String, Value>>(text).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(k, _)| !OWNED.contains(&k.as_str()))
+        .collect()
 }
 
 /// `bytes` as a JSON or JSONC value of one kind: `None` for a file that is not valid or holds
@@ -208,6 +234,7 @@ impl Run<'_> {
         let mut sets = Vec::new();
         let mut removes = Vec::new();
         for (key, wanted) in wanted_settings(self.defaults, &self.applied) {
+            let key = key.as_str();
             let now = current.get(key);
             let last = self.applied.settings.get(key);
             // The first-open seed writes the colour scheme following; that is Puddle's own value.

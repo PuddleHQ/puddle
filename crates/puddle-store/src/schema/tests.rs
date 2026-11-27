@@ -1010,16 +1010,21 @@ fn an_in_memory_database_is_never_copied_to_disk() {
 }
 
 #[test]
-fn a_copy_that_cannot_be_pruned_is_named_in_the_error() {
+fn a_copy_that_cannot_be_pruned_is_logged_and_the_migration_goes_on() {
     let dir = tempfile::tempdir().unwrap();
     let mut conn = Connection::open(dir.path().join("puddle.db")).unwrap();
     migrate_to(&mut conn, 1).unwrap();
     std::fs::create_dir(dir.path().join("puddle.db.pre-v1")).unwrap();
     migrate_to(&mut conn, 2).unwrap();
-    let err = migrate_to(&mut conn, 3).unwrap_err().to_string();
+    let logs = crate::test_support::Logs::capture();
+    migrate_to(&mut conn, 3).unwrap();
+    assert_eq!(version(&conn), 3);
+    let lines = logs.lines();
     assert!(
-        err.contains("pre-v1"),
-        "the error blames the wrong file: {err}"
+        lines
+            .iter()
+            .any(|l| l.contains("old upgrade copy not deleted") && l.contains("pre-v1")),
+        "the log does not name the file: {lines:?}"
     );
 }
 
@@ -1040,6 +1045,17 @@ fn a_copy_that_cannot_be_replaced_stops_the_migration_before_any_step() {
 /// moment the connection returned reads its first `foreign_keys` pragma: after its own version
 /// read and its copy, before its first step.
 fn racing_connection(path: &Path, steps: usize) -> Connection {
+    racing_with(path, move |other| {
+        let mut first = Connection::open(other).unwrap();
+        first
+            .busy_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        migrate_to(&mut first, steps).unwrap();
+    })
+}
+
+/// Like [`racing_connection`], with `action` as what the other process does.
+fn racing_with(path: &Path, action: impl Fn(&Path) + Send + 'static) -> Connection {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
@@ -1057,16 +1073,33 @@ fn racing_connection(path: &Path, steps: usize) -> Connection {
             }
         ) && !fired.swap(true, Ordering::SeqCst)
         {
-            let mut first = Connection::open(&other).unwrap();
-            first
-                .busy_timeout(std::time::Duration::from_secs(5))
-                .unwrap();
-            migrate_to(&mut first, steps).unwrap();
+            action(&other);
         }
         Authorization::Allow
     }))
     .unwrap();
     conn
+}
+
+#[test]
+fn a_commit_between_the_copy_and_the_lock_is_in_the_copy_that_is_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    migrate_to(&mut Connection::open(&path).unwrap(), 2).unwrap();
+    let mut second = racing_with(&path, |other| {
+        Connection::open(other)
+            .unwrap()
+            .execute("INSERT INTO child VALUES (12, 1)", [])
+            .unwrap();
+    });
+    migrate_to(&mut second, 4).unwrap();
+    let copy = Connection::open(dir.path().join("puddle.db.pre-v4")).unwrap();
+    assert_eq!(version(&copy), 2);
+    assert_eq!(
+        count(&copy, "child"),
+        3,
+        "the late commit is missing from the copy"
+    );
 }
 
 #[test]
@@ -1097,6 +1130,7 @@ fn a_copy_that_cannot_be_deleted_is_logged_and_the_migration_goes_on() {
         made: made.clone(),
         db: dir.path().join("puddle.db"),
         target: 2,
+        data_version: 0,
     };
     let logs = crate::test_support::Logs::capture();
     copy.discard();
@@ -1109,6 +1143,7 @@ fn a_copy_that_cannot_be_deleted_is_logged_and_the_migration_goes_on() {
         made: dir.path().join("puddle.db.pre-v2.1-1.partial"),
         db: dir.path().join("puddle.db"),
         target: 2,
+        data_version: 0,
     };
     gone.discard();
     assert_eq!(logs.lines().len(), 1, "{:?}", logs.lines());

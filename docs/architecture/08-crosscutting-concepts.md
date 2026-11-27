@@ -53,7 +53,7 @@ files or memory, because anything the guest holds the guest can send anywhere. I
 
 - Git and HTTP credentials are added by the injector to a decrypted request on the host
   (`crates/puddle-inject`), for the repositories the matching identity covers.
-- Logins captured in the guest (`gh`, `claude`, `copilot`) are swapped for stand-ins; the real
+- Logins captured in the guest (Claude Code, GitHub, Microsoft Entra, OpenAI Codex, Docker Hub) are swapped for stand-ins; the real
   tokens go to the OS credential store, and the proxy swaps them back only toward that service's own
   hosts (`crates/puddle-logins`).
 - Environment secrets reach the guest as stand-ins too; the real value lives only in the proxy's
@@ -487,9 +487,12 @@ The UI is held to WCAG 2.2 level AA by gates, not by review alone
 ([STANDARDS §13](../STANDARDS.md)):
 
 - `svelte-check --fail-on-warnings` in the `ui` gate, so Svelte's accessibility warnings fail.
-- axe (`@axe-core/playwright`, WCAG 2.0 to 2.2, A and AA) on every route in the light and dark
-  themes in the `ui-e2e` gate (`ui/e2e/support.ts`, `ui/e2e/shell.spec.ts`), plus colour contrast
-  across the palettes (`ui/e2e/palette.spec.ts`).
+- axe (`@axe-core/playwright`, WCAG 2.0 to 2.2, A and AA) in the `ui-e2e` gate
+  (`ui/e2e/support.ts`), plus colour contrast across the palettes (`ui/e2e/palette.spec.ts`).
+  `ui/e2e/shell.spec.ts` scans the six sidebar sections and the 404 page in the light and dark
+  themes; the other routes are scanned by the spec of their own feature. A unit test
+  (`ui/scripts/axe-routes.test.ts`) fails when a page under `src/routes` is named by no spec that
+  calls axe, so a new route needs a scan (its short list of known gaps is in the test).
 - Keyboard paths are tested: a skip link first, then the section links in order
   (`ui/e2e/shell.spec.ts`), and Tab and Escape in the specs of the dialogs and forms.
 - Components use only the colour tokens in `ui/src/lib/theme/tokens.css`, which define light and

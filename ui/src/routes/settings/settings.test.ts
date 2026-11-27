@@ -215,6 +215,7 @@ describe("the screen", () => {
       "Devices and sign-in",
       "Back up and restore",
       "Activity log",
+      "Diagnostic log",
       "Checks and errors",
       "Privacy and about",
       "New workspaces",
@@ -278,6 +279,14 @@ describe("the screen", () => {
       selector: "pre",
     });
     expect(text.textContent).toMatch(/Third-party software shipped/);
+  });
+
+  it("shows a loading line until the licence text arrives", async () => {
+    await open();
+    await fireEvent.click(screen.getByText("Third-party licences"));
+    expect(screen.queryByText(/Loading/)).not.toBeNull();
+    await screen.findByLabelText("Third-party licences", { selector: "pre" });
+    expect(screen.queryByText(/Loading/)).toBeNull();
   });
 });
 
@@ -451,6 +460,17 @@ describe("appearance and notifications", () => {
     expect(api.ui.notifications).toBe(false);
     expect(api.ui.sound).toBe(true);
     expect(api.ui.close_behaviour).toBe("quit");
+  });
+
+  it("saves the log detail, from the default and from a level already chosen", async () => {
+    await open();
+    expect(api.ui.log_level).toBeNull();
+    await choose("Log detail", "debug");
+    await save();
+    expect(api.ui.log_level).toBe("debug");
+    await choose("Log detail", "trace");
+    await save();
+    expect(api.ui.log_level).toBe("trace");
   });
 });
 

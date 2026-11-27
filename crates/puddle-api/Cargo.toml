@@ -44,6 +44,7 @@ puddle-netpolicy = { workspace = true }
 puddle-repos = { workspace = true }
 puddle-secrets = { workspace = true }
 puddle-services = { workspace = true }
+puddle-log = { workspace = true }
 puddle-settings = { workspace = true }
 puddle-store = { workspace = true }
 puddle-types = { workspace = true, features = ["openapi"] }

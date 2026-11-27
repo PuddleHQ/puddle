@@ -3,6 +3,7 @@
   import { onMount } from "svelte";
   import AuditRetention from "#lib/components/AuditRetention.svelte";
   import BackupCard from "#lib/components/BackupCard.svelte";
+  import LogBundleCard from "#lib/components/LogBundleCard.svelte";
   import RestoreCard from "#lib/components/RestoreCard.svelte";
   import DevicesPanel from "#lib/components/DevicesPanel.svelte";
   import SelectRow from "#lib/components/SelectRow.svelte";
@@ -20,7 +21,12 @@
     linesProblem,
     parseFreeGb,
   } from "#lib/settings/disk-space.ts";
-  import { CLOSE_OPTIONS, type CloseBehaviour } from "#lib/settings/model.ts";
+  import {
+    CLOSE_OPTIONS,
+    LOG_LEVEL_OPTIONS,
+    type CloseBehaviour,
+    type LogLevel,
+  } from "#lib/settings/model.ts";
   import { session } from "#lib/session/session.svelte.ts";
   import { DevicesStore } from "#lib/stores/devices.svelte.ts";
   import { globalSettings as store } from "#lib/stores/global-settings.svelte.ts";
@@ -156,6 +162,26 @@
 
   <SettingsGroup title="Activity log" id="set-audit">
     <AuditRetention />
+  </SettingsGroup>
+
+  <SettingsGroup title="Diagnostic log" id="set-log">
+    <SelectRow
+      id="set-log-level"
+      label="Log detail"
+      desc="How much Puddle writes to its log. Raise it to Debug before you reproduce a problem, then export the log bundle."
+      how="Takes effect at once, no restart. Debug and Trace never log tokens or passwords, but they are long. A PUDDLE_LOG variable set before Puddle started wins over this."
+      value={ui.log_level ?? "info"}
+      options={LOG_LEVEL_OPTIONS}
+      onchange={(next) =>
+        saveUi(
+          saver,
+          "set-log-level",
+          "log_level",
+          next as LogLevel,
+          ui.log_level ?? "info",
+        )}
+    />
+    <LogBundleCard />
   </SettingsGroup>
 
   <SettingsGroup title="Checks and errors">

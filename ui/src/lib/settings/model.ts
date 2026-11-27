@@ -119,6 +119,16 @@ export function parseDiskWarning(
   return { ok: true, percent };
 }
 
+export type LogLevel = NonNullable<Ui["log_level"]>;
+
+export const LOG_LEVEL_OPTIONS: { value: LogLevel; label: string }[] = [
+  { value: "error", label: "Errors only" },
+  { value: "warn", label: "Warnings" },
+  { value: "info", label: "Normal (default)" },
+  { value: "debug", label: "Debug: detail for each step" },
+  { value: "trace", label: "Trace: every step, very long" },
+];
+
 export const CLOSE_OPTIONS: { value: CloseBehaviour; label: string }[] = [
   { value: "tray", label: "Keep running in the tray" },
   { value: "quit", label: "Quit Puddle" },

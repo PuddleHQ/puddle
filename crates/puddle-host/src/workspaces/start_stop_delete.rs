@@ -43,6 +43,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             route_alive = self.adopt_sandbox(name, &sandbox.routes).await;
         }
         let looked = began.elapsed();
+        tracing::debug!(workspace = %name, sandbox_exists = exists, route_alive, moved, "workspace start: what was found");
         let restarted = exists && route_alive && !moved && self.restart_in_place(&record).await?;
         if moved {
             // A runtime cannot move the mount of a sandbox it already made.
@@ -76,10 +77,12 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             // A route left from an earlier boot belongs to a sandbox that no longer exists.
             self.quiesce(name, true).await;
             let mut created_volume = false;
+            tracing::debug!(workspace = %name, "workspace start: booting a new sandbox");
             self.boot_new(&record, &mut created_volume, BootFor::Start)
                 .await?;
         }
         let booted = began.elapsed();
+        tracing::debug!(workspace = %name, restarted_in_place = restarted, boot_ms = millis(booted), "workspace start: sandbox up, settling");
         if let Err(reason) = self.settle(&record).await {
             return Err(self.undo_boot(&record, Undo::Keep, reason).await);
         }
@@ -266,6 +269,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 
     pub(super) async fn stop_work(&self, record: WorkspaceRecord) -> Result<(), OpError> {
         let name = &record.id;
+        tracing::debug!(workspace = %name, "workspace stop: ending terminals and windows, then trim and stop");
         // The terminals end first, with the stop as their reason, while the guest can still answer.
         self.inner.terminals.end(name, EndReason::Stopped);
         // The windows go first, so the editor can disconnect and the guest end its extension hosts
@@ -319,6 +323,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         }
         self.quiesce(name, false).await;
         self.inner.reports.end(name);
+        tracing::debug!(workspace = %name, "workspace stop: done");
         Ok(())
     }
 
@@ -464,6 +469,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         report: puddle_workspace::DeleteReport,
     ) -> Result<(), OpError> {
         let inner = &self.inner;
+        tracing::debug!(workspace = %record.id, "workspace delete: starting");
         self.progress(&record.id, WorkspaceStep::Checking, None);
         inner.launcher.close_browser(&record.id).await;
         let _guest = self.hold_guest(&record.id).await;

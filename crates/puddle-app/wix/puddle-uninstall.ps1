@@ -2,12 +2,15 @@
 # Run by the installer's uninstall (crates/puddle-app/wix/main.wxs), never by hand.
 #   -Stop       asks the running Puddle to quit (`puddle-app.exe --quit`, the program's own quit: it
 #               stops every workspace cleanly) and waits for its processes to end. It never kills one.
+#   -AskStop    the same, after a Yes/No box in the person's session (the basic interface of
+#               `msiexec /x` shows no dialog of ours); No leaves Puddle running and the installer refuses.
 #   -RemoveAll  deletes what Puddle keeps outside the install folder: the data folder (workspaces,
 #               disks, settings, logs, the runtime's home), the shell's own state, the development
 #               certificate it trusted, and its Include line in ~/.ssh/config.
 # The list shown to the user in the uninstall dialog is the list below, nothing else is touched.
 param(
     [switch]$Stop,
+    [switch]$AskStop,
     [switch]$RemoveAll,
     [string]$InstallDir = (Split-Path -Parent (Split-Path -Parent $PSCommandPath)),
     [int]$WaitSeconds = 300
@@ -15,6 +18,15 @@ param(
 $ErrorActionPreference = 'Continue'
 
 function Get-PuddleProcesses { @(Get-Process -Name 'puddle-app', 'msb' -ErrorAction SilentlyContinue) }
+
+if ($AskStop -and (Get-PuddleProcesses).Count -gt 0) {
+    Add-Type -AssemblyName System.Windows.Forms
+    $answer = [System.Windows.Forms.MessageBox]::Show(
+        'Puddle is running. Quit it now (this stops your workspaces cleanly) and remove it?',
+        'Puddle Setup', [System.Windows.Forms.MessageBoxButtons]::YesNo,
+        [System.Windows.Forms.MessageBoxIcon]::Question, [System.Windows.Forms.MessageBoxDefaultButton]::Button1)
+    if ($answer -eq [System.Windows.Forms.DialogResult]::Yes) { $Stop = $true }
+}
 
 if ($Stop) {
     $app = Join-Path $InstallDir 'puddle-app.exe'

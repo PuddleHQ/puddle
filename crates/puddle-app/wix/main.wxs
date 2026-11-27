@@ -94,18 +94,11 @@
         <!-- Windows' "Apps" list and Control Panel start an uninstall with msiexec /x, which runs the
              basic user interface (UILevel 3): the installer's own dialogs, PuddleRemoveDlg among them,
              are never shown, only the "are you sure" box and a progress bar. There the offer is a Yes/No
-             message through the installer's own message channel (Session.Message), shown by the person's
-             session whatever service runs the installer. A silent run (UILevel 2) gets no box and keeps
+             message box that puddle-uninstall.ps1 -AskStop shows (a Session.Message from a script returned at
+             once without showing anything in the basic interface), and it quits Puddle on Yes. A silent run (UILevel 2) gets no box and keeps
              refusing unless PUDDLE_STOP_RUNNING=1. -->
-        <CustomAction Id="PuddleAskStop" Script="vbscript" Execute="immediate" Return="ignore"><![CDATA[
-            Function PuddleAskStop()
-                Dim rec
-                Set rec = Session.Installer.CreateRecord(0)
-                rec.StringData(0) = "Puddle is running. Quit it now (this stops your workspaces cleanly) and remove it?"
-                If Session.Message(&H03000000 + 4 + 32, rec) = 6 Then Session.Property("PUDDLE_STOP_RUNNING") = "1"
-                PuddleAskStop = 1
-            End Function
-        ]]></CustomAction>
+        <CustomAction Id="PuddleAskStop" Directory="INSTALLDIR" Execute="immediate" Impersonate="yes" Return="ignore"
+            ExeCommand="&quot;[SystemFolder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;[INSTALLDIR]uninstall\puddle-uninstall.ps1&quot; -AskStop" />
         <CustomAction Id="PuddleStop" Directory="INSTALLDIR" Execute="immediate" Impersonate="yes" Return="ignore"
             ExeCommand="&quot;[SystemFolder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;[INSTALLDIR]uninstall\puddle-uninstall.ps1&quot; -Stop" />
         <CustomAction Id="PuddleRemoveAll" Directory="INSTALLDIR" Execute="deferred" Impersonate="yes" Return="ignore"
@@ -116,9 +109,9 @@
             <Custom Action="PuddleDetect" Before="InstallValidate" />
             <Custom Action="PuddleAskStop" After="PuddleDetect"><![CDATA[REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND UILevel >= 3 AND NOT PUDDLE_STOP_RUNNING AND ((PUDDLE_SHELL_RUNNING <> "" AND PUDDLE_SHELL_RUNNING <> "0") OR (PUDDLE_RUNTIME_RUNNING <> "" AND PUDDLE_RUNTIME_RUNNING <> "0"))]]></Custom>
             <Custom Action="PuddleStop" After="PuddleAskStop"><![CDATA[REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND PUDDLE_STOP_RUNNING="1" AND ((PUDDLE_SHELL_RUNNING <> "" AND PUDDLE_SHELL_RUNNING <> "0") OR (PUDDLE_RUNTIME_RUNNING <> "" AND PUDDLE_RUNTIME_RUNNING <> "0"))]]></Custom>
-            <Custom Action="PuddleForgetShellAgain" After="PuddleStop"><![CDATA[REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND PUDDLE_STOP_RUNNING="1"]]></Custom>
-            <Custom Action="PuddleForgetRuntimeAgain" After="PuddleForgetShellAgain"><![CDATA[REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND PUDDLE_STOP_RUNNING="1"]]></Custom>
-            <Custom Action="PuddleDetectAgain" After="PuddleForgetRuntimeAgain"><![CDATA[REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND PUDDLE_STOP_RUNNING="1"]]></Custom>
+            <Custom Action="PuddleForgetShellAgain" After="PuddleStop"><![CDATA[REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND (PUDDLE_STOP_RUNNING="1" OR UILevel >= 3)]]></Custom>
+            <Custom Action="PuddleForgetRuntimeAgain" After="PuddleForgetShellAgain"><![CDATA[REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND (PUDDLE_STOP_RUNNING="1" OR UILevel >= 3)]]></Custom>
+            <Custom Action="PuddleDetectAgain" After="PuddleForgetRuntimeAgain"><![CDATA[REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND (PUDDLE_STOP_RUNNING="1" OR UILevel >= 3)]]></Custom>
             <Custom Action="PuddleRunning" After="PuddleDetectAgain"><![CDATA[(PUDDLE_SHELL_RUNNING <> "" AND PUDDLE_SHELL_RUNNING <> "0") OR (PUDDLE_RUNTIME_RUNNING <> "" AND PUDDLE_RUNTIME_RUNNING <> "0")]]></Custom>
             <Custom Action="PuddleRemoveAll" Before="RemoveFiles"><![CDATA[REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND PUDDLE_REMOVE_ALL="1"]]></Custom>
         </InstallExecuteSequence>

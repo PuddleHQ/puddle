@@ -1208,7 +1208,8 @@ function Get-PuddleProcessesNow { @(Get-Process -Name 'msb', 'puddle-app', 'pudd
 # The uninstaller's offer and its full-removal option (main.wxs PuddleRemoveDlg, PuddleStop, PuddleRemoveAll;
 # crates/puddle-app/wix/puddle-uninstall.ps1):
 #   - with Puddle (and a workspace) running, a silent uninstall still refuses and changes nothing;
-#   - the uninstaller's own dialog says Puddle is running; Remove quits it through its own quit (the workspaces
+#   - msiexec /x (what Windows' app list runs) shows only the basic interface: its Yes/No message says Puddle is
+#     running; Yes quits it through its own quit (the workspaces
 #     stop cleanly), the uninstall goes on, and the data folder stays;
 #   - a silent uninstall asked for everything (PUDDLE_STOP_RUNNING=1 PUDDLE_REMOVE_ALL=1) over a running Puddle
 #     leaves no process, no data folder, no shell state, no Include line of Puddle's in the user's ssh config

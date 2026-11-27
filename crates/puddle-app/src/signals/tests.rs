@@ -24,13 +24,19 @@ async fn a_signal_quits_once_and_a_second_one_gives_up() {
     ));
     send_to_self("-TERM");
     let wait = Duration::from_secs(5);
-    assert!(tokio::time::timeout(wait, quit_rx.recv()).await.is_ok());
+    assert_eq!(
+        tokio::time::timeout(wait, quit_rx.recv()).await,
+        Ok(Some(()))
+    );
     assert!(
         give_up_rx.try_recv().is_err(),
         "one signal only quits, it does not give up"
     );
     send_to_self("-INT");
-    assert!(tokio::time::timeout(wait, give_up_rx.recv()).await.is_ok());
+    assert_eq!(
+        tokio::time::timeout(wait, give_up_rx.recv()).await,
+        Ok(Some(()))
+    );
     task.await.unwrap();
     assert!(quit_rx.try_recv().is_err(), "quit ran once");
 }

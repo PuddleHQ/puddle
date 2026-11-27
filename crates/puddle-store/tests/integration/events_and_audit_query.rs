@@ -416,6 +416,7 @@ fn pruning_the_audit_emits_for_its_trim_record() {
         ask(&store, "a", &format!("h{i}.example"));
     }
     clock.advance(2 * 24 * 60 * 60 * 1000);
+    ask(&store, "a", "fresh.example");
     drop(sink.take());
     let report = store.sweep().unwrap();
     assert!(report.audit_records_pruned > 0);

@@ -204,6 +204,14 @@ impl Store {
         Ok(deletion)
     }
 
+    /// Whether the audit's lines are over [`Limits::audit_warn_bytes`].
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn audit_over_warn_size(&self) -> Result<bool, StoreError> {
+        Ok(self.audit_bytes()? > self.limits.audit_warn_bytes)
+    }
+
     /// One sweeper pass (R-19, R-22), each step its own short transaction.
     ///
     /// # Errors
@@ -234,18 +242,26 @@ impl Store {
                 fx.push(Event::RulesChanged {});
             }
             Ok(rules.len() as u64)
-        })?;
-        self.flush_limits()?;
-        let waiting_records_merged = self.merge_waiting_connections()?;
-        let audit_records_pruned = self.prune_audit_if_due()?;
+        });
+        // Each step runs whatever an earlier one did, so a step that fails every pass cannot
+        // starve the prune, the size warning or the shrink behind it (RS-12); the first error
+        // is the one returned.
+        let mut first_error = None;
+        let rules_expired = settle(rules_expired, &mut first_error);
+        settle(self.flush_limits(), &mut first_error);
+        let waiting_records_merged = settle(self.merge_waiting_connections(), &mut first_error);
+        let audit_records_pruned = settle(self.prune_audit_if_due(), &mut first_error);
         // Before the shrink, so that a shrink that fails (a full disk) never hides the warning.
-        let audit_over_warn_size = self.audit_bytes()? > self.limits.audit_warn_bytes;
+        let audit_over_warn_size = settle(self.audit_over_warn_size(), &mut first_error);
         let audit_file_shrunk_bytes = self.shrink_audit_file().unwrap_or_else(|err| {
             tracing::warn!(%err, "the audit file's free space could not be given back; the next sweep tries again");
             0
         });
         if let Err(err) = self.checkpoint_wal() {
             tracing::warn!(%err, "the write-ahead log could not be truncated; the next sweep tries again");
+        }
+        if let Some(err) = first_error {
+            return Err(err);
         }
         Ok(SweepReport {
             rules_expired,
@@ -715,4 +731,13 @@ pub(super) fn audit_head(conn: &Connection) -> Result<i64, StoreError> {
             row.get(0)
         })?,
     )
+}
+
+/// A sweep step's value, or its default after it failed; the first failure is kept in `first`.
+fn settle<T: Default>(step: Result<T, StoreError>, first: &mut Option<StoreError>) -> T {
+    step.unwrap_or_else(|err| {
+        tracing::warn!(%err, "a sweep step failed; the next sweep tries again");
+        first.get_or_insert(err);
+        T::default()
+    })
 }

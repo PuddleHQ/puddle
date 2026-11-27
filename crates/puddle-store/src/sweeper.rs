@@ -91,7 +91,13 @@ impl Sweeper {
                         problems.clear(SWEEP_PROBLEM);
                         warn_when_large(&store, &problems, report.audit_over_warn_size);
                     }
-                    Err(reason) => problems.raise(sweep_problem(&reason)),
+                    Err(reason) => {
+                        problems.raise(sweep_problem(&reason));
+                        // A failing step must not hide the size warning (RS-12).
+                        if let Ok(over) = store.audit_over_warn_size() {
+                            warn_when_large(&store, &problems, over);
+                        }
+                    }
                 }
                 tokio::select! {
                     () = tokio::time::sleep(period) => {}

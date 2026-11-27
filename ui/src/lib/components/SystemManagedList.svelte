@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
+  import HostName from "./HostName.svelte";
   import {
     SYSTEM_INTRO,
     byReason,
@@ -31,14 +32,14 @@
         <ul aria-label="Hosts allowed because: {group.text}">
           {#each group.hosts as host (host.pattern)}
             <li>
-              <span class="mono">
-                {entryPattern({
+              <HostName
+                host={entryPattern({
                   pattern: host.pattern,
                   pattern_kind: host.pattern.startsWith("*")
                     ? "suffix"
                     : "exact",
                 })}
-              </span>
+              />
               <span class="muted">{host.note}</span>
             </li>
           {/each}
@@ -79,14 +80,17 @@
     margin: 0;
     padding: 0;
     list-style: none;
+    /* At the largest text size a host label is wider than the line. It scrolls in its own box
+       rather than breaking inside a word or widening the page. */
+    overflow-x: auto;
   }
   li {
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-2);
   }
-  .mono {
-    font-family: var(--font-mono);
-    overflow-wrap: anywhere;
+  li :global(.host) {
+    white-space: nowrap;
+    overflow-wrap: normal;
   }
 </style>

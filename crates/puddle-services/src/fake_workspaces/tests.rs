@@ -131,6 +131,54 @@ async fn a_rename_clash_is_refused_and_a_create_cannot_take_a_label_in_use() {
 }
 
 #[tokio::test]
+async fn a_create_ends_running_as_the_lifecycle_table_says() {
+    let (fake, _) = fake();
+    let made = fake.create(new_ws("web"), &NoGitSetup).await.unwrap();
+    assert_eq!(made.status, WorkspaceStatus::Created);
+    assert_eq!(made.busy, Some(Operation::Creating));
+    fake.idle().await;
+    let done = fake.get(&made.id).await.unwrap();
+    assert_eq!(done.status, WorkspaceStatus::Running);
+    assert_eq!(done.busy, None);
+}
+
+#[tokio::test]
+async fn a_restored_disk_takes_a_numbered_name_when_its_name_is_in_use() {
+    let (fake, _) = fake();
+    seeded(&fake, "other", WorkspaceStatus::Stopped);
+    fake.rename(&id("other"), DisplayName::parse("Disk").unwrap())
+        .await
+        .unwrap();
+    let url = RepoUrl::parse("https://example.com/a/b").unwrap();
+    fake.add_orphan_volume(&id("disk"), None);
+    let restored = fake
+        .restore_orphan(&id("disk"), UserId::OWNER, Some(url.clone()), &NoGitSetup)
+        .await
+        .unwrap();
+    assert_eq!(restored.id, id("disk"));
+    assert_eq!(restored.name.as_str(), "disk (2)");
+    // A disk that holds a checkout is named after its folder, as the host names it.
+    fake.add_orphan_volume(
+        &id("disk-2"),
+        Some(RepoUrl::parse("https://example.com/acme/shop.git").unwrap()),
+    );
+    let named = fake
+        .restore_orphan(&id("disk-2"), UserId::OWNER, None, &NoGitSetup)
+        .await
+        .unwrap();
+    assert_eq!(named.name.as_str(), "shop");
+    // A listed id is still never replaced.
+    fake.add_orphan_volume(&id("other"), None);
+    let clash = fake
+        .restore_orphan(&id("other"), UserId::OWNER, Some(url), &NoGitSetup)
+        .await;
+    assert!(
+        matches!(&clash, Err(WorkspaceError::Conflict(m)) if m.contains("nothing was replaced")),
+        "{clash:?}"
+    );
+}
+
+#[tokio::test]
 async fn a_failed_stop_leaves_the_workspace_running() {
     let (fake, sink) = fake();
     seeded(&fake, "w", WorkspaceStatus::Running);

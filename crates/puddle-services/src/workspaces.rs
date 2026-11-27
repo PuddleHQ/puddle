@@ -262,6 +262,36 @@ pub fn label_taken<'a>(
         .find(|r| r.owner == owner && Some(&r.id) != except && r.label().to_lowercase() == wanted)
 }
 
+/// The label a workspace restored from a disk gets: `base`, or with ` (2)`, ` (3)` and so on
+/// when a workspace of `owner` in `records` already goes by it, cut to fit the longest name. The
+/// one rule both services apply.
+pub fn free_label<'a>(
+    records: impl IntoIterator<Item = &'a WorkspaceRecord>,
+    owner: UserId,
+    base: &str,
+) -> DisplayName {
+    let records: Vec<&WorkspaceRecord> = records.into_iter().collect();
+    let mut n = 1_usize;
+    loop {
+        let suffix = if n == 1 {
+            String::new()
+        } else {
+            format!(" ({n})")
+        };
+        let stem: String = base
+            .chars()
+            .take(DisplayName::MAX_CHARS - suffix.chars().count())
+            .collect();
+        // `base` is a folder name or an id: never empty, never a control character.
+        if let Ok(name) = DisplayName::parse(&format!("{}{suffix}", stem.trim_end()))
+            && label_taken(records.iter().copied(), owner, name.as_str(), None).is_none()
+        {
+            return name;
+        }
+        n += 1;
+    }
+}
+
 /// Whether the workspace `id` may take `name` among its owner's workspaces in `records`. The one rule both services apply.
 ///
 /// # Errors

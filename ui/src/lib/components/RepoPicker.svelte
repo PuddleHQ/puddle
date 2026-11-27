@@ -2,12 +2,7 @@
 <script lang="ts">
   import RepoSourceStatus from "./RepoSourceStatus.svelte";
   import type { Identity } from "#lib/identities/model.ts";
-  import {
-    roleWord,
-    tableCannotHold,
-    traits,
-    type RepoView,
-  } from "#lib/repos/model.ts";
+  import { roleWord, traits, type RepoView } from "#lib/repos/model.ts";
   import { RepoLists } from "#lib/stores/repos.svelte.ts";
   import "#lib/theme/controls.css";
 
@@ -123,12 +118,6 @@
                     .filter((word) => word !== "")
                     .join(" · ")}
                 </span>
-                {#if tableCannotHold(repo.url)}
-                  <span class="meta warn wrap">
-                    Its project name has a space: you can still make a
-                    workspace, but its repository table can't hold it.
-                  </span>
-                {/if}
               </button>
             </li>
           {/each}
@@ -207,8 +196,5 @@
   .meta {
     font-size: var(--text-sm);
     color: var(--color-text-muted);
-  }
-  .warn {
-    color: var(--color-warning);
   }
 </style>

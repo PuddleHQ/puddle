@@ -311,13 +311,17 @@ fn problem(problem: &UpstreamProblem) -> ProxyProblem {
 
 /// Whether the PAC or WPAD answered. A setup this build cannot name, with nothing asked and no
 /// automatic detection on, is `Unknown`: it may well use a PAC, so it must not read as "not used".
+/// Automatic detection that finds no server (a home network has none) is not a failure: no script
+/// was configured, so it is `NotUsed`, and only a configured script address can be `Unreachable`.
 fn pac_state(detected: Detected, pac_reachable: Option<bool>, auto_detect: bool) -> PacState {
     match (detected, pac_reachable) {
-        (_, Some(false)) => PacState::Unreachable,
+        (Detected::Pac, Some(false)) => PacState::Unreachable,
         (_, Some(true)) => PacState::Answering,
         (Detected::Pac | Detected::Wpad, None) => PacState::NotAsked,
         (_, None) if auto_detect => PacState::NotAsked,
-        (Detected::Static | Detected::Env | Detected::Direct, None) => PacState::NotUsed,
+        (_, Some(false)) | (Detected::Static | Detected::Env | Detected::Direct, None) => {
+            PacState::NotUsed
+        }
         _ => PacState::Unknown,
     }
 }

@@ -1174,18 +1174,6 @@ describe("CreateWorkspaceForm identities and repositories", () => {
     expect(identityBox()).toHaveDisplayValue("Work");
     expect(screen.queryByText(/listed this repository/)).toBeNull();
   });
-
-  it("warns about an Azure DevOps project with a space in the address", async () => {
-    open();
-    await screen.findByRole("region");
-    await type(
-      "Git repository (HTTPS)",
-      "https://dev.azure.com/contoso/Shop%20Floor/_git/scanner",
-    );
-    expect(screen.getByTestId("table-cannot-hold")).toHaveTextContent(
-      "Only push to allowed repositories",
-    );
-  });
 });
 
 describe("CreateWorkspaceForm with several repositories", () => {

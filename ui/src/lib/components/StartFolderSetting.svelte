@@ -2,7 +2,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { api } from "#lib/api/client.ts";
-  import { sentence } from "#lib/rules/model.ts";
+  import { sentence } from "#lib/format/sentence.ts";
   import { live } from "#lib/stores/live.svelte.ts";
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import type { Workspace } from "#lib/workspaces/model.ts";

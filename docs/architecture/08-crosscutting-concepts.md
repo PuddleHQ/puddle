@@ -99,6 +99,10 @@ How a client gets the token:
   that others can read. Nothing deletes it at quit; the next start overwrites it, and a backup leaves
   it out. In the product its readers are developer tools (the UI's `npm run dev` proxy, the end-to-end
   and soak harnesses); the `puddle` command line does not read it.
+  The data folder carries the same owner-only protection (`0700`, or a protected entry for the
+  current user on Windows), so other local accounts cannot read the file. After a quit it holds a
+  dead token: each start generates a new one. Code running as the same user is out of scope
+  (the threat model), and it can read the token from process memory anyway.
 
 **The desktop window** has one Tauri permission, the folder picker
 (`crates/puddle-app/capabilities/main.json`), keeps navigation on the API's origin and denies new

@@ -4,10 +4,9 @@
 //! answer to its first HTTPS request instead.
 //!
 //! The real-tool test needs `curl` on the path; without it the test skips unless
-//! `PUDDLE_REQUIRE_TOOLS` is set (CI sets it).
+//! `PUDDLE_REQUIRE_TOOLS` is set (CI sets it). It is Unix-only, like the other real-tool tests
+//! (`proxy_port` is).
 use crate::terminate_support;
-
-use std::process::Command;
 
 use puddle_types::ConnectionDecision;
 use terminate_support::{Pki, RigBuilder};
@@ -48,8 +47,11 @@ async fn a_refusal_on_another_port_is_the_plain_connect_answer() {
     assert_eq!(status, 403);
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn curl_prints_the_refusal_text_instead_of_a_bare_tunnel_error() {
+    use std::process::Command;
+
     if Command::new("curl").arg("--version").output().is_err() {
         assert!(
             std::env::var_os("PUDDLE_REQUIRE_TOOLS").is_none(),

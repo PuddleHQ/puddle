@@ -505,7 +505,7 @@ sequenceDiagram
   (`crates/puddle-workspace/src/workspaces.rs` `check_delete`); the UI shows them and sends back the
   fingerprint of what the user saw. The delete checks again and refuses if anything changed. Then
   the sandbox and the volume are removed (this is the only place a volume is deleted), and
-  `Store::delete_workspace` (`crates/puddle-store/src/store/audit.rs`) deletes the workspace's rules
+  `Store::delete_workspace` (`crates/puddle-store/src/store/workspaces.rs`) deletes the workspace's rules
   (each with an audit record), closes its open requests, and deletes its identities, environment,
   stand-ins and forwards in one transaction; its secret values leave the credential store. Leftovers
   a failed step could not remove are retried at the next start (`sweep_retired`).
@@ -534,7 +534,7 @@ The Windows installer replaces the program files and leaves the data folder alon
 refuses to run while Puddle or `msb` is running. The first start of the new version then does this:
 
 - **Store.** The schema version is SQLite's `user_version`; the migrations are an append-only list
-  (`crates/puddle-store/src/schema.rs`, `SCHEMA_VERSION`). Before migrating, the store writes a copy
+  (`crates/puddle-store/src/schema.rs`, `SCHEMA_VERSION`; the runner is `schema/migrations.rs`). Before migrating, the store writes a copy
   `puddle.db.pre-v<N>` (the last two are kept); all steps and the version bump run in one
   transaction, and a step that breaks a foreign key aborts it. A database from a newer Puddle is
   refused, and the app says that nothing in the data folder was changed
@@ -584,7 +584,7 @@ box (`crates/puddle-app/src/main.rs`), elsewhere it goes to standard error. The 
 | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | Second start                                 | The single-instance plugin focuses the running window; a second host on the same data folder is refused with the holder's process id                                          | `crates/puddle-app/src/shell.rs`, `crates/puddle-fs/src/lock.rs`          |
 | Runtime missing, wrong version or wrong hash | Start refused; the message points to `puddle doctor`                                                                                                                          | `crates/puddle-runtime/src/runtime.rs`, `crates/puddle-host/src/error.rs` |
-| Database from a newer Puddle                 | Start refused; nothing in the data folder changed                                                                                                                             | `crates/puddle-store/src/schema.rs`                                       |
+| Database from a newer Puddle                 | Start refused; nothing in the data folder changed                                                                                                                             | `crates/puddle-store/src/schema/migrations.rs`                            |
 | Database unreadable                          | Start refused with the store's error; there is no repair step                                                                                                                 | `crates/puddle-store/src/store.rs`                                        |
 | Port taken                                   | Cannot happen for the API and the pull proxy (the OS picks a free port). The editor front keeps its port across starts; if it is taken, it takes another and raises a problem | `crates/puddle-host/src/front.rs`                                         |
 | No hypervisor (WHP or KVM)                   | Not checked at start: `puddle doctor` and the welcome check step test it and report it                                                                                        | `crates/puddle-doctor/src/diagnose.rs`                                    |

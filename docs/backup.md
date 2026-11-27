@@ -74,8 +74,38 @@ path above the top level or an absolute path, a link, more than 4 GiB unpacked, 
 database that fails SQLite's integrity check, a schema newer than this Puddle reads, or an unknown
 format. An older schema is accepted and read forward.
 
-## Restore
+## Restoring from Settings
 
+Settings has a "Restore from a file…" button. You choose a backup file, read the preview, then confirm
+with one of two modes (the owner alone can do it):
+
+- **Add what is missing.** Nothing that exists here changes or goes. What the backup has and this
+  machine lacks is added; an entry that exists in both and differs keeps your version.
+- **Replace.** Rules, rule sets and their switches, identities, environment variables and the
+  per-workspace rows (Git, interception, repositories, shell init, pinned ports, never-decrypt
+  lists, SSH agent hosts) become the backup's: what is only here is dropped.
+
+In both modes the users are matched, not replaced: the backup's owner is this machine's owner, a user of
+the same name is that user, and any other becomes a new user without a password (run
+`puddle user reset <name>`). This machine's passwords and devices are never touched. Pending
+requests, sign-in state and what the machine learned by watching are not carried, and the audit log
+is loaded only when this machine's is empty.
+
+`POST /api/restore/apply` takes the `staging_id` from the preview and the mode. Before anything
+changes Puddle makes a safety copy of the present state in `safety-copies/` in the data folder, one folder
+named by the UTC time (`20261115T225500Z`), and does not start when it cannot make it. It then
+leaves the restore for the next start (the desktop app restarts itself; `puddle serve` exits).
+At that start, before the store opens, Puddle builds the restored database, settings and
+workspace list beside the live ones and swaps them in part by part; a crash is finished, and a failing
+step is undone, at the following start, so Puddle comes up with the old state. Either way the result
+is kept until you dismiss it: `GET /api/restore/result` says whether it was applied or undone,
+what changed or why, and the safety copy's name (`DELETE /api/restore/result` forgets it).
+`GET /api/safety-copies` lists the copies with their sizes and `DELETE /api/safety-copies/<name>`
+removes one; Puddle never removes one itself.
+
+## Restore by hand
+
+Use this when Puddle cannot start.
 
 1. Stop Puddle (`puddle serve` or the desktop app). The data folder takes one host process at a
    time.

@@ -2,7 +2,7 @@ puddle doctor (puddle 0.1.0, windows x86_64)
 
 ok    CPU virtualization          on (the hypervisor uses it)
 ok    Hypervisor                  Windows Hypervisor Platform is on and the hypervisor runs
-ok    Code integrity              memory integrity (HVCI) on; App Control policy for programs off
+ok    Code integrity              memory integrity on; policy limiting which programs may run off
 ok    Bundled runtime             msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
 ok    Runtime starts              msb 0.7.7-puddle.2 (0.0 s)
 FAIL  Test boot                   msb exited with 1 without booting the test VM
@@ -47,7 +47,7 @@ ok    Known problematic software  none found
     {
       "id": "code_integrity",
       "status": "ok",
-      "summary": "memory integrity (HVCI) on; App Control policy for programs off",
+      "summary": "memory integrity on; policy limiting which programs may run off",
       "impact": "Windows' code integrity rules guard the system against untrusted code, and Puddle runs alongside them."
     },
     {

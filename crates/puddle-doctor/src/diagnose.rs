@@ -358,7 +358,7 @@ fn code_integrity(facts: &CodeIntegrityFacts) -> Check {
         CodeIntegrityFacts::Unreadable { detail } => Check::new(
             CheckId::CodeIntegrity,
             Status::Info,
-            "could not be read; whether memory integrity (HVCI) or an App Control policy is on is unknown",
+            "could not be read; whether memory integrity or a policy limiting which programs may run is on is unknown",
         )
         .finding(Finding::CodeIntegrityUnreadable)
         .fix(
@@ -379,7 +379,7 @@ fn code_integrity_state(ci: CodeIntegrity) -> Check {
         "off"
     };
     let mut summary =
-        format!("memory integrity (HVCI) {hvci}; App Control policy for programs {app}");
+        format!("memory integrity {hvci}; policy limiting which programs may run {app}");
     if ci.test_signing {
         summary.push_str("; test signing on");
     }
@@ -388,7 +388,7 @@ fn code_integrity_state(ci: CodeIntegrity) -> Check {
     let check = Check::new(CheckId::CodeIntegrity, Status::Ok, summary);
     if ci.user_mode_enforced {
         check.fix(
-            "An App Control (WDAC) policy decides which programs may run. If it blocks Puddle's runtime, \
+            "A Windows App Control policy decides which programs may run. If it blocks Puddle's runtime, \
 \"Runtime starts\" says so and names the log with the rule.",
         )
     } else {

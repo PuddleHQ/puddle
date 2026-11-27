@@ -478,6 +478,14 @@ async fn an_unchanged_environment_starts_the_stopped_sandbox_again_and_does_not_
     start_acme(&mut e).await;
     assert_eq!(calls_of(&e.rig, "Create"), e.creates);
     assert_eq!(calls_of(&e.rig, "Remove"), 0);
+    assert!(
+        e.host
+            .problems()
+            .list()
+            .iter()
+            .all(|p| p.key != "rebuilt:acme"),
+        "a kept sandbox is no rebuild"
+    );
     e.host.shutdown().await;
 }
 
@@ -531,6 +539,28 @@ async fn a_failed_environment_write_falls_back_to_a_new_sandbox_on_the_same_volu
     );
     assert_eq!(last_boot_env(&e, "EDITOR").as_deref(), Some("emacs"));
     assert_eq!(volume_names(&e.rig).await, e.volumes);
+    let lasting = e
+        .host
+        .problems()
+        .list()
+        .into_iter()
+        .find(|p| p.key == "rebuilt:acme")
+        .expect("the rebuild stays on the workspace as a problem after the start ended");
+    assert!(
+        lasting.detail.contains("variables") && lasting.detail.contains("installed packages"),
+        "{lasting:?}"
+    );
+
+    // A start that keeps the sandbox does not take it back: the root disk stays lost.
+    stop_acme(&mut e).await;
+    start_acme(&mut e).await;
+    assert!(
+        e.host
+            .problems()
+            .list()
+            .iter()
+            .any(|p| p.key == "rebuilt:acme")
+    );
     e.host.shutdown().await;
 }
 

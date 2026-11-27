@@ -359,9 +359,11 @@ test("the certificates step counts the company roots Puddle will add", async ({
   await backend.signIn(page);
   await page.goto("/welcome/certificates");
   await expect(
-    page.getByText("2 company root certificates found"),
+    page.getByText("2 root certificates copied from this computer"),
   ).toBeVisible();
-  await expect(page.getByText(/Added to every workspace/)).toBeVisible();
+  await expect(
+    page.getByText(/From this computer's trust store/),
+  ).toBeVisible();
 });
 
 test("Trust it now shows a no and a failure in words, and ends the offer after a yes", async ({

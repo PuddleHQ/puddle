@@ -44,7 +44,7 @@ fn manual_clock_monotonic_follows_forward_moves_and_ignores_a_step_back() {
 #[test]
 fn system_clock_monotonic_counts_real_elapsed_time() {
     let first = SystemClock.monotonic_ms();
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     let mut second = first;
     // flake-ok: reads the clock under test until it has moved 30 ms; it is bounded by the assert inside
     while second < first + 30 {

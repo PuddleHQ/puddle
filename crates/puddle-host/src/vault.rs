@@ -54,8 +54,10 @@ fn credential_scope(data: &Path) -> String {
             return text.to_owned();
         }
     }
-    let mut bytes = [0u8; SCOPE_LEN / 2];
-    let fresh = getrandom::fill(&mut bytes).is_ok().then(|| hex(&bytes));
+    let mut bytes = [0u8; 8];
+    let fresh = getrandom::fill(&mut bytes)
+        .is_ok()
+        .then(|| format!("{:016x}", u64::from_be_bytes(bytes)));
     if let Some(fresh) = fresh
         && puddle_fs::private::write_atomic(&file, fresh.as_bytes()).is_ok()
     {
@@ -64,18 +66,11 @@ fn credential_scope(data: &Path) -> String {
     tracing::warn!("could not keep a credential store name in the data folder; using its path");
     let path = std::fs::canonicalize(data).unwrap_or_else(|_| data.to_path_buf());
     let digest = Sha256::digest(path.to_string_lossy().as_bytes());
-    hex(&digest[..SCOPE_LEN / 2])
+    let head = digest.first_chunk::<8>().copied().unwrap_or_default();
+    format!("{:016x}", u64::from_be_bytes(head))
 }
 
 const SCOPE_LEN: usize = 16;
-
-fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    bytes.iter().fold(String::new(), |mut out, b| {
-        let _ = write!(out, "{b:02x}");
-        out
-    })
-}
 
 /// The problem that stands while the clean-up cannot finish; the next sweep that does ends it.
 const SWEEP_PROBLEM: &str = "credential-store-sweep";

@@ -72,6 +72,10 @@ async function waitUntilMinute(minute) {
 
 // ---- the installed app ---------------------------------------------------------------------------
 
+// The default guest is 8 GiB, and WHP commits all of it: two of them took 95 to 97 % of a 16 GB runner's
+// commit limit from the first sample on (runs 45868035500, 45844667767), so the commit-charge line fired with
+// no leak. The loops need little; the editor rounds (code-server) ran in 2 GiB in microsoft-editor.mjs.
+const GUEST_MEMORY_MIB = 2048;
 const connectionFile = join(dataDir, "api.json");
 const appExe = join(installDir, "puddle-app.exe");
 let app;
@@ -248,7 +252,7 @@ try {
   check("the installed app starts and answers its API", true, conn.url);
   const ids = [];
   for (const name of NAMES) {
-    const made = await api("POST", "/api/workspaces", { name });
+    const made = await api("POST", "/api/workspaces", { name, memory_mib: GUEST_MEMORY_MIB });
     if (made.status >= 300) throw new Error(`creating ${name}: ${made.status} ${made.body.slice(0, 200)}`);
     ids.push(made.json?.id ?? (await workspaces()).find((w) => w.name === name)?.id);
   }

@@ -82,6 +82,11 @@ describe("system check step", () => {
     expect(screen.queryByRole("list", { name: "Checks" })).toBeNull();
     // Nothing is known yet, so the step does not go on.
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Continue" }),
+    ).toHaveAccessibleDescription(
+      "Press Start system check first. Continue unlocks when the check finishes.",
+    );
     expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
     await fireEvent.click(
       screen.getByRole("button", { name: "Start system check" }),

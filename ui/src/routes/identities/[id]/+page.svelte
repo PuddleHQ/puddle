@@ -52,7 +52,7 @@
   onMount(() => store.start());
 
   async function test(credential: Credential) {
-    await store.check(credential);
+    await store.check(credential, identity ?? undefined);
   }
 
   // The click on Sign in is what starts it; nothing else does.

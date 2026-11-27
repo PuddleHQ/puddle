@@ -248,7 +248,7 @@ fn the_window_opens_on_the_hosts_api_with_its_token_and_the_system_check_answers
     let window = app.get_webview_window(MAIN_LABEL).unwrap();
     assert_eq!(&window.url().unwrap(), backend.url());
     assert_eq!(backend.url().host_str(), Some("127.0.0.1"));
-    // The command line reaches the same host through the connection file in the data folder.
+    // The host writes the connection file in the data folder on every start, desktop app included.
     let file = ConnectionInfo::read(&dir.path().join("data").join("api.json")).unwrap();
     assert_eq!(file.token.expose(), backend.token());
 

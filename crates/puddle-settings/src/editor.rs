@@ -272,6 +272,81 @@ impl From<Keybindings> for String {
     }
 }
 
+/// The editor setting keys Puddle owns through their own fields; [`CustomEditorSettings`] refuses
+/// them so one key has one owner.
+pub const OWNED_EDITOR_KEYS: [(&str, &str); 3] = [
+    ("workbench.colorTheme", "the colour theme field"),
+    ("window.autoDetectColorScheme", "the colour theme field"),
+    ("editor.fontSize", "the font size field"),
+];
+
+/// The user's own editor settings to use as defaults: the text of a JSON object of setting keys
+/// to values, the shape of the editor's `settings.json` without comments.
+///
+/// ```
+/// use puddle_settings::CustomEditorSettings;
+/// let s = CustomEditorSettings::new(r#"{"editor.tabSize": 2}"#).unwrap();
+/// assert_eq!(s.entries().len(), 1);
+/// assert!(CustomEditorSettings::new("[]").is_err());
+/// assert!(CustomEditorSettings::new(r#"{"editor.fontSize": 12}"#).is_err());
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct CustomEditorSettings(String);
+
+impl CustomEditorSettings {
+    /// Largest accepted text, in bytes.
+    pub const MAX_BYTES: usize = 64 * 1024;
+
+    /// Checks `text`: within [`Self::MAX_BYTES`], a JSON object (no comments), and none of the
+    /// keys in [`OWNED_EDITOR_KEYS`].
+    ///
+    /// # Errors
+    ///
+    /// When the text breaks one of those rules; a refused key names the field that owns it.
+    pub fn new(text: &str) -> Result<Self, ValidationError> {
+        let bad = |reason: &str| ValidationError::new("custom editor settings", text, reason);
+        if text.len() > Self::MAX_BYTES {
+            return Err(bad("must be at most 64 KiB"));
+        }
+        let Ok(Value::Object(map)) = serde_json::from_str::<Value>(text) else {
+            return Err(bad("must be a JSON object of setting keys (no comments)"));
+        };
+        for (key, owner) in OWNED_EDITOR_KEYS {
+            if map.contains_key(key) {
+                return Err(bad(&format!("\"{key}\" is set by {owner}; remove it here")));
+            }
+        }
+        Ok(Self(text.to_owned()))
+    }
+
+    /// The text as stored.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// The parsed entries (the text was checked, so this is the object it holds).
+    #[must_use]
+    pub fn entries(&self) -> serde_json::Map<String, Value> {
+        serde_json::from_str(&self.0).unwrap_or_default()
+    }
+}
+
+impl TryFrom<String> for CustomEditorSettings {
+    type Error = ValidationError;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        Self::new(&text)
+    }
+}
+
+impl From<CustomEditorSettings> for String {
+    fn from(s: CustomEditorSettings) -> Self {
+        s.0
+    }
+}
+
 /// The editor defaults at one level, each optional (`None` = ask the next level).
 ///
 /// ```
@@ -295,6 +370,9 @@ pub struct EditorLayer {
     /// Key bindings to merge in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keybindings: Option<Keybindings>,
+    /// The user's own editor settings to merge in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings: Option<CustomEditorSettings>,
     #[serde(flatten)]
     pub(crate) extra: BTreeMap<String, Value>,
 }
@@ -322,6 +400,8 @@ pub struct EffectiveEditor {
     pub extensions: crate::Resolved<Vec<ExtensionId>>,
     /// The key bindings to merge; `None` adds none.
     pub keybindings: crate::Resolved<Option<Keybindings>>,
+    /// The user's own editor settings to merge; `None` adds none.
+    pub settings: crate::Resolved<Option<CustomEditorSettings>>,
 }
 
 impl EffectiveEditor {
@@ -332,6 +412,7 @@ impl EffectiveEditor {
         font_size: crate::resolve::default(None),
         extensions: crate::resolve::default(Vec::new()),
         keybindings: crate::resolve::default(None),
+        settings: crate::resolve::default(None),
     };
 
     /// `workspace` over `global` over [`Self::DEFAULTS`], field by field.
@@ -343,6 +424,7 @@ impl EffectiveEditor {
             font_size,
             extensions,
             keybindings,
+            settings,
             extra: _,
         } = workspace;
         Self {
@@ -369,6 +451,12 @@ impl EffectiveEditor {
                 global.keybindings.as_ref(),
                 |v| Some(v.clone()),
                 Self::DEFAULTS.keybindings,
+            ),
+            settings: pick_with(
+                settings.as_ref(),
+                global.settings.as_ref(),
+                |v| Some(v.clone()),
+                Self::DEFAULTS.settings,
             ),
         }
     }

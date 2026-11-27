@@ -164,6 +164,7 @@ function reset() {
     font_size: null,
     extensions: null,
     keybindings: null,
+    settings: null,
   };
   api.miseAvailable = true;
   api.unknown = {};
@@ -1473,6 +1474,7 @@ describe("the settings tab", () => {
       font_size: 14,
       extensions: ["a.b"],
       keybindings: null,
+      settings: null,
     };
     await open();
     const theme = screen.getByLabelText(
@@ -1656,6 +1658,7 @@ describe("the settings tab", () => {
       font_size: null,
       extensions: ["a.b"],
       keybindings: null,
+      settings: null,
     };
     await open();
     const size = screen.getByLabelText("Font size (pixels)");

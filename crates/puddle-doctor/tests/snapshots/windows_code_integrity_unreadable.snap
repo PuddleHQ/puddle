@@ -2,7 +2,7 @@ puddle doctor (puddle 0.1.0, windows x86_64)
 
 ok    CPU virtualization          on (the hypervisor uses it)
 ok    Hypervisor                  Windows Hypervisor Platform is on and the hypervisor runs
-info  Code integrity              could not be read; whether memory integrity (HVCI) or an App Control policy is on is unknown
+info  Code integrity              could not be read; whether memory integrity or a policy limiting which programs may run is on is unknown
       impact: Puddle couldn't read which Windows rules decide what programs may run.
       remedy: If Runtime starts reports a blocked runtime, follow the steps there.
       note:   Puddle works without it. If "Runtime starts" or "Test boot" reports a blocked msb,
@@ -50,7 +50,7 @@ ok    Known problematic software  none found
     {
       "id": "code_integrity",
       "status": "info",
-      "summary": "could not be read; whether memory integrity (HVCI) or an App Control policy is on is unknown",
+      "summary": "could not be read; whether memory integrity or a policy limiting which programs may run is on is unknown",
       "finding": "code_integrity_unreadable",
       "fix": "Puddle works without it. If \"Runtime starts\" or \"Test boot\" reports a blocked msb, that check names the policy.",
       "detail": "NtQuerySystemInformation(SystemCodeIntegrityInformation) failed: NTSTATUS 0xC0000022",

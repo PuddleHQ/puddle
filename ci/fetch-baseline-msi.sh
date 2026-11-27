@@ -8,7 +8,7 @@
 # the newest msi workflow run on develop whose `msi` job passed kept (the `puddle-msi` artifact, 14
 # days; the run's other jobs may be red, the upgrade job among them), from a commit other than this one, so the upgrade still crosses commits,
 # and from a run that started before this one: the package version is 0.0.<run number>, so a develop run
-# that started later holds a higher version, and Windows Installer refuses to upgrade down to this build (1603, T-2351, PR 1509). Prints the MSI's path on the
+# that started later holds a higher version, and Windows Installer refuses to upgrade down to this build (error 1603). Prints the MSI's path on the
 # last line of stdout and says where it came from on stderr; with GITHUB_STEP_SUMMARY set, the
 # source also goes into the run's summary. Exits 1 when there is no baseline (a release without
 # an MSI, or no kept develop MSI), naming why. Needs GH_TOKEN, GITHUB_REPOSITORY, GITHUB_SHA, GITHUB_RUN_ID and

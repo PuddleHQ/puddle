@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+use super::migrations::*;
 use super::*;
+use crate::error::StoreError;
+use rusqlite::Connection;
+use std::path::Path;
 
 fn version(conn: &Connection) -> u32 {
     conn.pragma_query_value(None, "user_version", |row| row.get(0))

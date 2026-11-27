@@ -444,6 +444,7 @@ fn restored_database(
     Ok(puddle_store::RestoredDatabase {
         user_map: Vec::new(),
         owner_id: 1,
+        dropped_rows: 0,
     })
 }
 

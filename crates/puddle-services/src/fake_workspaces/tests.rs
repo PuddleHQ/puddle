@@ -213,6 +213,23 @@ async fn failed_reclaim_and_delete_change_nothing() {
 }
 
 #[tokio::test]
+async fn a_reclaim_gives_back_half_the_used_disk() {
+    let (fake, _) = fake();
+    let mut record = WorkspaceRecord::new(
+        id("w"),
+        UserId::OWNER,
+        DisplayName::parse("w").unwrap(),
+        Vec::new(),
+    );
+    record.status = WorkspaceStatus::Stopped;
+    record.disk_used_mib = Some(100);
+    fake.seed(record, Unsaved::default());
+    fake.reclaim(&id("w")).await.unwrap();
+    fake.idle().await;
+    assert_eq!(fake.get(&id("w")).await.unwrap().disk_used_mib, Some(50));
+}
+
+#[tokio::test]
 async fn reclaim_waits_out_a_boot_or_shutdown() {
     let (fake, _) = fake();
     seeded(&fake, "a", WorkspaceStatus::Starting);

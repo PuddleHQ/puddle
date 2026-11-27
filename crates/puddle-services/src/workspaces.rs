@@ -278,17 +278,15 @@ pub fn free_label<'a>(
         } else {
             format!(" ({n})")
         };
-        let stem: String = base
-            .chars()
-            .take(DisplayName::MAX_CHARS - suffix.chars().count())
-            .collect();
+        let room = DisplayName::MAX_CHARS.saturating_sub(suffix.chars().count());
+        let stem: String = base.chars().take(room).collect();
         // `base` is a folder name or an id: never empty, never a control character.
         if let Ok(name) = DisplayName::parse(&format!("{}{suffix}", stem.trim_end()))
             && label_taken(records.iter().copied(), owner, name.as_str(), None).is_none()
         {
             return name;
         }
-        n += 1;
+        n = n.saturating_add(1);
     }
 }
 

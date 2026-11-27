@@ -456,6 +456,16 @@ describe("credentials", () => {
     // Without the identity only the store is asked.
     api.hostRefuses.set(describeSource(cred.source), "refused");
     expect((await store.check(cred)).state).toBe("ok");
+    // A host that cannot be asked leaves the store's answer.
+    const post = api.POST;
+    vi.spyOn(api, "POST").mockImplementation((async (
+      path: string,
+      init: never,
+    ) => {
+      if (path === "/api/repos/refresh") throw new TypeError("down");
+      return post(path, init);
+    }) as never);
+    expect((await store.check(cred, held)).state).toBe("ok");
   });
 
   it("tests every credential of every identity, one after another", async () => {

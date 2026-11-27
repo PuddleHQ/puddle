@@ -371,7 +371,6 @@ export class IdentitiesStore {
     identity: Identity,
   ): Promise<Check | null> {
     const at = identity.credentials.indexOf(credential);
-    if (at < 0) return null;
     try {
       const { data } = await this.#api.POST("/api/repos/refresh", {
         body: { identity_id: identity.id },

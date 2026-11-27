@@ -757,8 +757,8 @@ fn azure_profile(source: &SourceSpec) -> Profile {
         organisations,
         notes: vec![Note::new(
             NoteKind::AuthorUnavailable,
-            "Azure DevOps lets only a Microsoft Entra sign-in read an account's profile, and \
-             Puddle does not read it yet: enter the author yourself",
+            "Azure DevOps gives an account's name and address only to a Microsoft Entra sign-in: \
+             type the author name and address yourself",
         )],
         ..Profile::default()
     }

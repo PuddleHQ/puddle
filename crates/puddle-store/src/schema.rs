@@ -448,6 +448,16 @@ UPDATE audit SET search = nullif(lower(
 UPDATE audit SET search = substr(search, 2) WHERE search IS NOT NULL;
 ";
 
+/// The names of the triggers any Puddle schema version creates, read from the migrations. A
+/// staged backup may carry these and no others.
+pub(crate) fn known_trigger_names() -> std::collections::BTreeSet<&'static str> {
+    MIGRATIONS
+        .iter()
+        .flat_map(|sql| sql.split("CREATE TRIGGER ").skip(1))
+        .filter_map(|rest| rest.split_whitespace().next())
+        .collect()
+}
+
 /// Brings `conn` to [`SCHEMA_VERSION`] and returns the version it started at.
 ///
 /// # Errors

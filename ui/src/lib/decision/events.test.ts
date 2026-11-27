@@ -98,6 +98,7 @@ describe("asInboxEvent", () => {
         program: null,
         blocked_by: null,
         company_signal: null,
+        exact_only: false,
       },
       registrable_domain: "example.com",
     });

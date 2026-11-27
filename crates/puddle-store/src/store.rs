@@ -31,7 +31,7 @@ use crate::pattern::{Pattern, registrable_domain};
 use crate::pending::{
     Decided, InboxGroup, PatternChoice, PendingRow, PendingState, Resolution, ScopeChoice,
 };
-use crate::rule::{Actor, NewRule, Precedence, Rule, RuleEdit, Scope};
+use crate::rule::{Actor, Effect, NewRule, Precedence, Rule, RuleEdit, Scope};
 use crate::schema;
 use crate::users::UserId;
 
@@ -932,6 +932,7 @@ impl Store {
     /// [`StoreError::UnknownPending`] or [`StoreError::PendingNotOpen`] for a stale id (nothing
     /// changes), [`StoreError::Pattern`] for a suffix that doesn't cover the host or is a public
     /// suffix, [`StoreError::ExpiryNotInFuture`] for a zero duration,
+    /// [`StoreError::ExactAllowOnly`] for a suffix or rule set allow of an `exact_only` row,
     /// [`StoreError::SystemActor`], or a database error.
     pub fn resolve_pending(
         &self,
@@ -952,6 +953,13 @@ impl Store {
                     id,
                     state: row.state,
                 });
+            }
+            if row.exact_only
+                && resolution.effect == Effect::Allow
+                && (matches!(resolution.pattern, PatternChoice::Suffix(_))
+                    || matches!(resolution.scope, ScopeChoice::Set(_)))
+            {
+                return Err(StoreError::ExactAllowOnly(id));
             }
             let pattern = match &resolution.pattern {
                 PatternChoice::Exact => Pattern::Exact(row.host.clone()),

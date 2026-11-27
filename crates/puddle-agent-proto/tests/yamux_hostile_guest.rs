@@ -4,8 +4,6 @@
 //! measured (`--nocapture`) so the cost per stream and per grant is on record.
 #![expect(clippy::unwrap_used, reason = "a failed step fails the test")]
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use futures_util::StreamExt;
@@ -15,6 +13,7 @@ use tokio_yamux::{Session, config::INITIAL_STREAM_WINDOW};
 
 const WINDOW_UPDATE: u8 = 1;
 const SYN: u16 = 1;
+const ACK: u16 = 2;
 const RST: u16 = 8;
 
 fn header(kind: u8, flags: u16, stream: u32, length: u32) -> [u8; 12] {
@@ -34,29 +33,32 @@ fn rss_kib() -> u64 {
 }
 
 /// A guest opens `opened` streams with a SYN each and says nothing else. Returns how many the
-/// host's session accepted and how many it reset.
+/// host's session accepted and how many it reset, as the guest sees them: every SYN is answered
+/// with an ack or a reset.
 async fn flood(opened: u32) -> (usize, usize) {
     let (peer, ours) = duplex(1 << 20);
     let mut session = Session::new_server(ours, server_config());
-    let accepted = Arc::new(AtomicUsize::new(0));
-    let counted = Arc::clone(&accepted);
+    // The accepted streams are held, as the host's stream tasks hold them.
     let driver = tokio::spawn(async move {
         let mut held = Vec::new();
         while let Some(Ok(stream)) = session.next().await {
             held.push(stream);
-            counted.fetch_add(1, Ordering::SeqCst);
         }
     });
     let (mut rx, mut tx) = tokio::io::split(peer);
-    let resets = Arc::new(AtomicUsize::new(0));
-    let counted = Arc::clone(&resets);
     let reader = tokio::spawn(async move {
+        let (mut acked, mut reset) = (0, 0);
         let mut h = [0u8; 12];
-        while rx.read_exact(&mut h).await.is_ok() {
-            if u16::from_be_bytes([h[2], h[3]]) & RST != 0 {
-                counted.fetch_add(1, Ordering::SeqCst);
+        while acked + reset < opened as usize {
+            rx.read_exact(&mut h).await.unwrap();
+            let flags = u16::from_be_bytes([h[2], h[3]]);
+            if flags & RST != 0 {
+                reset += 1;
+            } else if flags & ACK != 0 {
+                acked += 1;
             }
         }
+        (acked, reset)
     });
     let before = rss_kib();
     for n in 0..opened {
@@ -64,25 +66,16 @@ async fn flood(opened: u32) -> (usize, usize) {
             .await
             .unwrap();
     }
-    // Every SYN is answered with an ack or a reset, so the two counts add up to what was sent.
-    let all_answered = tokio::time::timeout(Duration::from_secs(20), async {
-        while accepted.load(Ordering::SeqCst) + resets.load(Ordering::SeqCst) < opened as usize {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await;
+    let (accepted, resets) = tokio::time::timeout(Duration::from_secs(20), reader)
+        .await
+        .expect("not every SYN was answered in 20 s")
+        .unwrap();
     let held_kib = rss_kib().saturating_sub(before);
-    let (accepted, resets) = (
-        accepted.load(Ordering::SeqCst),
-        resets.load(Ordering::SeqCst),
-    );
     eprintln!(
         "flood of {opened} SYN-only streams: {accepted} accepted, {resets} reset, \
          about {held_kib} KiB resident for the held streams"
     );
-    assert!(all_answered.is_ok(), "not every SYN was answered");
     driver.abort();
-    reader.abort();
     (accepted, resets)
 }
 

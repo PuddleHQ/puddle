@@ -12,6 +12,7 @@ async fn serve(parts: Vec<Vec<u8>>, pause: Duration) -> (url::Url, tokio::task::
         let (mut conn, _) = listener.accept().await.unwrap();
         let mut seen = [0_u8; 4096];
         let _ = conn.read(&mut seen).await;
+        // flake-ok: a scripted server pacing its writes so the client sees separate reads; it waits for nothing.
         for part in parts {
             conn.write_all(&part).await.unwrap();
             conn.flush().await.unwrap();

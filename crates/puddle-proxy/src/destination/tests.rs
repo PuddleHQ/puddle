@@ -138,18 +138,38 @@ fn the_product_guard_lets_a_distribution_point_use_private_addresses_only() {
     }
 }
 
+/// A one-way latch: threads wait on it (at most 10 s) until it is opened.
+#[derive(Default)]
+struct Latch(std::sync::Mutex<bool>, std::sync::Condvar);
+
+impl Latch {
+    fn open(&self) {
+        *self.0.lock().unwrap() = true;
+        self.1.notify_all();
+    }
+
+    fn wait(&self) {
+        let open = self.0.lock().unwrap();
+        drop(
+            self.1
+                .wait_timeout_while(open, std::time::Duration::from_secs(10), |open| !*open)
+                .unwrap(),
+        );
+    }
+}
+
 /// Jobs run on the slots' blocking threads at most `limit` at a time, however many are queued,
 /// and a job that is queued starts once a slot frees (a lookup's timeout drops its waiter, never
 /// its thread, so only the slots bound the threads).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn blocking_jobs_run_at_most_as_many_at_a_time_as_there_are_slots() {
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use std::time::{Duration, Instant};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
 
     let slots = Arc::new(BlockingSlots::new(2));
     let active = Arc::new(AtomicUsize::new(0));
     let peak = Arc::new(AtomicUsize::new(0));
-    let release = Arc::new(AtomicBool::new(false));
+    let release = Arc::new(Latch::default());
     let jobs: Vec<_> = (0..6)
         .map(|n| {
             let (slots, active, peak, release) = (
@@ -163,10 +183,7 @@ async fn blocking_jobs_run_at_most_as_many_at_a_time_as_there_are_slots() {
                     .run(move || {
                         let now = active.fetch_add(1, Ordering::SeqCst) + 1;
                         peak.fetch_max(now, Ordering::SeqCst);
-                        let deadline = Instant::now() + Duration::from_secs(10);
-                        while !release.load(Ordering::SeqCst) && Instant::now() < deadline {
-                            std::thread::sleep(Duration::from_millis(5));
-                        }
+                        release.wait();
                         active.fetch_sub(1, Ordering::SeqCst);
                         n
                     })
@@ -174,13 +191,14 @@ async fn blocking_jobs_run_at_most_as_many_at_a_time_as_there_are_slots() {
             })
         })
         .collect();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while active.load(Ordering::SeqCst) < 2 && Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
+    puddle_test_kit::eventually("two jobs run", Duration::from_secs(5), || {
+        active.load(Ordering::SeqCst) >= 2
+    })
+    .await;
+    // Absence window: no signal says a third job did not start, so give it time to.
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(active.load(Ordering::SeqCst), 2, "two run, four wait");
-    release.store(true, Ordering::SeqCst);
+    release.open();
     for (n, job) in jobs.into_iter().enumerate() {
         assert_eq!(job.await.unwrap().unwrap(), n);
     }

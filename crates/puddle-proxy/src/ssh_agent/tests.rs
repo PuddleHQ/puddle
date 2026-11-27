@@ -516,13 +516,33 @@ async fn a_silent_stream_is_closed_after_the_idle_limit() {
     closed(&mut guest, served).await;
 }
 
+/// A one-way latch: threads wait on it (at most 10 s) until it is opened.
+#[derive(Default)]
+struct Latch(Mutex<bool>, std::sync::Condvar);
+
+impl Latch {
+    fn open(&self) {
+        *self.0.lock().unwrap() = true;
+        self.1.notify_all();
+    }
+
+    fn wait(&self) {
+        let open = self.0.lock().unwrap();
+        drop(
+            self.1
+                .wait_timeout_while(open, Duration::from_secs(10), |open| !*open)
+                .unwrap(),
+        );
+    }
+}
+
 /// A gate whose `record` (which runs on the blocking thread of every request) holds the thread
 /// until released, counting the threads held at once per workspace.
 #[derive(Default)]
 struct HoldingGate {
     active: Mutex<HashMap<WorkspaceId, usize>>,
     peak: Mutex<HashMap<WorkspaceId, usize>>,
-    release: std::sync::atomic::AtomicBool,
+    release: Latch,
 }
 
 impl AgentGate for HoldingGate {
@@ -546,10 +566,7 @@ impl AgentGate for HoldingGate {
             let p = peak.entry(workspace.clone()).or_default();
             *p = (*p).max(now);
         }
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        while !self.release.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(5));
-        }
+        self.release.wait();
         *self.active.lock().unwrap().get_mut(workspace).unwrap() -= 1;
     }
 }
@@ -576,13 +593,18 @@ async fn a_workspace_holds_at_most_its_cap_of_blocking_threads_however_many_stre
             .unwrap();
         open.push((guest, served));
     }
+    puddle_test_kit::eventually("the cap of requests hold a thread", WAIT, || {
+        gate.active.lock().unwrap().get(&workspace("box")).copied() == Some(cap)
+    })
+    .await;
+    // Absence window: no signal says another request did not start, so give it time to.
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(
         gate.active.lock().unwrap().get(&workspace("box")).copied(),
         Some(cap),
         "the rest wait without a thread"
     );
-    gate.release.store(true, Ordering::SeqCst);
+    gate.release.open();
     for (mut guest, served) in open {
         let mut len = [0_u8; 4];
         tokio::time::timeout(WAIT, guest.read_exact(&mut len))

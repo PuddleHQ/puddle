@@ -57,17 +57,38 @@ fn endpoint_displays_its_path() {
 }
 
 #[test]
-fn the_install_id_is_made_once_kept_and_remade_when_it_is_garbage() {
+fn the_install_id_is_made_once_and_kept() {
     let state = tempfile::tempdir().unwrap();
     let first = install_id(state.path()).unwrap();
     assert!(name::is_install_id(&first), "{first}");
     assert_eq!(install_id(state.path()).unwrap(), first);
-    std::fs::write(state.path().join(INSTALL_ID_FILE), "not an id").unwrap();
-    let remade = install_id(state.path()).unwrap();
-    assert!(name::is_install_id(&remade) && remade != first);
-    assert_eq!(install_id(state.path()).unwrap(), remade);
     let other = tempfile::tempdir().unwrap();
-    assert_ne!(install_id(other.path()).unwrap(), remade);
+    assert_ne!(install_id(other.path()).unwrap(), first);
+}
+
+#[test]
+fn an_install_id_file_that_is_not_an_id_is_refused_and_left_alone() {
+    // Remaking the id renames every route, which makes every sandbox again and drops its root
+    // disk: only a missing file may do that.
+    let state = tempfile::tempdir().unwrap();
+    let file = state.path().join(INSTALL_ID_FILE);
+    std::fs::write(&file, "not an id").unwrap();
+    match install_id(state.path()).unwrap_err() {
+        IpcError::Root { path, .. } => assert_eq!(path, file),
+        other => panic!("unexpected {other}"),
+    }
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "not an id");
+}
+
+#[test]
+fn an_install_id_file_that_cannot_be_read_is_refused() {
+    // A folder in its place reads as an error that is not "not found".
+    let state = tempfile::tempdir().unwrap();
+    let file = state.path().join(INSTALL_ID_FILE);
+    std::fs::create_dir(&file).unwrap();
+    let err = install_id(state.path()).unwrap_err();
+    assert!(matches!(err, IpcError::Root { .. }), "{err}");
+    assert!(file.is_dir());
 }
 
 #[test]

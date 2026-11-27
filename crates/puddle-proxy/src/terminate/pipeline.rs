@@ -34,7 +34,7 @@ use super::request_rules::{self, Refused};
 use super::session::{Context, Outcome, stale_kind};
 use super::stand_in::{
     AnswerReport, NotScrubbed, ScrubNotes, Swapped, answer_encoding_refusal, answer_failed_refusal,
-    limit_accept_encoding, scan_answer, scrub_answer,
+    limit_accept_encoding, scan_answer, scrub_answer, withhold_ranges,
 };
 use crate::http::{self, Head};
 use crate::proxy::Refusal;
@@ -252,6 +252,7 @@ pub(crate) async fn prepare<W: Wire>(
     audit.foreign = foreign;
     if stand_ins.scrubs_answers_from(host) {
         limit_accept_encoding(&mut headers);
+        withhold_ranges(&mut headers);
     }
     let mut prepared = Prepared {
         headers,

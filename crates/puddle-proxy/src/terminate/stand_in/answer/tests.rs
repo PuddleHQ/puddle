@@ -612,11 +612,13 @@ proptest! {
     ) {
         let scrubber = scrubber();
         let body: Vec<u8> = pieces.concat();
-        let one = whole(&scrubber, &body);
+        // A body that ends inside a real value is cut off, however it is split.
+        let run = |parts: &[&[u8]]| stream(&scrubber, parts).map_err(|withheld| withheld.0);
+        let one = run(&[&body]);
         // Every single split offset.
         for at in 0..=body.len() {
             let (a, b) = body.split_at(at);
-            prop_assert_eq!(&stream(&scrubber, &[a, b]).unwrap(), &one);
+            prop_assert_eq!(&run(&[a, b]), &one);
         }
         // Several random cuts.
         let mut offsets: Vec<usize> = cuts.iter().map(|i| i.index(body.len() + 1)).collect();
@@ -628,12 +630,14 @@ proptest! {
             from = at;
         }
         parts.push(&body[from..]);
-        prop_assert_eq!(&stream(&scrubber, &parts).unwrap(), &one);
+        prop_assert_eq!(&run(&parts), &one);
         // Nothing real is left.
-        let out = String::from_utf8_lossy(&one);
-        prop_assert!(!out.contains(REAL_GH));
-        prop_assert!(!out.contains(REAL_ODD));
-        prop_assert!(!out.contains(&STANDARD.encode(REAL_GH)));
+        if let Ok(one) = &one {
+            let out = String::from_utf8_lossy(one);
+            prop_assert!(!out.contains(REAL_GH));
+            prop_assert!(!out.contains(REAL_ODD));
+            prop_assert!(!out.contains(&STANDARD.encode(REAL_GH)));
+        }
     }
 
     #[test]
@@ -1171,4 +1175,108 @@ async fn a_plain_body_is_passed_on_in_the_frames_it_came_in() {
     }
     // The scrubber keeps the last byte back until the end; nothing else splits the body.
     assert_eq!(sizes, [99_999, 1]);
+}
+
+#[test]
+fn a_body_that_ends_inside_a_real_value_is_cut_off_not_flushed() {
+    let scrubber = scrubber();
+    // Half of the value at the very end of the body: the guest must not get that half.
+    let half = &REAL_GH.as_bytes()[..REAL_GH.len() - 6];
+    let mut body = b"echo: ".to_vec();
+    body.extend_from_slice(half);
+    assert!(stream(&scrubber, &[&body]).is_err(), "one piece");
+    assert!(
+        stream(&scrubber, &[b"echo: ", &half[..8], &half[8..]]).is_err(),
+        "pieces"
+    );
+    let notes = ScrubNotes::default();
+    assert!(scrubber.scrub_whole(&body, &notes).is_err(), "whole");
+    assert!(notes.withheld());
+}
+
+#[test]
+fn a_short_tail_that_starts_a_value_is_ordinary_text_at_the_end_of_a_body() {
+    let scrubber = scrubber();
+    // "ghp_" is public, and a body that ends in "g" is common.
+    for tail in ["g", "ghp_", "ghp_r"] {
+        let body = format!("a thing{tail}");
+        assert_eq!(text(&whole(&scrubber, body.as_bytes())), body, "{tail}");
+    }
+}
+
+#[test]
+fn a_refreshed_value_is_still_scrubbed_for_a_request_that_carried_the_old_one() {
+    let registry = registry();
+    let to = host("api.github.com");
+    let refreshed = "ghp_refreshedRefreshed22";
+    registry.set_real(GH, SecretValue::new(refreshed)).unwrap();
+    let after = registry.answer_scrubber(&to).unwrap();
+    assert_eq!(
+        text(&whole(&after, REAL_GH.as_bytes())),
+        GH,
+        "the old value"
+    );
+    assert_eq!(
+        text(&whole(&after, refreshed.as_bytes())),
+        GH,
+        "the new one"
+    );
+    // The memory of old values is bounded, and the newest are kept.
+    for n in 0..20 {
+        let next = format!("ghp_round{n:02}Round{n:02}Round");
+        registry.set_real(GH, SecretValue::new(next)).unwrap();
+    }
+    let later = registry.answer_scrubber(&to).unwrap();
+    assert_eq!(text(&whole(&later, b"ghp_round18Round18Round")), GH);
+    assert_eq!(
+        text(&whole(&later, refreshed.as_bytes())),
+        refreshed,
+        "forgotten"
+    );
+}
+
+#[test]
+fn a_range_request_toward_a_scrubbed_host_is_asked_for_whole() {
+    let mut headers = HeaderMap::new();
+    headers.insert(header::RANGE, HeaderValue::from_static("bytes=0-9"));
+    headers.insert(header::IF_RANGE, HeaderValue::from_static("\"tag\""));
+    headers.insert(header::ACCEPT, HeaderValue::from_static("*/*"));
+    withhold_ranges(&mut headers);
+    assert!(headers.get(header::RANGE).is_none());
+    assert!(headers.get(header::IF_RANGE).is_none());
+    assert!(headers.get(header::ACCEPT).is_some());
+}
+
+#[test]
+fn a_body_that_ends_in_exactly_the_shortest_cut_form_is_cut_off() {
+    let scrubber = scrubber();
+    let start = &REAL_GH.as_bytes()[..MIN_CUT_FORM];
+    let mut body = b"echo: ".to_vec();
+    body.extend_from_slice(start);
+    assert!(stream(&scrubber, &[&body]).is_err(), "{MIN_CUT_FORM} bytes");
+    let one_less = &REAL_GH.as_bytes()[..MIN_CUT_FORM - 1];
+    let mut body = b"echo: ".to_vec();
+    body.extend_from_slice(one_less);
+    assert_eq!(text(&whole(&scrubber, &body)), text(&body), "one byte less");
+}
+
+#[test]
+fn a_refreshed_value_keeps_exactly_the_last_eight_old_ones_scrubbed() {
+    let registry = registry();
+    let to = host("api.github.com");
+    let old = |n: usize| format!("ghp_old{n:02}Old{n:02}Old{n:02}");
+    for n in 0..9 {
+        registry.set_real(GH, SecretValue::new(old(n))).unwrap();
+    }
+    // Nine refreshes: the value before the first is forgotten, the next eight are kept (and
+    // the ninth is the current one).
+    let scrubber = registry.answer_scrubber(&to).unwrap();
+    assert_eq!(
+        text(&whole(&scrubber, REAL_GH.as_bytes())),
+        REAL_GH,
+        "forgotten"
+    );
+    for n in 0..9 {
+        assert_eq!(text(&whole(&scrubber, old(n).as_bytes())), GH, "{n}");
+    }
 }

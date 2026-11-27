@@ -5,6 +5,7 @@
 // has changes) and on a resync.
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import type { components } from "#lib/api/schema.d.ts";
+import type { PushBlock } from "#lib/repos/model.ts";
 import {
   isIdentitiesChanged,
   isWorkspaceGitChanged,
@@ -200,6 +201,7 @@ export class WorkspaceGitStore {
     url: string;
     pull: boolean;
     push: boolean;
+    push_block?: PushBlock | null;
   }): Promise<Result> {
     return this.#send(
       () =>

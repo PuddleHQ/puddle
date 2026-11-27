@@ -276,3 +276,91 @@ fn a_shrink_frees_all_its_pages_and_reports_the_bytes_it_freed() {
     );
     assert_eq!(pragma_u64(&lock(&store.conn), "freelist_count").unwrap(), 0);
 }
+
+fn a_store_with_old_records_only() -> (Arc<ManualClock>, Store) {
+    let clock = Arc::new(ManualClock::new(1_800_000_000_000));
+    let store = Store::open_in_memory(clock.clone(), Limits::default()).unwrap();
+    let workspace = WorkspaceId::new("a").unwrap();
+    crate::testing::own(&store, &workspace);
+    let host = Host::parse_normalised("x.example").unwrap();
+    store
+        .decide(
+            &EgressRequest::new(workspace, host, 443),
+            SuffixAllows::Count,
+        )
+        .unwrap();
+    store.set_audit_retention_days(1).unwrap();
+    (clock, store)
+}
+
+#[test]
+fn a_sweep_that_would_delete_the_whole_audit_waits_for_a_second_pass_to_confirm() {
+    let (clock, store) = a_store_with_old_records_only();
+    let records = store.audit_stats().unwrap().records;
+    assert!(records > 0);
+    // The clock stepped forward past the retention: every record looks old.
+    clock.advance(10 * DAY);
+
+    assert_eq!(store.sweep().unwrap().audit_records_pruned, 0);
+    assert_eq!(store.audit_stats().unwrap().records, records, "kept");
+    // Within the hour nothing looks again.
+    assert_eq!(store.sweep().unwrap().audit_records_pruned, 0);
+
+    clock.advance(2 * 60 * 60 * 1000);
+    assert_eq!(store.sweep().unwrap().audit_records_pruned, records);
+}
+
+#[test]
+fn a_clock_that_steps_back_before_the_second_pass_cancels_the_deferred_delete() {
+    let (clock, store) = a_store_with_old_records_only();
+    let records = store.audit_stats().unwrap().records;
+    clock.advance(10 * DAY);
+    store.sweep().unwrap();
+    // The step was wrong; a record now survives the cutoff, so a later pass starts over.
+    clock.set(1_800_000_000_000 + 1000);
+    clock.advance(2 * 60 * 60 * 1000);
+    assert_eq!(store.sweep().unwrap().audit_records_pruned, 0);
+    clock.advance(10 * DAY);
+    clock.advance(2 * 60 * 60 * 1000);
+    assert_eq!(
+        store.sweep().unwrap().audit_records_pruned,
+        0,
+        "all old again, so it waits again"
+    );
+    assert_eq!(store.audit_stats().unwrap().records, records);
+}
+
+#[test]
+fn a_manual_prune_deletes_at_once() {
+    let (clock, store) = a_store_with_old_records_only();
+    let records = store.audit_stats().unwrap().records;
+    clock.advance(10 * DAY);
+    assert_eq!(store.prune_audit(1).unwrap().deleted, records);
+}
+
+#[test]
+fn a_prune_logs_what_it_deleted_and_stays_quiet_when_it_deleted_nothing() {
+    let (clock, store) = a_store_with_old_records_only();
+    let records = store.audit_stats().unwrap().records;
+    let logs = crate::test_support::Logs::capture();
+
+    // Nothing is past retention yet.
+    assert_eq!(store.prune_audit(1).unwrap().deleted, 0);
+    assert!(
+        !logs
+            .lines()
+            .iter()
+            .any(|line| line.contains("audit records past their retention deleted")),
+        "a prune that deleted nothing says nothing: {:?}",
+        logs.lines()
+    );
+
+    clock.advance(10 * DAY);
+    assert_eq!(store.prune_audit(1).unwrap().deleted, records);
+    let lines = logs.lines();
+    let line = lines
+        .iter()
+        .find(|line| line.contains("audit records past their retention deleted"))
+        .unwrap_or_else(|| panic!("a prune that deleted records says so: {lines:?}"));
+    assert!(line.contains(&format!("deleted={records}")), "{line}");
+}

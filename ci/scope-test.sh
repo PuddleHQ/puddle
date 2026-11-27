@@ -41,7 +41,7 @@ vm_unrelated_only() {
 
 # 1. Replay of the merged pull requests: class and outputs as recorded, and an independent check
 # that any pull request with an always-run path got a full run.
-always_re='^(Cargo\.lock|Cargo\.toml|rust-toolchain\.toml|\.cargo/|\.config/|\.githooks/|\.github/workflows/|ci/|scripts/|crates/puddle-vm-tests/|crates/puddle-api/openapi/|ui/package-lock\.json|ui/src/lib/api/schema\.d\.ts|.*/Cargo\.toml$)'
+always_re='^(Cargo\.lock|Cargo\.toml|rust-toolchain\.toml|\.cargo/|\.config/|\.githooks/|\.github/workflows/|ci/|scripts/|crates/puddle-vm-tests/|crates/puddle-api/openapi/|ui/package-lock\.json|ui/src/lib/api/schema\.d\.ts|docs/serve\.md$|ui/src/lib/settings/model\.ts$|.*/Cargo\.toml$)'
 data_re='^scripts/(diff-coverage-exclusions\.txt|diff-coverage-exclusions/[^/]+\.txt|coverage-baseline\.json|standalone-allow\.txt)$'
 replayed=0
 declare -A seen_class=()
@@ -110,6 +110,36 @@ mapfile -t many < <(seq 1 300 | sed 's|^|docs/page-|')
 want "300 docs files" "$FULL" "${many[@]}"
 mapfile -t many < <(seq 1 299 | sed 's|^|docs/page-|')
 want "299 docs files" "docs false false false false" "${many[@]}"
+
+# 3a. Files a Rust test includes from outside crates/ (docs/serve.md and the settings model.ts used to be
+# `docs` and `ui`, so a change to only one of them skipped the Rust test that reads it).
+want "included docs page" "$FULL" docs/serve.md
+want "included docs page with ui" "$FULL" ui/src/a.ts docs/serve.md
+want "included settings model" "$FULL" ui/src/lib/settings/model.ts
+want "included settings model with docs" "$FULL" docs/STANDARDS.md ui/src/lib/settings/model.ts
+# Guard: every include_str!/include_bytes! path of a crate source that resolves outside crates/ must be
+# a path the rules run the Rust gates for (always, gate, fixture), so a new include cannot slip past
+# the list above. ui/src/lib/settings/cpus.ts is the one exception: puddle-e2e includes it and the UI
+# jobs build puddle-e2e, so a `ui` class change already runs its test.
+root=$(cd "$here/.." && pwd)
+included=0
+while IFS= read -r -d '' rs; do
+    dir=$(dirname "$rs")
+    while IFS= read -r rel; do
+        [ -n "$rel" ] || continue
+        abs=$(realpath -m "$dir/$rel")
+        repo=${abs#"$root"/}
+        case $repo in crates/*) continue ;; esac
+        included=$((included + 1))
+        case $repo in ui/src/lib/settings/cpus.ts) continue ;; esac
+        got=$(classify "$repo")
+        case $got in
+        "$FULL" | "rust "* | "mixed "*) ;;
+        *) bad "${rs#"$root"/} includes $repo, which scopes as '$got': add it to path_class in ci/scope.sh (always)" ;;
+        esac
+    done < <(grep -Pzo 'include_(str|bytes)!\(\s*"[^"]+"' "$rs" | tr '\0' '\n' | sed -n 's/^include_[a-z]*!(\s*"\(.*\)"$/\1/p')
+done < <(find "$root/crates" -name '*.rs' -not -path '*/target/*' -print0)
+[ "$included" -ge 5 ] || bad "include guard found only $included includes outside crates/ (the scan is broken)"
 
 # 4. The classes, by example.
 want "docs only" "docs false false false false" docs/STANDARDS.md README.md .github/dependabot.yml

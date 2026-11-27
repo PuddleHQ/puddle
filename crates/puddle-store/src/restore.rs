@@ -9,6 +9,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use rusqlite::config::DbConfig;
 use rusqlite::{Connection, OpenFlags};
 
 use crate::error::StoreError;
@@ -59,6 +60,10 @@ pub fn check_staged_database(
             "it cannot be opened".into(),
         )));
     };
+    // The file is untrusted: its views and triggers may only call innocuous functions, and
+    // nothing may rewrite the schema behind SQLite's back.
+    conn.set_db_config(DbConfig::SQLITE_DBCONFIG_TRUSTED_SCHEMA, false)?;
+    conn.set_db_config(DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true)?;
     // `integrity_check` is the first statement that reads the file: a non-database fails here.
     let check: Result<String, _> = conn.query_row("PRAGMA integrity_check", [], |r| r.get(0));
     match check {
@@ -78,11 +83,49 @@ pub fn check_staged_database(
             supported: SCHEMA_VERSION,
         }));
     }
+    if let Some(why) = foreign_structure(&conn)? {
+        return Ok(Err(DatabaseRefusal::NotPuddle(why)));
+    }
     conn.pragma_update(None, "foreign_keys", true)?;
     schema::migrate(&mut conn)?;
     Ok(Ok(StagedDatabase {
         schema_version: version,
     }))
+}
+
+/// The tables every Puddle schema version has.
+const CORE_TABLES: [&str; 3] = ["rules", "pending", "audit"];
+
+/// Why the schema of `conn` is not one Puddle made: a core table missing or not a table, a view
+/// (Puddle has none), or a trigger no Puddle version creates.
+fn foreign_structure(conn: &Connection) -> Result<Option<String>, StoreError> {
+    let mut stmt = conn.prepare(
+        "SELECT type, name FROM sqlite_master WHERE type IN ('table', 'view', 'trigger')",
+    )?;
+    let found = stmt
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+        .collect::<Result<Vec<_>, _>>()?;
+    let known = schema::known_trigger_names();
+    for (kind, name) in &found {
+        match kind.as_str() {
+            "view" => return Ok(Some(format!("it has a view, `{name}`"))),
+            "trigger" if !known.contains(name.as_str()) => {
+                return Ok(Some(format!(
+                    "it has a trigger Puddle does not make, `{name}`"
+                )));
+            }
+            _ => {}
+        }
+    }
+    for core in CORE_TABLES {
+        if !found
+            .iter()
+            .any(|(kind, name)| kind == "table" && name == core)
+        {
+            return Ok(Some(format!("it has no `{core}` table")));
+        }
+    }
+    Ok(None)
 }
 
 /// How the entries of one part of a backup compare with the present ones (see the backup page,
@@ -170,8 +213,26 @@ pub struct DatabasePreview {
 fn user_key(db: &str) -> String {
     format!(
         "CASE WHEN (SELECT role FROM {db}.users WHERE id = x.user_id) = 'owner' THEN '' \
-         ELSE lower((SELECT name FROM {db}.users WHERE id = x.user_id)) END"
+         ELSE lower({}) END",
+        matched_as(db, "x.user_id")
     )
+}
+
+/// The name a person of `db` is matched and added under, given the SQL expression `id` of its id.
+/// A plain user of the backup named like this machine's owner (a name is unique here, and the owner
+/// is never a match for anyone) is matched and added as `<name> (restored)`, so the owner's rows
+/// stay the owner's; the preview and the merge both use this one expression.
+fn matched_as(db: &str, id: &str) -> String {
+    let name = format!("(SELECT name FROM {db}.users WHERE id = {id})");
+    if db == "backup" {
+        format!(
+            "CASE WHEN (SELECT role FROM backup.users WHERE id = {id}) = 'user' \
+             AND {name} = (SELECT name FROM main.users WHERE role = 'owner') COLLATE NOCASE \
+             THEN {name} || ' (restored)' ELSE {name} END"
+        )
+    } else {
+        name
+    }
 }
 
 /// The secret environment variables of the backup.
@@ -280,8 +341,9 @@ fn queries(db: &str) -> [(&'static str, String); 6] {
         (
             "users",
             format!(
-                "SELECT CASE WHEN x.role = 'owner' THEN '' ELSE lower(x.name) END, x.role \
-                 FROM {db}.users x"
+                "SELECT CASE WHEN x.role = 'owner' THEN '' ELSE lower({}) END, x.role \
+                 FROM {db}.users x",
+                matched_as(db, "x.id")
             ),
         ),
     ]
@@ -296,6 +358,7 @@ fn queries(db: &str) -> [(&'static str, String); 6] {
 pub fn preview_merge(present: &Path, backup: &Path) -> Result<DatabasePreview, StoreError> {
     let conn = Connection::open_with_flags(present, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    conn.set_db_config(DbConfig::SQLITE_DBCONFIG_TRUSTED_SCHEMA, false)?;
     attach(&conn, backup)?;
     conn.pragma_update(None, "query_only", true)?;
     let mut maps: BTreeMap<&str, (Keyed, Keyed)> = BTreeMap::new();
@@ -354,7 +417,7 @@ pub enum RestoreMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RestoredDatabase {
     /// For each user of the backup, the id it has in the new database: the backup's owner is this
-    /// machine's owner, a user of the same name is that user, and any other becomes a new user
+    /// machine's owner, a plain user of the same name is that user (one named like the owner is added as `<name> (restored)`), and any other becomes a new user
     /// without a password. Rows of the backup that name a user follow this map.
     pub user_map: Vec<(i64, i64)>,
     /// This machine's owner, who owns whatever the backup's owner owned.
@@ -577,16 +640,17 @@ fn map_rows(conn: &Connection, map: &str, table: &str, key: &str) -> Result<(), 
 /// The id mapping of the users: the owner to the owner, the same name to the same user, anyone
 /// else added as a user with no password.
 fn map_users(conn: &Connection) -> Result<(), StoreError> {
-    conn.execute_batch(
+    let matched = matched_as("backup", "b.id");
+    conn.execute_batch(&format!(
         "INSERT INTO main.users (role, name, created_at) \
-           SELECT 'user', b.name, b.created_at FROM backup.users b \
-           WHERE b.role = 'user' AND NOT EXISTS (SELECT 1 FROM main.users m WHERE m.name = b.name COLLATE NOCASE);
+           SELECT 'user', {matched}, b.created_at FROM backup.users b \
+           WHERE b.role = 'user' AND NOT EXISTS (SELECT 1 FROM main.users m WHERE m.name = {matched} COLLATE NOCASE);
          DROP TABLE IF EXISTS temp.umap;
          CREATE TEMP TABLE umap AS SELECT b.id AS b_id, \
            CASE WHEN b.role = 'owner' THEN (SELECT id FROM main.users WHERE role = 'owner') \
-                ELSE (SELECT id FROM main.users m WHERE m.name = b.name COLLATE NOCASE) END AS p_id \
-           FROM backup.users b;",
-    )?;
+                ELSE (SELECT id FROM main.users m WHERE m.role = 'user' AND m.name = {matched} COLLATE NOCASE) END AS p_id \
+           FROM backup.users b;"
+    ))?;
     Ok(())
 }
 

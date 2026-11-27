@@ -127,7 +127,7 @@
       "notes": [
         {
           "code": "author_unavailable",
-          "message": "Azure DevOps does not give Puddle the account's author."
+          "message": "Azure DevOps gives an account's name and address only to a Microsoft Entra sign-in: type the author name and address yourself"
         }
       ]
     }

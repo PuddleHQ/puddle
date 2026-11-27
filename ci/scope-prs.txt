@@ -220,7 +220,7 @@ crates/xtask/src/pin.rs
 crates/xtask/src/source.rs
 crates/xtask/tests/runtime.rs
 docs/STANDARDS.md
-@31 ui false false true false
+@31 full true true true true
 ui/src/lib/settings/model.ts
 ui/src/lib/stores/global-settings.svelte.ts
 ui/src/lib/stores/workspace-settings.svelte.ts

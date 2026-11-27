@@ -5,7 +5,8 @@ Written fresh from Puddle's own design decisions and threat model. No upstream H
 or test code was used.
 
 Every numbered rule (`R-n`) gets at least one named test in `puddle-store` (`r07_expired_rule_never_matches`, etc.).
-Defaults marked *(default)* are reversible choices.
+Defaults marked *(default)* are reversible choices. A rule number is never reused: R-13 (a rate limit on new
+pending rows) and R-48 are retired, and a gap in the numbers is one of them. R-12a is a sub-rule of R-12.
 
 ## 1. Model
 
@@ -322,8 +323,10 @@ readable as JSONL (one record per line).
 - **R-26 Size caps.** One line is at most 4 KiB: `path` is cut to 1 KiB *(default)* with
   `path_truncated: true`, and any other oversize string field is cut the same way. The audit is kept
   for a number of days, 90 *(default)*, 1 to 3650, set by the owner: the sweeper deletes the records
-  older than that (checked at most once an hour) and writes one `audit_trimmed` record per
-  deletion. Nothing is deleted for size and there is no cap per workspace, because a workspace
+  older than that (checked at most once an hour) and writes an `audit_trimmed` record in the same
+  transaction as each batch of deletes. A pass that would delete every record waits for the next
+  pass (an hour later) to find the same, so a host clock stepped forward cannot empty the log at once.
+  Nothing is deleted for size and there is no cap per workspace, because a workspace
   that floods its own log could then push out its history. The size only warns: past 2 GiB
   *(default)* a problem is shown, and the admin sees the audit's size and growth. The database
   file gives the space of deleted records back in short steps. Per workspace, `connection` records are limited to 200 per second
@@ -361,6 +364,13 @@ readable as JSONL (one record per line).
   The record is filtered like any other (R-28): `type=workspace_op`, `workspace`, and
   `outcome=succeeded|failed`, which only this record has. A record that cannot be written is logged
   and dropped, and the operation it describes stands.
+- **R-71 Interception and shell-init changes are not audited.** Changing a workspace's decrypt
+  mode, its never-decrypt names, the global never-decrypt list, the decrypt-every-host settings or
+  a workspace's shell-init text writes no audit record in the store. The store only tells the host
+  through an event (`WorkspaceGitChanged` for interception, which makes the host rebuild what the
+  workspace's proxy knows, and `WorkspaceShellInitChanged` for shell init), so the change shows in
+  the workspace's next request or shell, not in the activity log. This records what the code does,
+  not a decision that it should stay so.
 
 - **R-28 Reading the audit with filters.** The API filters on the server, on stored columns and
   indexes (never by parsing JSON): `workspace`, `type`, `outcome`, `host_contains` (case-folded
@@ -398,7 +408,7 @@ other client, so R-1 to R-14 apply to it unchanged. These rules say what the hos
 lookup. They are tested in `puddle-proxy` (`resolve`) and `puddle-e2e` (`stub_dns`), not in the
 store.
 
-- **R-30 A lookup writes nothing, except the `SRV` requests of R-34 and R-36.** It asks the rules engine
+- **R-30 A lookup writes nothing, except the `SRV` requests of R-34 and R-68.** It asks the rules engine
   without recording: no pending row, no audit record, no counter. The pending row and the deny
   come from the connection that follows (R-10), by name.
 - **R-31 A name that no rule allows is not looked up.** An unmatched name, a denied name and a name
@@ -406,7 +416,7 @@ store.
   and cause **no** lookup on any resolver, so DNS is not a way out and a guest asking for many
   random names causes no resolver traffic. The connection that follows is refused with the
   usual reason. Record types other than `A` (`TXT`, `SRV`, `MX`) of such a name are answered
-  with no data; R-36 adds one request for an `SRV` query of a name no rule matches.
+  with no data; R-68 adds one request for an `SRV` query of a name no rule matches.
 - **R-32 An allowed name is resolved once, on the host.** If it resolves, the guest gets a
   stand-in. If the host's resolver says there is no such name, the guest gets `NXDOMAIN`, except
   under R-33; if the lookup itself fails (no resolver answered, the network is down) it gets
@@ -447,7 +457,7 @@ store.
   timeout. An unreadable rules engine is "unavailable", never "not allowed". A burst of 500 distinct
   names asked at once, as a package manager's cold start can, must all be answered (standing test
   `a_burst_of_five_hundred_distinct_names_all_resolve_for_a_client_with_glibc_defaults`).
-- **R-36 An `SRV` query for a name no rule matches raises one request for its base name.** Clients
+- **R-68 An `SRV` query for a name no rule matches raises one request for its base name.** Clients
   such as `mongodb+srv://` ask for `SRV` first and give up on "no records" without ever
   connecting, so the user would never see them. The query `_mongodb._tcp.cluster.example.net`
   therefore opens one pending request for `cluster.example.net` (the leading service labels are
@@ -647,8 +657,8 @@ decides is each rule's own precedence.
   - Opposite effects: an **error** (R-64).
 
   How overlap is decided. Host patterns are exact (`a.example.com`, an IP literal) or suffix
-  (`.example.com`, R-3; the user may type `*.example.com` or `**.example.com`, both are stored as
-  the suffix). Two exact patterns overlap when equal. An exact host and a suffix overlap when the
+  (`.example.com`, R-3; the user may type `*.example.com`, which is stored as the suffix; a
+  pattern with `**` in the host, such as `**.example.com`, is refused). Two exact patterns overlap when equal. An exact host and a suffix overlap when the
   host ends with the suffix, and an IP literal overlaps no suffix. Two suffixes overlap when one
   ends the other: `.test.example.com` and `.example.com` overlap (every `x.test.example.com` matches
   both), `.a.example.com` and `.b.example.com` do not, and equal suffixes overlap. An exact
@@ -803,3 +813,31 @@ fetched from a URL), rules on method and path that allow, or that match on heade
 port rules, and the "Dangerous settings" unblock of
 Puddle's endpoints (later). Address classification, name normalisation and the 403 body belong to
 the proxy and `puddle-netpolicy`; the API and CLI shape of R-15 to `puddle-api` and `puddle`.
+
+## 10. The filtered SSH agent's first-use question
+
+A workspace whose agent switch is on for a host (`ssh_agent_hosts`, optionally limited to some
+keys) may ask the user's own SSH agent for a signature. The first signature for each
+workspace, host and key waits for the user. *Added 2026-11-27, from code that shipped earlier.*
+
+- **R-69 The first signature waits for an answer.** A request to sign for a workspace, host and key
+  that no grant covers opens one question (`ssh_agent_asks`, state `requested`) in the inbox
+  and holds the guest's request. Every later request for the same triple while it is open joins that
+  question (its `attempts` goes up; no second row). A workspace has at most 64 questions open;
+  one over that is "unavailable" and nothing is signed. The host waits for an answer for 120 seconds
+  and then says "unanswered"; the question stays open, so a late answer still counts for the next
+  request. A store that cannot be read is "unavailable", never "allowed".
+- **R-70 Four answers, two grants.** The user answers `once` (the waiting requests
+  sign, nothing is kept), `run` (a grant until the workspace stops), `always` (a grant until the
+  agent is turned off for the host) or `deny` (nothing signs). An answer is final: a second answer
+  to the same question is refused, and an answer from another workspace's route finds no question.
+  A grant is one row per workspace, host and key; a later request that finds one signs without a
+  question. Turning the agent off for a host, stopping the workspace (`run` grants only) and
+  deleting the workspace drop the grants and the open questions they cover. A decided question
+  is kept for an hour for the requests still reading it, then pruned. Each answer writes a
+  `workspace_op` record `ssh_agent_answered` (R-56) in the transaction that makes it, so an answer
+  whose record cannot be written is not given. Tests: the `ssh_agent_asks` tests in `puddle-store`
+  (`once_lets_the_waiting_requests_sign_and_leaves_no_grant`,
+  `run_and_always_grants_answer_later_requests_until_they_end`,
+  `an_answer_is_final_and_belongs_to_one_workspace`,
+  `an_answer_whose_audit_record_cannot_be_written_is_not_given`).

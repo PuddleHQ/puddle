@@ -1146,14 +1146,25 @@ describe("CreateWorkspaceForm identities and repositories", () => {
     ).toBeInTheDocument();
   });
 
-  it("greys out Push for a repository handed in as archived", async () => {
-    open({
+  it("greys out Push for a repository handed in as archived and sends the block with the create", async () => {
+    const { create } = open({
       url: "https://github.com/acme/old",
       identity: 1,
       pushBlock: "archived",
     });
     await screen.findByRole("region");
     expect(screen.getByLabelText("Push")).toBeDisabled();
+    await fireEvent.click(submit());
+    await vi.waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create.mock.calls[0]?.[0]).toMatchObject({
+      repositories: [
+        {
+          url: "https://github.com/acme/old",
+          push: false,
+          push_block: "archived",
+        },
+      ],
+    });
   });
 
   it("forgets the identity that listed it when the address is typed over", async () => {
@@ -1162,18 +1173,6 @@ describe("CreateWorkspaceForm identities and repositories", () => {
     await type("Git repository (HTTPS)", "https://github.com/acme/api");
     expect(identityBox()).toHaveDisplayValue("Work");
     expect(screen.queryByText(/listed this repository/)).toBeNull();
-  });
-
-  it("warns about an Azure DevOps project with a space in the address", async () => {
-    open();
-    await screen.findByRole("region");
-    await type(
-      "Git repository (HTTPS)",
-      "https://dev.azure.com/contoso/Shop%20Floor/_git/scanner",
-    );
-    expect(screen.getByTestId("table-cannot-hold")).toHaveTextContent(
-      "Only push to allowed repositories",
-    );
   });
 });
 

@@ -84,6 +84,7 @@
             scope="col"
             aria-sort={ariaSort(column.key)}
             class:created={column.key === "created"}
+            class:expires={column.key === "expires"}
           >
             {#if onSort}
               <button
@@ -123,7 +124,14 @@
           class:expired
           class:off={!rule.enabled}
         >
-          <td class="host">
+          <td
+            class="host"
+            data-when={rule.expires_at === null
+              ? undefined
+              : expired
+                ? "Expired"
+                : `Expires ${relativeTime(rule.expires_at, now)}`}
+          >
             <HostName host={patternLabel(rule)} />
             {#if !rule.enabled}<span class="meta">off</span>{/if}
           </td>
@@ -135,7 +143,7 @@
           <td>
             {scopeLabel(rule)}
           </td>
-          <td>
+          <td class="expires">
             {#if rule.expires_at === null}
               <span class="muted">Never</span>
             {:else}
@@ -268,6 +276,20 @@
       position: sticky;
       inset-inline-end: 0;
       background: var(--color-surface);
+    }
+  }
+  /* On a phone the table is wider than its box with every column, and the menu pinned at the end
+     then covers the switch before it. Dropping Expires makes it fit; the host cell says it instead,
+     as generated text, so the words are on the page once. */
+  @media (max-width: 520px) {
+    .expires {
+      display: none;
+    }
+    .host[data-when]::after {
+      display: block;
+      content: attr(data-when);
+      color: var(--color-text-muted);
+      font-size: var(--text-sm);
     }
   }
 </style>

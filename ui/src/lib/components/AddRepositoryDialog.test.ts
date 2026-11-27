@@ -153,16 +153,6 @@ describe("the Add repository dialog", () => {
     ).toBeInTheDocument();
   });
 
-  it("warns about an Azure DevOps project with a space in it", async () => {
-    open();
-    await screen.findByRole("dialog");
-    await type(
-      "Git repository (HTTPS)",
-      "https://dev.azure.com/contoso/Shop%20Floor/_git/scanner",
-    );
-    expect(screen.getByTestId("table-cannot-hold")).toBeInTheDocument();
-  });
-
   it("refuses the same repository and a taken directory, and sends nothing", async () => {
     const onSubmit = open({
       entries: [{ url: "https://github.com/acme/api.git", directory: "api" }],

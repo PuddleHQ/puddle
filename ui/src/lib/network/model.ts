@@ -164,11 +164,14 @@ export function findings(report: NetworkHealth): Finding[] {
     });
   });
   if (proxy.pac_state === "unreachable") {
-    const address = proxy.pac_url ?? "the proxy script";
+    const title =
+      proxy.pac_url === null
+        ? "The proxy script isn't answering."
+        : `The proxy script at ${proxy.pac_url} isn't answering.`;
     out.push({
       id: "pac-unreachable",
       level: "problem",
-      title: `The proxy script at ${address} isn't answering.`,
+      title,
       fix: "Open that address in a browser on this computer. If it fails there too you are probably off the company network or the VPN is down. Puddle looks again by itself when the network changes.",
     });
   }

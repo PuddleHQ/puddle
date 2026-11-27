@@ -1442,9 +1442,9 @@ mod guard {
                     let rule_id = RuleId(100 + i64::try_from(index).unwrap());
                     let pattern = PatternKind::Exact;
                     match kind {
-                        1 => { ip_rules.insert(ip(addr), Decision::Allow { rule_id, pattern }); }
+                        1 => { ip_rules.insert(ip(addr).to_canonical(), Decision::Allow { rule_id, pattern }); }
                         2 => {
-                            ip_rules.insert(ip(addr), Decision::Deny { rule_id, pattern });
+                            ip_rules.insert(ip(addr).to_canonical(), Decision::Deny { rule_id, pattern });
                             denied.push((ip(addr), rule_id));
                         }
                         _ => {}

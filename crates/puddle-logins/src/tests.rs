@@ -1278,16 +1278,25 @@ async fn a_token_the_store_writes_after_it_timed_out_does_not_outlast_the_put_ba
     // The refresh's new refresh token is written late: after the capture gave up on it.
     let (started, parked) = tokio::sync::oneshot::channel();
     let (go, wait) = std::sync::mpsc::channel();
+    let released = Arc::new(std::sync::atomic::AtomicBool::new(false));
     store.then([SetStep::Pass, SetStep::Park(started, wait)]);
-    tokio::spawn(async move {
-        parked.await.unwrap();
-        // simulated latency: the write returns after the capture's 100 ms limit
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        let _ = go.send(());
+    tokio::spawn({
+        let released = Arc::clone(&released);
+        async move {
+            parked.await.unwrap();
+            // simulated latency: the write returns after the capture's 100 ms limit
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            released.store(true, std::sync::atomic::Ordering::SeqCst);
+            let _ = go.send(());
+        }
     });
     assert_eq!(capture_claude(&logins, ACCESS_B, REFRESH_B).await, None);
-    // An absence window: a late write that the capture did not wait for would land in it.
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(
+        !released.load(std::sync::atomic::Ordering::SeqCst),
+        "the tool waited for the late write instead of being answered first"
+    );
+    // An absence window: a late write must land before the put back, which runs after it.
+    tokio::time::sleep(std::time::Duration::from_millis(700)).await;
     let vault = Vault::new(store.clone(), &workspace());
     for (role, real, given) in [
         (Role::Access, REAL_ACCESS, &first["access_token"]),
@@ -1300,6 +1309,51 @@ async fn a_token_the_store_writes_after_it_timed_out_does_not_outlast_the_put_ba
             "a write that finished after the put back left a pair that never went together"
         );
     }
+}
+
+/// A Claude token answer with an access token only: one slot, so a failed write has nothing to put back.
+fn claude_access_only_answer(access: &str) -> Vec<u8> {
+    serde_json::to_vec(&json!({
+        "token_type": "Bearer",
+        "access_token": access,
+        "expires_in": 28800,
+        "scope": "user:inference user:profile",
+        "account": {"uuid": "u-1", "email_address": "me@example.invalid"},
+    }))
+    .unwrap()
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_write_that_times_out_with_nothing_to_put_back_refuses_after_one_timeout() {
+    let store = Arc::new(Scripted::new([]));
+    let registry = Arc::new(StandIns::new());
+    let logins = logins_on(&store, &registry);
+    let limit = std::time::Duration::from_secs(10);
+    logins.set_store_timeout(limit);
+    let (started, parked) = tokio::sync::oneshot::channel();
+    let (go, wait) = std::sync::mpsc::channel();
+    store.then([SetStep::Park(started, wait)]);
+    let exchange = logins.begin(&host("platform.claude.com"), "POST", "/v1/oauth/token");
+    let answer = claude_access_only_answer(REAL_ACCESS);
+    let mut capture = Box::pin(answered(exchange, 200, Some("application/json"), &answer));
+    // A parked blocking call stops the paused clock from advancing by itself: move it by hand,
+    // once the write is parked, by one store timeout and no more.
+    tokio::select! {
+        _ = &mut capture => panic!("the capture ended with its write parked"),
+        parked = parked => parked.unwrap(),
+    }
+    tokio::time::advance(limit + std::time::Duration::from_millis(1)).await;
+    let given = tokio::select! {
+        given = &mut capture => Some(given),
+        () = async { for _ in 0..200 { tokio::task::yield_now().await } } => None,
+    };
+    // Let the parked write go, so the blocking thread ends with the test.
+    let _ = go.send(());
+    assert_eq!(
+        given,
+        Some(None),
+        "the capture lock was still held a store timeout after a write that left nothing to put back"
+    );
 }
 
 #[tokio::test]

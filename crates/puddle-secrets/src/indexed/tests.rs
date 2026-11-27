@@ -186,6 +186,7 @@ fn a_value_that_will_not_go_stays_listed_while_the_others_are_swept() {
     store.set(&id("tok-gone"), &secret("b")).unwrap();
     let again = IndexedStore {
         inner: store.inner,
+        index: store.index,
         written: Mutex::new(HashSet::new()),
     };
     again.inner.stuck.lock().unwrap().insert("tok-stuck".into());
@@ -241,6 +242,7 @@ fn a_sweep_that_removes_nothing_does_not_write_the_index() {
     store.set(&id("tok-a"), &secret("a")).unwrap();
     let later = IndexedStore {
         inner: store.inner,
+        index: store.index,
         written: Mutex::new(HashSet::new()),
     };
     *later.inner.locked.lock().unwrap() = true;
@@ -306,4 +308,50 @@ fn the_listed_ids_are_what_the_index_holds_and_a_plain_store_lists_none() {
     let plain = MemoryStore::new();
     plain.set(&id("tok-a"), &secret("one")).unwrap();
     assert_eq!(plain.listed_ids(), Ok(Vec::new()));
+}
+
+#[test]
+fn a_sweep_in_one_scope_leaves_another_scopes_values_alone() {
+    let disk = Shared::default();
+    let folder_a = IndexedStore::scoped(disk.clone(), "aaaa");
+    folder_a.set(&id("tok-a"), &secret("a")).unwrap();
+
+    let folder_b = IndexedStore::scoped(disk.clone(), "bbbb");
+    folder_b.set(&id("tok-b"), &secret("b")).unwrap();
+    let again_b = IndexedStore::scoped(disk.clone(), "bbbb");
+    assert_eq!(
+        again_b.sweep_orphans(&|_| false).unwrap(),
+        Sweep {
+            removed: 1,
+            stuck: 0
+        }
+    );
+
+    assert_eq!(disk.get(&id("tok-a")).unwrap().unwrap().expose(), "a");
+    assert!(disk.get(&id("tok-b")).unwrap().is_none());
+    assert_eq!(again_b.listed_ids().unwrap(), Vec::new());
+    assert_eq!(
+        IndexedStore::scoped(disk, "aaaa").listed_ids().unwrap(),
+        vec![id("tok-a")]
+    );
+}
+
+#[test]
+fn a_scoped_sweep_never_touches_what_the_shared_list_of_an_earlier_version_names() {
+    let disk = Shared::default();
+    IndexedStore::new(disk.clone())
+        .set(&id("tok-old"), &secret("old"))
+        .unwrap();
+    let scoped = IndexedStore::scoped(disk.clone(), "bbbb");
+    assert_eq!(scoped.sweep_orphans(&|_| false).unwrap(), Sweep::default());
+    assert!(disk.get(&id("tok-old")).unwrap().is_some());
+}
+
+#[test]
+fn no_list_is_a_credential() {
+    let store = IndexedStore::scoped(MemoryStore::new(), "aaaa");
+    for list in ["puddle-index", "puddle-index-aaaa", "puddle-index-bbbb"] {
+        assert_eq!(store.set(&id(list), &secret("x")), Err(StoreError));
+        assert_eq!(store.delete(&id(list)), Err(StoreError));
+    }
 }

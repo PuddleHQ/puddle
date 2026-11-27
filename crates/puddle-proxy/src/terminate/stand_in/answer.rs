@@ -67,6 +67,10 @@ const MAX_DECODED_STEP: usize = 16 * 1024 * 1024;
 
 const ZSTD_WINDOW_LOG_MAX: u32 = 27;
 
+/// The fewest bytes of the start of a real value that make a body's end an error: shorter, the
+/// end is far likelier ordinary text than a cut value, and what leaks is a public prefix.
+const MIN_CUT_FORM: usize = 6;
+
 /// One form of a real value and what replaces it.
 struct Pattern {
     find: Zeroizing<Vec<u8>>,
@@ -197,12 +201,15 @@ fn build_scrubber(entries: &[Arc<super::StandIn>], host: &Host) -> Option<Scrubb
     for entry in entries.iter().filter(|entry| entry.hosts.contains(host)) {
         let id = ids.len();
         ids.push(entry.id());
-        let real = entry.real.expose();
-        for (find, put) in forms(real, &entry.text) {
-            add(&mut patterns, find, Some(put), id);
-        }
-        for core in base64_cores(real) {
-            add(&mut patterns, core, None, id);
+        // The current value first: a form two values share keeps the current one's id.
+        for real in std::iter::once(&entry.real).chain(entry.retired.iter().rev()) {
+            let real = real.expose();
+            for (find, put) in forms(real, &entry.text) {
+                add(&mut patterns, find, Some(put), id);
+            }
+            for core in base64_cores(real) {
+                add(&mut patterns, core, None, id);
+            }
         }
     }
     if patterns.is_empty() {
@@ -465,6 +472,12 @@ impl Scrubber {
                 frontier = self.frontier(buf, copied);
             }
         }
+        if end && let Some(id) = self.cut_inside_a_form(buf, copied) {
+            notes.withheld.store(true, Ordering::SeqCst);
+            return Err(Withheld(
+                self.ids.get(id).map_or("", String::as_str).to_owned(),
+            ));
+        }
         let upto = frontier.max(copied);
         out.extend_from_slice(buf.get(copied..upto).unwrap_or_default());
         Ok(upto)
@@ -484,6 +497,26 @@ impl Scrubber {
                 })
             })
             .unwrap_or(buf.len())
+    }
+
+    /// At the end of a body: the id of a form that the rest of `buf` (from `from`) is a long
+    /// enough proper start of. A body that stops inside a real value would give its first half
+    /// to the guest, and another request for the rest would give the second ([`MIN_CUT_FORM`]
+    /// keeps a body that ends in `g` as it is).
+    fn cut_inside_a_form(&self, buf: &[u8], from: usize) -> Option<usize> {
+        let first = from.max(buf.len().saturating_sub(self.longest.saturating_sub(1)));
+        (first..buf.len()).find_map(|at| {
+            let tail = buf.get(at..).unwrap_or_default();
+            if tail.len() < MIN_CUT_FORM {
+                return None;
+            }
+            // `run` has replaced every whole form from `from` on, so a tail that starts a form is a
+            // proper start of it.
+            self.patterns
+                .iter()
+                .find(|pattern| pattern.find.starts_with(tail))
+                .map(|pattern| pattern.id)
+        })
     }
 
     /// `input` scrubbed whole, or `None` when nothing in it was replaced.
@@ -1010,6 +1043,13 @@ async fn hold(body: &mut AnswerBody, idle: Duration) -> Result<Bytes, NotScrubbe
 
 /// The content codings an answer may come in when it is scrubbed.
 const READABLE_CODINGS: [&str; 6] = ["gzip", "x-gzip", "deflate", "br", "zstd", "identity"];
+
+/// Drops `Range` and `If-Range` from a request whose answer is scrubbed: two ranged answers
+/// could split a real value between them, each half unseen by the scrubber.
+pub(crate) fn withhold_ranges(headers: &mut HeaderMap) {
+    headers.remove(header::RANGE);
+    headers.remove(header::IF_RANGE);
+}
 
 /// Limits a request's `Accept-Encoding` to the codings Puddle decodes, for a request whose
 /// answer is scrubbed: the server then picks one of those (or none).

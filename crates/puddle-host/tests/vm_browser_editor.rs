@@ -360,6 +360,17 @@ impl ShellStandIn {
             .expect("keys");
     }
 
+    /// Clicks the first element matching `selector` in the newest page of `workspace`.
+    async fn click(&self, workspace: &str, selector: &str) {
+        let page = self.page(workspace).await;
+        self.browser
+            .lock()
+            .await
+            .click(page, selector)
+            .await
+            .expect("click");
+    }
+
     /// Types `text` into what has focus in the newest page of `workspace`.
     async fn type_text(&self, workspace: &str, text: &str) {
         let page = self.page(workspace).await;
@@ -2064,6 +2075,102 @@ async fn vm_browser_code_server_hovering_a_typescript_symbol_shows_the_type_the_
 
     let errors = shell.page_errors.lock().unwrap().clone();
     assert!(errors.is_empty(), "the pages reported errors: {errors:?}");
+    editor.finish().await;
+}
+
+/// The extension folders the editor server holds, one per line, from its own `--extensions-dir`.
+const EXTENSION_FOLDERS: &str = r#"
+pid=$(pgrep -f -o -- '--extensions-dir')
+exts=$(tr '\0' '\n' <"/proc/$pid/cmdline" | grep -A1 -x -- '--extensions-dir' | tail -n 1)
+ls -1 "$exts" 2>/dev/null
+true
+"#;
+
+/// Clicks, once it exists, the button of the editor's modal dialog labelled `label`; true then.
+fn click_dialog_button(label: &str) -> String {
+    let label = serde_json::to_string(label).unwrap();
+    format!(
+        "(() => {{ const b = [...document.querySelectorAll('.monaco-dialog-box .monaco-button')].find(b => b.textContent.trim() === {label}); if (!b) return false; b.click(); return true; }})()"
+    )
+}
+
+/// Clicks "Install" on the Extensions view's row that shows `name`; true once it has.
+fn click_install_in_row(name: &str) -> String {
+    let name = serde_json::to_string(name).unwrap();
+    format!(
+        "(() => {{ const row = [...document.querySelectorAll('.extensions-list .monaco-list-row')].find(r => r.textContent.includes({name})); const a = row?.querySelector('a.extension-action.install'); if (!a) return false; a.click(); return true; }})()"
+    )
+}
+
+/// Two checkouts and a loose file, owned by the editor's user: the window's explorer lists rows
+/// only when the volume holds more than `.puddle`.
+const CHECKOUTS: &str = "cd /workspace && git init -q api && git init -q web && echo loose >notes.txt && chown -R agent:agent .";
+
+/// K tier, code-server. Installing an extension from the Extensions view, which is the path a user
+/// takes (the CLI test in `vm_editor_extensions` skips it): the editor asks "Do you trust the
+/// publisher?" before it downloads anything, and a click on "Trust Publisher & Install" installs
+/// the extension. rust-analyzer is the second one: Open VSX's newest build needs a newer VS Code
+/// than the pinned code-server, and the editor must still pick one it can run.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_browser_code_server_installs_extensions_from_the_view_after_trusting_the_publisher() {
+    let editor = Box::pin(Editor::start("exu", None)).await;
+    editor.guest(CHECKOUTS).await;
+    let (shell, name) = (&editor.shell, &editor.name);
+    editor.attach().await;
+    editor.explorer("window").await;
+    let page = shell.page(name).await;
+
+    for (id, row, folder) in [
+        (
+            "EditorConfig.EditorConfig",
+            "EditorConfig",
+            "editorconfig.editorconfig-",
+        ),
+        (
+            "rust-lang.rust-analyzer",
+            "rust-analyzer",
+            "rust-lang.rust-analyzer-",
+        ),
+    ] {
+        shell.press(name, "Escape").await;
+        shell.press(name, "Control+Shift+x").await;
+        // The search box takes keys only after a click on it; the key chord alone leaves them elsewhere.
+        shell
+            .click(name, ".extensions-viewlet .monaco-editor")
+            .await;
+        // Replaces the first round's search.
+        shell.press(name, "Control+a").await;
+        shell.type_text(name, id).await;
+        shell
+            .rows_with(page, ".extensions-list .monaco-list-row", row)
+            .await;
+        shell
+            .wait(name, &click_install_in_row(row), "true", PAGE_BUDGET)
+            .await;
+        // Nothing is downloaded until the dialog is answered.
+        shell
+            .wait(
+                name,
+                &click_dialog_button("Trust Publisher & Install"),
+                "true",
+                PAGE_BUDGET,
+            )
+            .await;
+        let folders = puddle_test_kit::eventually_async(
+            &format!("{id} is in the editor's extensions folder"),
+            Duration::from_secs(180),
+            || async {
+                let out = editor.guest(EXTENSION_FOLDERS).await;
+                if out.lines().any(|l| l.to_lowercase().starts_with(folder)) {
+                    Ok(out)
+                } else {
+                    Err(out)
+                }
+            },
+        )
+        .await;
+        eprintln!("{id}: {folders}");
+    }
     editor.finish().await;
 }
 

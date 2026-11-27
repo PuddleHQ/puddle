@@ -23,8 +23,8 @@ use puddle_proxy::testing::{
 };
 use puddle_proxy::{AddressCheck, AddressVerdict, Proxy, ProxyConfig, Route};
 use puddle_types::{
-    BlockReason, CompanySignal, ConnectionDecision, ConnectionEvent, ConnectionReason, Host,
-    LocalCategory, NullSink, PendingId, RefusedReason, WorkspaceId,
+    BlockReason, CompanySignal, ConnectionDecision, ConnectionEvent, ConnectionOutcome,
+    ConnectionReason, Host, LocalCategory, NullSink, PendingId, RefusedReason, WorkspaceId,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
@@ -447,6 +447,66 @@ async fn a_connection_is_open_until_its_record_is_written() {
         rig.log.events().len(),
         1,
         "at zero open connections the record is already written"
+    );
+}
+
+/// The agent session ends while a tunnel is open: the proxy aborts the tunnel's task mid-splice,
+/// and the connection still leaves its one record, with what had passed and the decision made.
+#[tokio::test]
+async fn a_tunnel_cut_with_its_agent_session_is_still_recorded() {
+    let echo = echo_server().await;
+    let rig = Rig::with_resolver(
+        &ProxyConfig::default(),
+        StaticResolver::new().with("echo.test", &[LOCAL]),
+    );
+    let rule = rig.policy.allow(&host("echo.test"));
+    let mut guest = rig.guest().await;
+    let head = format!(
+        "CONNECT echo.test:{0} HTTP/1.1\r\nHost: echo.test:{0}\r\n\r\n",
+        echo.port()
+    );
+    let mut stream = guest.stream().await;
+    stream.write_all(head.as_bytes()).await.unwrap();
+    let mut reader = BufReader::new(stream);
+    assert_eq!(status(&mut reader).await.unwrap(), 200);
+    reader.get_mut().write_all(b"ping").await.unwrap();
+    let mut back = [0u8; 4];
+    reader.read_exact(&mut back).await.unwrap();
+    assert!(rig.log.events().is_empty(), "the tunnel is still open");
+
+    // The session dies with the tunnel open: no shutdown, no close.
+    drop(reader);
+    drop(guest);
+
+    let events = rig.events(1).await;
+    // Nothing else follows: the cut is recorded once.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(rig.log.events().len(), 1, "one record per connection");
+    let event = &events[0];
+    assert_eq!(
+        (event.host.to_string(), event.port),
+        ("echo.test".to_owned(), echo.port())
+    );
+    assert_eq!(
+        (
+            event.decision,
+            event.reason,
+            event.rule_id,
+            event.outcome,
+            event.resolved_ip
+        ),
+        (
+            ConnectionDecision::Allow,
+            ConnectionReason::Rule,
+            Some(rule),
+            Some(ConnectionOutcome::Connected),
+            Some(LOCAL)
+        )
+    );
+    let established = "HTTP/1.1 200 Connection Established\r\n\r\n".len() as u64;
+    assert_eq!(
+        (event.bytes_up, event.bytes_down),
+        (head.len() as u64 + 4, established + 4)
     );
 }
 

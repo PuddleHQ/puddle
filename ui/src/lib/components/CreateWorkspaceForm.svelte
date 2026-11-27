@@ -13,8 +13,6 @@
     matchingUrl,
     pushBlock,
     pushBlockText,
-    tableCannotHold,
-    TABLE_CANNOT_HOLD,
     type PushBlock,
     type RepoView,
   } from "#lib/repos/model.ts";
@@ -415,6 +413,7 @@
           ...(directory === "" ? {} : { directory }),
           ...(identity === "" ? {} : { identity_id: Number(identity) }),
           ...(row.push ? {} : { push: false }),
+          ...(row.pushBlock ? { push_block: row.pushBlock } : {}),
         };
       }),
       ...(folder === "" ? {} : { start_folder: folder }),
@@ -612,12 +611,6 @@
           onblur={() => (left = { ...left, [row.key]: true })}
           onPick={(repo, by) => picked(row, repo, by)}
         />
-
-        {#if tableCannotHold(addressOf(row))}
-          <p class="hint warn" data-testid="table-cannot-hold">
-            {TABLE_CANNOT_HOLD}
-          </p>
-        {/if}
 
         <div class="field">
           <label for={rowId(row, "directory")}>Directory</label>

@@ -61,6 +61,7 @@ fn new_ws(name: &str) -> NewWorkspace {
             identity: None,
             pull: true,
             push: true,
+            push_block: None,
             local: None,
         }],
     )

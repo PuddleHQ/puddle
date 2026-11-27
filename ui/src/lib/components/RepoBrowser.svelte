@@ -4,13 +4,7 @@
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
   import RepoSourceStatus from "./RepoSourceStatus.svelte";
   import type { Identity } from "#lib/identities/model.ts";
-  import {
-    roleWord,
-    tableCannotHold,
-    TABLE_CANNOT_HOLD,
-    traits,
-    type RepoView,
-  } from "#lib/repos/model.ts";
+  import { roleWord, traits, type RepoView } from "#lib/repos/model.ts";
   import type { RepoLists } from "#lib/stores/repos.svelte.ts";
   import "#lib/theme/controls.css";
 
@@ -164,11 +158,6 @@
                     {trait}
                   </span>{/each}
               </span>
-              {#if tableCannotHold(repo.url)}
-                <span class="warn" data-testid="repo-table-warning">
-                  {TABLE_CANNOT_HOLD}
-                </span>
-              {/if}
             </td>
             <td class="muted">{roleWord(repo.role)}</td>
             <td class="act">
@@ -266,10 +255,6 @@
   .trait {
     font-size: var(--text-sm);
     color: var(--color-text-muted);
-  }
-  .warn {
-    font-size: var(--text-sm);
-    color: var(--color-warning);
   }
   .act {
     text-align: right;

@@ -331,6 +331,10 @@ pub struct NewRepositoryRequest {
     /// Push on its new repository table row; left out or `null` is on.
     #[serde(default)]
     pub push: Option<bool>,
+    /// Why a push to it cannot succeed, when the listing it was picked from said so; kept on its
+    /// new repository table row. Left out or `null` is none known.
+    #[serde(default)]
+    pub push_block: Option<super::PushBlock>,
 }
 
 /// A field a request may no longer send: present whatever its value, `null` included.
@@ -429,6 +433,7 @@ impl NewWorkspaceRequest {
                 identity: r.identity_id.map(puddle_store::IdentityId),
                 pull: r.pull,
                 push: r.push,
+                push_block: r.push_block.map(Into::into),
                 local: r.local_path,
             })
             .collect();

@@ -557,7 +557,10 @@ printf 'protocol=https\nhost=github.com\n\n' | timeout 30 env VSCODE_GIT_IPC_HAN
                 "the explorer has no root {folder}: {up:?}"
             );
         }
-        assert!(up.title.contains("(Workspace)"), "{up:?}");
+        // The multi-root file sets `window.title` to the display name, so the title shows it and
+        // no longer VS Code's "(Workspace)" suffix for a file name.
+        assert!(up.title.contains(&s.name), "{up:?}");
+        assert!(!up.title.contains("(Workspace)"), "{up:?}");
 
         s.wait_for_git_socket("ls /tmp/vscode-git-*.sock 2>/dev/null | head -n 1")
             .await;

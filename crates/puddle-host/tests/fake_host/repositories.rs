@@ -23,6 +23,7 @@ async fn a_failed_sync_after_the_clones_leaves_nothing_behind() {
             "preparing_volume",
             "pulling_image",
             "starting",
+            "waiting_for_agent",
             "syncing",
             "cloning",
             "failed"
@@ -154,6 +155,7 @@ async fn a_clone_that_fails_fails_only_its_repository_and_every_clone_carries_it
             "preparing_volume",
             "pulling_image",
             "starting",
+            "waiting_for_agent",
             "syncing",
             "cloning",
             "cloning",
@@ -322,6 +324,50 @@ async fn an_added_clone_has_its_identity_and_table_row_before_it_runs_and_is_lis
         rig.guest.clone_commands().len(),
         2,
         "no clone ran for either"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_clone_of_a_host_passed_through_for_its_certificate_says_windows_does_not_trust_it() {
+    use puddle_types::{
+        ConnectionDecision, ConnectionEvent, ConnectionReason, Host, PassThroughCode,
+    };
+    const FORGE: &str = "https://forge.corp.example/acme/docs.git";
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "adds").await;
+    *rig.guest.fail_clone_of.lock().unwrap() = Some(FORGE.to_owned());
+    // The proxy passed the forge through for its certificate, as it does while git clones.
+    let mut passed = ConnectionEvent::puddle(
+        Host::parse_normalised("forge.corp.example").unwrap(),
+        443,
+        ConnectionDecision::Allow,
+        ConnectionReason::PassedThrough(PassThroughCode::ServerCertificate),
+    );
+    passed.origin = puddle_types::ConnectionOrigin::Workspace;
+    passed.workspace = Some(WorkspaceId::new("adds").unwrap());
+    host.store().record_connection(&passed).unwrap();
+
+    let reply = add_and_wait(
+        &api,
+        &mut events,
+        "adds",
+        json!({"kind": "clone", "url": FORGE}),
+    )
+    .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let problems = problems_of(&api).await;
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(
+        problems[0].3.starts_with(
+            "Windows does not trust forge.corp.example's certificate: add your company's root \
+             certificate to Windows. Git said: git exited 128: "
+        ),
+        "{}",
+        problems[0].3
     );
     host.shutdown().await;
 }
@@ -1055,6 +1101,7 @@ async fn a_workspace_with_no_repositories_is_made_without_a_clone_or_a_sync() {
             "preparing_volume",
             "pulling_image",
             "starting",
+            "waiting_for_agent",
             "syncing",
             "done"
         ]

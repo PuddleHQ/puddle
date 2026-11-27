@@ -285,10 +285,11 @@ pub struct GuestFile {
 
 impl fmt::Debug for GuestFile {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // No bit set for group or others: an owner-only secret.
+        let owner_only = self.mode.trailing_zeros() >= 6;
         let mut shown = f.debug_struct("GuestFile");
         shown.field("path", &self.path);
-        // No bit set for group or others: an owner-only secret.
-        if self.mode.trailing_zeros() >= 6 {
+        if owner_only {
             shown.field(
                 "contents",
                 &format_args!("<{} bytes, owner-only>", self.contents.len()),
@@ -296,10 +297,20 @@ impl fmt::Debug for GuestFile {
         } else {
             shown.field("contents", &self.contents);
         }
-        shown
-            .field("mode", &self.mode)
-            .field("apply", &self.apply)
-            .finish()
+        shown.field("mode", &self.mode);
+        match &self.apply {
+            // A merge spec holds the values of the keys it owns, as private as the contents.
+            ApplyKind::Merge(spec) if owner_only => shown.field(
+                "apply",
+                &format_args!(
+                    "Merge {{ format: {:?}, keys: {:?}, values hidden }}",
+                    spec.format(),
+                    spec.keys()
+                ),
+            ),
+            apply => shown.field("apply", apply),
+        };
+        shown.finish()
     }
 }
 

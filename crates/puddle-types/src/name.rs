@@ -20,6 +20,11 @@ const MAX_LABEL_LEN: usize = 63;
 /// (ADR 0006).
 pub const WORKSPACE_VOLUME_PREFIX: &str = "ws-";
 
+/// Prefix of Puddle's short-lived maintenance sandboxes: `m--<workspace id>` (fits the 63
+/// characters of a sandbox name for the longest workspace id). No workspace id starts with it, so
+/// a maintenance sandbox is never taken for a workspace's.
+pub const MAINTENANCE_PREFIX: &str = "m--";
+
 /// Workspace ids Puddle refuses because the desktop shell uses them as host names
 /// (`tauri.localhost`, `ipc.localhost`, `asset.localhost`).
 pub const RESERVED_WORKSPACE_NAMES: [&str; 3] = ["tauri", "ipc", "asset"];
@@ -224,10 +229,18 @@ impl WorkspaceId {
     ///
     /// # Errors
     ///
-    /// When `id` isn't a DNS label of at most [`WorkspaceId::MAX_LEN`] characters, or is one of
-    /// [`RESERVED_WORKSPACE_NAMES`] (the desktop shell's own origins).
+    /// When `id` isn't a DNS label of at most [`WorkspaceId::MAX_LEN`] characters, starts with
+    /// [`MAINTENANCE_PREFIX`], or is one of [`RESERVED_WORKSPACE_NAMES`] (the desktop shell's own
+    /// origins).
     pub fn new(id: &str) -> Result<Self, ValidationError> {
         check_label("workspace id", id, Self::MAX_LEN)?;
+        if id.starts_with(MAINTENANCE_PREFIX) {
+            return Err(ValidationError::new(
+                "workspace id",
+                id,
+                "starts with the prefix of Puddle's maintenance sandboxes",
+            ));
+        }
         if RESERVED_WORKSPACE_NAMES.contains(&id) {
             return Err(ValidationError::new(
                 "workspace id",

@@ -510,9 +510,11 @@ impl Scrubber {
             if tail.len() < MIN_CUT_FORM {
                 return None;
             }
+            // `run` has replaced every whole form from `from` on, so a tail that starts a form is a
+            // proper start of it.
             self.patterns
                 .iter()
-                .find(|pattern| pattern.find.len() > tail.len() && pattern.find.starts_with(tail))
+                .find(|pattern| pattern.find.starts_with(tail))
                 .map(|pattern| pattern.id)
         })
     }

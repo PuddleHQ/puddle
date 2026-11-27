@@ -462,7 +462,7 @@ async fn a_boot_dropped_at_any_await_leaves_the_gate_where_it_was() {
 }
 
 #[tokio::test]
-async fn a_stop_during_a_boot_is_not_undone_when_the_boot_ends() {
+async fn a_stop_during_a_boot_waits_for_it_and_then_closes_the_gate() {
     let rt = FakeRuntime::new();
     let _hook = FakeHook::install(&rt, 0, "", Duration::ZERO);
     let boot = BootHook::new();
@@ -480,9 +480,124 @@ async fn a_stop_during_a_boot_is_not_undone_when_the_boot_ends() {
         assert!(again.as_mut().poll(&mut cx).is_pending());
     }
     assert_eq!(gate.state(), GateState::Booting);
-    // ...when the user stops the sandbox through the handle of the first boot.
-    first.stop().await.unwrap();
-    assert_eq!(gate.state(), GateState::Down);
-    let _ = again.await;
-    assert_eq!(gate.state(), GateState::Down, "the stop stands");
+    // ...when the user stops the sandbox through the handle of the first boot: the stop waits
+    // for the boot, so it neither closes the gate under it nor stops a VM the boot still uses.
+    let mut stop = pin!(first.stop());
+    for _ in 0..20 {
+        assert!(stop.as_mut().poll(&mut cx).is_pending());
+    }
+    assert_eq!(gate.state(), GateState::Booting);
+    let second = again.await.unwrap();
+    assert_eq!(gate.state(), GateState::Ready);
+    stop.await.unwrap();
+    assert_eq!(
+        gate.state(),
+        GateState::Down,
+        "the stop came after the boot"
+    );
+    assert_eq!(second.status().await.unwrap(), WorkspaceStatus::Stopped);
+}
+
+#[tokio::test]
+async fn a_hook_rerun_waits_for_a_boot_in_flight() {
+    let rt = FakeRuntime::new();
+    let hook = FakeHook::install(&rt, 0, "", Duration::ZERO);
+    let boot = BootHook::new();
+    let gate = Gate::new();
+    let first = boot
+        .create(&rt, spec("rerun"), &plan(), &gate)
+        .await
+        .unwrap();
+    assert_eq!(hook.runs(), 1);
+    rt.wait_in_every_call(true);
+    let (rerun, plan) = (name("rerun"), plan());
+    let mut again = pin!(boot.adopt(&rt, &rerun, &plan, &gate));
+    let mut cx = Context::from_waker(Waker::noop());
+    for _ in 0..2 {
+        assert!(again.as_mut().poll(&mut cx).is_pending());
+    }
+    assert_eq!(gate.state(), GateState::Booting);
+    // A rewrite of the guest's files runs the plan again while that boot is inside its hook:
+    // two runs would truncate each other's scratch files.
+    let mut run = pin!(boot.run(&first, &plan));
+    for _ in 0..20 {
+        assert!(run.as_mut().poll(&mut cx).is_pending());
+    }
+    assert_eq!(hook.runs(), 1, "the rerun has not started");
+    again.await.unwrap();
+    assert_eq!(hook.runs(), 2);
+    let report = run.await.unwrap();
+    assert_eq!(report.stdout, "puddle-boot: ready\n");
+    assert_eq!(hook.runs(), 3, "the rerun ran after the boot");
+}
+
+#[tokio::test]
+async fn a_hook_rerun_on_an_idle_sandbox_runs_at_once_and_keeps_the_gate() {
+    let rt = FakeRuntime::new();
+    let hook = FakeHook::install(&rt, 0, "", Duration::ZERO);
+    let boot = BootHook::new();
+    let gate = Gate::new();
+    let sb = boot
+        .create(&rt, spec("idle"), &plan(), &gate)
+        .await
+        .unwrap();
+    let report = boot.run(&sb, &plan()).await.unwrap();
+    assert_eq!(hook.runs(), 2);
+    assert_eq!(report.stdout, "puddle-boot: ready\n");
+    assert_eq!(gate.state(), GateState::Ready);
+    // The lock is free again afterwards: a second rerun does not hang.
+    boot.run(&sb, &plan()).await.unwrap();
+    assert_eq!(hook.runs(), 3);
+}
+
+#[tokio::test]
+async fn a_boot_dropped_once_the_vm_runs_leaves_the_gate_down_not_back_at_ready() {
+    let rt = FakeRuntime::new();
+    let _hook = FakeHook::install(&rt, 0, "", Duration::ZERO);
+    let boot = BootHook::new();
+    let plan = plan();
+    for kind in ["create", "start", "adopt"] {
+        // The gate after the boot was dropped at its first, second, ... await.
+        let mut after_drop = Vec::new();
+        for waits in 1..12 {
+            let n = format!("late-{kind}-{waits}");
+            let id = name(&n);
+            // A gate left Ready by a VM that ended without a stop through the gated handle.
+            let gate = Gate::new();
+            let sb = boot.create(&rt, spec(&n), &plan, &gate).await.unwrap();
+            if kind == "start" {
+                sb.ungated().stop().await.unwrap();
+            }
+            assert_eq!(gate.state(), GateState::Ready);
+            rt.wait_in_every_call(true);
+            let other = spec(&format!("{n}-new"));
+            let finished = match kind {
+                "create" => drop_after(boot.create(&rt, other, &plan, &gate), waits),
+                "start" => drop_after(boot.start(&rt, &id, &plan, &gate), waits),
+                _ => drop_after(boot.adopt(&rt, &id, &plan, &gate), waits),
+            };
+            rt.wait_in_every_call(false);
+            if finished {
+                assert_eq!(gate.state(), GateState::Ready, "{kind} ran to its end");
+                break;
+            }
+            after_drop.push(gate.state());
+        }
+        // Dropped before the runtime answered: the state from before. After: Down, because the
+        // VM runs (or restarted) and the hook did not return 0.
+        let down_from = after_drop.iter().position(|s| *s == GateState::Down);
+        let down_from = down_from.unwrap_or_else(|| panic!("{kind}: {after_drop:?}"));
+        assert!(
+            after_drop[..down_from]
+                .iter()
+                .all(|s| *s == GateState::Ready),
+            "{kind}: {after_drop:?}"
+        );
+        assert!(
+            after_drop[down_from..]
+                .iter()
+                .all(|s| *s == GateState::Down),
+            "{kind}: {after_drop:?}"
+        );
+    }
 }

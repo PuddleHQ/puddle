@@ -226,12 +226,15 @@ impl<S: Sandbox> GatedSandbox<S> {
         self.inner.status().await
     }
 
-    /// Closes the gate, then stops the VM.
+    /// Waits for a boot in flight to end, closes the gate, then stops the VM (a stop that
+    /// overtook a start would return `Ok` for a VM the start then leaves running behind a closed
+    /// gate).
     ///
     /// # Errors
     ///
     /// From [`Sandbox::stop`].
     pub async fn stop(&self) -> Result<(), ComputeError> {
+        let _boot = self.gate.lock_boot().await;
         self.gate.close();
         self.inner.stop().await
     }

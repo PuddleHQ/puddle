@@ -91,7 +91,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             label: &guest.label,
         };
         let (plan, _) = kit.plan(&guest.image, &inputs)?;
-        let report = kit.hook().run(gated.ungated(), &plan).await?;
+        let report = kit.hook().run(gated, &plan).await?;
         self.settle_after_hook(name, &report, Some(&guest.authors), HookRun::Rewrite);
         Ok(report)
     }

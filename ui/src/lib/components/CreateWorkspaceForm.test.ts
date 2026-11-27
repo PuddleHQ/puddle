@@ -108,6 +108,23 @@ function settings(
   } as never;
 }
 
+describe("the title", () => {
+  const titleLevel = (embedded: boolean) => {
+    render(CreateWorkspaceForm, {
+      props: { store: { create: vi.fn() }, settings: settings(), embedded },
+    } as never);
+    return screen.getByRole("heading", { name: "New workspace" }).tagName;
+  };
+
+  it("is the page's h1 on its own screen", () => {
+    expect(titleLevel(false)).toBe("H1");
+  });
+
+  it("is an h2 under another screen's h1", () => {
+    expect(titleLevel(true)).toBe("H2");
+  });
+});
+
 describe("the default image's description", () => {
   function mountWith(description: string | null, image: string | null = null) {
     render(CreateWorkspaceForm, {

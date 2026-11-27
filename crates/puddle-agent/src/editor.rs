@@ -584,10 +584,15 @@ fn prepare(server: &EditorServer) -> io::Result<()> {
 /// What a code-server window shows in its first open: the colour theme follows the colour scheme
 /// of the browser that shows it (the system's, as Puddle's own window does), with VS Code's
 /// default dark and light themes. Without it the window opens in the light theme on a dark system.
+/// Telemetry and experiments are off, so the editor does not call `mobile.events.data.microsoft.com`
+/// and `default.exp-tas.com` and a new user is not asked about Microsoft hosts they never used
+/// (T-2374: the hosts stay ordinary traffic, `docs/spec/rules.md` R-1).
 const FIRST_SETTINGS: &str = r#"{
     "window.autoDetectColorScheme": true,
     "workbench.preferredDarkColorTheme": "Default Dark Modern",
-    "workbench.preferredLightColorTheme": "Default Light Modern"
+    "workbench.preferredLightColorTheme": "Default Light Modern",
+    "telemetry.telemetryLevel": "off",
+    "workbench.enableExperiments": false
 }
 "#;
 

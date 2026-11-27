@@ -510,6 +510,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
                 record
             };
             self.follow_rename(&record).await;
+            self.refresh_editor_file(&record).await;
             Ok(record)
         })
     }

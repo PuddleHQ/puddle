@@ -100,11 +100,11 @@ async fn concurrent_connects_to_one_name_share_one_lookup() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn different_names_and_ports_are_looked_up_apart() {
+async fn different_names_are_looked_up_apart() {
     let r = Coalescing::new(Slow::new(Duration::from_secs(1)));
     let (a, b) = (name("a.example"), name("b.example"));
     let _ = tokio::join!(r.resolve(&a, 443), r.resolve(&b, 443), r.resolve(&a, 80));
-    assert_eq!(r.inner.lookups.load(Ordering::SeqCst), 3);
+    assert_eq!(r.inner.lookups.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test(start_paused = true)]
@@ -189,4 +189,20 @@ async fn many_callers_cancelled_at_once_leave_the_map_empty() {
         }
         assert!(r.flights.lock().unwrap().is_empty());
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn connects_to_one_name_on_many_ports_share_one_lookup_and_each_gets_its_own_port() {
+    let r = Coalescing::new(Slow::new(Duration::from_secs(5)));
+    let n = name("a.example");
+    let all =
+        futures_util::future::join_all((1000..1050_u16).map(|port| r.resolve(&n, port))).await;
+    assert_eq!(r.inner.lookups.load(Ordering::SeqCst), 1);
+    for (answer, port) in all.into_iter().zip(1000..1050_u16) {
+        let addrs = answer.unwrap();
+        assert_eq!(addrs.len(), 1);
+        assert_eq!(addrs[0].port(), port);
+        assert_eq!(ip(&addrs), 1);
+    }
+    assert!(r.flights.lock().unwrap().is_empty());
 }

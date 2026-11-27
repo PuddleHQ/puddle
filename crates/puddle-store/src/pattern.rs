@@ -124,7 +124,7 @@ impl Pattern {
     #[must_use]
     pub fn matches(&self, host: &Host) -> bool {
         match (self, host) {
-            (Self::Exact(want), host) => want == host,
+            (Self::Exact(want), host) => want.folded() == host.folded(),
             (Self::Suffix(suffix), Host::Name(name)) => {
                 let base = suffix.base().as_str();
                 name.as_str()

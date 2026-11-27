@@ -47,7 +47,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let mut route_alive = inner.live.lock().await.contains_key(name);
         if let Some(sandbox) = sandbox.filter(|_| !route_alive && !moved) {
             // An earlier run of Puddle made it: it is kept when this run can serve its route.
-            route_alive = self.adopt_sandbox(name, &sandbox.routes).await;
+            route_alive = self.adopt_sandbox(name, &sandbox.routes).await?;
         }
         let looked = began.elapsed();
         tracing::debug!(workspace = %name, sandbox_exists = exists, route_alive, moved, "workspace start: what was found");
@@ -116,9 +116,14 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     /// Takes over the sandbox an earlier run of Puddle made, so it starts again with its root disk
     /// (home directory, installed packages): binds the workspace's route and keeps the sandbox only
     /// if that is the endpoint the sandbox was made with (`routes`, from the runtime). Otherwise
-    /// (a sandbox from before routes were stable, a name another process holds) nothing is kept
-    /// and the caller makes a new sandbox on the same volume, as before.
-    async fn adopt_sandbox(&self, name: &WorkspaceId, routes: &[VsockRoute]) -> bool {
+    /// (a sandbox from before routes were stable) nothing is kept and the caller makes a new
+    /// sandbox on the same volume, as before. A name another process holds is an error, not
+    /// "otherwise": making the sandbox again would drop its root disk.
+    async fn adopt_sandbox(
+        &self,
+        name: &WorkspaceId,
+        routes: &[VsockRoute],
+    ) -> Result<bool, OpError> {
         let inner = &self.inner;
         // A sandbox whose volume is gone cannot start: the new-sandbox path refuses that with the
         // volume-missing state, which is the answer to give.
@@ -127,34 +132,23 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 if volumes
                     .iter()
                     .any(|v| v.name == name.volume_name().as_str()) => {}
-            _ => return false,
+            _ => return Ok(false),
         }
-        let bound = match inner.kit.route(name) {
-            Ok(route) => Some(route),
-            Err(reason) => {
-                tracing::warn!(workspace = %name, %reason, "no route for the sandbox of an earlier run");
-                None
-            }
-        };
-        let route = match bound {
-            Some(route) if BootKit::serves(routes, &route) => route,
-            other => {
-                if let Some(route) = other {
-                    route.shutdown().await;
-                }
-                self.progress(
-                    name,
-                    WorkspaceStep::Starting,
-                    Some(
-                        "its sandbox was made with a route this run of Puddle cannot serve, so \
-                         it is made again; the volume with your work is kept, what was installed \
-                         outside it is not"
-                            .to_owned(),
-                    ),
-                );
-                return false;
-            }
-        };
+        let route = inner.kit.route(name)?;
+        if !BootKit::serves(routes, &route) {
+            route.shutdown().await;
+            self.progress(
+                name,
+                WorkspaceStep::Starting,
+                Some(
+                    "its sandbox was made with a route this run of Puddle cannot serve, so it \
+                     is made again; the volume with your work is kept, what was installed \
+                     outside it is not"
+                        .to_owned(),
+                ),
+            );
+            return Ok(false);
+        }
         inner.live.lock().await.insert(
             name.clone(),
             Live {
@@ -169,7 +163,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 rewrite: Arc::default(),
             },
         );
-        true
+        Ok(true)
     }
 
     /// Starts the stopped sandbox again, with the workspace's variables as they are now: a changed

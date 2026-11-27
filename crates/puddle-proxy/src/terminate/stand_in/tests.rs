@@ -501,6 +501,11 @@ fn registering_is_checked() {
         "*.co.uk",
         "*.azurewebsites.net",
         "*.s3.amazonaws.com",
+        // Registrable themselves, with public suffixes below (`s3.amazonaws.com`,
+        // `blob.core.windows.net`): a guest owns `x.s3.amazonaws.com`.
+        "*.amazonaws.com",
+        "*.windows.net",
+        "*.core.windows.net",
     ] {
         let wide = TerminationSet::parse(["github.com", shared]).unwrap();
         assert!(
@@ -510,7 +515,13 @@ fn registering_is_checked() {
     }
     // An exact name below a shared domain is the user's own choice; a pattern below a
     // registrable domain is fine.
-    for fine in ["a.github.io", "*.githubcopilot.com", "*.example.co.uk"] {
+    for fine in [
+        "a.github.io",
+        "*.githubcopilot.com",
+        "*.example.co.uk",
+        "*.api.github.com",
+        "a.amazonaws.com",
+    ] {
         let set = TerminationSet::parse([fine]).unwrap();
         assert!(new("N", GH, "r", set).is_ok(), "{fine}");
     }

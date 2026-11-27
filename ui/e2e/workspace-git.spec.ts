@@ -128,6 +128,7 @@ test("adds a repository by its address and removes one", async ({
     .getByLabel("Add a repository")
     .fill("https://github.com/Acme/Billing.git");
   await page.getByLabel("Push", { exact: true }).uncheck();
+  await page.getByLabel("Clone immediately").uncheck();
   await page.getByRole("button", { name: "Add repository" }).click();
   await expect(page.getByText("Listed github.com/acme/billing.")).toBeVisible();
   await expect(
@@ -154,6 +155,7 @@ test("refuses an address it cannot read, in the create form's words, and a repos
 }) => {
   await open(page, backend);
   const url = page.getByLabel("Add a repository");
+  await page.getByLabel("Clone immediately").uncheck();
   await url.fill("git@example.com:acme/x.git");
   await page.getByRole("button", { name: "Add repository" }).click();
   await expect(page.getByRole("alert")).toContainText(

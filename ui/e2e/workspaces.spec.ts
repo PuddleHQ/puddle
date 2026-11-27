@@ -247,9 +247,10 @@ test.describe("creating", () => {
     await expect(dialog).toHaveCount(0);
     const created = card(page, "Ledger_Service");
     await expect(created).toContainText("Creating");
+    // A workspace being created reads "created" but offers no Start until it is done.
     await expect(
       created.getByRole("button", { name: "Start Ledger_Service" }),
-    ).toBeDisabled();
+    ).toHaveCount(0);
     // The service reports where it is, with the bytes while an image comes down.
     await backend.control.emit({
       type: "workspace_progress",
@@ -478,7 +479,7 @@ test.describe("start and stop", () => {
       detail: null,
     });
     await expect(docs).toContainText("Syncing your settings");
-    await expect(docs).toContainText("step 2 of 2");
+    await expect(docs).toContainText("step 3 of 3");
     await backend.control.step({ do: "release_workspaces" });
     await expect(toast(page, "docs-site is running.")).toBeVisible();
     await expect(docs).toContainText("Running");

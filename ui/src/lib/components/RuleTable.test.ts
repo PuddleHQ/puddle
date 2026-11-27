@@ -118,6 +118,30 @@ describe("RuleTable", () => {
     expect(screen.queryByRole("menuitem", { name: /^Edit rule/ })).toBeNull();
   });
 
+  it("keeps the expiry in the host cell for the narrow layout, where the Expires column steps aside", () => {
+    render(RuleTable, {
+      props: {
+        rules: [
+          rule(1, { pattern: "never.example.com", expires_at: null }),
+          rule(2, {
+            pattern: "soon.example.com",
+            expires_at: 5_000_000 + 3_600_000,
+          }),
+          rule(3, { pattern: "old.example.com", expires_at: 1_000 }),
+        ],
+        sort: DEFAULT_SORT,
+        now: 5_000_000,
+      },
+    });
+    const when = (id: number) =>
+      document
+        .querySelector(`[data-rule-id="${id}"] td.host`)
+        ?.getAttribute("data-when");
+    expect(when(1)).toBeNull();
+    expect(when(2)).toBe("Expires in 1 hour");
+    expect(when(3)).toBe("Expired");
+  });
+
   it("shows an expired rule as expired alone: no switch, no pill, and Renew in its menu", async () => {
     const onExpiry = vi.fn();
     const lapsed = [rule(1, { pattern: "old.example.com", expires_at: 1_000 })];

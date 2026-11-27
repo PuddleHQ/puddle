@@ -53,6 +53,7 @@ import {
 import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
 import { pending } from "#lib/stores/pending.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
+import { mine } from "#lib/testing/fake-rule-sets.ts";
 import InboxPage from "../../routes/inbox/+page.svelte";
 
 const { inbox, setsApi, request } = h;
@@ -139,5 +140,49 @@ describe("the more-choices popover", () => {
     await vi.waitFor(() =>
       expect(screen.queryByRole("dialog", { hidden: true })).toBeNull(),
     );
+  });
+});
+
+describe("a request that needs an exact allow", () => {
+  async function optionsFor(exactOnly: boolean) {
+    setsApi.sets = [mine(4, { name: "Client X" })];
+    inbox.add(
+      request(1, { host: "a.example.com", exact_only: exactOnly }),
+      "example.com",
+    );
+    render(InboxPage);
+    await screen.findByRole("heading", { name: "example.com" });
+    await vi.waitFor(() =>
+      expect(setsApi.calls).toContain("GET /api/rule-sets"),
+    );
+    await fireEvent.click(
+      screen.getByRole("button", { name: /^More choices for a\.example\.com/ }),
+    );
+    const dialog = await screen.findByRole("dialog", { hidden: true });
+    if (dialog.parentElement) dialog.parentElement.style.visibility = "visible";
+    return dialog;
+  }
+
+  it("offers neither a subdomain choice nor a rule set", async () => {
+    const dialog = await optionsFor(true);
+    expect(
+      within(dialog).queryByRole("radio", { name: /^Everything under/ }),
+    ).toBeNull();
+    expect(
+      within(dialog).queryByRole("radio", { name: /Into rule set/ }),
+    ).toBeNull();
+    expect(
+      within(dialog).getByRole("radio", { name: /^Every workspace/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("offers both for an ordinary request", async () => {
+    const dialog = await optionsFor(false);
+    expect(
+      within(dialog).getByRole("radio", { name: /^Everything under/ }),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("radio", { name: /Into rule set Client X/ }),
+    ).toBeInTheDocument();
   });
 });

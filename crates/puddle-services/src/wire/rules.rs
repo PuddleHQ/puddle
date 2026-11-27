@@ -154,6 +154,10 @@ pub struct PendingRequest {
     /// tell a company address from the plain range it also falls in.
     #[schema(required = true, value_type = Option<puddle_types::CompanySignal>)]
     pub company_signal: Option<String>,
+    /// Whether the name resolved to a local address: only an exact allow decides
+    /// it, so approving with a suffix or into a rule set is refused (rules spec R-16). A client
+    /// offers only the exact choice for an open one.
+    pub exact_only: bool,
 }
 
 impl PendingRequest {
@@ -176,6 +180,7 @@ impl PendingRequest {
             rule_id,
             rule_set,
             program,
+            exact_only,
         } = row;
         Ok(Self {
             id: id.0,
@@ -193,6 +198,7 @@ impl PendingRequest {
             program: program.map(|p| p.to_string()),
             blocked_by: None,
             company_signal: None,
+            exact_only,
         })
     }
 }

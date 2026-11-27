@@ -315,6 +315,7 @@ fn raw_pending_rows_with_bad_fields_are_corrupt() {
         rule_id: None,
         rule_set: None,
         program: None,
+        exact_only: false,
     };
     assert!(pending_from_raw(&base()).is_ok());
     let cases: Vec<fn(&mut RawPending)> = vec![

@@ -64,6 +64,7 @@ function asRequest(v: unknown): PendingRequest | undefined {
     program: null,
     blocked_by: null,
     company_signal: null,
+    exact_only: false,
   };
 }
 

@@ -156,6 +156,9 @@ pub(crate) struct GuestInputs<'a> {
     pub(crate) ssh_agent: bool,
     /// The managed mise layer, when it is on for this workspace.
     pub(crate) mise: Option<&'a MiseLayer>,
+    /// The boot step that binds the volume at its mount point in a sandbox an older Puddle made
+    /// with the volume elsewhere; it runs before every other step.
+    pub(crate) older_mount: Option<&'a GuestFile>,
     /// The workspace's name, which an interactive bash prompt shows instead of the guest's host
     /// name (the id).
     pub(crate) label: &'a str,
@@ -345,6 +348,9 @@ impl BootKit {
                 guest.root,
                 &crate::editor_file::start_path(guest.root, guest.start_folder),
             ));
+        if let Some(step) = guest.older_mount {
+            builder = builder.file(step.clone()).step(step.path().clone());
+        }
         if let Some(file) = guest.editor_file {
             builder = builder.file(file.clone());
         }

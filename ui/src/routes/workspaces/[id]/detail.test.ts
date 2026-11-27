@@ -6,34 +6,31 @@ import {
   screen,
   within,
 } from "@testing-library/svelte";
+import { SvelteMap } from "svelte/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { components } from "#lib/api/schema.d.ts";
 
-const url = await vi.hoisted(async () => {
-  // Reading `params` is tracked, so a test can change the id the way a navigation does.
-  const { SvelteMap } = await import("svelte/reactivity");
-  const navigations = new SvelteMap([["n", 0]]);
-  return {
-    pathname: "/workspaces/w-demo",
-    id: "w-demo",
-    navigations,
-    navigate(id: string) {
-      this.id = id;
-      navigations.set("n", (navigations.get("n") ?? 0) + 1);
-    },
-  };
-});
+const url = vi.hoisted(() => ({
+  pathname: "/workspaces/w-demo",
+  id: "w-demo",
+}));
 vi.mock("$app/state", () => ({
   page: {
     get url() {
       return new URL(`http://127.0.0.1${url.pathname}`);
     },
     get params() {
-      url.navigations.get("n");
+      navigations.get("n");
       return { id: url.id };
     },
   },
 }));
+// Reading `params` is tracked, so a test can change the id the way a navigation does.
+const navigations = new SvelteMap([["n", 0]]);
+function navigate(id: string) {
+  url.id = id;
+  navigations.set("n", (navigations.get("n") ?? 0) + 1);
+}
 const goto = vi.hoisted(() => vi.fn());
 vi.mock("$app/navigation", () => ({ goto }));
 
@@ -433,7 +430,7 @@ describe("the detail layout", () => {
     await load();
     render(DetailLayout, { children: (() => {}) as never });
     await screen.findByRole("heading", { level: 1, name: "demo" });
-    url.navigate("nope");
+    navigate("nope");
     expect(
       await screen.findByRole("heading", { name: "No such workspace" }),
     ).toBeInTheDocument();

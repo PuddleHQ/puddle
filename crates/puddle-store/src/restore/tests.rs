@@ -742,3 +742,68 @@ fn the_preview_lists_the_pasted_tokens_of_the_backups_identities_and_no_other_so
         }]
     );
 }
+
+#[test]
+fn a_backup_user_named_like_the_owner_never_becomes_the_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    let here = dir.path().join("here.db");
+    let there = dir.path().join("there.db");
+    open(&here);
+    open(&there);
+    sql(
+        &here,
+        &format!(
+            "UPDATE users SET name = 'Tijs' WHERE role = 'owner'; {}",
+            rule("mine.example.org", "allow", 5)
+        ),
+    );
+    sql(
+        &there,
+        "INSERT INTO users (id, role, name, created_at) VALUES (2, 'user', 'tijs', 1);
+         INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by, user_id, precedence) \
+         VALUES ('global', 'exact', 'theirs.example.org', 'allow', 1, 'cli', 2, 5);
+         INSERT INTO env_vars (workspace_id, name, kind, value, hosts, changed_at, user_id) \
+         VALUES (NULL, 'THEIRS', 'plain', 'v', NULL, 1, 2);",
+    );
+    let preview = preview_merge(&here, &there).unwrap();
+    assert_eq!(preview.users.add, 1, "{preview:?}");
+    assert_eq!(preview.rules.add, 1, "{preview:?}");
+    assert_eq!(preview.environment.add, 1, "{preview:?}");
+
+    let dest = dir.path().join("new.db");
+    let outcome = restore_database(&here, &there, &dest, RestoreMode::Add).unwrap();
+    // The owner keeps exactly what it had; the backup user is a new user with its own rows.
+    assert_eq!(
+        count(&dest, "SELECT count(*) FROM rules WHERE user_id = 1"),
+        1
+    );
+    assert_eq!(
+        count(&dest, "SELECT count(*) FROM env_vars WHERE user_id = 1"),
+        0
+    );
+    assert_eq!(
+        count(
+            &dest,
+            "SELECT count(*) FROM rules r JOIN users u ON u.id = r.user_id \
+             WHERE u.role = 'user' AND r.pattern = 'theirs.example.org'"
+        ),
+        1
+    );
+    assert_eq!(count(&dest, "SELECT count(*) FROM users"), 2);
+    assert_eq!(
+        count(
+            &dest,
+            "SELECT count(*) FROM users WHERE role = 'owner' AND name = 'Tijs'"
+        ),
+        1
+    );
+    assert_eq!(outcome.user_map, vec![(1, 1), (2, 2)]);
+    // Preview equals apply: a second restore of the same backup adds nothing.
+    let again = dir.path().join("again.db");
+    restore_database(&dest, &there, &again, RestoreMode::Add).unwrap();
+    assert_eq!(count(&again, "SELECT count(*) FROM users"), 2);
+    assert_eq!(count(&again, "SELECT count(*) FROM rules"), 2);
+    let second = preview_merge(&dest, &there).unwrap();
+    assert_eq!(second.users.add, 0, "{second:?}");
+    assert_eq!(second.rules.add, 0, "{second:?}");
+}

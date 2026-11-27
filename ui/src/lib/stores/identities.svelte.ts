@@ -22,7 +22,7 @@ import {
   type Source,
 } from "#lib/identities/model.ts";
 import { isIdentitiesChanged } from "#lib/identities/events.ts";
-import { sentence } from "#lib/rules/model.ts";
+import { sentence } from "#lib/format/sentence.ts";
 import { live, type LiveSource } from "./live.svelte.ts";
 
 type StoreApi = Pick<ApiClient, "GET" | "POST" | "PUT" | "DELETE">;

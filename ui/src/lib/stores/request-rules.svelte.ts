@@ -3,7 +3,7 @@
 // it and delete it. It refetches on `request_rules_changed` and on a resync, and polls slowly as a
 // safety net for a dropped event stream.
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
-import { sentence } from "#lib/rules/model.ts";
+import { sentence } from "#lib/format/sentence.ts";
 import { isRequestRulesChanged } from "#lib/rules/request-rule-events.ts";
 import {
   refusalField,

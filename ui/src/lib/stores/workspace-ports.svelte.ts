@@ -2,7 +2,7 @@
 // One workspace's ports for its tab: what listens in it, what is forwarded to this computer and
 // what is pinned. The page reads the list again on the events that say it changed and on a resync.
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
-import { sentence } from "#lib/rules/model.ts";
+import { sentence } from "#lib/format/sentence.ts";
 import { isPortsEvent, type PortEntry } from "#lib/workspaces/ports.ts";
 import type { LiveSource } from "./live.svelte.ts";
 import { live } from "./live.svelte.ts";

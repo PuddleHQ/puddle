@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use super::*;
@@ -13,35 +12,25 @@ fn send_to_self(signal: &str) {
     assert!(sent);
 }
 
-async fn until(count: &AtomicU32, at_least: u32) {
-    let ran = tokio::time::timeout(Duration::from_secs(5), async {
-        while count.load(Ordering::SeqCst) < at_least {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await;
-    assert!(ran.is_ok(), "the callback ran");
-}
-
 #[tokio::test]
 async fn a_signal_quits_once_and_a_second_one_gives_up() {
-    static QUIT: AtomicU32 = AtomicU32::new(0);
-    static GAVE_UP: AtomicU32 = AtomicU32::new(0);
+    let (quit_tx, mut quit_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (give_up_tx, mut give_up_rx) = tokio::sync::mpsc::unbounded_channel();
     let signals = ShutdownSignals::install().unwrap();
     let task = tokio::spawn(quit_on_signals(
         signals,
-        || {
-            QUIT.fetch_add(1, Ordering::SeqCst);
-        },
-        || {
-            GAVE_UP.fetch_add(1, Ordering::SeqCst);
-        },
+        move || quit_tx.send(()).unwrap(),
+        move || give_up_tx.send(()).unwrap(),
     ));
     send_to_self("-TERM");
-    until(&QUIT, 1).await;
-    assert_eq!(GAVE_UP.load(Ordering::SeqCst), 0, "one signal only quits");
+    let wait = Duration::from_secs(5);
+    assert!(tokio::time::timeout(wait, quit_rx.recv()).await.is_ok());
+    assert!(
+        give_up_rx.try_recv().is_err(),
+        "one signal only quits, it does not give up"
+    );
     send_to_self("-INT");
-    until(&GAVE_UP, 1).await;
+    assert!(tokio::time::timeout(wait, give_up_rx.recv()).await.is_ok());
     task.await.unwrap();
-    assert_eq!(QUIT.load(Ordering::SeqCst), 1);
+    assert!(quit_rx.try_recv().is_err(), "quit ran once");
 }

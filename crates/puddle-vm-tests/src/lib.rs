@@ -30,7 +30,7 @@
 //! # A browser client
 //!
 //! [`BrowserClient`] and [`Node`] drive headless Chromium and node beside the VM (module docs in
-//! `browser.rs`); tests that use them are named `vm_browser_*` so the CI jobs can tell which
+//! `browser.rs`); tests that use them are named `vm_browser_*` (`vm_soak_browser_*` for a soak) so the CI jobs can tell which
 //! partition needs the browser installed.
 //!
 //! # A desktop VS Code client

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! What a hostile guest can make the host's yamux session hold: streams that cost a task each, and
-//! window grants that let the host queue bytes the guest never reads. Each test prints what it
-//! measured (`--nocapture`) so the cost per stream and per grant is on record.
+//! window grants that let the host queue bytes the guest never reads. Each test reports what it
+//! measured in the failure message, so the cost per stream and per grant is on record.
 #![expect(clippy::unwrap_used, reason = "a failed step fails the test")]
 
 use std::time::Duration;
@@ -35,7 +35,7 @@ fn rss_kib() -> u64 {
 /// A guest opens `opened` streams with a SYN each and says nothing else. Returns how many the
 /// host's session accepted and how many it reset, as the guest sees them: every SYN is answered
 /// with an ack or a reset.
-async fn flood(opened: u32) -> (usize, usize) {
+async fn flood(opened: u32) -> (usize, usize, u64) {
     let (peer, ours) = duplex(1 << 20);
     let mut session = Session::new_server(ours, server_config());
     // The accepted streams are held, as the host's stream tasks hold them.
@@ -68,23 +68,26 @@ async fn flood(opened: u32) -> (usize, usize) {
     }
     let (accepted, resets) = tokio::time::timeout(Duration::from_secs(20), reader)
         .await
-        .expect("not every SYN was answered in 20 s")
+        .unwrap()
         .unwrap();
     let held_kib = rss_kib().saturating_sub(before);
-    eprintln!(
-        "flood of {opened} SYN-only streams: {accepted} accepted, {resets} reset, \
-         about {held_kib} KiB resident for the held streams"
-    );
     driver.abort();
-    (accepted, resets)
+    (accepted, resets, held_kib)
 }
 
 #[tokio::test]
 async fn a_guest_opening_streams_without_end_is_held_to_the_stream_cap() {
     let extra = 1000;
-    let (accepted, resets) = flood(MAX_STREAMS as u32 + extra).await;
-    assert_eq!(accepted, MAX_STREAMS);
-    assert_eq!(resets, extra as usize, "each stream past the cap is reset");
+    let (accepted, resets, held_kib) = flood(u32::try_from(MAX_STREAMS).unwrap() + extra).await;
+    assert_eq!(
+        accepted, MAX_STREAMS,
+        "{held_kib} KiB resident for the held streams"
+    );
+    assert_eq!(
+        resets,
+        usize::try_from(extra).unwrap(),
+        "each stream past the cap is reset"
+    );
 }
 
 #[tokio::test]
@@ -129,18 +132,13 @@ async fn a_guest_granting_more_window_than_it_reads_cannot_make_the_host_queue_i
         }
     }
     let held_kib = rss_kib().saturating_sub(before);
-    eprintln!(
-        "one stream, a grant of nearly 4 GiB, a guest that reads nothing: {} MiB queued, \
-         about {held_kib} KiB resident",
-        queued >> 20
-    );
     assert!(
         queued >= STREAM_WINDOW as usize,
         "the host queued only {queued} bytes: the window is cut too far"
     );
     assert!(
         queued <= (STREAM_WINDOW + INITIAL_STREAM_WINDOW) as usize,
-        "the host queued {queued} bytes for a guest that reads none"
+        "the host queued {queued} bytes ({held_kib} KiB resident) for a guest that reads none"
     );
     driver.abort();
 }

@@ -274,7 +274,7 @@ impl From<Keybindings> for String {
 
 /// The editor setting keys Puddle owns through their own fields; [`CustomEditorSettings`] refuses
 /// them so one key has one owner.
-pub const OWNED_EDITOR_KEYS: [(&str, &str); 3] = [
+pub(crate) const OWNED_EDITOR_KEYS: [(&str, &str); 3] = [
     ("workbench.colorTheme", "the colour theme field"),
     ("window.autoDetectColorScheme", "the colour theme field"),
     ("editor.fontSize", "the font size field"),

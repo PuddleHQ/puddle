@@ -1583,6 +1583,23 @@ describe("the settings tab", () => {
       expect(api.overrides["w-demo"]?.editor.keybindings).toBeNull(),
     );
 
+    await fireEvent.input(screen.getByLabelText("Custom editor settings"), {
+      target: { value: '{"a.b":1}' },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Save Custom editor settings" }),
+    );
+    await own("editor-custom-settings");
+    expect(api.overrides["w-demo"]?.editor.settings).toBe('{"a.b":1}');
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "Use the global setting again for Custom editor settings",
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(api.overrides["w-demo"]?.editor.settings).toBeNull(),
+    );
+
     await fireEvent.input(screen.getByLabelText("Editor colour theme"), {
       target: { value: "Solarized Dark" },
     });

@@ -75,11 +75,16 @@ fn the_copy_keeps_the_users_and_none_of_their_sign_in_secrets() {
     secrets
         .put_invite(owner, b"CANARY-invite-digest-bytes", 9_999_999)
         .unwrap();
+    let device = store.add_device(owner, "desktop", 5_000).unwrap();
+    secrets
+        .put_session(device.id, b"CANARY-refresh-digest-bytes-0123456789")
+        .unwrap();
     let dest = dir.path().join("copy.db");
     backup_database(&src, &dest).unwrap();
 
     let bytes = std::fs::read(&dest).unwrap();
     for canary in [
+        &b"CANARY-refresh-digest-bytes"[..],
         &b"CANARY-password-hash"[..],
         &b"CANARY-invite-digest-bytes"[..],
     ] {
@@ -107,8 +112,22 @@ fn the_copy_keeps_the_users_and_none_of_their_sign_in_secrets() {
             .is_none()
     );
     assert!(
+        copied_secrets
+            .session_for(b"CANARY-refresh-digest-bytes-0123456789")
+            .unwrap()
+            .is_none(),
+        "the session is gone"
+    );
+    assert!(
         secrets.check_password(owner, |_| true).unwrap(),
         "the live database keeps its own"
+    );
+    assert!(
+        secrets
+            .session_for(b"CANARY-refresh-digest-bytes-0123456789")
+            .unwrap()
+            .is_some(),
+        "the live database keeps its session"
     );
 }
 

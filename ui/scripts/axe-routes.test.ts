@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 const ui = resolve(import.meta.dirname, "..");
 
 /** Routes with no scan yet. A route leaves this list when a spec scans it, and the test says so. */
-const NOT_SCANNED_YET = ["/workspaces/new"];
+const NOT_SCANNED_YET: string[] = [];
 
 function files(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>

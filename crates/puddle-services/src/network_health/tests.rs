@@ -2,7 +2,7 @@
 use super::*;
 
 #[test]
-fn a_pac_that_answered_or_failed_is_reported_whatever_was_detected() {
+fn a_pac_that_answered_is_reported_whatever_was_detected() {
     for detected in [
         Detected::Pac,
         Detected::Wpad,
@@ -11,14 +11,27 @@ fn a_pac_that_answered_or_failed_is_reported_whatever_was_detected() {
     ] {
         for auto_detect in [false, true] {
             assert_eq!(
-                pac_state(detected, Some(false), auto_detect),
-                PacState::Unreachable
-            );
-            assert_eq!(
                 pac_state(detected, Some(true), auto_detect),
                 PacState::Answering
             );
         }
+    }
+}
+
+#[test]
+fn a_configured_pac_that_failed_is_unreachable() {
+    for auto_detect in [false, true] {
+        assert_eq!(
+            pac_state(Detected::Pac, Some(false), auto_detect),
+            PacState::Unreachable
+        );
+    }
+}
+
+#[test]
+fn automatic_detection_that_finds_no_server_is_not_a_failure() {
+    for detected in [Detected::Wpad, Detected::Static, Detected::Direct] {
+        assert_eq!(pac_state(detected, Some(false), true), PacState::NotUsed);
     }
 }
 

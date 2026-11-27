@@ -8,7 +8,7 @@
 // as text by the screens.
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import { isRepoListsChanged } from "#lib/identities/events.ts";
-import { sentence } from "#lib/rules/model.ts";
+import { sentence } from "#lib/format/sentence.ts";
 import {
   nextRetryDelay,
   type RepoListing,

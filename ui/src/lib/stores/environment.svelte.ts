@@ -6,7 +6,7 @@
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import type { EnvSet, EnvVariable } from "#lib/environment/model.ts";
 import { isEnvChanged } from "#lib/environment/events.ts";
-import { sentence } from "#lib/rules/model.ts";
+import { sentence } from "#lib/format/sentence.ts";
 import type { LiveSource } from "./live.svelte.ts";
 import { live } from "./live.svelte.ts";
 import type { Result } from "./identities.svelte.ts";

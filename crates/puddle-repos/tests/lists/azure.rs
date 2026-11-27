@@ -256,6 +256,89 @@ async fn a_signed_in_credential_another_organisation_refuses_is_not_dropped_for_
 }
 
 #[tokio::test]
+async fn an_azure_cli_credential_with_no_organisation_is_kept_when_only_one_refuses_it() {
+    let rig = Rig::new();
+    rig.api
+        .reply("dev.azure.com", LIST, json("azure_repositories.json"));
+    rig.api.reply(
+        "dev.azure.com",
+        "/contoso/_apis/git/repositories?api-version=7.1",
+        ApiReply::new(203, data("azure_sign_in.html")).with_header("content-type", "text/html"),
+    );
+    let source = az_cli("fabrikam.onmicrosoft.com", None);
+    rig.tokens
+        .set(&source, "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl");
+    let ids = identities(vec![(
+        "Work",
+        vec![binding(
+            "dev.azure.com",
+            source,
+            &["acme", "contoso"],
+            false,
+        )],
+    )]);
+
+    let lists = rig.lists(&ids, Freshness::Cached).await;
+
+    let state_of = |org: &str| {
+        lists
+            .iter()
+            .find(|l| l.organisation.as_deref() == Some(org))
+            .unwrap()
+    };
+    assert_eq!(state_of("acme").state, ListState::Ok);
+    let refused = state_of("contoso").problem.as_ref().unwrap();
+    assert_eq!(refused.kind, ProblemKind::NotFound);
+    assert!(!refused.needs_sign_in, "{}", refused.message);
+    assert!(
+        rig.tokens.invalidated().is_empty(),
+        "the token works for acme, so it is not dropped from the cache"
+    );
+}
+
+#[tokio::test]
+async fn an_azure_cli_credential_every_organisation_refuses_is_dropped_from_the_cache() {
+    let rig = Rig::new();
+    let page =
+        ApiReply::new(203, data("azure_sign_in.html")).with_header("content-type", "text/html");
+    rig.api.reply("dev.azure.com", LIST, page.clone());
+    rig.api.reply(
+        "dev.azure.com",
+        "/contoso/_apis/git/repositories?api-version=7.1",
+        page,
+    );
+    let source = az_cli("fabrikam.onmicrosoft.com", None);
+    rig.tokens
+        .set(&source, "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl");
+    let ids = identities(vec![(
+        "Work",
+        vec![binding(
+            "dev.azure.com",
+            source.clone(),
+            &["acme", "contoso"],
+            false,
+        )],
+    )]);
+
+    let first = rig.lists(&ids, Freshness::Cached).await;
+    // The organisation read last has seen every other one refuse; the next round sees them all.
+    rig.clock.advance(60_000);
+    let second = rig.lists(&ids, Freshness::Reload).await;
+
+    assert!(
+        first
+            .iter()
+            .any(|l| l.problem.as_ref().is_some_and(|p| p.needs_sign_in))
+    );
+    assert!(second.iter().all(|l| {
+        l.problem
+            .as_ref()
+            .is_some_and(|p| p.kind == ProblemKind::TokenRejected && p.needs_sign_in)
+    }));
+    assert!(rig.tokens.invalidated().contains(&source));
+}
+
+#[tokio::test]
 async fn a_signed_in_credential_its_own_organisation_refuses_is_dropped_from_the_cache() {
     let rig = Rig::new();
     rig.api.reply(

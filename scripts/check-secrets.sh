@@ -179,6 +179,11 @@ expect fail other-token-in-log-canary-file crates/puddle-proxy/tests/terminate_s
 expect fail log-canary-token-outside-listed-path src/app.rs "const T: &str = \"$canary_token\";"
 expect fail token-in-listed-file crates/puddle-proxy/tests/integration/route.rs "let t = \"$token\";"
 expect fail canary-outside-listed-paths src/lib.rs '    password: "CANARY-s3cret".into(),'
+# The history-only entry for the old app errors e2e fixture is anchored by commit id AND path: a
+# fresh commit holding a token-shaped value at that very path, or the old shape elsewhere, still fails.
+hex="9f3a7c1e5b2d48a6"; hex="$hex$hex$hex$hex"
+expect fail history-only-entry-not-reusable-at-its-path ui/e2e/app-errors.spec.ts "const apiKey = \"$hex\";"
+expect fail history-only-entry-not-reusable-at-another-path ui/e2e/other.spec.ts "const apiKey = \"$hex\";"
 
 # Canary and allowlist entry in one commit. The fixture config lists the canary token for its path.
 canary_config() { # <with|without>: a minimal config, with the allowlist entry or without it

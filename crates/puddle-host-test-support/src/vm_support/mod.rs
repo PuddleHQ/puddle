@@ -535,6 +535,19 @@ fn split_word(value: &str) -> String {
     format!("\"{head}\"\"{tail}\"")
 }
 
+/// Filesystems that are not disk: the token search prunes these by mount type, never by folder
+/// name, so a `dev/` or `proc/` folder anywhere else is still searched.
+const PSEUDO_FS: &str = "proc|sysfs|devtmpfs|devpts|cgroup|cgroup2|mqueue|securityfs|debugfs|tracefs|binfmt_misc|configfs|fusectl|pstore|bpf|autofs|hugetlbfs|selinuxfs";
+
+/// Where the control plants the first token: a plain file, a nested `dev/proc/sys` folder, the
+/// tmpfs under `/dev/shm`, and the `Authorization` base64 form.
+const PLANTED_FILES: [&str; 4] = [
+    "/root/planted.txt",
+    "/root/dev/proc/sys/planted-nested.txt",
+    "/dev/shm/planted-shm.txt",
+    "/root/planted-b64.txt",
+];
+
 /// The guest holds none of `tokens`: not in any process's environment or command line, not in any
 /// file of the disk, neither plain nor in the two base64 forms a Git `Authorization` header takes.
 /// The control comes first: the first token planted in a file and in a process's environment must
@@ -553,19 +566,31 @@ pub async fn assert_guest_holds_no_token(vm: &VmHost, sandbox: &WorkspaceId, tok
     let search = format!(
         "rm -f /dev/shm/.p; {patterns}\
          echo procs=$(cat /proc/[0-9]*/environ /proc/[0-9]*/cmdline 2>/dev/null | tr '\\0' '\\n' | grep -cFf /dev/shm/.p); \
-         echo files=$(grep -rlaFf /dev/shm/.p --exclude-dir=proc --exclude-dir=sys --exclude-dir=dev --exclude=.p / 2>/dev/null | grep -v '^/dev/shm/.p$' | tr '\\n' ' '); \
+         echo files=$(while read -r _ mp fs _; do case $fs in {PSEUDO_FS}) ;; *) \
+         find \"$mp\" -xdev -type f ! -path /dev/shm/.p -exec grep -laFf /dev/shm/.p {{}} + 2>/dev/null;; esac; done </proc/mounts | tr '\\n' ' '); \
          rm -f /dev/shm/.p; echo done"
     );
     let planted = format!(
         "w={w}; printf '%s\\n' \"$w\" > /root/planted.txt; \
-         env PLANTED=\"$w\" sleep 120 & pid=$!; sleep 1; {search}; kill $pid; rm -f /root/planted.txt",
+         mkdir -p /root/dev/proc/sys /dev/shm; \
+         printf '%s\\n' \"$w\" > /root/dev/proc/sys/planted-nested.txt; \
+         printf '%s\\n' \"$w\" > /dev/shm/planted-shm.txt; \
+         printf 'x-access-token:%s' \"$w\" | base64 -w0 > /root/planted-b64.txt; \
+         env PLANTED=\"$w\" sleep 120 & pid=$!; sleep 1; {search}; kill $pid; \
+         rm -rf /root/planted.txt /root/planted-b64.txt /root/dev /dev/shm/planted-shm.txt",
         w = split_word(first)
     );
     let control = guest_within(&vm.runtime, sandbox, &planted, Duration::from_secs(600)).await;
     assert!(
-        !control.contains("procs=0") && control.contains("/root/planted.txt"),
-        "the search must find a planted token in a process and in a file: {control}"
+        !control.contains("procs=0"),
+        "the search must find a planted token in a process: {control}"
     );
+    for planted in PLANTED_FILES {
+        assert!(
+            control.contains(planted),
+            "the search must find a token planted at {planted}: {control}"
+        );
+    }
     let found = guest_within(&vm.runtime, sandbox, &search, Duration::from_secs(600)).await;
     assert!(
         found.contains("procs=0"),

@@ -130,7 +130,10 @@ use puddle_types::{
     WorkspaceStatus,
 };
 use puddle_upstream::{Discovery, FakeOs, Mode, ProxyConfig};
-use puddle_workspace::{CLEAR_LOCKS_SH, CLONE_SH, DELETE_CHECK_SH, FINISH_IMPORT_SH, PREPARE_SH};
+use puddle_workspace::{
+    CLEAR_LOCKS_SH, CLONE_SH, DELETE_CHECK_SH, FINISH_IMPORT_SH, OLDER_MOUNT_SH,
+    OLDER_MOUNT_STEP_GUEST, PREPARE_SH,
+};
 use rustls::pki_types::pem::PemObject;
 use serde_json::json;
 use support::{Api, TestDevCert, ended, hermetic_options, named_id_options};

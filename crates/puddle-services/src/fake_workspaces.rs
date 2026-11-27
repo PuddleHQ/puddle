@@ -892,6 +892,7 @@ impl WorkspaceService for FakeWorkspaces {
                 Operation::Starting,
                 vec![
                     (WorkspaceStep::Starting, None, None),
+                    (WorkspaceStep::WaitingForAgent, None, None),
                     (WorkspaceStep::Syncing, None, None),
                 ],
             );

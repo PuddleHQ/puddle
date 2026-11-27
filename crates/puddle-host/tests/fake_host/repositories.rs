@@ -1186,16 +1186,20 @@ async fn the_workspaces_list_shows_each_checkouts_branch_from_the_listing_made_a
     let api = api(&host);
     let mut events = api.events().await;
     create(&api, &mut events, "adds").await;
-    eventually("the background listing", Duration::from_secs(10), || {
-        !rig.guest.listings.lock().unwrap().is_empty()
-    })
+    // The fake counts a listing before it answers, so "the guest ran it" is not "the host kept
+    // its branches": wait on the list itself. A read of the workspace never lists the checkouts,
+    // so before anything asks for them only the listing the attach made can have kept the branch.
+    let list = puddle_test_kit::eventually_async(
+        "the attach's listing is kept for the list",
+        APPLY,
+        || async {
+            let list = api.get("/api/workspaces/adds").await.json();
+            list["repositories"][0]["branch"]
+                .is_string()
+                .then_some(list)
+        },
+    )
     .await;
-    // Before anything asks for the checkouts: only the listing the attach made can have kept it.
-    let list = api.get("/api/workspaces/adds").await.json();
-    assert!(
-        list["repositories"][0]["branch"].is_string(),
-        "the attach's listing is kept for the list: {list}"
-    );
     let listed = checkouts_of(&api, "adds").await;
     assert_eq!(
         list["repositories"][0]["branch"], listed["checkouts"][0]["branch"],

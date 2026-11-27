@@ -25419,6 +25419,7 @@
           "unpacking_image",
           "cloning",
           "starting",
+          "waiting_for_agent",
           "syncing",
           "checking",
           "reclaiming",

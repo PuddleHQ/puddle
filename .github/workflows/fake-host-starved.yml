@@ -3,7 +3,7 @@
 # 20 times in a row on 2 CPUs beside busy loops, as one process (the way plain `cargo test` runs it), because a race
 # between test threads of one process, such as a data-folder lock still held by a forked copy of its descriptor, does not
 # exist under nextest's process per test (the nextest runs of stress.yml). A failing run fails the job, which opens
-# "Nightly red: fake-host-starved" through nightly-signal.yml; the job keeps the first failure's log and the processes
+# "Nightly red: fake-host-starved" through nightly-signal.yml; the job keeps every failing run's log and the processes
 # that held host.lock as an artifact. Not a required check; it runs only on the schedule and by hand.
 name: fake-host-starved
 
@@ -53,10 +53,10 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ failure() }}
         with:
-          name: fake-host-starved-first-failure
+          name: fake-host-starved-failures
           path: |
-            target/fake-host-starved/first-failure.log
-            target/fake-host-starved/first-failure-holders.txt
+            target/fake-host-starved/failure-*.log
+            target/fake-host-starved/failure-*-holders.txt
             target/fake-host-starved/result.env
           retention-days: 14
           if-no-files-found: ignore

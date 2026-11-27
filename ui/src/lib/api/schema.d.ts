@@ -7529,7 +7529,7 @@ export interface components {
          * @description Where a long workspace operation is, as [`Event::WorkspaceProgress`] reports it.
          * @enum {string}
          */
-        WorkspaceStep: "preparing_volume" | "pulling_image" | "unpacking_image" | "cloning" | "starting" | "syncing" | "checking" | "reclaiming" | "resetting_root_disk" | "growing_root_disk" | "stopping" | "removing" | "done" | "failed";
+        WorkspaceStep: "preparing_volume" | "pulling_image" | "unpacking_image" | "cloning" | "starting" | "waiting_for_agent" | "syncing" | "checking" | "reclaiming" | "resetting_root_disk" | "growing_root_disk" | "stopping" | "removing" | "done" | "failed";
         /** @description Changes a workspace's two switches; a switch left out stays as it is. */
         WorkspaceSwitchesRequest: {
             /** @description "Only pull from allowed repositories": the workspace's own value. */

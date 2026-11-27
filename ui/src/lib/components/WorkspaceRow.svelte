@@ -101,7 +101,9 @@
       {/if}
     </p>
     <div class="acts">
-      {#if down}
+      {#if workspace.busy === "creating"}
+        <!-- A workspace being created reads "created" but cannot be started yet. -->
+      {:else if down}
         <button
           type="button"
           class="btn primary"

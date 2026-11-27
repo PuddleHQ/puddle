@@ -149,6 +149,20 @@ struct Entry {
     generation: u64,
     /// A read in the background is under way, so no second one is started for the same list.
     revalidating: bool,
+    /// The host's last answer to this list's read was a rejection of the token, whatever the list
+    /// then reports. Other organisations of the same credential read it to tell a bad token from
+    /// an organisation the account is not in.
+    token_rejected: bool,
+}
+
+/// How long a profile read's rate-limit record is kept after it was last changed.
+const PROFILE_LIMIT_AGE_MS: u64 = 60 * 60_000;
+
+/// The limit a profile read ran into: the wait and the strikes behind it.
+struct ProfileLimit {
+    strikes: u32,
+    blocked_until: Option<u64>,
+    at: u64,
 }
 
 struct Slot {
@@ -356,6 +370,9 @@ struct Inner {
     clock: Arc<dyn Clock>,
     config: Config,
     slots: Mutex<HashMap<Target, Arc<Slot>>>,
+    /// What a profile read learned about a host's limits, by credential. Apart from `slots`, which
+    /// `lists` prunes to the saved identities: a credential read for the create form is in none.
+    profile_limits: Mutex<HashMap<SourceSpec, ProfileLimit>>,
     reads: Semaphore,
     on_change: OnceLock<OnChange>,
 }
@@ -389,6 +406,7 @@ impl Repos {
                 reads: Semaphore::new(config.concurrent_reads.max(1)),
                 config,
                 slots: Mutex::new(HashMap::new()),
+                profile_limits: Mutex::new(HashMap::new()),
                 on_change: OnceLock::new(),
             }),
         }
@@ -501,6 +519,12 @@ impl Inner {
         self.slots.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    fn profile_limits(&self) -> MutexGuard<'_, HashMap<SourceSpec, ProfileLimit>> {
+        self.profile_limits
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
     fn slot(&self, target: Target) -> Arc<Slot> {
         let mut slots = self.slots();
         let slot = slots
@@ -595,6 +619,7 @@ impl Inner {
             .await
             .map_err(|err| Problem::from_source(&target.source, &err))?;
         let stored = matches!(target.source, SourceSpec::Stored { .. });
+        self.mark_rejected(target, false);
         let result = match &kind {
             Kind::GitHub(endpoint) => {
                 let exchange = self.exchange("GitHub", &target.source, limits::github, strikes);
@@ -619,12 +644,23 @@ impl Inner {
             // A signed-in account reaches the organisations it is a member of: one that refuses
             // it says nothing about the token, which still works for its own.
             Err(problem) if problem.kind == ProblemKind::TokenRejected => {
+                self.mark_rejected(target, true);
                 if let Some((own, organisation)) = elsewhere(target) {
                     Err(Problem::new(
                         ProblemKind::NotFound,
                         format!(
                             "Azure DevOps did not accept this credential for organisation \
                              {organisation}: it is for {own} and does not reach {organisation}; \
+                             check that the account is a member of {organisation}, or take \
+                             {organisation} out of what the credential covers"
+                        ),
+                    ))
+                } else if let Some(organisation) = self.accepted_elsewhere(target) {
+                    Err(Problem::new(
+                        ProblemKind::NotFound,
+                        format!(
+                            "Azure DevOps did not accept this credential for organisation \
+                             {organisation}, and the credential names no organisation of its own; \
                              check that the account is a member of {organisation}, or take \
                              {organisation} out of what the credential covers"
                         ),
@@ -642,6 +678,32 @@ impl Inner {
         let mut listed = result?;
         listed.notes.extend(standing_notes(&target.source, &kind));
         Ok(listed)
+    }
+
+    fn mark_rejected(&self, target: &Target, rejected: bool) {
+        let slot = self.slots().get(target).cloned();
+        if let Some(slot) = slot {
+            slot.entry().token_rejected = rejected;
+        }
+    }
+
+    /// For an Azure DevOps credential that names no organisation of its own and was refused by
+    /// `target`'s organisation: that organisation, unless every other organisation the credential
+    /// reads refused it too (then the token is the bad part). Another organisation that has not
+    /// answered yet counts as not refusing, so the last list read of a bad token settles it.
+    fn accepted_elsewhere(&self, target: &Target) -> Option<String> {
+        if source_organisation(&target.source).is_some() {
+            return None;
+        }
+        let organisation = target.organisation.clone()?;
+        let siblings: Vec<Arc<Slot>> = self
+            .slots()
+            .iter()
+            .filter(|(other, _)| other.source == target.source && *other != target)
+            .map(|(_, slot)| Arc::clone(slot))
+            .collect();
+        let others_refuse = siblings.iter().all(|slot| slot.entry().token_rejected);
+        (!siblings.is_empty() && !others_refuse).then_some(organisation)
     }
 
     fn exchange(
@@ -685,19 +747,18 @@ impl Inner {
             Kind::GitHub(endpoint) => endpoint,
             Kind::Azure => return Ok(azure_profile(source)),
         };
-        let slot = self.slot(Target {
-            source: source.clone(),
-            organisation: None,
-        });
         let strikes = {
-            let entry = slot.entry();
-            if let Some(until) = entry
-                .blocked_until
-                .filter(|until| *until > self.clock.now_ms())
+            let now = self.clock.now_ms();
+            let mut limits = self.profile_limits();
+            limits.retain(|_, kept| now.saturating_sub(kept.at) < PROFILE_LIMIT_AGE_MS);
+            let kept = limits.get(source);
+            if let Some(until) = kept
+                .and_then(|kept| kept.blocked_until)
+                .filter(|until| *until > now)
             {
                 return Err(limited_until(until));
             }
-            entry.strikes
+            kept.map_or(0, |kept| kept.strikes)
         };
         let credential = self
             .secrets
@@ -707,14 +768,17 @@ impl Inner {
         let mut exchange = self.exchange("GitHub", source, limits::github, strikes);
         "account".clone_into(&mut exchange.missing);
         let authorization = Authorization::Bearer(credential.secret);
-        let result = match tokio::time::timeout(
-            self.config.deadline,
-            github::profile(&exchange, endpoint, &authorization),
-        )
-        .await
-        {
-            Ok(result) => result,
-            Err(_) => Err(self.too_slow()),
+        let result = {
+            let _permit = self.reads.acquire().await;
+            match tokio::time::timeout(
+                self.config.deadline,
+                github::profile(&exchange, endpoint, &authorization),
+            )
+            .await
+            {
+                Ok(result) => result,
+                Err(_) => Err(self.too_slow()),
+            }
         };
         match result {
             Ok(mut profile) => {
@@ -724,9 +788,16 @@ impl Inner {
             Err(problem) => {
                 match problem.kind {
                     ProblemKind::RateLimited => {
-                        let mut entry = slot.entry();
-                        entry.strikes = entry.strikes.saturating_add(1);
-                        entry.blocked_until = problem.retry_at;
+                        let now = self.clock.now_ms();
+                        let mut limits = self.profile_limits();
+                        let kept = limits.entry(source.clone()).or_insert(ProfileLimit {
+                            strikes: 0,
+                            blocked_until: None,
+                            at: now,
+                        });
+                        kept.strikes = kept.strikes.saturating_add(1);
+                        kept.blocked_until = problem.retry_at;
+                        kept.at = now;
                     }
                     ProblemKind::TokenRejected if !matches!(source, SourceSpec::Stored { .. }) => {
                         self.secrets.invalidate(source);
@@ -790,7 +861,10 @@ impl Entry {
         self.failed_at = None;
         self.problem = None;
         self.strikes = 0;
-        self.blocked_until = listed.spent_until.filter(|until| *until > now);
+        self.blocked_until = listed
+            .spent_until
+            .filter(|until| *until > now)
+            .map(|until| limits::bounded_reset(until, now));
     }
 
     fn fail(&mut self, problem: Problem, now: u64, target: &Target) {

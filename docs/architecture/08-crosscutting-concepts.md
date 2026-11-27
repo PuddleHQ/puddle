@@ -53,7 +53,7 @@ files or memory, because anything the guest holds the guest can send anywhere. I
 
 - Git and HTTP credentials are added by the injector to a decrypted request on the host
   (`crates/puddle-inject`), for the repositories the matching identity covers.
-- Logins captured in the guest (`gh`, `claude`, `copilot`) are swapped for stand-ins; the real
+- Logins captured in the guest (Claude Code, GitHub, Microsoft Entra, OpenAI Codex, Docker Hub) are swapped for stand-ins; the real
   tokens go to the OS credential store, and the proxy swaps them back only toward that service's own
   hosts (`crates/puddle-logins`).
 - Environment secrets reach the guest as stand-ins too; the real value lives only in the proxy's

@@ -719,7 +719,7 @@ impl NewWorkspaceIdentity {
                 Some(format!(
                     "No identity covers {place}, so this workspace got your default identity, {label}. \
                      {label} has no credential for {place}: commits use its author, but requests to \
-                     {place} go out without a credential until an identity covers it (Identities tab)."
+                     {place} go out without a credential until an identity covers it (add one on the workspace's Git tab)."
                 )),
             ),
             (store::StartBasis::Covers, _) => (NewWorkspaceIdentityBasis::Covers, None),
@@ -728,7 +728,7 @@ impl NewWorkspaceIdentity {
                 NewWorkspaceIdentityBasis::None,
                 Some(format!(
                     "No identity covers {place} and you have no default identity, so this workspace \
-                     has no commit author and no credential. Add an identity on the Identities tab."
+                     has no commit author and no credential. Add an identity on the workspace's Git tab."
                 )),
             ),
         };

@@ -75,7 +75,8 @@ async function wraps(page: Page): Promise<string[]> {
       )
         continue;
       const text = node.textContent ?? "";
-      for (const word of text.matchAll(/\S+/g)) {
+      // A hyphen is a legal place to break a line, so "sign-in" is the words "sign-" and "in".
+      for (const word of text.matchAll(/[^\s-]+-?|-+/g)) {
         const range = document.createRange();
         range.setStart(node, word.index);
         range.setEnd(node, word.index + word[0].length);
@@ -88,9 +89,22 @@ async function wraps(page: Page): Promise<string[]> {
     const single = "button,[role=button],.btn,th";
     for (const el of document.body.querySelectorAll(single)) {
       if (!visible(el)) continue;
-      const range = document.createRange();
-      range.selectNodeContents(el);
-      if (lines(range) > 1)
+      // Only the label's own text counts: an icon sits at its own height, and screen-reader-only
+      // text is positioned out of the line.
+      const tops = new Set<number>();
+      const own = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      for (let node = own.nextNode(); node; node = own.nextNode()) {
+        if (
+          !node.textContent?.trim() ||
+          node.parentElement?.closest(".visually-hidden")
+        )
+          continue;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        for (const r of range.getClientRects())
+          if (r.width > 0) tops.add(Math.round((r.top + r.height / 2) / 4));
+      }
+      if (tops.size > 1)
         found.push(
           `<${el.tagName.toLowerCase()}> "${(el.textContent ?? "").trim().slice(0, 40)}" takes several lines`,
         );

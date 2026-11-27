@@ -41,6 +41,13 @@ th[scope="col"] {
   overflow-wrap: normal !important;
   word-break: normal !important;
 }
+/* Every button is one line, not only `.btn`: the Activity time cell and other bare buttons wrapped. */
+button,
+[role="button"] {
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+}
 h1:focus {
   outline: none;
 }

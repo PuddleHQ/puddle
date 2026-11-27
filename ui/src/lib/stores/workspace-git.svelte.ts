@@ -10,6 +10,7 @@ import {
   isWorkspaceGitChanged,
 } from "#lib/identities/events.ts";
 import { sentence } from "#lib/rules/model.ts";
+import { workspaces } from "./workspaces.svelte.ts";
 import type { LiveSource } from "./live.svelte.ts";
 import { live } from "./live.svelte.ts";
 import type { Result } from "./identities.svelte.ts";
@@ -31,13 +32,16 @@ export class WorkspaceGitStore {
   #ticket = 0;
   readonly #api: StoreApi;
   readonly #source: LiveSource | undefined;
+  readonly #refreshWorkspaces: () => Promise<void>;
 
   constructor(
     api: StoreApi = defaultApi,
     source: LiveSource | undefined = live,
+    refreshWorkspaces: () => Promise<void> = () => workspaces.refresh(),
   ) {
     this.#api = api;
     this.#source = source;
+    this.#refreshWorkspaces = refreshWorkspaces;
   }
 
   /** Reads the workspace's Git settings. `quiet` keeps the page as it is while it does. */
@@ -185,6 +189,29 @@ export class WorkspaceGitStore {
         }),
       "Puddle refused the repository",
       () => this.load(this.#id, true),
+    );
+  }
+
+  /**
+   * Adds a repository to the running workspace and clones it now: the workspace's own list (its
+   * Repositories section) and the table both get it. The workspace is busy cloning until it ends.
+   */
+  cloneRepo(repo: {
+    url: string;
+    pull: boolean;
+    push: boolean;
+  }): Promise<Result> {
+    return this.#send(
+      () =>
+        this.#api.POST("/api/workspaces/{id}/repositories", {
+          ...this.#path(),
+          body: { kind: "clone", ...repo },
+        }),
+      "Puddle refused to clone the repository",
+      async () => {
+        await this.#refreshWorkspaces();
+        await this.load(this.#id, true);
+      },
     );
   }
 

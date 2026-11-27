@@ -9,11 +9,7 @@
   import { previewIdentity, type Preview } from "#lib/identities/preview.ts";
   import { clearDraft, saveDraft, savedDraft } from "#lib/workspaces/draft.ts";
   import { parseRepoUrl } from "#lib/identities/repo.ts";
-  import {
-    matchingUrl,
-    tableCannotHold,
-    TABLE_CANNOT_HOLD,
-  } from "#lib/repos/model.ts";
+  import { matchingUrl } from "#lib/repos/model.ts";
   import {
     identities as identityStore,
     type IdentitiesStore,
@@ -574,12 +570,6 @@
           onblur={() => (left = { ...left, [row.key]: true })}
           onPick={(repo, by) => picked(row, repo, by)}
         />
-
-        {#if tableCannotHold(addressOf(row))}
-          <p class="hint warn" data-testid="table-cannot-hold">
-            {TABLE_CANNOT_HOLD}
-          </p>
-        {/if}
 
         <div class="field">
           <label for={rowId(row, "directory")}>Directory</label>

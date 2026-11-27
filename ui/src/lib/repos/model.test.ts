@@ -17,7 +17,6 @@ import {
   retryText,
   roleWord,
   sourceTitle,
-  tableCannotHold,
   traits,
 } from "./model.ts";
 
@@ -180,43 +179,5 @@ describe("matching identities", () => {
       matchingUrl(all, "https://github.com/acme/web.git").map((i) => i.id),
     ).toEqual([1, 2]);
     expect(matchingUrl(all, "not a url")).toEqual([]);
-  });
-});
-
-describe("tableCannotHold", () => {
-  it("is true for an Azure DevOps project with a space, spelled either way", () => {
-    expect(
-      tableCannotHold(
-        "https://dev.azure.com/contoso/Shop%20Floor/_git/scanner",
-      ),
-    ).toBe(true);
-    expect(
-      tableCannotHold("https://dev.azure.com/contoso/Shop Floor/_git/scanner"),
-    ).toBe(true);
-    expect(
-      tableCannotHold("https://contoso.visualstudio.com/Shop%20Floor/_git/x"),
-    ).toBe(true);
-  });
-
-  it("reads an SSH address of Azure DevOps as its HTTPS address", () => {
-    expect(
-      tableCannotHold("git@ssh.dev.azure.com:v3/contoso/Shop%20Floor/scanner"),
-    ).toBe(true);
-    expect(
-      tableCannotHold("git@ssh.dev.azure.com:v3/contoso/Platform/api"),
-    ).toBe(false);
-    expect(tableCannotHold("git@git.example.com:contoso/api")).toBe(false);
-  });
-
-  it("is false for names without a space and for other hosts", () => {
-    expect(
-      tableCannotHold("https://dev.azure.com/contoso/Platform/_git/api"),
-    ).toBe(false);
-    expect(tableCannotHold("https://github.com/acme/web%20x")).toBe(false);
-    expect(tableCannotHold("https://dev.azure.com")).toBe(false);
-    expect(tableCannotHold("")).toBe(false);
-    expect(
-      tableCannotHold("https://dev.azure.com/contoso/%E0%A4%A/_git/x"),
-    ).toBe(false);
   });
 });

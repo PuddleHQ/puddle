@@ -131,20 +131,17 @@ test("an account that reaches nothing says so", async ({ page, backend }) => {
   await expect(repos(page).getByRole("table")).toHaveCount(0);
 });
 
-test("an Azure DevOps project with a space is listed, with what that costs and the way out", async ({
+test("an Azure DevOps project with a space is listed and creates a workspace", async ({
   page,
   backend,
 }) => {
   await open(page, backend, WORK);
   const row = rowOf(page, "contoso/Shop Floor/scanner");
-  await expect(row.getByTestId("repo-table-warning")).toContainText(
-    "turn that off on the workspace's Git tab",
-  );
+  await expect(row.getByTestId("repo-table-warning")).toHaveCount(0);
   await create(page, "contoso/Shop Floor/scanner").click();
   await expect(dialog(page).getByLabel("Git repository (HTTPS)")).toHaveValue(
     "https://dev.azure.com/contoso/Shop%20Floor/_git/scanner",
   );
-  await expect(dialog(page).getByTestId("table-cannot-hold")).toBeVisible();
 });
 
 test("Refresh asks the host again and shows what changed", async ({

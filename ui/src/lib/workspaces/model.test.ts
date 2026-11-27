@@ -168,6 +168,10 @@ describe("suggested names", () => {
     expect(suggestName("https://github.com/acme/web-shop/")).toBe("web-shop");
     expect(suggestName("https://example.org/a/b.git?x=1#y")).toBe("b");
     expect(suggestName("")).toBe("");
+    expect(
+      suggestName("https://dev.azure.com/qaorg/qa%20proj/_git/qa%20repo"),
+    ).toBe("qa repo");
+    expect(suggestName("https://h/o/100%.git")).toBe("100%");
     expect(suggestName("https://github.com/acme/tauri.git")).toBe("tauri");
     expect(suggestName("/home/me/Shop API \u00fc")).toBe("Shop API \u00fc");
     expect(suggestName(`https://h/${"x".repeat(80)}`)).toHaveLength(

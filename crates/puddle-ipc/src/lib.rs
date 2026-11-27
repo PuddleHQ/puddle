@@ -237,13 +237,13 @@ fn install_id(state_dir: &Path) -> Result<String, IpcError> {
             if name::is_install_id(id) {
                 Ok(id.to_owned())
             } else {
-                Err(root_err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
+                Err(root_err(io::Error::new(
+                    io::ErrorKind::InvalidData,
                     "it does not hold an install id; delete it to make a new one, which makes every sandbox again",
                 )))
             }
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
             let id = name::random_name::<16>()?;
             puddle_fs::private::write_atomic(&file, id.as_bytes()).map_err(root_err)?;
             Ok(id)

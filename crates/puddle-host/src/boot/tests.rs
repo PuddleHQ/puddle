@@ -215,9 +215,7 @@ async fn a_taken_stable_route_refuses_the_start_instead_of_giving_a_random_one()
     let root = IpcRoot::stable(state.path()).unwrap();
     let workspace = WorkspaceId::new("w-acme").unwrap();
     let _holder = root.listen_named(workspace.as_str()).unwrap();
-    let err = stable_listener(&root, &workspace)
-        .err()
-        .expect("the name is taken");
+    let err = stable_listener(&root, &workspace).expect_err("the name is taken");
     assert!(
         matches!(
             &err,

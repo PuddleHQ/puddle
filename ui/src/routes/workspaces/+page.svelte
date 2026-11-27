@@ -4,7 +4,7 @@
   import { onMount } from "svelte";
   import Plus from "@lucide/svelte/icons/plus";
   import OrphanVolumesNotice from "#lib/components/OrphanVolumesNotice.svelte";
-  import FirstWorkspaceForm from "#lib/components/FirstWorkspaceForm.svelte";
+  import CreateWorkspaceForm from "#lib/components/CreateWorkspaceForm.svelte";
   import WorkspaceRow from "#lib/components/WorkspaceRow.svelte";
   import { orphanVolumes } from "#lib/stores/orphan-volumes.svelte.ts";
   import { pending } from "#lib/stores/pending.svelte.ts";
@@ -68,7 +68,8 @@
 {:else if workspaces.status === "failed"}
   <LoadNotice what="the workspaces" message={workspaces.loadError} />
 {:else if workspaces.list.length === 0}
-  <FirstWorkspaceForm onMore={() => actions.openCreate()} />
+  <!-- The first workspace gets the whole form, like every later one, under the page's h1. -->
+  <CreateWorkspaceForm embedded />
 {:else}
   <div class="columns" aria-hidden="true">
     <span>State</span><span>Name</span><span>Repository</span><span>

@@ -925,6 +925,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/logs/bundle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Makes a log bundle now and sends it as one file (`application/gzip`, named
+         *     `puddle-logs-<seconds>.tar.gz`): the versions, the platform, the settings and the recent log
+         *     files, with every secret cut out ([`puddle_log::redact`]). A `POST` so that no link, prefetch or
+         *     cache can start one.
+         */
+        post: operations["create_log_bundle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/network-health": {
         parameters: {
             query?: never;
@@ -2661,6 +2683,7 @@ export interface components {
             pull?: boolean | null;
             /** @description Push on its new repository table row; left out or `null` is on. */
             push?: boolean | null;
+            push_block?: components["schemas"]["PushBlock"] | null;
             /** @description The repository, as an `https://` URL without credentials. */
             url: string;
         } | {
@@ -4676,6 +4699,7 @@ export interface components {
             pull: boolean;
             /** @description A push to it may go out. */
             push: boolean;
+            push_block?: components["schemas"]["PushBlock"] | null;
             /** @description `repo`, or `project/repo` on Azure DevOps; `.git` is dropped. */
             repo: string;
         };
@@ -4706,6 +4730,7 @@ export interface components {
             pull: boolean;
             /** @description A push to it may go out. */
             push: boolean;
+            push_block: components["schemas"]["PushBlock"] | null;
             /** @description `repo`, or `project/repo` on Azure DevOps; lower-case, no `.git`. */
             repo: string;
         };
@@ -5170,6 +5195,11 @@ export interface components {
             special: boolean | null;
         };
         /**
+         * @description How much Puddle writes to its log.
+         * @enum {string}
+         */
+        LogLevelChoice: "error" | "warn" | "info" | "debug" | "trace";
+        /**
          * @description What is wrong with a login, as [`Event::LoginProblem`] reports it.
          * @enum {string}
          */
@@ -5228,6 +5258,7 @@ export interface components {
             pull?: boolean | null;
             /** @description Push on its new repository table row; left out or `null` is on. */
             push?: boolean | null;
+            push_block?: components["schemas"]["PushBlock"] | null;
             /**
              * @description The repository to clone, as an `https://` URL without credentials. An SSH address
              *     (`git@host:path`, `ssh://`) of GitHub, GitLab, Bitbucket or Azure DevOps is kept as its
@@ -5420,6 +5451,12 @@ export interface components {
              */
             decided_at: number | null;
             decided_by: components["schemas"]["Actor"] | null;
+            /**
+             * @description Whether the name resolved to a local address: only an exact allow decides
+             *     it, so approving with a suffix or into a rule set is refused (rules spec R-16). A client
+             *     offers only the exact choice for an open one.
+             */
+            exact_only: boolean;
             /**
              * Format: int64
              * @description Epoch ms of the first request.
@@ -5692,6 +5729,11 @@ export interface components {
             /** @description The pull proxy reaches the internet through the company proxy setup above. */
             via_upstream: boolean;
         };
+        /**
+         * @description Why a push to a repository cannot succeed, as its listing said.
+         * @enum {string}
+         */
+        PushBlock: "archived" | "read";
         /**
          * @description The reason codes that stand alone, without a prefix. Serialises as its [`ReasonCode::as_str`].
          * @enum {string}
@@ -7147,6 +7189,7 @@ export interface components {
             disk_warning_percent: number | null;
             /** @description The inbox's single-key shortcuts A, D, J and K (default on). */
             inbox_shortcuts: boolean | null;
+            log_level: components["schemas"]["LogLevelChoice"] | null;
             /** @description Minimizing hides the window to the tray instead of the taskbar (default off). */
             minimize_to_tray: boolean | null;
             /** @description A system notification for a new request (default on). */
@@ -7492,7 +7535,7 @@ export interface components {
          * @description Where a long workspace operation is, as [`Event::WorkspaceProgress`] reports it.
          * @enum {string}
          */
-        WorkspaceStep: "preparing_volume" | "pulling_image" | "unpacking_image" | "cloning" | "starting" | "syncing" | "checking" | "reclaiming" | "resetting_root_disk" | "growing_root_disk" | "stopping" | "removing" | "done" | "failed";
+        WorkspaceStep: "preparing_volume" | "pulling_image" | "unpacking_image" | "cloning" | "starting" | "waiting_for_agent" | "syncing" | "checking" | "reclaiming" | "resetting_root_disk" | "growing_root_disk" | "stopping" | "removing" | "done" | "failed";
         /** @description Changes a workspace's two switches; a switch left out stays as it is. */
         WorkspaceSwitchesRequest: {
             /** @description "Only pull from allowed repositories": the workspace's own value. */
@@ -11507,6 +11550,71 @@ export interface operations {
             };
         };
     };
+    create_log_bundle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the log bundle */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/gzip": number[];
+                };
+            };
+            /** @description missing or wrong bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description only the owner may export the logs */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Host is not the API's own address */
+            421: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Puddle failed; see its log */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the logs cannot be read */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
     network_health: {
         parameters: {
             query?: never;
@@ -13030,6 +13138,15 @@ export interface operations {
             };
             /** @description only the owner may restore */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description the file is larger than a backup can be; nothing is staged */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };

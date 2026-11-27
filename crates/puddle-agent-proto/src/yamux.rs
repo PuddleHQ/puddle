@@ -16,6 +16,11 @@ pub const STREAM_WINDOW: u32 = 16 * 1024 * 1024;
 /// hundreds at once; the default of 256 would refuse some.
 pub const ACCEPT_BACKLOG: usize = 4096;
 
+/// Streams one session may have open at once. Hundreds at once is a busy day (a parallel restore,
+/// a `docker pull`); every stream past this is reset, so a guest cannot make the host keep a task
+/// and its buffers for each of 65,535 streams that sit open for the 30 s a silent one lives.
+pub const MAX_STREAMS: usize = 4096;
+
 /// The host's keepalive ping interval: a liveness check only, it plays no part in flow control.
 pub const KEEPALIVE: Duration = Duration::from_secs(30);
 
@@ -44,6 +49,7 @@ pub fn client_config_with_window(window: u32) -> Config {
 pub fn server_config() -> Config {
     Config {
         accept_backlog: ACCEPT_BACKLOG,
+        max_stream_count: MAX_STREAMS,
         max_stream_window_size: STREAM_WINDOW,
         enable_keepalive: true,
         keepalive_interval: KEEPALIVE,

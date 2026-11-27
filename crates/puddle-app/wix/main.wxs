@@ -197,6 +197,7 @@
             <ProgressText Action="AppSearch">Checking this computer</ProgressText>
             <ProgressText Action="MigrateFeatureStates">Checking earlier install choices</ProgressText>
             <ProgressText Action="RollbackCleanup">Cleaning up temporary files</ProgressText>
+            <ProgressText Action="InstallFinalize">Finishing the installation</ProgressText>
             <ProgressText Action="InstallAdminPackage">Copying Puddle's files to the chosen folder</ProgressText>
 
 

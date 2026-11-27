@@ -153,6 +153,10 @@ pub enum AddRepositoryRequest {
         /// Push on its new repository table row; left out or `null` is on.
         #[serde(default)]
         push: Option<bool>,
+        /// Why a push to it cannot succeed, when the listing it was picked from said so; kept on
+        /// its new repository table row. Left out or `null` is none known.
+        #[serde(default)]
+        push_block: Option<super::PushBlock>,
     },
     /// Manage a checkout that is already on the volume ("Manage this"). Puddle reads its remote
     /// again at that moment and changes nothing in the checkout.
@@ -190,6 +194,7 @@ impl AddRepositoryRequest {
                 identity_id,
                 pull,
                 push,
+                push_block,
             } => {
                 let draft = RepositoryDraft {
                     url,
@@ -197,6 +202,7 @@ impl AddRepositoryRequest {
                     identity: identity_id.map(IdentityId),
                     pull,
                     push,
+                    push_block: push_block.map(Into::into),
                     local: None,
                 };
                 let mut checked =

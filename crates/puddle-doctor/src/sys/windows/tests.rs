@@ -18,7 +18,7 @@ fn probes_read_what_an_account_without_admin_rights_may_read() {
         "{:?}",
         job()
     );
-    assert!(global_secure_access().is_some());
+    assert!(problematic_software().is_some());
     // `None` is "no such service", which is a fact of the machine.
     let _service = ssh_agent_service();
 }

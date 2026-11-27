@@ -3,6 +3,7 @@
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import CreateWorkspaceForm from "#lib/components/CreateWorkspaceForm.svelte";
+  import { parsePushBlock } from "#lib/repos/model.ts";
 
   // A repository to start from arrives as `?url=...&identity=...` ("Create a workspace for this").
   // Taken once: the form keeps editing its own rows after that.
@@ -13,6 +14,7 @@
     return {
       url,
       identity: Number.isInteger(identity) && identity > 0 ? identity : null,
+      pushBlock: parsePushBlock(page.url.searchParams.get("push_block")),
     };
   });
 </script>

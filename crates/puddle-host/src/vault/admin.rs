@@ -196,8 +196,11 @@ fn named_ids(paths: &HostPaths) -> Result<HashSet<StoredId>, VaultAdminError> {
     Ok(store.secret_ids_in_use()?)
 }
 
-fn os_store(setup: &SecretSetup) -> Arc<dyn SecretStore> {
-    setup.os_store.clone().unwrap_or_else(os_vault)
+fn os_store(paths: &HostPaths, setup: &SecretSetup) -> Arc<dyn SecretStore> {
+    setup
+        .os_store
+        .clone()
+        .unwrap_or_else(|| os_vault(paths.data()))
 }
 
 /// The file vault, with its key. `make` lets a missing vault (and its key) be made; without it a
@@ -274,12 +277,12 @@ fn migrate_within(
         };
     }
     let old = match current {
-        StoreKind::Os => Some(os_store(setup)),
+        StoreKind::Os => Some(os_store(paths, setup)),
         StoreKind::File => file_store(paths, setup, false)?,
     }
     .ok_or(VaultAdminError::NoVault)?;
     let new = match to {
-        StoreKind::Os => os_store(setup),
+        StoreKind::Os => os_store(paths, setup),
         StoreKind::File => file_store(paths, setup, true)?.ok_or(VaultAdminError::NoVault)?,
     };
     // Ask each store one question first, so a keyring that waits for an unlock ends the command
@@ -329,7 +332,7 @@ fn finish(
     named: &HashSet<StoredId>,
 ) -> Result<MigrateOutcome, VaultAdminError> {
     let old = match other(in_charge) {
-        StoreKind::Os => Some(os_store(setup)),
+        StoreKind::Os => Some(os_store(paths, setup)),
         StoreKind::File => file_store(paths, setup, false)?,
     };
     let Some(old) = old else {
@@ -375,7 +378,7 @@ fn status_within(
         return Ok(status);
     };
     let store = match record.store {
-        StoreKind::Os => os_store(setup),
+        StoreKind::Os => os_store(paths, setup),
         StoreKind::File => {
             let vault = vault_path(paths.data());
             match FileVault::header_source(&vault) {

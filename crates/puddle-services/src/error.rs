@@ -321,6 +321,7 @@ impl From<StoreError> for ApiError {
             | StoreError::DeviceName(_)
             | StoreError::SignInMethod(_)
             | StoreError::Pattern(_)
+            | StoreError::ExactAllowOnly(_)
             | StoreError::ExpiryNotInFuture
             | StoreError::PrecedenceOutOfRange(_)
             | StoreError::NotSwitchable

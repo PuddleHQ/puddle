@@ -365,7 +365,11 @@ pub(crate) fn ip_rule(
     request: &EgressRequest,
     addr: SocketAddr,
 ) -> Result<IpRule, PolicyError> {
-    let by_ip = EgressRequest::new(request.workspace.clone(), Host::Ip(addr.ip()), request.port);
+    let by_ip = EgressRequest::new(
+        request.workspace.clone(),
+        Host::from_ip(addr.ip()),
+        request.port,
+    );
     Ok(match proxy.policy.lookup(&by_ip, SuffixAllows::Ignore)? {
         Some(Decision::Allow {
             rule_id,

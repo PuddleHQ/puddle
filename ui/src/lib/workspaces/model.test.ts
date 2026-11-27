@@ -32,6 +32,7 @@ import {
   canRename,
   statusLabel,
   byteCountText,
+  elapsedText,
   operationOfStep,
   statusTone,
   stepLabel,
@@ -120,7 +121,11 @@ describe("words", () => {
 
   it("places a step in its operation", () => {
     expect(stepPosition("creating", "cloning")).toEqual({ index: 3, of: 3 });
-    expect(stepPosition("starting", "starting")).toEqual({ index: 1, of: 2 });
+    expect(stepPosition("starting", "starting")).toEqual({ index: 1, of: 3 });
+    expect(stepPosition("starting", "waiting_for_agent")).toEqual({
+      index: 2,
+      of: 3,
+    });
     expect(stepPosition("deleting", "removing")).toEqual({ index: 2, of: 2 });
     expect(stepPosition("reclaiming", "reclaiming")).toEqual({
       index: 1,
@@ -150,6 +155,15 @@ describe("image download counts", () => {
   });
 });
 
+describe("elapsed time", () => {
+  it("prints seconds under a minute, then minutes with zero-padded seconds", () => {
+    expect(elapsedText(0)).toBe("0 s");
+    expect(elapsedText(8.9)).toBe("8 s");
+    expect(elapsedText(65)).toBe("1 min 05 s");
+    expect(elapsedText(125)).toBe("2 min 05 s");
+  });
+});
+
 describe("suggested names", () => {
   it("suggests the repository's own name as typed, without a slug", () => {
     expect(suggestName("https://github.com/acme/Ledger_Service.git")).toBe(
@@ -158,6 +172,10 @@ describe("suggested names", () => {
     expect(suggestName("https://github.com/acme/web-shop/")).toBe("web-shop");
     expect(suggestName("https://example.org/a/b.git?x=1#y")).toBe("b");
     expect(suggestName("")).toBe("");
+    expect(
+      suggestName("https://dev.azure.com/qaorg/qa%20proj/_git/qa%20repo"),
+    ).toBe("qa repo");
+    expect(suggestName("https://h/o/100%.git")).toBe("100%");
     expect(suggestName("https://github.com/acme/tauri.git")).toBe("tauri");
     expect(suggestName("/home/me/Shop API \u00fc")).toBe("Shop API \u00fc");
     expect(suggestName(`https://h/${"x".repeat(80)}`)).toHaveLength(

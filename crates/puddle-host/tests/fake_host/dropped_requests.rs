@@ -182,6 +182,7 @@ async fn send(host: &Host<FakeRuntime>, request: Request, id: &WorkspaceId, wait
                 identity: None,
                 pull: true,
                 push: true,
+                push_block: None,
                 local: None,
             };
             drop_after(

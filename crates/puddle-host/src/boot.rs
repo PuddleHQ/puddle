@@ -37,6 +37,20 @@ pub(crate) enum BootInputError {
     /// The egress route's endpoint could not be opened.
     #[error(transparent)]
     Route(#[from] IpcError),
+    /// The workspace's stable route is not available (another process holds the name).
+    #[error(
+        "the route of workspace {workspace} is not available ({source}); starting it with another \
+         route would make its sandbox again and drop what was installed outside its volume, so it \
+         is not started: close what holds the name (another Puddle, or a program using the same \
+         endpoint) and start it again"
+    )]
+    RouteUnavailable {
+        /// The workspace.
+        workspace: WorkspaceId,
+        /// Why the endpoint could not be bound.
+        #[source]
+        source: IpcError,
+    },
     /// The session user's home is not a guest path.
     #[error(transparent)]
     Home(#[from] puddle_types::ValidationError),
@@ -95,6 +109,18 @@ fn docker_disk() -> OwnedDisk {
         guest: guest_path!(DOCKER_DATA_DIR),
         size: DOCKER_DISK_SIZE,
     }
+}
+
+/// The stable endpoint of `workspace`, or why it cannot be had.
+fn stable_listener(
+    ipc: &IpcRoot,
+    workspace: &WorkspaceId,
+) -> Result<puddle_ipc::Listener, BootInputError> {
+    ipc.listen_named(workspace.as_str())
+        .map_err(|source| BootInputError::RouteUnavailable {
+            workspace: workspace.clone(),
+            source,
+        })
 }
 
 /// The pieces shared by every sandbox of this host.
@@ -156,6 +182,9 @@ pub(crate) struct GuestInputs<'a> {
     pub(crate) ssh_agent: bool,
     /// The managed mise layer, when it is on for this workspace.
     pub(crate) mise: Option<&'a MiseLayer>,
+    /// The boot step that binds the volume at its mount point in a sandbox an older Puddle made
+    /// with the volume elsewhere; it runs before every other step.
+    pub(crate) older_mount: Option<&'a GuestFile>,
     /// The workspace's name, which an interactive bash prompt shows instead of the guest's host
     /// name (the id).
     pub(crate) label: &'a str,
@@ -215,15 +244,14 @@ impl BootKit {
             .map(|release| CodeServer::begin(release, &dir))
             .transpose()
             .map_err(|e| HostError::GuestFiles(format!("install code-server: {e}")))?;
-        // Stable routes keep every sandbox across a restart of this process. Without them (the
-        // runtime folder is unusable) the routes are random again, and a restart rebuilds sandboxes.
-        let ipc = match IpcRoot::stable(state_dir) {
-            Ok(root) => root,
-            Err(e) => {
-                tracing::warn!(error = %e, "no stable sandbox routes: a restart of Puddle will make every sandbox again");
-                IpcRoot::new().map_err(|e| HostError::GuestFiles(e.to_string()))?
-            }
-        };
+        // Stable routes keep every sandbox across a restart of this process. Without them the
+        // routes would be random and a restart would rebuild every sandbox and drop its root
+        // disk, so Puddle does not start (the error names the folder or file to look at).
+        let ipc = IpcRoot::stable(state_dir).map_err(|e| {
+            let cause =
+                std::error::Error::source(&e).map_or_else(String::new, |c| format!(": {c}"));
+            HostError::GuestFiles(format!("no stable sandbox routes: {e}{cause}"))
+        })?;
         Ok(Self {
             proxy,
             ipc,
@@ -262,17 +290,11 @@ impl BootKit {
 
     /// Starts the egress route of `workspace`: an owner-only endpoint served by the shared proxy,
     /// the same one at every run of Puddle, so a sandbox made by an earlier run finds its route
-    /// where its spec says. A name that cannot be had (taken by another process, no stable root)
-    /// gets a random endpoint instead: that route is not the one an older sandbox has, so such a
-    /// sandbox is made again. It lives as long as the returned [`Route`].
+    /// where its spec says. A name that cannot be had (taken by another process) is an error: a
+    /// random endpoint would make the sandbox again and drop its root disk (installed tools, home
+    /// folder), so the start is refused instead. It lives as long as the returned [`Route`].
     pub(crate) fn route(&self, workspace: &WorkspaceId) -> Result<Route, BootInputError> {
-        let listener = match self.ipc.listen_named(workspace.as_str()) {
-            Ok(listener) => listener,
-            Err(e) => {
-                tracing::warn!(%workspace, error = %e, "the workspace's stable route is not available, so it gets a random one");
-                self.ipc.listen()?
-            }
-        };
+        let listener = stable_listener(&self.ipc, workspace)?;
         Ok(self.proxy.serve_route(listener, workspace.clone()))
     }
 
@@ -345,6 +367,9 @@ impl BootKit {
                 guest.root,
                 &crate::editor_file::start_path(guest.root, guest.start_folder),
             ));
+        if let Some(step) = guest.older_mount {
+            builder = builder.file(step.clone()).step(step.path().clone());
+        }
         if let Some(file) = guest.editor_file {
             builder = builder.file(file.clone());
         }

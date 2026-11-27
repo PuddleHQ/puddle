@@ -36,6 +36,7 @@ mod plain_http_window;
 mod real_az;
 mod real_git;
 mod real_logins;
+mod refused_tunnel;
 mod request_rules;
 mod request_rules_hostile;
 mod stand_ins;

@@ -65,6 +65,8 @@
   let token = $state("");
   let ownersText = $state("");
   let rest = $state(true);
+  /** Whether the user changed the coverage themselves; until then it follows the host and organisation. */
+  let coverEdited = false;
   let problem = $state<{ field: string; message: string } | null>(null);
   let busy = $state(false);
   let root = $state<HTMLElement>();
@@ -188,15 +190,23 @@
     azCheck = await store.checkSource(azSource(tenant, azOrg));
   }
 
+  /** A pasted Azure DevOps token belongs to one organisation, so it covers that one by default. */
+  function pastedCoverFollows() {
+    if (coverEdited) return;
+    const named = needsOrg(host) ? org.trim() : "";
+    ownersText = named;
+    rest = !needsOrg(host);
+  }
+
   function switchMode(next: "found" | "paste" | "az") {
     mode = next;
+    coverEdited = false;
     problem = null;
     forget();
     if (next === "az") {
       azOrgChanged();
     } else if (next === "paste") {
-      ownersText = "";
-      rest = true;
+      pastedCoverFollows();
     } else if (chosen) {
       choose(chosen, pick ?? 0);
     }
@@ -428,6 +438,7 @@
         autocapitalize="off"
         spellcheck="false"
         bind:value={host}
+        oninput={pastedCoverFollows}
         aria-invalid={problem?.field === "host" ? "true" : undefined}
         aria-describedby={problem?.field === "host" ? `${id}-error` : undefined}
       />
@@ -442,6 +453,7 @@
           autocapitalize="off"
           spellcheck="false"
           bind:value={org}
+          oninput={pastedCoverFollows}
           aria-invalid={problem?.field === "org" ? "true" : undefined}
           aria-describedby={problem?.field === "org"
             ? `${id}-error`
@@ -499,12 +511,6 @@
               "no name"}{found.email ? ` <${found.email}>` : ""}.
           </p>
         {/if}
-        {#if !found.problem && !hasAuthor(found) && needsOrg(coverHost)}
-          <p class="hint">
-            Azure DevOps doesn't tell Puddle who you are: type the author name
-            and address yourself.
-          </p>
-        {/if}
         {#each found.notes as note, index (index)}
           <p class="hint">{note.message}</p>
         {/each}
@@ -540,11 +546,16 @@
       spellcheck="false"
       placeholder="acme, acme-labs"
       bind:value={ownersText}
+      oninput={() => (coverEdited = true)}
       aria-invalid={problem?.field === "owners" ? "true" : undefined}
       aria-describedby={problem?.field === "owners" ? `${id}-error` : undefined}
     />
     <label class="choice">
-      <input type="checkbox" bind:checked={rest} />
+      <input
+        type="checkbox"
+        bind:checked={rest}
+        onchange={() => (coverEdited = true)}
+      />
       The rest of {coverHost}
     </label>
     <p class="hint">

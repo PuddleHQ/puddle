@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-use puddle_types::ConnectionEvent;
+use puddle_types::{ConnectionEvent, Host};
 
 use super::rows::{RawPending, RawRule, pending_from_raw, rule_from_raw};
 use super::*;
@@ -315,6 +315,7 @@ fn raw_pending_rows_with_bad_fields_are_corrupt() {
         rule_id: None,
         rule_set: None,
         program: None,
+        exact_only: false,
     };
     assert!(pending_from_raw(&base()).is_ok());
     let cases: Vec<fn(&mut RawPending)> = vec![

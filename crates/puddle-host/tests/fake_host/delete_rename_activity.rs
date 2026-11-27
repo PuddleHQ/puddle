@@ -375,7 +375,8 @@ async fn a_rename_reaches_the_prompt_of_the_running_guest_and_a_start_reads_the_
         .patch("/api/workspaces/acme", &name_body("It's $(a) shop"))
         .await;
     assert_eq!(renamed.status, 200, "{}", renamed.body);
-    assert_eq!(rig.guest.boots(), boots + 1);
+    // The prompt's plan, then the editor file's, whose window title carries the name.
+    assert_eq!(rig.guest.boots(), boots + 2);
     assert!(
         prompt(boots).contains("__puddle_name='It'\\''s $(a) shop'"),
         "{}",

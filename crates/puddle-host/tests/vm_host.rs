@@ -98,6 +98,7 @@ async fn vm_host_creates_a_workspace_with_progress_and_stops_cleanly() {
             "preparing_volume",
             "pulling_image",
             "starting",
+            "waiting_for_agent",
             "syncing",
             "cloning",
             "done"
@@ -601,6 +602,7 @@ async fn vm_host_clones_each_repository_and_one_that_cannot_be_reached_fails_alo
             "preparing_volume",
             "pulling_image",
             "starting",
+            "waiting_for_agent",
             "syncing",
             "cloning",
             "cloning",

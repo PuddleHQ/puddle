@@ -126,6 +126,29 @@ impl<T: DevCertTrust> DevCertManager<T> {
         Ok(self.finish(status, DevCertMaterial::new(cert_der, key), detail))
     }
 
+    /// Makes sure a certificate is ready for the guests and never asks the user anything: the
+    /// status is what the stores say now (a trusted leaf, or [`DevCertStatus::NeedsTrust`] when
+    /// it is not, whatever was answered before). A workspace start uses this, so a "No" given on
+    /// the first-run screen is not asked again at every start; only [`Self::ensure`] asks.
+    ///
+    /// # Errors
+    ///
+    /// The data folder can't be written or the leaf can't be generated.
+    pub fn prepare(&self, now: SystemTime) -> Result<DevCertReport, DevCertError> {
+        let (cert_der, key) = self.leaf(now)?;
+        let (status, detail) = match self.trust.is_trusted(&cert_der) {
+            Ok(true) => (DevCertStatus::Trusted, None),
+            Ok(false) => (DevCertStatus::NeedsTrust, None),
+            Err(TrustError::Unsupported) => (DevCertStatus::Unsupported, None),
+            Err(TrustError::Failed(why)) => (DevCertStatus::TrustFailed, Some(why)),
+        };
+        Ok(DevCertReport {
+            status,
+            material: DevCertMaterial::new(cert_der, key),
+            detail,
+        })
+    }
+
     fn finish(
         &self,
         status: DevCertStatus,

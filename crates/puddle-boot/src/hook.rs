@@ -273,12 +273,24 @@ impl BootHook {
         self
     }
 
-    /// Runs the hook once in `sandbox`, as root, with `plan` on stdin. Doesn't touch any gate.
+    /// Runs the hook once in `sandbox`, as root, with `plan` on stdin, after any boot of it in
+    /// flight has ended (the guest's scratch files are fixed names, so two runs must not
+    /// overlap). Doesn't change the gate's state.
     ///
     /// # Errors
     ///
     /// The [`BootFailure`] when it doesn't return 0.
     pub async fn run<S: Sandbox>(
+        &self,
+        sandbox: &GatedSandbox<S>,
+        plan: &BootPlan,
+    ) -> Result<BootReport, BootFailure> {
+        let _boot = sandbox.gate().lock_boot().await;
+        self.exec_hook(sandbox.ungated(), plan).await
+    }
+
+    /// One hook run; the caller holds the boot lock.
+    async fn exec_hook<S: Sandbox>(
         &self,
         sandbox: &S,
         plan: &BootPlan,
@@ -339,8 +351,9 @@ impl BootHook {
             }
         }
         let _boot = gate.lock_boot().await;
-        let booting = Booting::open(gate);
+        let mut booting = Booting::open(gate);
         let sandbox = runtime.create(spec).await?;
+        booting.vm_runs();
         let sandbox = kept(sandbox, keeper).await?;
         self.finish(sandbox, plan, booting).await
     }
@@ -376,8 +389,9 @@ impl BootHook {
         keeper: &impl Keeper<R::Sandbox>,
     ) -> Result<GatedSandbox<R::Sandbox>, BootError> {
         let _boot = gate.lock_boot().await;
-        let booting = Booting::open(gate);
+        let mut booting = Booting::open(gate);
         let sandbox = runtime.start(name).await?;
+        booting.vm_runs();
         let sandbox = kept(sandbox, keeper).await?;
         self.finish(sandbox, plan, booting).await
     }
@@ -396,8 +410,9 @@ impl BootHook {
         gate: &Gate,
     ) -> Result<GatedSandbox<R::Sandbox>, BootError> {
         let _boot = gate.lock_boot().await;
-        let booting = Booting::open(gate);
+        let mut booting = Booting::open(gate);
         let sandbox = runtime.get(name).await?;
+        booting.vm_runs();
         self.finish(sandbox, plan, booting).await
     }
 
@@ -408,7 +423,7 @@ impl BootHook {
         booting: Booting<'_>,
     ) -> Result<GatedSandbox<S>, BootError> {
         let gate = booting.gate;
-        match self.run(&sandbox, plan).await {
+        match self.exec_hook(&sandbox, plan).await {
             Ok(report) => {
                 booting.settle(GateState::Ready);
                 Ok(GatedSandbox::new(
@@ -433,11 +448,13 @@ impl BootHook {
 
 /// One boot's hold on the gate: `Booting` from [`Booting::open`] until [`Booting::settle`]. A boot
 /// that ends another way (a runtime error, or the caller dropping the future at an await) puts
-/// back the state from before, so the gate never stays `Booting` with nobody booting. Neither
+/// the gate back, so it never stays `Booting` with nobody booting: to the state from before while
+/// the runtime call has not answered, to `Down` once it has ([`Booting::vm_runs`]). Neither
 /// overwrites a stop that closed the gate meanwhile.
 struct Booting<'g> {
     gate: &'g Gate,
-    previous: Option<GateState>,
+    /// What a boot that ends without a verdict leaves; `None` once settled.
+    on_drop: Option<GateState>,
 }
 
 impl<'g> Booting<'g> {
@@ -446,21 +463,29 @@ impl<'g> Booting<'g> {
         gate.set(GateState::Booting);
         Self {
             gate,
-            previous: Some(previous),
+            on_drop: Some(previous),
         }
+    }
+
+    /// The runtime has made, started or found the VM, and the hook has not returned 0: the state
+    /// from before no longer describes it (a gate left `Ready` by a VM that died unstopped would
+    /// let exec in on an unhooked VM), so a boot that ends from here without a verdict leaves
+    /// the gate `Down`.
+    fn vm_runs(&mut self) {
+        self.on_drop = Some(GateState::Down);
     }
 
     /// The boot ended with `state`.
     fn settle(mut self, state: GateState) {
-        self.previous = None;
+        self.on_drop = None;
         self.gate.settle(state);
     }
 }
 
 impl Drop for Booting<'_> {
     fn drop(&mut self) {
-        if let Some(previous) = self.previous.take() {
-            self.gate.settle(previous);
+        if let Some(state) = self.on_drop.take() {
+            self.gate.settle(state);
         }
     }
 }

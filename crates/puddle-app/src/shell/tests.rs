@@ -8,29 +8,27 @@ use crate::backend::EndExtensionHostsFailed;
 use tracing::Level;
 
 #[test]
-fn rust_log_sets_the_level_and_per_crate_overrides() {
-    let (unset, bad) = log_targets(None);
-    assert!(bad.is_none());
-    assert!(unset.would_enable("puddle_app", &Level::INFO));
-    assert!(!unset.would_enable("puddle_app", &Level::DEBUG));
-
-    let (debug, _) = log_targets(Some("debug"));
-    assert!(debug.would_enable("puddle_app", &Level::DEBUG));
-    assert!(!debug.would_enable("puddle_app", &Level::TRACE));
-
-    let (mixed, _) = log_targets(Some("warn,puddle_host=trace"));
-    assert!(mixed.would_enable("puddle_host", &Level::TRACE));
-    assert!(!mixed.would_enable("puddle_app", &Level::INFO));
-}
-
-#[test]
 fn puddle_log_wins_over_rust_log_and_scopes_the_level_to_puddle_crates() {
     let (filter, said) = log_filter(Some("trace"), Some("error"));
     assert!(said.is_none());
     assert!(filter.would_enable("puddle_app", &Level::TRACE));
     assert!(!filter.would_enable("tauri", &Level::DEBUG));
-    let (filter, _) = log_filter(None, Some("debug"));
-    assert!(filter.would_enable("tauri", &Level::DEBUG));
+}
+
+#[test]
+fn rust_log_keeps_dependencies_at_the_ceiling_unless_it_names_them() {
+    let (filter, said) = log_filter(None, Some("trace"));
+    assert!(said.is_none());
+    assert!(filter.would_enable("puddle_app", &Level::TRACE));
+    for dep in ["hyper", "rustls", "h2", "russh", "tauri"] {
+        assert!(filter.would_enable(dep, &Level::INFO), "{dep}");
+        assert!(!filter.would_enable(dep, &Level::DEBUG), "{dep}");
+    }
+    let (filter, _) = log_filter(None, Some("warn,puddle_host=trace,hyper=debug"));
+    assert!(filter.would_enable("puddle_host", &Level::TRACE));
+    assert!(!filter.would_enable("puddle_app", &Level::INFO));
+    assert!(filter.would_enable("hyper", &Level::DEBUG));
+    assert!(!filter.would_enable("rustls", &Level::INFO));
 }
 
 #[test]
@@ -43,10 +41,10 @@ fn a_puddle_log_that_does_not_parse_gives_info_and_comes_back() {
 
 #[test]
 fn a_rust_log_that_does_not_parse_gives_info_and_comes_back() {
-    let (targets, bad) = log_targets(Some("puddle=loud"));
-    assert_eq!(bad.as_deref(), Some("puddle=loud"));
-    assert!(targets.would_enable("puddle_app", &Level::INFO));
-    assert!(!targets.would_enable("puddle_app", &Level::DEBUG));
+    let (filter, said) = log_filter(None, Some("puddle=loud"));
+    assert!(said.unwrap().starts_with("RUST_LOG=\"puddle=loud\""));
+    assert!(filter.would_enable("puddle_app", &Level::INFO));
+    assert!(!filter.would_enable("puddle_app", &Level::DEBUG));
 }
 
 #[test]

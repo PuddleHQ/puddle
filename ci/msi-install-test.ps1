@@ -776,6 +776,23 @@ function Get-ReadFilesScript([string]$VolumeRoot) {
     "set -e; cat $dir/token.txt; sha256sum $dir/random.bin"
 }
 
+# Writes $Token to the sandbox's root disk, outside the volume: into the session user's home folder
+# (/home/agent, or /root for a root session) and below /usr/local, where an installed package or
+# toolchain lands. An upgrade that makes the sandbox again loses both (QA 11 F1).
+function Get-WriteRootDiskScript([string]$Token) {
+    "set -e; home=/home/agent; [ -d `$home ] || home=/root; " +
+    "echo $Token > `$home/upgrade-check.txt; mkdir -p /usr/local/share/upgrade-check; " +
+    "echo $Token > /usr/local/share/upgrade-check/token.txt; sync; " +
+    "cat `$home/upgrade-check.txt /usr/local/share/upgrade-check/token.txt"
+}
+
+# Reads back what Get-WriteRootDiskScript wrote: one line each, or MISSING-HOME / MISSING-USR.
+function Get-ReadRootDiskScript {
+    "home=/home/agent; [ -d `$home ] || home=/root; " +
+    "cat `$home/upgrade-check.txt 2>/dev/null || echo MISSING-HOME; " +
+    "cat /usr/local/share/upgrade-check/token.txt 2>/dev/null || echo MISSING-USR"
+}
+
 # The token and the SHA-256 from the output of either script, or $null for what is missing.
 function Read-FilesReport([string]$Output) {
     $lines = @($Output -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
@@ -825,13 +842,17 @@ function Test-UpgradeFromBaseline([string]$Baseline, [string]$Upgrade, [string]$
     try {
         $wsId = New-Workspace $conn $name
         Wait-WorkspaceRunning $conn $wsId $name $CreateBudgetSec | Out-Null
-        # A baseline from before the single guest folder mounts the volume at /workspaces/<id>;
-        # this build mounts it at /workspace and makes such a sandbox again at its first start.
+        # A baseline from before the single guest folder (develop before 8110c2c3c, 2026-11-25)
+        # mounts the volume at /workspaces/<id>; this build keeps that sandbox and binds the volume
+        # at /workspace too, so the files are read back there.
         $where = Invoke-InWorkspace $wsId "if grep -q ' /workspace ' /proc/mounts; then echo /workspace; else echo /workspaces/$wsId; fi" 'finding the volume'
         $volume = @($where | ForEach-Object { $_ -split "`n" } | ForEach-Object { $_.Trim() } | Where-Object { $_ })[-1]
         $wrote = Read-FilesReport (Invoke-InWorkspace $wsId (Get-WriteFilesScript $volume $token) 'writing the files')
         Expect ($wrote.Token -eq $token -and $wrote.Sha256) "writing the files in $wsId printed no token or checksum"
         Write-Host "wrote $volume/upgrade-check (random.bin sha256 $($wrote.Sha256))"
+        $rootWrote = @((Invoke-InWorkspace $wsId (Get-WriteRootDiskScript $token) 'writing to the root disk') -split "`n" | Where-Object { $_.Trim() -eq $token })
+        Expect ($rootWrote.Count -eq 2) "writing the token to the root disk of $wsId printed it $($rootWrote.Count) times, not 2"
+        Write-Host "wrote the token to the root disk (the home folder and /usr/local/share)"
         Invoke-UpgradeState @('before', $StateDir, $wsId) 'before'
         Stop-Workspace $conn $wsId $name
     } finally {
@@ -860,6 +881,9 @@ function Test-UpgradeFromBaseline([string]$Baseline, [string]$Upgrade, [string]$
         Expect ($read.Token -eq $token) "the token file in $wsId changed or is gone after the upgrade: '$($read.Token)', expected $token"
         Expect ($read.Sha256 -eq $wrote.Sha256) "random.bin in $wsId changed after the upgrade: sha256 $($read.Sha256), was $($wrote.Sha256)"
         Write-Host "the files in $wsId are intact after the upgrade"
+        $rootRead = @((Invoke-InWorkspace $wsId (Get-ReadRootDiskScript) 'reading the root disk') -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        Expect (@($rootRead | Where-Object { $_ -eq $token }).Count -eq 2) "the root disk of $wsId lost what the older build wrote to it (the home folder or /usr/local), so the upgrade made the sandbox again: $($rootRead -join ' | ')"
+        Write-Host "the root disk of $wsId is intact after the upgrade (home folder and /usr/local)"
         Invoke-UpgradeState @('after', $StateDir, $wsId) 'after'
         Stop-Workspace $conn $wsId $name
         Remove-Workspace $conn $wsId $name

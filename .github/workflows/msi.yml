@@ -11,8 +11,10 @@
 #
 # The `upgrade` job tests the upgrade a user makes, on a machine of its own: it installs the last
 # release's MSI (ci/fetch-baseline-msi.sh; while there is none, the MSI the newest green develop
-# run kept), makes a workspace and writes files to it, upgrades to this run's build, and checks that
-# the workspace starts with its files intact under the newer runtime (ci/msi-install-test.ps1
+# run kept; the dispatch input `baseline_run` names another run's), makes a workspace and writes files
+# to its volume and its root disk (the home folder, a file outside both that stands for an installed
+# package), upgrades to this run's build, and checks that the workspace starts with both intact (its
+# sandbox kept) under the newer runtime (ci/msi-install-test.ps1
 # -BaselineMsi), and that the state a user builds up (rules, a pending request, variables, a secret,
 # settings, an identity, a file in the workspace folder) is equal after it (crates/puddle-app/e2e/upgrade-state.mjs). The
 # dispatch input `plant_breakage` shows the job fails when a migration loses data. The msi job installs
@@ -96,6 +98,10 @@ on:
         default: ""
       plant_footprint:
         description: "Run the msi job's install test with a planted installer breakage (no-shortcut, wrong-shortcut-target, visible-at-login, data-lost, slow-install, no-refusal or kill-skipped) and expect it to fail: shows that each footprint check catches the breakage it guards against"
+        required: false
+        default: ""
+      baseline_run:
+        description: "Run the upgrade job from the MSI this earlier run of the workflow kept (kept 14 days) instead of the newest: an upgrade from a build before a guest layout change, such as 45515025599 (develop 45e31395, the volume still at /workspaces/<id>)"
         required: false
         default: ""
       plant_breakage:
@@ -283,6 +289,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          BASELINE_RUN: ${{ inputs.baseline_run }}
         run: |
           msi=$(ci/fetch-baseline-msi.sh "$RUNNER_TEMP/msi-baseline" | tail -n 1)
           echo "BASELINE_MSI=$(cygpath -w "$msi")" >>"$GITHUB_ENV"

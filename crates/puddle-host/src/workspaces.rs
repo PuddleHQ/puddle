@@ -63,6 +63,7 @@ use crate::git_hosts::{Authors, SshListing};
 use crate::injection::Injection;
 use crate::op_error::{OpError, SAVE_HINT};
 
+mod clone_detail;
 mod repositories;
 
 pub(crate) mod orphans;
@@ -303,6 +304,10 @@ struct GuestState {
     ssh_agent: bool,
     /// The managed mise layer the guest was planned with: the settings as of this start.
     mise: Option<MiseLayer>,
+    /// The boot step that binds the volume at `/workspace` in a sandbox an older Puddle made with
+    /// it at `/workspaces/<id>` ([`puddle_workspace::Layout::older_mount_step`]); `None` for a
+    /// sandbox with the volume at `/workspace`.
+    older_mount: Option<GuestFile>,
 }
 
 /// How long a terminal opened while its workspace starts waits for the boot hook.
@@ -737,6 +742,9 @@ fn kept_login_row(login: &puddle_logins::KeptLogin) -> KeptLogin {
         since: login.since_ms,
     }
 }
+
+#[cfg(test)]
+mod clone_detail_tests;
 
 #[cfg(test)]
 mod room_for_a_grow_tests;

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use puddle_agent_proto::host::GuestStream;
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionOutcome, ConnectionReason,
-    EgressRequest,
+    EgressRequest, PassThroughCode,
 };
 use tokio::net::TcpStream;
 
@@ -17,12 +17,38 @@ use crate::request_target::Target;
 use crate::ssh;
 use crate::terminate::{self};
 use crate::token_gate::{self};
-use crate::upstream::connect_out;
+use crate::upstream::{Out, connect_out};
 use puddle_upstream::RouteWatch;
 
 use super::admit::{note_block, refuse_not_running, refuse_ssh};
-use super::plan::{Admitted, ConnectionPlan, GuestHints, Splice};
-use super::{GuestReader, Proxy, WorkspaceHandler, admit, apply_reason, refuse, tunnel};
+use super::audit::AuditGuard;
+use super::plan::{Admitted, ConnectionPlan, GuestHints, Seen, Splice};
+use super::{GuestReader, Proxy, Refusal, WorkspaceHandler, admit, apply_reason, refuse, tunnel};
+
+/// Sends a refusal to the guest: inside the tunnel when a tool that trusts the workspace's CA can
+/// read it there (see [`terminate::refused`]), else as the answer to the `CONNECT`.
+async fn tell(
+    proxy: &Proxy,
+    seen: &Seen,
+    request: &EgressRequest,
+    head: &Head,
+    mut reader: GuestReader,
+    refusal: &Refusal,
+) {
+    match seen.refusal_ca(request, GuestHints::of(request, head), refusal) {
+        Some(ca) => {
+            terminate::refused::serve(
+                &proxy.config,
+                &ca,
+                &request.host,
+                Opened::from(reader),
+                refusal,
+            )
+            .await;
+        }
+        None => refuse(reader.get_mut(), refusal).await,
+    }
+}
 
 /// Decides, connects and relays one `CONNECT` whose destination is known; returns what the audit
 /// records about it (bytes are filled in by the caller once the stream is gone). Plain HTTP goes
@@ -33,6 +59,7 @@ pub(super) async fn relay(
     request: &EgressRequest,
     head: &Head,
     target: &Target,
+    audit: &AuditGuard,
 ) -> ConnectionEvent {
     let proxy = &handler.proxy;
     let seen = proxy.seen(&request.workspace);
@@ -54,11 +81,12 @@ pub(super) async fn relay(
         ConnectionPlan::Admit(plan) => plan,
     };
     let (admitted, mut event) = admit(proxy, request).await;
+    audit.snapshot(&event);
     let admitted = match admitted {
         Ok(admitted) => admitted,
         Err(refusal) => {
             event.outcome = refusal.outcome;
-            refuse(reader.get_mut(), &refusal).await;
+            tell(proxy, &seen, request, head, reader, &refusal).await;
             return event;
         }
     };
@@ -123,12 +151,7 @@ pub(super) async fn relay(
             return event;
         }
     };
-    event.outcome = Some(ConnectionOutcome::Connected);
-    event.resolved_ip = out.addr.map(|addr| addr.ip());
-    event.upstream = out.hop;
-    if let Some(code) = splice.passed_through {
-        event.reason = ConnectionReason::PassedThrough(code);
-    }
+    note_connected(&mut event, &out, splice.passed_through, audit);
     note_tunnel(
         proxy,
         guest,
@@ -141,10 +164,27 @@ pub(super) async fn relay(
     event
 }
 
+/// Puts on `event` that the connection to the destination was made, and keeps that as the record
+/// a cut would write.
+fn note_connected(
+    event: &mut ConnectionEvent,
+    out: &Out,
+    passed_through: Option<PassThroughCode>,
+    audit: &AuditGuard,
+) {
+    event.outcome = Some(ConnectionOutcome::Connected);
+    event.resolved_ip = out.addr.map(|addr| addr.ip());
+    event.upstream.clone_from(&out.hop);
+    if let Some(code) = passed_through {
+        event.reason = ConnectionReason::PassedThrough(code);
+    }
+    audit.snapshot(event);
+}
+
 /// Sends a refusal made before admission and returns the audit record that goes with it.
 async fn refused(
     reader: &mut GuestReader,
-    (refusal, event): (super::Refusal, ConnectionEvent),
+    (refusal, event): (Refusal, ConnectionEvent),
 ) -> ConnectionEvent {
     refuse(reader.get_mut(), &refusal).await;
     event

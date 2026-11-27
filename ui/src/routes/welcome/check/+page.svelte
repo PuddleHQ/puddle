@@ -149,13 +149,26 @@
   {:else if blocked}
     <a class="btn" href="/workspaces">Leave setup for now</a>
   {:else if running || notStarted}
-    <button type="button" class="btn" class:primary={running} disabled>
+    <button
+      type="button"
+      class="btn"
+      class:primary={running}
+      disabled
+      aria-describedby="continue-hint"
+    >
       Continue
     </button>
   {:else}
     <a class="btn primary" href={around("check").next}>Continue</a>
   {/if}
 </div>
+{#if !fromSettings && (notStarted || running)}
+  <p class="muted" id="continue-hint">
+    {notStarted
+      ? "Press Start system check first. Continue unlocks when the check finishes."
+      : "Continue unlocks when the check finishes."}
+  </p>
+{/if}
 {#if blocked && !fromSettings}
   <p class="muted">
     Puddle can't run workspaces here until the problems are fixed. Setup comes

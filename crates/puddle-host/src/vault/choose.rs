@@ -128,7 +128,7 @@ pub(crate) async fn open(
             };
             let (vault, probe) = match &setup.os_store {
                 Some(store) => (store.clone(), Probe::Store(store.clone())),
-                None => (os_vault(), Probe::Os),
+                None => (os_vault(data), Probe::Os),
             };
             Ok(Chosen {
                 vault,

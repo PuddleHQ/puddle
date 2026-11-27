@@ -72,6 +72,25 @@ fn ip_literals_must_be_canonical() {
 }
 
 #[test]
+fn from_ip_folds_an_ipv4_mapped_address_into_the_ipv4_host() {
+    let v4 = Host::parse_normalised("127.0.0.2").unwrap();
+    assert_eq!(Host::from_ip("::ffff:127.0.0.2".parse().unwrap()), v4);
+    assert_eq!(Host::from_ip("127.0.0.2".parse().unwrap()), v4);
+    // Not folded: a NAT64 address is a translation target, not another spelling of the IPv4 one.
+    let nat64 = Host::parse_normalised("64:ff9b::7f00:2").unwrap();
+    assert_eq!(Host::from_ip("64:ff9b::7f00:2".parse().unwrap()), nat64);
+    assert_ne!(nat64, v4);
+}
+
+#[test]
+fn folded_equates_both_spellings_of_one_address() {
+    let mapped = Host::parse_normalised("::ffff:10.0.0.1").unwrap();
+    assert_eq!(mapped.folded(), Host::parse_normalised("10.0.0.1").unwrap());
+    let name = Host::parse_normalised("a.example.com").unwrap();
+    assert_eq!(name.folded(), name);
+}
+
+#[test]
 fn host_accessors_and_display() {
     let name = Host::parse_normalised("a.example.com").unwrap();
     assert_eq!(name.to_string(), "a.example.com");

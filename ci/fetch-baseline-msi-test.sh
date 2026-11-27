@@ -109,4 +109,14 @@ mkdir -p "$tmp/out$((n + 1))"
 run "a folder in use" FAKE_TAG=v0.2.0 FAKE_RELEASE_MSI=Puddle_0.2.0_x64_en-US.msi
 [ "$rc" = 1 ] && [[ $err == *"is not empty"* ]] || bad "a folder in use: exit $rc ($err)"
 
+run "an asked-for run" FAKE_TAG=v0.2.0 FAKE_RELEASE_MSI=Puddle_0.2.0_x64_en-US.msi BASELINE_RUN=45515025599
+[ "$rc" = 0 ] || bad "an asked-for run: exit $rc ($err)"
+[ "$out" = "$dir/Puddle_0.0.0_x64_en-US.msi" ] || bad "an asked-for run: printed '$out'"
+grep -q "^run download 45515025599 " "$tmp/log" || bad "an asked-for run: did not download it: $(cat "$tmp/log")"
+grep -qE "^(release|api) " "$tmp/log" && bad "an asked-for run: looked at the releases or the kept MSIs too"
+[[ $err == *"msi run 45515025599 (asked for)"* ]] || bad "an asked-for run: the source is not named: $err"
+
+run "a run id that is not one" FAKE_TAG= BASELINE_RUN='12; x'
+[ "$rc" = 1 ] && [[ $err == *"is not a run id"* ]] || bad "a bad run id: exit $rc ($err)"
+
 if [ "$fail" = 0 ]; then echo "fetch-baseline-msi-test: ok"; else exit 1; fi

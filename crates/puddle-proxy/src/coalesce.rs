@@ -2,6 +2,9 @@
 //! One lookup in flight per name: connects that ask for a name while a lookup of it is running
 //! share that lookup's answer instead of each starting their own.
 //!
+//! The port is no part of what is shared: it only fills in the addresses, so each caller gets the
+//! one answer with its own port.
+//!
 //! It is not a cache. The answer is handed to the callers that were waiting when it arrived and
 //! forgotten, so no answer outlives the lookup it came from and a name that changes is seen by the
 //! next connect. (The OS resolver reports no TTL, so a cache would have to guess one.) Rules are
@@ -20,7 +23,7 @@ use crate::destination::{BoxFuture, Resolver};
 
 /// The lookup's outcome as every waiter gets it: the error's kind and text, not its source chain.
 type Answer = Result<Vec<SocketAddr>, (io::ErrorKind, String)>;
-type Key = (DomainName, u16);
+type Key = DomainName;
 
 /// A lookup in flight and how many callers wait on it.
 struct Flight {
@@ -30,7 +33,7 @@ struct Flight {
 
 type Flights = Mutex<HashMap<Key, Flight>>;
 
-/// `inner`, with concurrent lookups of the same name and port shared. An answer is kept only
+/// `inner`, with concurrent lookups of the same name shared (whatever the port). An answer is kept only
 /// until its lookup returns; a user-supplied resolver is not wrapped.
 pub struct Coalescing<R> {
     inner: R,
@@ -101,13 +104,13 @@ impl<R: Resolver> Resolver for Coalescing<R> {
         port: u16,
     ) -> BoxFuture<'a, io::Result<Vec<SocketAddr>>> {
         Box::pin(async move {
-            let waiter = Waiter::join(&self.flights, (name.clone(), port));
+            let waiter = Waiter::join(&self.flights, name.clone());
             let answer = waiter
                 .cell
                 .get_or_init(|| async {
                     let answer = self
                         .inner
-                        .resolve(name, port)
+                        .resolve(name, 0)
                         .await
                         .map_err(|e| (e.kind(), e.to_string()));
                     // Out of the map the moment it has an answer, before the waiters wake, so a
@@ -117,7 +120,14 @@ impl<R: Resolver> Resolver for Coalescing<R> {
                 })
                 .await;
             match answer {
-                Ok(addrs) => Ok(addrs.clone()),
+                Ok(addrs) => Ok(addrs
+                    .iter()
+                    .map(|addr| {
+                        let mut addr = *addr;
+                        addr.set_port(port);
+                        addr
+                    })
+                    .collect()),
                 Err((kind, text)) => Err(io::Error::new(*kind, text.clone())),
             }
         })

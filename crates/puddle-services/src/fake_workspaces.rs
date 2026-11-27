@@ -635,6 +635,7 @@ impl FakeWorkspaces {
                     identity,
                     pull: toggles.pull,
                     push: toggles.push,
+                    push_block: None,
                     local: None,
                 },
             )
@@ -891,6 +892,7 @@ impl WorkspaceService for FakeWorkspaces {
                 Operation::Starting,
                 vec![
                     (WorkspaceStep::Starting, None, None),
+                    (WorkspaceStep::WaitingForAgent, None, None),
                     (WorkspaceStep::Syncing, None, None),
                 ],
             );
@@ -1106,6 +1108,7 @@ impl WorkspaceService for FakeWorkspaces {
                     identity: None,
                     pull: true,
                     push: true,
+                    push_block: None,
                     local: None,
                 };
                 (record, new)
@@ -1408,6 +1411,7 @@ impl WorkspaceService for FakeWorkspaces {
                 identity: None,
                 pull: true,
                 push: true,
+                push_block: None,
                 local: None,
             };
             self.clone_into(id, new, false, git).await

@@ -84,6 +84,16 @@ pub struct AuditStats {
     pub free_bytes: u64,
 }
 
+/// Frees up to `pages` pages from the end of the file. `incremental_vacuum` frees one page per
+/// step of its statement, so the statement is stepped until it is done: a single step, as
+/// `Connection::execute_batch` takes, frees one page.
+fn free_pages(conn: &Connection, pages: u32) -> Result<(), StoreError> {
+    let mut statement = conn.prepare(&format!("PRAGMA incremental_vacuum({pages})"))?;
+    let mut rows = statement.query([])?;
+    while rows.next()?.is_some() {}
+    Ok(())
+}
+
 fn pragma_u64(conn: &Connection, name: &str) -> Result<u64, StoreError> {
     let value: i64 = conn.pragma_query_value(None, name, |row| row.get(0))?;
     Ok(u64::try_from(value).unwrap_or(0))
@@ -172,8 +182,11 @@ impl Store {
     /// when it deleted any. Records of any age that are newer are never touched, whoever's they
     /// are. The file keeps its size until [`Store::shrink_audit_file`].
     ///
+    /// Each chunk and its `audit_trimmed` record commit in one transaction, so a delete is never
+    /// without its record: a record that cannot be written leaves the chunk in place.
+    ///
     /// # Errors
-    /// A database error; the chunks already deleted stay deleted.
+    /// A database error; the chunks already deleted stay deleted, each with its record.
     pub fn prune_audit(&self, keep_days: u32) -> Result<AuditPrune, StoreError> {
         let now = self.clock.now_ms();
         let cutoff = sql_ts(now.saturating_sub(u64::from(keep_days).saturating_mul(DAY_MS)));
@@ -181,53 +194,80 @@ impl Store {
         loop {
             let mut conn = lock(&self.conn);
             let tx = write_tx(&mut conn)?;
+            let head = audit_head(&tx)?;
             let chunk = tx.execute(
                 "DELETE FROM audit WHERE id IN
                      (SELECT id FROM audit WHERE ts < ?1 ORDER BY ts LIMIT ?2)",
                 params![cutoff, CHUNK],
             )?;
-            tx.commit()?;
             if chunk == 0 {
                 break;
             }
-            deleted += u64::try_from(chunk).unwrap_or(0);
+            let chunk = u64::try_from(chunk).unwrap_or(0);
+            let oldest: Option<i64> =
+                tx.query_row("SELECT min(ts) FROM audit", [], |row| row.get(0))?;
+            append(
+                &tx,
+                &AuditRecord::AuditTrimmed {
+                    ts: now,
+                    deleted_records: chunk,
+                    oldest_ts_kept: oldest.and_then(|ts| u64::try_from(ts).ok()),
+                },
+            )?;
+            self.commit(tx, head, Vec::new())?;
+            deleted += chunk;
         }
-        if deleted == 0 {
-            return Ok(AuditPrune::default());
+        if deleted > 0 {
+            tracing::info!(
+                deleted,
+                keep_days,
+                "audit records past their retention deleted"
+            );
         }
-        let mut conn = lock(&self.conn);
-        let tx = write_tx(&mut conn)?;
-        let head = audit_head(&tx)?;
-        let oldest: Option<i64> =
-            tx.query_row("SELECT min(ts) FROM audit", [], |row| row.get(0))?;
-        append(
-            &tx,
-            &AuditRecord::AuditTrimmed {
-                ts: now,
-                deleted_records: deleted,
-                oldest_ts_kept: oldest.and_then(|ts| u64::try_from(ts).ok()),
-            },
-        )?;
-        self.commit(tx, head, Vec::new())?;
-        tracing::info!(
-            deleted,
-            keep_days,
-            "audit records past their retention deleted"
-        );
         Ok(AuditPrune { deleted })
+    }
+
+    /// Whether a prune at `cutoff` would leave the audit empty: it holds records, and all are older.
+    fn prune_would_empty_audit(&self, cutoff: i64) -> Result<bool, StoreError> {
+        let conn = lock(&self.conn);
+        Ok(conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM audit WHERE ts < ?1)
+                    AND NOT EXISTS (SELECT 1 FROM audit WHERE ts >= ?1)",
+            [cutoff],
+            |row| row.get(0),
+        )?)
     }
 
     /// The sweeper's prune: by the saved retention, at most once an hour (and at once at start and
     /// after the retention changes).
+    ///
+    /// A pass that would delete every record waits for the next one to find the same: a host
+    /// clock stepped forward past the retention makes everything look old, and deleted records do
+    /// not come back (RS-13). Pruning by hand (`prune_audit`) is the user's word and does not wait.
     pub(super) fn prune_audit_if_due(&self) -> Result<u64, StoreError> {
         let now = self.clock.now_ms();
         let last = self.last_audit_prune.load(Ordering::Relaxed);
         if last != NEVER && now >= last && now - last < PRUNE_EVERY_MS {
             return Ok(0);
         }
-        let pruned = self.prune_audit(self.audit_retention_days()?)?;
+        let keep_days = self.audit_retention_days()?;
+        let cutoff = sql_ts(now.saturating_sub(u64::from(keep_days).saturating_mul(DAY_MS)));
+        if self.prune_would_empty_audit(cutoff)? {
+            if !self.audit_wipe_deferred.swap(true, Ordering::Relaxed) {
+                tracing::warn!(
+                    keep_days,
+                    "every audit record is past its retention (a clock step?); deleting them only if the next pass agrees"
+                );
+                self.last_audit_prune.store(now, Ordering::Relaxed);
+                return Ok(0);
+            }
+        } else {
+            self.audit_wipe_deferred.store(false, Ordering::Relaxed);
+        }
+        let pruned = self.prune_audit(keep_days)?;
         // Only a pass that worked counts, so a failed one is tried again at the next sweep.
         self.last_audit_prune.store(now, Ordering::Relaxed);
+        self.audit_wipe_deferred.store(false, Ordering::Relaxed);
         Ok(pruned.deleted)
     }
 
@@ -270,7 +310,7 @@ impl Store {
         };
         for _ in 0..SHRINK_STEPS_PER_SWEEP {
             let conn = lock(&self.conn);
-            conn.execute_batch(&format!("PRAGMA incremental_vacuum({SHRINK_STEP_PAGES})"))?;
+            free_pages(&conn, SHRINK_STEP_PAGES)?;
             if pragma_u64(&conn, "freelist_count")? == 0 {
                 break;
             }

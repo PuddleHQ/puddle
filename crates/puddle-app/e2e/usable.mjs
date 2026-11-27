@@ -459,9 +459,8 @@ async function firstRunToCreateForm() {
 
 /** Fills the New workspace form as a person does and presses Create. */
 async function createFromTheForm() {
-  // The empty list offers a one-line form; More options opens the full New workspace screen.
-  await uia.click("More options", inMain("button", "More options"));
-  await uia.waitFor("the New workspace screen", { window: MAIN, localized: "heading", name: "New workspace" });
+  // The empty list shows the whole New workspace form under the page's heading.
+  await uia.waitFor("the New workspace form", { window: MAIN, localized: "heading", name: "New workspace" });
   await uia.fill("the repository address", { window: MAIN, role: "edit", nameRegex: "^Git repository \\(HTTPS" }, httpsUrl);
   await uia.fill("the name", { window: MAIN, role: "edit", name: "Name" }, WORKSPACE);
   // Enter in the Name field submits the form. Real key presses go to the foreground window, so a key

@@ -40,6 +40,7 @@ use crate::terminate::{self, TerminationSource};
 use crate::upstream::{Admitted, Upstream};
 
 mod admit;
+mod audit;
 mod config;
 mod forward;
 mod plan;
@@ -48,6 +49,7 @@ mod relay;
 
 use admit::resolve_destination;
 pub(crate) use admit::{Unresolved, admit, refuse_not_running};
+use audit::AuditGuard;
 pub use config::ProxyConfig;
 pub(crate) use forward::{connect_first, tunnel};
 pub(crate) use plan::Seen;
@@ -442,14 +444,29 @@ impl Proxy {
     ) -> Result<Decision, PolicyError> {
         let policy = Arc::clone(&self.policy);
         let request = request.clone();
+        let asked = (
+            request.workspace.clone(),
+            request.host.clone(),
+            request.port,
+        );
         // A miss writes a pending row, so the call may block on SQLite.
-        tokio::task::spawn_blocking(move || policy.decide(&request, suffix_allows))
+        let decided = tokio::task::spawn_blocking(move || policy.decide(&request, suffix_allows))
             .await
             .unwrap_or_else(|_| {
                 Err(PolicyError {
                     reason: "policy task failed".into(),
                 })
-            })
+            });
+        // Names and ports only: never a header, a body or a query string.
+        match &decided {
+            Ok(decision) => {
+                tracing::debug!(workspace = %asked.0, host = %asked.1, port = asked.2, ?decision, "egress decision");
+            }
+            Err(err) => {
+                tracing::debug!(workspace = %asked.0, host = %asked.1, port = asked.2, reason = %err.reason, "egress decision failed");
+            }
+        }
+        decided
     }
 
     /// How a refusal names `workspace`: its name, or its id when the policy knows none.
@@ -463,9 +480,22 @@ impl Proxy {
             .unwrap_or_else(|| workspace.to_string())
     }
 
+    /// Hands `event` to the connection log on a blocking thread without waiting for it: for a
+    /// caller that cannot await (a drop). Outside a runtime the write happens on the caller.
+    pub(crate) fn record_detached(&self, event: ConnectionEvent) {
+        let log = Arc::clone(&self.log);
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                drop(runtime.spawn_blocking(move || log.record(&event)));
+            }
+            Err(_) => log.record(&event),
+        }
+    }
+
     /// Hands `event` to the connection log on a blocking thread (it may write to SQLite).
     pub(crate) async fn record(&self, event: ConnectionEvent) {
         let log = Arc::clone(&self.log);
+        tracing::debug!(workspace = ?event.workspace, host = %event.host, port = event.port, decision = ?event.decision, outcome = ?event.outcome, reason = ?event.reason, upstream = ?event.upstream, "connection recorded");
         if tokio::task::spawn_blocking(move || log.record(&event))
             .await
             .is_err()
@@ -648,10 +678,16 @@ async fn serve(handler: &WorkspaceHandler, stream: GuestStream) {
     if ssh::announced(&head) || ssh::started(reader.buffer()) {
         request = request.with_protocol(ProtocolHint::Ssh);
     }
-    let mut event = relay(handler, reader, &request, &head, &target).await;
-    event.bytes_up = counts.read();
-    event.bytes_down = counts.written();
-    proxy.record(event).await;
+    // From here every connection leaves a record, even when its task is aborted or panics. Until
+    // the decision is made the snapshot is the fail-closed one `admit` starts from.
+    let audit = AuditGuard::new(proxy, &counts);
+    audit.snapshot(&ConnectionEvent::new(
+        &request,
+        ConnectionDecision::Blocked,
+        ConnectionReason::PolicyUnavailable,
+    ));
+    let event = relay(handler, reader, &request, &head, &target, &audit).await;
+    audit.finish(event).await;
 }
 
 /// How long a connection over the workspace's limit may take to say where it was going. Short:

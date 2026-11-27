@@ -108,6 +108,23 @@ function settings(
   } as never;
 }
 
+describe("the title", () => {
+  const titleLevel = (embedded: boolean) => {
+    render(CreateWorkspaceForm, {
+      props: { store: { create: vi.fn() }, settings: settings(), embedded },
+    } as never);
+    return screen.getByRole("heading", { name: "New workspace" }).tagName;
+  };
+
+  it("is the page's h1 on its own screen", () => {
+    expect(titleLevel(false)).toBe("H1");
+  });
+
+  it("is an h2 under another screen's h1", () => {
+    expect(titleLevel(true)).toBe("H2");
+  });
+});
+
 describe("the default image's description", () => {
   function mountWith(description: string | null, image: string | null = null) {
     render(CreateWorkspaceForm, {
@@ -182,6 +199,32 @@ const type = (label: string, value: string) =>
   fireEvent.input(field(label), { target: { value } });
 
 describe("CreateWorkspaceForm", () => {
+  it("selects the suggested name on focus so typing replaces it, and leaves a typed name alone", async () => {
+    mount();
+    await screen.findByRole("region");
+    await type("Git repository (HTTPS)", "https://github.com/acme/shop");
+    const name = field("Name");
+    expect(name.value).toBe("shop");
+    name.focus();
+    expect([name.selectionStart, name.selectionEnd]).toEqual([0, 4]);
+    await fireEvent.input(name, { target: { value: "mine" } });
+    name.setSelectionRange(4, 4);
+    name.blur();
+    name.focus();
+    expect([name.selectionStart, name.selectionEnd]).toEqual([4, 4]);
+  });
+
+  it("keeps the suggested name selected through the mouse-up of the focusing click only", async () => {
+    mount();
+    await screen.findByRole("region");
+    await type("Git repository (HTTPS)", "https://github.com/acme/shop");
+    const name = field("Name");
+    expect(await fireEvent.mouseUp(name)).toBe(true);
+    name.focus();
+    expect(await fireEvent.mouseUp(name)).toBe(false);
+    expect(await fireEvent.mouseUp(name)).toBe(true);
+  });
+
   it("is a dialog with the repository first", async () => {
     mount();
     const dialog = await screen.findByRole("region", { name: "New workspace" });
@@ -857,7 +900,11 @@ describe("CreateWorkspaceForm identities and repositories", () => {
   });
 
   function open(
-    prefill: { url: string; identity: number | null } | null = null,
+    prefill: {
+      url: string;
+      identity: number | null;
+      pushBlock?: "archived" | "read" | null;
+    } | null = null,
     result: ActionResult<Workspace> = {
       ok: true,
       value: workspace("web", { busy: "creating", status: "created" }),
@@ -1060,24 +1107,72 @@ describe("CreateWorkspaceForm identities and repositories", () => {
     );
   });
 
+  it("greys out Push with the reason for an archived repository, and frees it when the address is typed over", async () => {
+    const repos = new FakeRepos();
+    repos.repos = [repoView("acme", "old", { archived: true })];
+    repos.sources = [repoSource({ repo_count: 1 })];
+    h.repos = repos;
+    open();
+    await screen.findByRole("region");
+    await fireEvent.click(screen.getByText("Choose from your repositories"));
+    await fireEvent.click(
+      await screen.findByRole("button", { name: /acme\/old/ }),
+    );
+    const push = screen.getByLabelText("Push");
+    expect(push).toBeDisabled();
+    expect(push).not.toBeChecked();
+    expect(
+      screen.getByText(/archived on its Git host, so it is read-only/),
+    ).toBeInTheDocument();
+    await type("Git repository (HTTPS)", "https://github.com/acme/web");
+    expect(screen.getByLabelText("Push")).toBeEnabled();
+    expect(screen.queryByText(/archived on its Git host/)).toBeNull();
+  });
+
+  it("greys out Push for a repository the account can only read", async () => {
+    const repos = new FakeRepos();
+    repos.repos = [repoView("acme", "docs", { role: "read" })];
+    repos.sources = [repoSource({ repo_count: 1 })];
+    h.repos = repos;
+    open();
+    await screen.findByRole("region");
+    await fireEvent.click(screen.getByText("Choose from your repositories"));
+    await fireEvent.click(
+      await screen.findByRole("button", { name: /acme\/docs/ }),
+    );
+    expect(screen.getByLabelText("Push")).toBeDisabled();
+    expect(
+      screen.getByText(/can only read this repository/),
+    ).toBeInTheDocument();
+  });
+
+  it("greys out Push for a repository handed in as archived and sends the block with the create", async () => {
+    const { create } = open({
+      url: "https://github.com/acme/old",
+      identity: 1,
+      pushBlock: "archived",
+    });
+    await screen.findByRole("region");
+    expect(screen.getByLabelText("Push")).toBeDisabled();
+    await fireEvent.click(submit());
+    await vi.waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create.mock.calls[0]?.[0]).toMatchObject({
+      repositories: [
+        {
+          url: "https://github.com/acme/old",
+          push: false,
+          push_block: "archived",
+        },
+      ],
+    });
+  });
+
   it("forgets the identity that listed it when the address is typed over", async () => {
     open({ url: "https://github.com/acme/web", identity: 2 });
     await screen.findByRole("region");
     await type("Git repository (HTTPS)", "https://github.com/acme/api");
     expect(identityBox()).toHaveDisplayValue("Work");
     expect(screen.queryByText(/listed this repository/)).toBeNull();
-  });
-
-  it("warns about an Azure DevOps project with a space in the address", async () => {
-    open();
-    await screen.findByRole("region");
-    await type(
-      "Git repository (HTTPS)",
-      "https://dev.azure.com/contoso/Shop%20Floor/_git/scanner",
-    );
-    expect(screen.getByTestId("table-cannot-hold")).toHaveTextContent(
-      "Only push to allowed repositories",
-    );
   });
 });
 

@@ -60,6 +60,28 @@ impl Seen {
         self.termination()?.mode_for(&request.host, from_container)
     }
 
+    /// The CA that lets the refusal of a `CONNECT` be answered inside the tunnel (see
+    /// [`terminate::refused`]): a decision on a name at port 443, from a client of the workspace
+    /// itself (a container has none of its trust settings), not announcing SSH, for a name the
+    /// workspace does not pass through undecrypted.
+    pub(crate) fn refusal_ca(
+        &self,
+        request: &EgressRequest,
+        hints: GuestHints,
+        refusal: &Refusal,
+    ) -> Option<Arc<puddle_ca::WorkspaceCa>> {
+        let telling = terminate::refused::tellable(refusal)
+            && !hints.from_container
+            && !hints.ssh
+            && request.port == terminate::request::HTTPS_PORT
+            && matches!(request.host, Host::Name(_));
+        let termination = self.termination().filter(|_| telling)?;
+        termination
+            .skipped(&request.host, false)
+            .is_none()
+            .then(|| Arc::clone(termination.ca()))
+    }
+
     /// Why a host the workspace would decrypt (it decrypts every host) is passed through instead.
     pub(crate) fn skipped(
         &self,

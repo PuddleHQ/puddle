@@ -616,15 +616,11 @@ async fn the_host_policy_still_applies_and_a_denied_bound_host_is_not_terminated
         .name("bound.test", server.addr)
         .allow(vec![])
         .build();
-    let guest = rig.guest();
-    let mut stream = guest.open_stream().await;
-    stream
-        .write_all(b"CONNECT bound.test:443 HTTP/1.1\r\nHost: bound.test:443\r\n\r\n")
-        .await
-        .unwrap();
-    let mut got = String::new();
-    stream.read_to_string(&mut got).await.unwrap();
-    assert!(got.starts_with("HTTP/1.1 403"), "{got}");
+    let mut guest = rig.guest();
+    // The refusal is the rules' own, told inside the tunnel: the real server is never reached.
+    let mut client = guest.tls("bound.test:443", None).await.unwrap();
+    let response = client.get("bound.test", "/x").await;
+    assert_eq!(response.status, 403);
     assert_eq!(server.accepted(), 0);
     let _ = (
         host("bound.test"),

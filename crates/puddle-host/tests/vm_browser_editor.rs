@@ -206,6 +206,10 @@ async fn explorer(
     }
 }
 
+/// The ids of the workspaces the editor keeps storage for, and of those it has a cached copy of
+/// the multi-root file for: `storage= <ids> cached= <ids>`.
+const WORKSPACE_IDS: &str = "cd /workspace/.puddle/code-server/user-data/User && echo storage= $(ls workspaceStorage 2>/dev/null | grep -v '[.]') cached= $(ls caches/CachedConfigurations/workspaces 2>/dev/null)";
+
 /// Waits until the editor server answers its health check.
 const EDITOR_UP: &str = "for i in $(seq 1 100); do curl -sf -o /dev/null http://127.0.0.1:41337/healthz && exit 0; sleep 1; done; exit 1";
 
@@ -354,6 +358,17 @@ impl ShellStandIn {
             .press(page, keys)
             .await
             .expect("keys");
+    }
+
+    /// Clicks the first element matching `selector` in the newest page of `workspace`.
+    async fn click(&self, workspace: &str, selector: &str) {
+        let page = self.page(workspace).await;
+        self.browser
+            .lock()
+            .await
+            .click(page, selector)
+            .await
+            .expect("click");
     }
 
     /// Types `text` into what has focus in the newest page of `workspace`.
@@ -540,7 +555,7 @@ const WINDOW_LOGS: &str = "(async () => {
           const get = all.get(key);
           get.onsuccess = get.onerror = () => {
             const body = get.result === undefined ? '' : text(get.result);
-            const lines = body.split('\n').filter(l => interesting.test(l)).slice(-60);
+            const lines = body.split('\\n').filter(l => interesting.test(l)).slice(-60);
             found.push({ key: String(key), bytes: body.length, lines });
             if (found.length === wanted.length) done(found);
           };
@@ -744,6 +759,36 @@ async fn vm_browser_code_server_opens_signed_in_shows_the_checkouts_and_its_clos
     );
     assert!(answer.get("url").is_none_or(Value::is_null), "{answer}");
     let rows = explorer(&shell, &runtime, &sandbox, "first window", EXPLORER_ROWS).await;
+    // The agent puts the editor's cached copy of the multi-root file in place under the id the
+    // workbench gives the window's workspace, which it mirrors from the workbench's internals.
+    // The window's own storage folder carries the workbench's id: an editor release that keys
+    // its cache another way fails here, not later as windows that open with no folders.
+    let (storage, cached) = puddle_test_kit::eventually_async(
+        "the window's storage folder",
+        Duration::from_secs(90),
+        || async {
+            let line = guest(&runtime, &sandbox, WORKSPACE_IDS).await;
+            let words = |part: &str| -> Vec<String> {
+                part.split_whitespace().map(str::to_owned).collect()
+            };
+            match line
+                .trim()
+                .strip_prefix("storage=")
+                .and_then(|rest| rest.split_once("cached="))
+            {
+                Some((storage, cached)) if !storage.trim().is_empty() => {
+                    Ok((words(storage), words(cached)))
+                }
+                _ => Err(format!("the guest shows {line}")),
+            }
+        },
+    )
+    .await;
+    assert!(
+        storage.iter().all(|id| cached.contains(id)),
+        "the window's workspace ids {storage:?} have no cached copy among {cached:?}: the editor \
+         no longer keys its cache the way the agent mirrors it"
+    );
     let place = shell.wait(&name, "true", WHERE, PAGE_BUDGET).await;
     assert_eq!(place["login"], false, "{place}");
     let password = guest(&runtime, &sandbox, "cat /run/puddle/editor-password").await;
@@ -2033,15 +2078,116 @@ async fn vm_browser_code_server_hovering_a_typescript_symbol_shows_the_type_the_
     editor.finish().await;
 }
 
+/// The extension folders the editor server holds, one per line, from its own `--extensions-dir`.
+const EXTENSION_FOLDERS: &str = r#"
+pid=$(pgrep -f -o -- '--extensions-dir')
+exts=$(tr '\0' '\n' <"/proc/$pid/cmdline" | grep -A1 -x -- '--extensions-dir' | tail -n 1)
+ls -1 "$exts" 2>/dev/null
+true
+"#;
+
+/// Clicks, once it exists, the button of the editor's modal dialog labelled `label`; true then.
+fn click_dialog_button(label: &str) -> String {
+    let label = serde_json::to_string(label).unwrap();
+    format!(
+        "(() => {{ const b = [...document.querySelectorAll('.monaco-dialog-box .monaco-button')].find(b => b.textContent.trim() === {label}); if (!b) return false; b.click(); return true; }})()"
+    )
+}
+
+/// Clicks "Install" on the Extensions view's row that shows `name`; true once it has.
+fn click_install_in_row(name: &str) -> String {
+    let name = serde_json::to_string(name).unwrap();
+    format!(
+        "(() => {{ const row = [...document.querySelectorAll('.extensions-list .monaco-list-row')].find(r => r.textContent.includes({name})); const a = row?.querySelector('a.extension-action.install'); if (!a) return false; a.click(); return true; }})()"
+    )
+}
+
+/// Two checkouts and a loose file, owned by the editor's user: the window's explorer lists rows
+/// only when the volume holds more than `.puddle`.
+const CHECKOUTS: &str = "cd /workspace && git init -q api && git init -q web && echo loose >notes.txt && chown -R agent:agent .";
+
+/// K tier, code-server. Installing an extension from the Extensions view, which is the path a user
+/// takes (the CLI test in `vm_editor_extensions` skips it): the editor asks "Do you trust the
+/// publisher?" before it downloads anything, and a click on "Trust Publisher & Install" installs
+/// the extension. rust-analyzer is the second one: Open VSX's newest build needs a newer VS Code
+/// than the pinned code-server, and the editor must still pick one it can run.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vm_browser_code_server_installs_extensions_from_the_view_after_trusting_the_publisher() {
+    let editor = Box::pin(Editor::start("exu", None)).await;
+    editor.guest(CHECKOUTS).await;
+    let (shell, name) = (&editor.shell, &editor.name);
+    editor.attach().await;
+    editor.explorer("window").await;
+    let page = shell.page(name).await;
+
+    for (id, row, folder) in [
+        (
+            "EditorConfig.EditorConfig",
+            "EditorConfig",
+            "editorconfig.editorconfig-",
+        ),
+        (
+            "rust-lang.rust-analyzer",
+            "rust-analyzer",
+            "rust-lang.rust-analyzer-",
+        ),
+    ] {
+        shell.press(name, "Escape").await;
+        shell.press(name, "Control+Shift+x").await;
+        // The search box takes keys only after a click on it; the key chord alone leaves them elsewhere.
+        shell
+            .click(name, ".extensions-viewlet .monaco-editor")
+            .await;
+        // Replaces the first round's search.
+        shell.press(name, "Control+a").await;
+        shell.type_text(name, id).await;
+        shell
+            .rows_with(page, ".extensions-list .monaco-list-row", row)
+            .await;
+        shell
+            .wait(name, &click_install_in_row(row), "true", PAGE_BUDGET)
+            .await;
+        // Nothing is downloaded until the dialog is answered.
+        shell
+            .wait(
+                name,
+                &click_dialog_button("Trust Publisher & Install"),
+                "true",
+                PAGE_BUDGET,
+            )
+            .await;
+        let folders = puddle_test_kit::eventually_async(
+            &format!("{id} is in the editor's extensions folder"),
+            Duration::from_secs(180),
+            || async {
+                let out = editor.guest(EXTENSION_FOLDERS).await;
+                if out.lines().any(|l| l.to_lowercase().starts_with(folder)) {
+                    Ok(out)
+                } else {
+                    Err(out)
+                }
+            },
+        )
+        .await;
+        eprintln!("{id}: {folders}");
+    }
+    editor.finish().await;
+}
+
 /// Rounds before the memory baseline is read.
 const WARM_UP_ROUNDS: u32 = 2;
 
-/// What the guest's processes hold in memory, summed (bytes).
-const GUEST_RSS: &str = "ps -eo rss= | awk '{ s += $1 } END { print s * 1024 }'";
+/// Whether the editor has cached the multi-root file in its own configuration cache: `yes` or `no`.
+const WORKSPACE_CACHED: &str = "ls /workspace/.puddle/code-server/user-data/User/caches/CachedConfigurations/workspaces/*/workspace.json >/dev/null 2>&1 && echo yes || echo no";
+
+/// What the guest's processes hold in memory, summed (bytes), four samples one second apart; the
+/// round's figure is the lowest of them.
+const GUEST_RSS_SAMPLES: &str =
+    "for i in 1 2 3 4; do sleep 1; ps -eo rss= | awk '{ s += $1 } END { print s * 1024 }'; done";
 
 /// K tier, code-server, soak bar. The window opened and closed ten times in a row: after each
-/// close the guest has no extension host, and after the tenth the guest's memory is within 10 % of
-/// what it was after the warm-up (the first rounds fill code-server's caches: the guest grew
+/// close the guest has no extension host, and after the tenth the guest's memory floor (the lowest of four samples after the close) is within 10 % of
+/// the floor after the warm-up (the first rounds fill code-server's caches: the guest grew
 /// 48 MB from round 1 to 2, then stayed within 4 % of round 3). `PUDDLE_VM_SOAK_BREAK=keep-extension-host`
 /// stops the hosts at each close and skips the cleanup, which must turn the no-extension-host bar red.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -2050,8 +2196,8 @@ async fn vm_soak_browser_code_server_ten_opens_and_closes_leave_no_extension_hos
     let editor = Box::pin(Editor::start("wch", None)).await;
     let sandbox = &editor.sandbox;
     let windows = editor.vm.host.editor_windows();
-    // Only the soak: a first load that misses the folders is a rare race, and its window's trace
-    // logs are what name the read that failed (the other tests keep the default level).
+    // Only the soak: its windows log at trace level, so a window that misses its folders leaves
+    // logs that say why (the other tests keep the default level).
     editor
         .shell
         .trace_pages
@@ -2068,6 +2214,28 @@ async fn vm_soak_browser_code_server_ten_opens_and_closes_leave_no_extension_hos
     for round in 1..=10 {
         editor.attach().await;
         editor.explorer(&format!("window {round}")).await;
+        // The window is not closed before the editor has cached the multi-root file. Without that
+        // cache entry the next window starts from an empty cached copy, and on a busy host the web
+        // workbench (VS Code 1.141) can drop the real file's folders when its read answers while
+        // the workspace is still being set up: the window then shows "No Folder Opened" until a
+        // reload. The workbench writes the entry seconds after it opens, later than a soak round
+        // takes on a loaded runner, so without this wait every window is such a first window.
+        puddle_test_kit::eventually_async(
+            "the editor cached the multi-root file",
+            Duration::from_secs(90),
+            || async {
+                let cached = editor.guest(WORKSPACE_CACHED).await;
+                if cached.trim() == "yes" {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "the cache entry is not there yet ({})",
+                        cached.trim()
+                    ))
+                }
+            },
+        )
+        .await;
         windows_become(windows, sandbox, true).await;
         let open = counts_until(
             &editor.vm.runtime,
@@ -2097,8 +2265,17 @@ async fn vm_soak_browser_code_server_ten_opens_and_closes_leave_no_extension_hos
             |l| count(l, "hosts") == 0,
         )
         .await;
-        let rss: u64 = editor.guest(GUEST_RSS).await.trim().parse().unwrap();
-        eprintln!("round {round}: guest memory {rss} bytes; open {open}; closed {closed}");
+        // A single sample swings by a third on a busy host: settle, then keep the lowest of a few.
+        let samples: Vec<u64> = editor
+            .guest(GUEST_RSS_SAMPLES)
+            .await
+            .split_whitespace()
+            .map(|n| n.parse().unwrap())
+            .collect();
+        let rss = puddle_vm_tests::soak::rss_floor(&samples).unwrap();
+        eprintln!(
+            "round {round}: guest memory floor {rss} bytes of {samples:?}; open {open}; closed {closed}"
+        );
         if round == WARM_UP_ROUNDS + 1 {
             first = rss;
         }

@@ -2,7 +2,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
   import { goto } from "$app/navigation";
-  import RepoPicker from "./RepoPicker.svelte";
+  import RepositoryAddress from "./RepositoryAddress.svelte";
   import RepositoryHostsNotice from "./RepositoryHostsNotice.svelte";
   import { allowedNotice, type HostCheck } from "#lib/workspaces/hosts.ts";
   import { covering, type Identity } from "#lib/identities/model.ts";
@@ -11,8 +11,10 @@
   import { parseRepoUrl } from "#lib/identities/repo.ts";
   import {
     matchingUrl,
-    tableCannotHold,
-    TABLE_CANNOT_HOLD,
+    pushBlock,
+    pushBlockText,
+    type PushBlock,
+    type RepoView,
   } from "#lib/repos/model.ts";
   import {
     identities as identityStore,
@@ -67,6 +69,7 @@
     prefill = null,
     onCreated,
     onCancel,
+    embedded = false,
     settings = globalSettingsStore,
     hostCheck = undefined,
     defaultImage = defaultImageStore,
@@ -79,11 +82,17 @@
      * A repository to start from, as "Create a workspace for this" gives it: its address and the
      * identity that listed it. Give a new object each time the form should take one.
      */
-    prefill?: { url: string; identity: number | null } | null;
+    prefill?: {
+      url: string;
+      identity: number | null;
+      pushBlock?: PushBlock | null;
+    } | null;
     /** Called with the new workspace (still being created) once the service accepted it. */
     onCreated?: (workspace: Workspace) => void;
     /** Called when Cancel is pressed, after the draft was dropped. */
     onCancel?: () => void;
+    /** Shown under another screen's h1 (the empty Workspaces page): the title is an h2, so the page keeps one h1. */
+    embedded?: boolean;
     /** The global settings, which say how many CPUs a workspace may have and gets by default. */
     settings?: Pick<GlobalSettings, "view" | "load">;
     /** For tests: the host check. */
@@ -104,7 +113,10 @@
   function firstRow(): RowDraft {
     const given = untrack(() => prefill);
     const row = fresh(given?.url ?? "");
-    if (given) row.listedBy = given.identity;
+    if (given) {
+      row.listedBy = given.identity;
+      blockPush(row, given.pushBlock ?? null);
+    }
     return row;
   }
 
@@ -164,6 +176,7 @@
       taken = prefill;
       const row = fresh(prefill.url);
       row.listedBy = prefill.identity;
+      blockPush(row, prefill.pushBlock ?? null);
       rows = [row];
       rowErrors = {};
     }
@@ -195,14 +208,6 @@
     rowErrors[row.key]?.[field] ??
     (field === "url" ? addressProblem(row) : undefined) ??
     live.get(row.key)?.[field];
-
-  /** "Will clone ..." when the field means another address than the one typed. */
-  function willClone(row: RowDraft): string | null {
-    const resolved = resolveRepoAddress(row.url);
-    return "url" in resolved && resolved.url !== row.url.trim()
-      ? `Will clone ${resolved.url}`
-      : null;
-  }
 
   const offeredFor = (row: RowDraft) =>
     matchingUrl(identities.identities, addressOf(row), row.listedBy);
@@ -260,6 +265,20 @@
     name = suggestName(folder === null ? (first?.url ?? "") : `/${folder}`);
   });
 
+  // The suggested name arrives selected, so the first thing typed replaces it. A click's mouse-up
+  // would collapse that selection, so the one that follows the focusing click is cancelled.
+  let selectedByFocus = false;
+  function selectSuggestedName(e: FocusEvent) {
+    if (nameTouched) return;
+    (e.currentTarget as HTMLInputElement).select();
+    selectedByFocus = true;
+  }
+  function keepSuggestedNameSelected(e: MouseEvent) {
+    if (!selectedByFocus) return;
+    selectedByFocus = false;
+    e.preventDefault();
+  }
+
   /** Drops the draft: what was sent, or what Cancel gives up. */
   let done = false;
   function discard() {
@@ -312,9 +331,20 @@
     else focus("new-ws-add");
   }
 
-  function picked(row: RowDraft, repo: { url: string }, by: number | null) {
+  /** Sets or clears what stops a push to the row's repository; a blocked row is not pushed to. */
+  function blockPush(row: RowDraft, block: PushBlock | null) {
+    row.pushBlock = block;
+    if (block) row.push = false;
+  }
+
+  function picked(
+    row: RowDraft,
+    repo: Pick<RepoView, "url" | "archived" | "role">,
+    by: number | null,
+  ) {
     row.url = repo.url;
     row.listedBy = by;
+    blockPush(row, pushBlock(repo));
     row.identity = null;
     if (row === rows[0]) focus("new-ws-name");
     else focus(rowId(row, "directory"));
@@ -383,6 +413,7 @@
           ...(directory === "" ? {} : { directory }),
           ...(identity === "" ? {} : { identity_id: Number(identity) }),
           ...(row.push ? {} : { push: false }),
+          ...(row.pushBlock ? { push_block: row.pushBlock } : {}),
         };
       }),
       ...(folder === "" ? {} : { start_folder: folder }),
@@ -453,7 +484,13 @@
 </script>
 
 <section class="screen" aria-labelledby="new-ws-title">
-  <h1 id="new-ws-title">New workspace</h1>
+  <svelte:element
+    this={embedded ? "h2" : "h1"}
+    id="new-ws-title"
+    class:embedded
+  >
+    New workspace
+  </svelte:element>
   <p class="lead">
     Puddle clones your repositories into a fresh workspace with its own disk.
   </p>
@@ -552,58 +589,28 @@
           </div>
         {/if}
 
-        <div class="field">
-          <label for={rowId(row, "url")}>
-            {row.source === "folder"
-              ? "Git repository (HTTPS, optional)"
-              : "Git repository (HTTPS)"}
-          </label>
-          <input
-            id={rowId(row, "url")}
-            type="text"
-            inputmode="url"
-            autocomplete="off"
-            spellcheck="false"
-            placeholder="https://github.com/you/project.git"
-            bind:value={row.url}
-            oninput={() => {
-              row.listedBy = null;
-              row.identity = null;
-              rowErrors = { ...rowErrors, [row.key]: {} };
-              left = { ...left, [row.key]: false };
-            }}
-            onblur={() => (left = { ...left, [row.key]: true })}
-            aria-invalid={urlError ? "true" : undefined}
-            aria-describedby={urlError
-              ? rowId(row, "url-error")
-              : rowId(row, "url-hint")}
-          />
-          {#if urlError}
-            <p class="error" id={rowId(row, "url-error")} role="alert">
-              {urlError}
-            </p>
-          {:else}
-            <p class="hint" id={rowId(row, "url-hint")} aria-live="polite">
-              {willClone(row) ??
-                (row.source === "folder"
-                  ? "Left empty, the checkout's own origin is used. An SSH origin on GitHub, GitLab, Bitbucket or Azure DevOps is turned into its HTTPS address; for any other host, give the HTTPS address here."
-                  : "An HTTPS URL, owner/repo for GitHub, or an SSH address of GitHub, GitLab, Bitbucket or Azure DevOps (git@github.com:you/project.git); the repository is cloned over HTTPS.")}
-            </p>
-          {/if}
-        </div>
-
-        {#if row.source === "address"}
-          <RepoPicker
-            identities={identities.identities}
-            onPick={(repo, by) => picked(row, repo, by)}
-          />
-        {/if}
-
-        {#if tableCannotHold(addressOf(row))}
-          <p class="hint warn" data-testid="table-cannot-hold">
-            {TABLE_CANNOT_HOLD}
-          </p>
-        {/if}
+        <RepositoryAddress
+          id={rowId(row, "url")}
+          bind:value={row.url}
+          label={row.source === "folder"
+            ? "Git repository (HTTPS, optional)"
+            : "Git repository (HTTPS)"}
+          identities={identities.identities}
+          error={urlError ?? null}
+          hint={row.source === "folder"
+            ? "Left empty, the checkout's own origin is used. An SSH origin on GitHub, GitLab, Bitbucket or Azure DevOps is turned into its HTTPS address; for any other host, give the HTTPS address here."
+            : "An HTTPS URL, owner/repo for GitHub, or an SSH address of GitHub, GitLab, Bitbucket or Azure DevOps (git@github.com:you/project.git); the repository is cloned over HTTPS."}
+          picker={row.source === "address"}
+          oninput={() => {
+            row.listedBy = null;
+            blockPush(row, null);
+            row.identity = null;
+            rowErrors = { ...rowErrors, [row.key]: {} };
+            left = { ...left, [row.key]: false };
+          }}
+          onblur={() => (left = { ...left, [row.key]: true })}
+          onPick={(repo, by) => picked(row, repo, by)}
+        />
 
         <div class="field">
           <label for={rowId(row, "directory")}>Directory</label>
@@ -684,6 +691,7 @@
             <input
               type="checkbox"
               bind:checked={row.push}
+              disabled={!!row.pushBlock}
               aria-describedby={rowId(row, "boxes-hint")}
             />
             Push
@@ -692,6 +700,7 @@
         <p class="hint" id={rowId(row, "boxes-hint")}>
           The workspace can always fetch from this repository. Push says whether
           it may also send to it. You can change that later on its Git tab.
+          {#if row.pushBlock}{pushBlockText(row.pushBlock)}{/if}
         </p>
 
         <div>
@@ -727,6 +736,8 @@
         autocomplete="off"
         spellcheck="false"
         bind:value={name}
+        onfocus={selectSuggestedName}
+        onmouseup={keepSuggestedNameSelected}
         oninput={() => {
           nameTouched = true;
         }}
@@ -898,6 +909,10 @@
 <style>
   .screen {
     max-width: 44rem;
+  }
+  .embedded {
+    font-size: var(--text-lg);
+    font-weight: 600;
   }
   .lead {
     margin: 0 0 var(--space-4);

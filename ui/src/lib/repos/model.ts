@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // What the repository lists mean on screen, as pure functions: how a list's freshness, notes and
-// problem are worded, which identities reach a repository, and which clone addresses the
-// workspace's repository table cannot hold. The lists come from `GET /api/repos`; every string
+// problem are worded, and which identities reach a repository. The lists come from `GET /api/repos`; every string
 // the host sends (a note, a problem's message) is untrusted text and is only ever rendered as text.
 import type { components } from "#lib/api/schema.d.ts";
 import { relativeTime } from "#lib/format/relative-time.ts";
@@ -11,7 +10,6 @@ import {
   type Identity,
 } from "#lib/identities/model.ts";
 import { parseRepoUrl } from "#lib/identities/repo.ts";
-import { looksLikeSsh, sshAsHttps } from "#lib/workspaces/model.ts";
 
 export type RepoListing = components["schemas"]["RepoListing"];
 export type RepoView = components["schemas"]["RepoView"];
@@ -106,6 +104,30 @@ export function roleWord(role: RepoView["role"]): string {
   return role === "unknown" ? "" : role;
 }
 
+/** Why a push to a repository cannot succeed: archived on its host, or the account only reads it. */
+export type PushBlock = "archived" | "read";
+
+/** The block on pushing to `repo`, or `null` when nothing in its listing says a push fails. */
+export function pushBlock(
+  repo: Pick<RepoView, "archived" | "role">,
+): PushBlock | null {
+  if (repo.archived) return "archived";
+  if (repo.role === "read" || repo.role === "triage") return "read";
+  return null;
+}
+
+/** The explanation shown beside a Push box that a block greys out. */
+export function pushBlockText(block: PushBlock): string {
+  return block === "archived"
+    ? "This repository is archived on its Git host, so it is read-only and a push cannot succeed."
+    : "Your account can only read this repository, so a push cannot succeed.";
+}
+
+/** Reads a block back from a link's text; anything else is no block. */
+export function parsePushBlock(text: string | null): PushBlock | null {
+  return text === "archived" || text === "read" ? text : null;
+}
+
 /** The traits of a repository worth a chip, in words. */
 export function traits(repo: RepoView): string[] {
   const out: string[] = [];
@@ -153,36 +175,3 @@ export function matchingUrl(
     ? matching(identities, parsed.host, parsed.owner, first)
     : [];
 }
-
-/**
- * Whether the clone address names an Azure DevOps project with a space in it. The repository table
- * and the proxy cannot spell such a name, so the workspace still clones but its push and pull lists
- * cannot hold the repository.
- */
-export function tableCannotHold(url: string): boolean {
-  let address = url.trim();
-  if (looksLikeSsh(address)) {
-    const https = sshAsHttps(address);
-    if ("message" in https) return false;
-    address = https.url;
-  }
-  const rest = address.replace(/^https:\/\//i, "");
-  const slash = rest.indexOf("/");
-  if (slash < 0) return false;
-  const host = rest.slice(0, slash).toLowerCase();
-  if (host !== "dev.azure.com" && !host.endsWith(".visualstudio.com")) {
-    return false;
-  }
-  const path = rest.slice(slash + 1).split(/[?#]/)[0] ?? "";
-  return path.split("/").some((segment) => {
-    try {
-      return /\s/.test(decodeURIComponent(segment));
-    } catch {
-      return false;
-    }
-  });
-}
-
-/** The warning for such an address, with the way out. */
-export const TABLE_CANNOT_HOLD =
-  "This project's name has a space in it, which a workspace's repository table can't hold. The workspace is made, but while “Only push to allowed repositories” is on, pushes from it are refused: turn that off on the workspace's Git tab (Repositories), or use a project without a space.";

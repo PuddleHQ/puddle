@@ -35,6 +35,24 @@ fn unreadable(what: &str, err: SettingsError) -> ApiError {
     }
 }
 
+/// Puts the log at the level the settings ask for (unless the environment set one), from start-up
+/// on and at every change.
+pub(crate) fn apply_log_level(settings: &GlobalSettings) {
+    use puddle_settings::LogLevelChoice as Level;
+    use tracing::level_filters::LevelFilter;
+    let level = settings.ui.log_level();
+    let changed = puddle_log::apply_setting(match level {
+        Level::Error => LevelFilter::ERROR,
+        Level::Warn => LevelFilter::WARN,
+        Level::Info => LevelFilter::INFO,
+        Level::Debug => LevelFilter::DEBUG,
+        Level::Trace => LevelFilter::TRACE,
+    });
+    if changed {
+        tracing::info!(level = level.as_str(), "log level set from the settings");
+    }
+}
+
 pub(crate) fn load_global(repo: &dyn SettingsRepo) -> Result<Loaded<GlobalSettings>, ApiError> {
     const WHAT: &str = "the global settings";
     let document = repo
@@ -189,6 +207,7 @@ pub(crate) async fn put_global(
     })
     .await?;
     tracing::info!("global settings changed");
+    apply_log_level(&loaded.settings);
     workspaces.settings_changed().await;
     drop(lock);
     crate::system_managed::refresh(&after).await;

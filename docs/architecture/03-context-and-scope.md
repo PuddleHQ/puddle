@@ -61,7 +61,7 @@ flowchart TB
     end
     subgraph vm [Workspace microVM, no network device]
         ga[Guest agent]
-        tools[Tools, editor server, sshd of msb]
+        tools[Tools, editor server, SSH sessions]
     end
     up[Company proxy, optional]
     net[Internet: git hosts, registries, login services, allowed hosts]

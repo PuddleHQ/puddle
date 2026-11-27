@@ -189,6 +189,8 @@ fn the_sweeper_prunes_by_the_saved_days_at_most_once_an_hour() {
     assert_eq!(store.sweep().unwrap().audit_records_pruned, 0);
     assert!(mentions(&store, "old.example") > 0);
     clock.set(T0 + DAY + 31 * 60 * 1000);
+    // A record that stays: a prune that would empty the whole log waits for a second pass.
+    ask(&store, "a", "fresh.example");
     assert!(store.sweep().unwrap().audit_records_pruned > 0);
     assert_eq!(mentions(&store, "old.example"), 0);
 }
@@ -200,6 +202,7 @@ fn a_changed_retention_is_applied_at_the_next_sweep_not_after_the_hour() {
     clock.set(T0 + 10 * DAY);
     assert_eq!(store.sweep().unwrap().audit_records_pruned, 0);
     store.set_audit_retention_days(5).unwrap();
+    ask(&store, "a", "fresh.example");
     assert!(store.sweep().unwrap().audit_records_pruned > 0);
     assert_eq!(mentions(&store, "old.example"), 0);
 }
@@ -341,6 +344,7 @@ fn the_sweeper_looks_again_exactly_an_hour_after_its_last_look() {
     assert_eq!(store.sweep().unwrap().audit_records_pruned, 0);
     assert!(mentions(&store, "old.example") > 0);
     clock.set(T0 + DAY - 1 + HOUR);
+    ask(&store, "a", "fresh.example");
     assert!(store.sweep().unwrap().audit_records_pruned > 0);
 }
 

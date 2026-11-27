@@ -87,8 +87,8 @@ pub use identities::{
     GitRepoRequest, GitRepoToggles, GitRepoView, GitSwitchesRequest, IdentityAuthor,
     IdentityCredential, IdentityCredentialView, IdentityDeleted, IdentityList,
     IdentityOrderRequest, IdentityRequest, IdentitySigning, IdentityView, LastCheck,
-    NewWorkspaceIdentity, NewWorkspaceIdentityBasis, SwitchSource, TokenLeft, WorkspaceGitView,
-    WorkspaceIdentitiesRequest, WorkspaceSwitchesRequest,
+    NewWorkspaceIdentity, NewWorkspaceIdentityBasis, PushBlock, SwitchSource, TokenLeft,
+    WorkspaceGitView, WorkspaceIdentitiesRequest, WorkspaceSwitchesRequest,
 };
 pub use interception::{
     GlobalNeverDecrypt, InterceptionRequest, InterceptionSettingsRequest, InterceptionSettingsView,
@@ -134,9 +134,9 @@ pub use rules::{
 pub use settings_view::{
     ClipboardRead, CloseBehaviour, DensityChoice, EditorSettings, EffectiveEditor, EffectiveLimits,
     EffectiveSettings, EffectiveToggles, GlobalSettingsRequest, GlobalSettingsView, GlobalTools,
-    Limits, LocalToggles, PaletteChoice, ResolvedBool, ResolvedClipboardRead, ResolvedNumber,
-    ResolvedOptionalNumber, ResolvedText, ResolvedTextList, ServerChoice, SettingSource,
-    SettingsLayer, ThemeChoice, UiPrefs, VsCodeServer, WorkspaceSettingsRequest,
+    Limits, LocalToggles, LogLevelChoice, PaletteChoice, ResolvedBool, ResolvedClipboardRead,
+    ResolvedNumber, ResolvedOptionalNumber, ResolvedText, ResolvedTextList, ServerChoice,
+    SettingSource, SettingsLayer, ThemeChoice, UiPrefs, VsCodeServer, WorkspaceSettingsRequest,
     WorkspaceSettingsView, WorkspaceTools,
 };
 pub use shell_init::{ShellInitRequest, ShellInitSaved, ShellInitView};

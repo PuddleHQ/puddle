@@ -86,7 +86,7 @@ test("a tab on another build waits while the settings form has unsaved edits, th
   });
   await backend.control.reset("lived-in");
   await backend.signIn(page);
-  await page.goto("/settings/workspaces");
+  await page.goto("/settings/this-computer");
   const line = page.getByLabel("Warn when free space is under (GB)", {
     exact: true,
   });

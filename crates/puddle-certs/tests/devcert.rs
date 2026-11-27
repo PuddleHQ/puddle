@@ -474,6 +474,21 @@ fn a_declined_confirmation_is_a_reported_state_and_the_guests_still_get_the_leaf
 }
 
 #[test]
+fn prepare_makes_the_leaf_and_never_asks_the_user() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeTrust::new();
+    let m = manager(&dir, &fake);
+    let report = m.prepare(now()).unwrap();
+    assert_eq!(report.status, DevCertStatus::NeedsTrust);
+    assert!(leaf_path(&dir).exists());
+    assert_eq!(fake.trust_calls(), 0);
+    // After a trust (a press on the first-run screen) it reads as trusted, still asking nothing.
+    m.ensure(now()).unwrap();
+    assert_eq!(m.prepare(now()).unwrap().status, DevCertStatus::Trusted);
+    assert_eq!(fake.trust_calls(), 1);
+}
+
+#[test]
 fn a_failed_trust_is_a_reported_state_with_the_reason() {
     let dir = tempfile::tempdir().unwrap();
     let fake = FakeTrust::new().answering(Err(TrustError::Failed(

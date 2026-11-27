@@ -128,6 +128,7 @@ test("adds a repository by its address and removes one", async ({
     .getByLabel("Add a repository")
     .fill("https://github.com/Acme/Billing.git");
   await page.getByLabel("Push", { exact: true }).uncheck();
+  await page.getByLabel("Clone immediately").uncheck();
   await page.getByRole("button", { name: "Add repository" }).click();
   await expect(page.getByText("Listed github.com/acme/billing.")).toBeVisible();
   await expect(
@@ -154,6 +155,7 @@ test("refuses an address it cannot read, in the create form's words, and a repos
 }) => {
   await open(page, backend);
   const url = page.getByLabel("Add a repository");
+  await page.getByLabel("Clone immediately").uncheck();
   await url.fill("git@example.com:acme/x.git");
   await page.getByRole("button", { name: "Add repository" }).click();
   await expect(page.getByRole("alert")).toContainText(
@@ -341,7 +343,7 @@ test("the default for the two switches is inherited by new workspaces and overri
 }) => {
   await backend.control.reset("git-identities");
   await backend.signIn(page);
-  await page.goto("/settings/editor");
+  await page.goto("/settings/git");
   const pull = page.getByRole("switch", {
     name: "Only pull from allowed repositories",
   });
@@ -379,7 +381,7 @@ test("the default for the two switches is inherited by new workspaces and overri
   await expect(
     page.getByRole("switch", { name: "Only pull from allowed repositories" }),
   ).not.toBeChecked();
-  await page.goto("/settings/editor");
+  await page.goto("/settings/git");
   await page
     .getByRole("switch", { name: "Only pull from allowed repositories" })
     .click();
@@ -407,7 +409,7 @@ test("the default for the two switches is inherited by new workspaces and overri
     page.getByRole("button", { name: /Use the default again/ }),
   ).toHaveCount(0);
   await expect(page.getByText(/It follows the default/)).toHaveCount(2);
-  await page.goto("/settings/editor");
+  await page.goto("/settings/git");
   await page
     .getByRole("switch", { name: "Only pull from allowed repositories" })
     .click();

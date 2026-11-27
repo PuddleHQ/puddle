@@ -106,7 +106,8 @@ const STEP_WORDS: Record<Step, string> = {
   pulling_image: "Downloading the image",
   unpacking_image: "Preparing the image",
   cloning: "Cloning the repository",
-  starting: "Starting the workspace",
+  starting: "Booting the workspace",
+  waiting_for_agent: "Waiting for the workspace agent",
   syncing: "Syncing your settings",
   checking: "Checking for unsaved work",
   reclaiming: "Reclaiming free space",
@@ -131,20 +132,29 @@ export function byteCountText(
   return `${bytesLabel(bytes.done)} of ${bytesLabel(bytes.total)}, ${share} %`;
 }
 
+/** How long a step has run, for the steps that give no count: "8 s", "1 min 05 s". */
+export function elapsedText(seconds: number): string {
+  const whole = Math.max(0, Math.floor(seconds));
+  if (whole < 60) return `${whole} s`;
+  const minutes = Math.floor(whole / 60);
+  return `${minutes} min ${String(whole % 60).padStart(2, "0")} s`;
+}
+
 /** What a step takes long over, in words, for the steps people sit and wait through. */
 export const STEP_HINTS: Partial<Record<Step, string>> = {
   pulling_image:
     "The first workspace downloads its image once; later ones reuse it.",
   unpacking_image:
     "Turning the download into the disk the workspace boots from.",
-  starting:
-    "Booting the workspace's virtual machine takes a minute or two, every time it starts.",
+  starting: "Booting the workspace's virtual machine, every time it starts.",
+  waiting_for_agent:
+    "The agent inside the workspace has to answer before it is ready; this takes up to a minute or two.",
 };
 
 /** The ordered steps each operation goes through, to show "step 2 of 3". */
 const SCRIPTS: Record<Operation, readonly Step[]> = {
   creating: ["preparing_volume", "pulling_image", "cloning"],
-  starting: ["starting", "syncing"],
+  starting: ["starting", "waiting_for_agent", "syncing"],
   stopping: ["stopping", "reclaiming"],
   reclaiming: ["reclaiming"],
   resetting_root_disk: ["resetting_root_disk"],
@@ -361,11 +371,20 @@ export function resolveRepoAddress(
   return { url: clean };
 }
 
-/** A workspace name suggested by a repository URL: its last path segment, as typed. */
+/** `text` with its `%XX` escapes read; text with a bad escape stays as typed. */
+function unescaped(text: string): string {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
+}
+
+/** A workspace name suggested by a repository URL: its last path segment, as typed, with `%20`-style escapes read (`qa%20repo` is `qa repo`). */
 export function suggestName(repoUrl: string): string {
   const path = repoUrl.trim().split(/[?#]/)[0] ?? "";
   const last = path.split("/").filter(Boolean).pop() ?? "";
-  const name = last.replace(/\.git$/i, "");
+  const name = unescaped(last).replace(/\.git$/i, "");
   return [...name].slice(0, MAX_NAME_LENGTH).join("");
 }
 

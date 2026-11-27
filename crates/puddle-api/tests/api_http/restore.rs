@@ -322,3 +322,16 @@ async fn without_a_service_every_other_restore_call_says_it_is_unavailable() {
     }
     api.running.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_confirm_with_a_body_that_is_not_json_answers_with_the_error_body() {
+    let fake = Arc::new(FakeRestore::new());
+    let api = start_with_restore(fake.clone()).await;
+    let reply = api
+        .send_file("POST", "/api/restore/apply", b"staging_id=1")
+        .await;
+    assert_eq!(reply.status, 415, "{}", reply.body);
+    assert_eq!(reply.error(), "unsupported_media_type");
+    assert_eq!(fake.applied().len(), 0);
+    api.running.shutdown().await;
+}

@@ -452,6 +452,34 @@ impl TokenLeft {
     }
 }
 
+/// Why a push to a repository cannot succeed, as its listing said.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PushBlock {
+    /// Archived on its Git host, so read-only.
+    Archived,
+    /// The listing account can only read it.
+    Read,
+}
+
+impl From<PushBlock> for store::PushBlock {
+    fn from(block: PushBlock) -> Self {
+        match block {
+            PushBlock::Archived => Self::Archived,
+            PushBlock::Read => Self::Read,
+        }
+    }
+}
+
+impl From<store::PushBlock> for PushBlock {
+    fn from(block: store::PushBlock) -> Self {
+        match block {
+            store::PushBlock::Archived => Self::Archived,
+            _ => Self::Read,
+        }
+    }
+}
+
 /// One row of a workspace's repository table.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct GitRepoView {
@@ -467,6 +495,10 @@ pub struct GitRepoView {
     pub pull: bool,
     /// A push to it may go out.
     pub push: bool,
+    /// Why a push to it cannot succeed, from the listing it was added from; `null` when none
+    /// was known.
+    #[schema(required = true)]
+    pub push_block: Option<PushBlock>,
     /// Epoch ms it was added.
     pub created_at: u64,
 }
@@ -482,6 +514,7 @@ impl GitRepoView {
             repo: entry.repo.repo,
             pull: entry.pull,
             push: entry.push,
+            push_block: entry.push_block.map(PushBlock::from),
             created_at: entry.created_at,
         }
     }
@@ -618,6 +651,10 @@ pub struct GitRepoRequest {
     pub pull: bool,
     /// A push to it may go out.
     pub push: bool,
+    /// Why a push to it cannot succeed, when the listing it was picked from said so (archived,
+    /// or an account that can only read it); left out or `null` is none known.
+    #[serde(default)]
+    pub push_block: Option<PushBlock>,
 }
 
 impl GitRepoRequest {
@@ -719,7 +756,7 @@ impl NewWorkspaceIdentity {
                 Some(format!(
                     "No identity covers {place}, so this workspace got your default identity, {label}. \
                      {label} has no credential for {place}: commits use its author, but requests to \
-                     {place} go out without a credential until an identity covers it (Identities tab)."
+                     {place} go out without a credential until an identity covers it (add one on the workspace's Git tab)."
                 )),
             ),
             (store::StartBasis::Covers, _) => (NewWorkspaceIdentityBasis::Covers, None),
@@ -728,7 +765,7 @@ impl NewWorkspaceIdentity {
                 NewWorkspaceIdentityBasis::None,
                 Some(format!(
                     "No identity covers {place} and you have no default identity, so this workspace \
-                     has no commit author and no credential. Add an identity on the Identities tab."
+                     has no commit author and no credential. Add an identity on the workspace's Git tab."
                 )),
             ),
         };

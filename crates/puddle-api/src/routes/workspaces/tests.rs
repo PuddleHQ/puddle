@@ -13,6 +13,7 @@ fn at(url: &str, identity: Option<i64>) -> NewRepository {
         identity: identity.map(IdentityId),
         pull: true,
         push: true,
+        push_block: None,
         local: None,
     }
 }

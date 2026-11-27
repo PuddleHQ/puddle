@@ -612,7 +612,12 @@ pub(crate) async fn add_git_repo(
     let name = named(&state, &id).await?;
     let repo = body.repo_ref()?;
     let row = blocking(move || {
-        let entry = state.store.add_repo(&name, &repo, body.toggles())?;
+        let entry = state.store.add_repo(
+            &name,
+            &repo,
+            body.toggles(),
+            body.push_block.map(Into::into),
+        )?;
         record_op(
             &state.store,
             principal.user,

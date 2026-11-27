@@ -9,11 +9,15 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use puddle_compute::fake::{ExecContext, FakeRuntime, Fault, Op};
 use puddle_compute::{ComputeError, DiskSize, ExecOutput, ExecRequest, Runtime};
 use puddle_types::{CheckoutDir, GuestPath, ImageRef, WorkspaceId};
-use puddle_workspace::{FINISH_IMPORT_SH, Import, WorkspaceError, Workspaces};
+use puddle_workspace::{FINISH_IMPORT_SH, HoldKind, Import, WorkspaceError, Workspaces};
+
+mod spy;
+use spy::{Spy, Step};
 
 /// A git directory by structure at `<base>/<name>/.git`, its HEAD naming `branch`.
 fn checkout(base: &Path, name: &str, branch: &str) -> PathBuf {
@@ -270,7 +274,7 @@ async fn a_clone_that_runs_out_of_time_fails_alone_and_a_lost_guest_fails_the_im
         Fault::once(ComputeError::ExecTimeout {
             sandbox: "m--acme".into(),
             program: "git".into(),
-            timeout: std::time::Duration::from_secs(600),
+            timeout: Duration::from_secs(600),
         }),
     );
     let imports = [
@@ -481,4 +485,124 @@ async fn a_failed_create_whose_cleanup_fails_too_reports_the_create() {
         .await
         .unwrap_err();
     assert!(err.to_string().contains("no room"), "{err}");
+}
+
+#[tokio::test]
+async fn a_dropped_import_gives_the_workspace_back() {
+    let s = setup();
+    // The runtime never answers the first sandbox listing: the request is dropped there.
+    let spy = Spy::new(s.rt.clone(), |op| {
+        if op == Op::List {
+            Step::Hang
+        } else {
+            Step::Pass
+        }
+    });
+    let imports = [import(checkout(&s.base, "api", "main"), "api")];
+    let image = image();
+    let held = s
+        .workspaces
+        .import(&spy, &s.id, &image, DiskSize::gib(1), &imports);
+    let timed_out = tokio::time::timeout(Duration::from_millis(50), held).await;
+    assert!(timed_out.is_err(), "the import never ends");
+    assert_eq!(
+        s.workspaces.holder(&s.id),
+        None,
+        "the workspace is still lent to the import after the request was dropped"
+    );
+}
+
+/// What `holders_seen` collects: the op, and who held the workspace when it was called.
+type HoldersSeen = Arc<Mutex<Vec<(Op, Option<HoldKind>)>>>;
+
+/// The holder of `id` at each call of `ops`, as the runtime sees it.
+fn holders_seen(
+    workspaces: &Arc<Workspaces>,
+    id: &WorkspaceId,
+    ops: &'static [Op],
+) -> (HoldersSeen, impl Fn(Op) -> Step + Send + Sync + 'static) {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let (w, id, log) = (Arc::clone(workspaces), id.clone(), Arc::clone(&seen));
+    let hook = move |op| {
+        if ops.contains(&op) {
+            log.lock()
+                .unwrap()
+                .push((op, w.holder(&id).map(|h| h.kind)));
+        }
+        Step::Pass
+    };
+    (seen, hook)
+}
+
+#[tokio::test]
+async fn the_workspace_stays_lent_while_a_failed_import_looks_for_and_removes_its_new_volume() {
+    let s = setup();
+    let workspaces = Arc::new(Workspaces::default());
+    let (seen, hook) = holders_seen(&workspaces, &s.id, &[Op::Volume, Op::RemoveVolume]);
+    let spy = Spy::new(s.rt.clone(), hook);
+    s.rt.inject(
+        Op::Exec,
+        Fault::once(runtime_error("exec", "the guest is gone")),
+    );
+    let imports = [import(checkout(&s.base, "api", "main"), "api")];
+    workspaces
+        .import(&spy, &s.id, &image(), DiskSize::gib(1), &imports)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [
+            (Op::Volume, Some(HoldKind::Maintenance)),
+            (Op::Volume, Some(HoldKind::Maintenance)),
+            (Op::RemoveVolume, Some(HoldKind::Maintenance)),
+        ]
+    );
+    assert_eq!(workspaces.holder(&s.id), None, "given back at the end");
+    assert_eq!(s.rt.list_volumes().await.unwrap(), []);
+}
+
+#[tokio::test]
+async fn a_lookup_that_fails_after_a_failed_import_says_the_new_volume_may_be_left() {
+    let s = setup();
+    s.rt.inject(
+        Op::Exec,
+        Fault::once(runtime_error("exec", "the guest is gone")),
+    );
+    s.rt.inject(
+        Op::Volume,
+        Fault::once(runtime_error("volume", "no answer")).after(1),
+    );
+    let imports = [import(checkout(&s.base, "api", "main"), "api")];
+    let err = s
+        .workspaces
+        .import(&s.rt, &s.id, &image(), DiskSize::gib(1), &imports)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, WorkspaceError::Leftover { .. }), "{err}");
+    let said = err.to_string();
+    assert!(said.contains("the guest is gone"), "{said}");
+    assert!(said.contains("no answer"), "{said}");
+    assert!(said.contains("ws-acme"), "{said}");
+    assert_eq!(
+        s.rt.list_volumes().await.unwrap().len(),
+        1,
+        "left, and said so"
+    );
+}
+
+#[tokio::test]
+async fn a_lookup_that_fails_after_a_good_import_still_reports_the_volume_it_made() {
+    let s = setup();
+    s.rt.inject(
+        Op::Volume,
+        Fault::once(runtime_error("volume", "no answer")).after(1),
+    );
+    let imports = [import(checkout(&s.base, "api", "main"), "api")];
+    let report = s
+        .workspaces
+        .import(&s.rt, &s.id, &image(), DiskSize::gib(1), &imports)
+        .await
+        .unwrap();
+    assert!(report.created_volume);
+    assert_eq!(report.failed, []);
 }

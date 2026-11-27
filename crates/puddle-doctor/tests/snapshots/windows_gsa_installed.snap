@@ -1,26 +1,27 @@
 puddle doctor (puddle 0.1.0, windows x86_64)
 
-ok    CPU virtualization    on (the hypervisor uses it)
-ok    Hypervisor            Windows Hypervisor Platform is on and the hypervisor runs
-ok    Code integrity        memory integrity (HVCI) off; App Control policy for programs audit only; test signing on
-ok    Bundled runtime       msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
-ok    Runtime starts        msb 0.7.7-puddle.2 (0.0 s)
-ok    Test boot             a test VM booted and ran a program in 1.1 s
-ok    Disk space            120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
-ok    Disk encryption       data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
-ok    SSH agent             the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)
-ok    Azure CLI (az)        version 2.64.0
-ok    Credential store      the operating system's credential store: a test write and delete worked
-warn  Global Secure Access  Microsoft Entra Global Secure Access client installed (running)
-      impact: Company resources you reach through Global Secure Access may not work from a
-              workspace.
-      remedy: If one fails from a workspace, ask your IT team for another way to reach it.
-      note:   Microsoft documents that this client doesn't tunnel virtual machines' traffic and
-              isn't supported on devices that host VMs. Sandboxes have no network of their own:
-              their traffic leaves through Puddle's proxy, an ordinary program on this PC, which
-              the client handles like any other app. If company resources reached through Global
-              Secure Access don't work from a sandbox, this limitation is the likely cause; Puddle
-              can't change it.
+ok    CPU virtualization          on (the hypervisor uses it)
+ok    Hypervisor                  Windows Hypervisor Platform is on and the hypervisor runs
+ok    Code integrity              memory integrity off; policy limiting which programs may run audit only; test signing on
+ok    Bundled runtime             msb 0.7.7-puddle.2 (C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe)
+ok    Runtime starts              msb 0.7.7-puddle.2 (0.0 s)
+ok    Test boot                   a test VM booted and ran a program in 1.1 s
+ok    Disk space                  120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
+ok    Disk encryption             data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
+ok    SSH agent                   the agent on \\.\pipe\openssh-ssh-agent holds 2 keys (ed25519: 1, rsa: 1)
+ok    Azure CLI (az)              version 2.64.0
+ok    Credential store            the operating system's credential store: a test write and delete worked
+warn  Known problematic software  Microsoft Entra Global Secure Access client installed (running)
+      impact: Software on this computer is known to keep workspaces from working as expected, for
+              example from reaching company resources.
+      remedy: Open More details: it names each program, why it matters and what to do.
+      note:   Microsoft Entra Global Secure Access client: Microsoft documents that this client
+              doesn't tunnel virtual machines' traffic and isn't supported on devices that host
+              VMs. Workspaces have no network of their own: their traffic leaves through Puddle's
+              proxy, an ordinary program on this computer, which the client handles like any other
+              app. If company resources reached through Global Secure Access don't work from a
+              workspace, this limitation is the likely cause. Puddle can't change it: ask your IT
+              team for another way to reach them.
 
 No problems found; 1 warning to know about. (1.2 s)
 
@@ -47,7 +48,7 @@ No problems found; 1 warning to know about. (1.2 s)
     {
       "id": "code_integrity",
       "status": "ok",
-      "summary": "memory integrity (HVCI) off; App Control policy for programs audit only; test signing on",
+      "summary": "memory integrity off; policy limiting which programs may run audit only; test signing on",
       "impact": "Windows' code integrity rules guard the system against untrusted code, and Puddle runs alongside them."
     },
     {
@@ -99,13 +100,13 @@ No problems found; 1 warning to know about. (1.2 s)
       "impact": "Puddle keeps your tokens and passwords in a protected store, so you don't type them again."
     },
     {
-      "id": "global_secure_access",
+      "id": "problematic_software",
       "status": "warn",
       "summary": "Microsoft Entra Global Secure Access client installed (running)",
-      "finding": "global_secure_access_installed",
-      "fix": "Microsoft documents that this client doesn't tunnel virtual machines' traffic and isn't supported on devices that host VMs. Sandboxes have no network of their own: their traffic leaves through Puddle's proxy, an ordinary program on this PC, which the client handles like any other app. If company resources reached through Global Secure Access don't work from a sandbox, this limitation is the likely cause; Puddle can't change it.",
-      "impact": "Company resources you reach through Global Secure Access may not work from a workspace.",
-      "remedy": "If one fails from a workspace, ask your IT team for another way to reach it."
+      "finding": "problematic_software_installed",
+      "fix": "Microsoft Entra Global Secure Access client: Microsoft documents that this client doesn't tunnel virtual machines' traffic and isn't supported on devices that host VMs. Workspaces have no network of their own: their traffic leaves through Puddle's proxy, an ordinary program on this computer, which the client handles like any other app. If company resources reached through Global Secure Access don't work from a workspace, this limitation is the likely cause. Puddle can't change it: ask your IT team for another way to reach them.",
+      "impact": "Software on this computer is known to keep workspaces from working as expected, for example from reaching company resources.",
+      "remedy": "Open More details: it names each program, why it matters and what to do."
     }
   ],
   "elapsed_ms": 1234

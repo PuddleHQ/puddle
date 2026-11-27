@@ -184,8 +184,9 @@
     }}
     workspace={optionsRow.request.workspace}
     anchor={shown?.anchor ?? null}
-    exactOnly={isIpLiteral(optionsRow.request.host)}
-    sets={setChoices}
+    exactOnly={isIpLiteral(optionsRow.request.host) ||
+      optionsRow.request.exact_only}
+    sets={optionsRow.request.exact_only ? [] : setChoices}
     onDecide={(choice) => decide(optionsRow, choice)}
     onClose={() => {
       optionsOpen = false;

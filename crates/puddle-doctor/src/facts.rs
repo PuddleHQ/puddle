@@ -3,12 +3,14 @@
 //! [`crate::diagnose`] can turn it into findings on any platform.
 
 use std::path::PathBuf;
+
+use crate::software::ProblematicSoftware;
 use std::time::Duration;
 
 /// The operating system the checks are worded for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Os {
-    /// Windows: WHP, AppLocker/WDAC, Global Secure Access.
+    /// Windows: WHP, AppLocker/WDAC, known problematic software.
     Windows,
     /// Linux: KVM (a supported second host).
     Linux,
@@ -474,9 +476,9 @@ impl JobFacts {
     }
 }
 
-/// Microsoft Entra Global Secure Access client state.
+/// Whether one known program is installed.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum GsaFacts {
+pub enum InstallState {
     /// None of its services exist.
     NotInstalled,
     /// At least one of its services exists.
@@ -485,14 +487,23 @@ pub enum GsaFacts {
         /// other is known to run.
         running: Option<bool>,
     },
-    /// The service manager couldn't be asked, so it is unknown whether the client is installed.
+    /// The service manager couldn't be asked, so it is unknown whether the program is installed.
     Unknown {
         /// The OS error.
         detail: String,
     },
 }
 
-/// What one Global Secure Access service looked like.
+/// What the check found for one entry of [`crate::PROBLEMATIC_SOFTWARE`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SoftwareFacts {
+    /// The program looked for.
+    pub software: &'static ProblematicSoftware,
+    /// Whether it is installed.
+    pub state: InstallState,
+}
+
+/// What one service of a known program looked like.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServiceState {
     /// The service doesn't exist.
@@ -521,8 +532,8 @@ impl ServiceState {
     }
 }
 
-impl GsaFacts {
-    /// The client's state from what each of its services looked like: one running service is
+impl InstallState {
+    /// The program's state from what each of its services looked like: one running service is
     /// enough, and a service that couldn't be read leaves "not running" unproven.
     #[must_use]
     pub fn from_services(services: impl IntoIterator<Item = ServiceState>) -> Self {

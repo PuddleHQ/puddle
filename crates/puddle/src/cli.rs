@@ -17,6 +17,8 @@ pub enum Command {
     Doctor(crate::cmd::doctor::DoctorArgs),
     /// Copy the data folder's database, settings and workspace list, see [`crate::cmd::backup`].
     Backup(crate::cmd::backup::BackupArgs),
+    /// Write a bundle of the logs, versions and settings with secrets cut out, see [`crate::cmd::logs`].
+    Logs(crate::cmd::logs::LogsArgs),
     /// Run the host process until asked to stop, see [`crate::cmd::serve`].
     Serve(crate::cmd::serve::ServeArgs),
     /// Add, list, remove or reset a user, see [`crate::cmd::user`].
@@ -53,11 +55,11 @@ pub enum UsageError {
 
 /// Usage text for `--help` and for usage errors, with the `serve` command (the `serve` feature).
 #[cfg(feature = "serve")]
-pub const USAGE: &str = "usage: puddle [--version | --help | doctor [--json] [--no-boot] [--config <path>] [--data-dir <path>] | serve [--config <path>] [--print-config] [--port <n>] [--connection-file <path>] [--data-dir <path>] [--secret-store <store>] [--headless | --no-headless] [--log <filter>] [--remote | --no-remote] [--public-hosts <host,...>] [--workspace-base-domain <domain>] [--listen-interface <ip>] [--listen-port <n>] [--allowed-proxies <ip,...>] [--multi-user | --no-multi-user] | user add|remove|reset [--config <path>] [--data-dir <path>] <name> | user list [--config <path>] [--data-dir <path>] | backup [--config <path>] [--data-dir <path>] <dest> | audit status|prune [--days <n>] [--config <path>] [--data-dir <path>] | secrets status|reset [--yes] [--config <path>] [--data-dir <path>] | secrets migrate --to os|file [--config <path>] [--data-dir <path>] | ssh-bridge <endpoint>]\nserve options and the config file: https://github.com/PuddleHQ/puddle/blob/main/docs/serve.md";
+pub const USAGE: &str = "usage: puddle [--version | --help | doctor [--json] [--no-boot] [--config <path>] [--data-dir <path>] | serve [--config <path>] [--print-config] [--port <n>] [--connection-file <path>] [--data-dir <path>] [--secret-store <store>] [--headless | --no-headless] [--log <filter>] [--remote | --no-remote] [--public-hosts <host,...>] [--workspace-base-domain <domain>] [--listen-interface <ip>] [--listen-port <n>] [--allowed-proxies <ip,...>] [--multi-user | --no-multi-user] | user add|remove|reset [--config <path>] [--data-dir <path>] <name> | user list [--config <path>] [--data-dir <path>] | backup [--config <path>] [--data-dir <path>] <dest> | logs bundle [--output <path>] [--config <path>] [--data-dir <path>] | audit status|prune [--days <n>] [--config <path>] [--data-dir <path>] | secrets status|reset [--yes] [--config <path>] [--data-dir <path>] | secrets migrate --to os|file [--config <path>] [--data-dir <path>] | ssh-bridge <endpoint>]\nserve options and the config file: https://github.com/PuddleHQ/puddle/blob/main/docs/serve.md";
 
 /// Usage text for `--help` and for usage errors. The v0.1 build leaves `serve` out.
 #[cfg(not(feature = "serve"))]
-pub const USAGE: &str = "usage: puddle [--version | --help | doctor [--json] [--no-boot] [--config <path>] [--data-dir <path>] | user add|remove|reset [--config <path>] [--data-dir <path>] <name> | user list [--config <path>] [--data-dir <path>] | backup [--config <path>] [--data-dir <path>] <dest> | audit status|prune [--days <n>] [--config <path>] [--data-dir <path>] | secrets status|reset [--yes] [--config <path>] [--data-dir <path>] | secrets migrate --to os|file [--config <path>] [--data-dir <path>] | ssh-bridge <endpoint>]";
+pub const USAGE: &str = "usage: puddle [--version | --help | doctor [--json] [--no-boot] [--config <path>] [--data-dir <path>] | user add|remove|reset [--config <path>] [--data-dir <path>] <name> | user list [--config <path>] [--data-dir <path>] | backup [--config <path>] [--data-dir <path>] <dest> | logs bundle [--output <path>] [--config <path>] [--data-dir <path>] | audit status|prune [--days <n>] [--config <path>] [--data-dir <path>] | secrets status|reset [--yes] [--config <path>] [--data-dir <path>] | secrets migrate --to os|file [--config <path>] [--data-dir <path>] | ssh-bridge <endpoint>]";
 
 /// Parse the arguments after the program name.
 ///
@@ -79,6 +81,7 @@ where
             "doctor" => return crate::cmd::doctor::parse(args),
             "serve" if cfg!(feature = "serve") => return crate::cmd::serve::parse(args),
             "backup" => return crate::cmd::backup::parse(args),
+            "logs" => return crate::cmd::logs::parse(args),
             "user" => return crate::cmd::user::parse(args),
             "audit" => return crate::cmd::audit::parse(args),
             "secrets" => return crate::cmd::secrets::parse(args),

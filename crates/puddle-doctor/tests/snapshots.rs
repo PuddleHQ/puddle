@@ -16,10 +16,11 @@ use std::time::Duration;
 use puddle_doctor::{
     AZ_CLI_LIMIT, AccessDenied, AgentService, AzCliFacts, BlockedBy, BlockedFolder, BootFacts,
     CheckId, CodeIntegrity, CodeIntegrityFacts, CredentialStoreFacts, DataEncryption,
-    DataPathFacts, DiskEncryptionFacts, DiskFacts, Finding, GsaFacts, HypervisorApi,
-    HypervisorFacts, JobFacts, KeptLogs, KeySourceTag, LoginSession, Options, Os, Probe,
-    ProcessOutcome, Protection, Report, RuntimeFacts, RuntimeState, SealedKeyFacts, SshAgentFacts,
-    Status, StoreHealth, SwapArea, SwapFacts, TpmFacts, VaultFacts, WritableFolder, diagnose,
+    DataPathFacts, DiskEncryptionFacts, DiskFacts, Finding, HypervisorApi, HypervisorFacts,
+    InstallState, JobFacts, KeptLogs, KeySourceTag, LoginSession, Options, Os,
+    PROBLEMATIC_SOFTWARE, Probe, ProcessOutcome, Protection, Report, RuntimeFacts, RuntimeState,
+    SealedKeyFacts, SoftwareFacts, SshAgentFacts, Status, StoreHealth, SwapArea, SwapFacts,
+    TpmFacts, VaultFacts, WritableFolder, diagnose,
 };
 use puddle_runtime::RuntimeError;
 
@@ -43,7 +44,7 @@ struct Fake {
     launch: ProcessOutcome,
     boot: BootFacts,
     job: Option<JobFacts>,
-    gsa: Option<GsaFacts>,
+    software: Option<Vec<SoftwareFacts>>,
     disk: DiskFacts,
     data_path: Option<DataPathFacts>,
     enc: DiskEncryptionFacts,
@@ -105,6 +106,17 @@ fn encryption(data: Protection, swap: Protection) -> DiskEncryptionFacts {
 }
 
 /// A healthy Windows workstation.
+/// The one known program today, in the given state.
+fn software(state: &InstallState) -> Vec<SoftwareFacts> {
+    PROBLEMATIC_SOFTWARE
+        .iter()
+        .map(|software| SoftwareFacts {
+            software,
+            state: state.clone(),
+        })
+        .collect()
+}
+
 fn windows() -> Fake {
     Fake {
         os: Os::Windows,
@@ -126,7 +138,7 @@ fn windows() -> Fake {
         launch: exited(0, "msb 0.7.7-puddle.2", "", 85),
         boot: booted(),
         job: None,
-        gsa: Some(GsaFacts::NotInstalled),
+        software: Some(software(&InstallState::NotInstalled)),
         disk: disk_with_gb(120),
         data_path: None,
         enc: encrypted("BitLocker"),
@@ -161,7 +173,7 @@ fn linux() -> Fake {
             hypervisor_vendor: None,
         },
         ci: None,
-        gsa: None,
+        software: None,
         ssh: SshAgentFacts::Keys {
             endpoint: SOCK.into(),
             families: vec!["ed25519".into()],
@@ -209,8 +221,8 @@ impl Probe for Fake {
     fn job(&self) -> Option<JobFacts> {
         self.job.clone()
     }
-    fn global_secure_access(&self) -> Option<GsaFacts> {
-        self.gsa.clone()
+    fn problematic_software(&self) -> Option<Vec<SoftwareFacts>> {
+        self.software.clone()
     }
     fn disk_space(&self) -> DiskFacts {
         self.disk.clone()
@@ -916,9 +928,9 @@ fn windows_boot_setup_failed() {
 #[test]
 fn windows_gsa_installed_warns_and_explains() {
     let fake = Fake {
-        gsa: Some(GsaFacts::Installed {
+        software: Some(software(&InstallState::Installed {
             running: Some(true),
-        }),
+        })),
         ci: Some(CodeIntegrityFacts::Read(CodeIntegrity {
             hvci: false,
             user_mode_enforced: false,
@@ -930,19 +942,19 @@ fn windows_gsa_installed_warns_and_explains() {
     let r = check(
         "windows_gsa_installed",
         &fake,
-        CheckId::GlobalSecureAccess,
-        Some(Finding::GlobalSecureAccessInstalled),
+        CheckId::ProblematicSoftware,
+        Some(Finding::ProblematicSoftwareInstalled),
     );
     assert!(r.ok, "a warning doesn't fail the report");
     let stopped = Fake {
-        gsa: Some(GsaFacts::Installed {
+        software: Some(software(&InstallState::Installed {
             running: Some(false),
-        }),
+        })),
         ..windows()
     };
     let r = run(&stopped, &Options::default());
     assert!(
-        r.check(CheckId::GlobalSecureAccess)
+        r.check(CheckId::ProblematicSoftware)
             .unwrap()
             .summary
             .contains("not running")
@@ -976,18 +988,18 @@ fn windows_unreadable_code_integrity_is_an_info_check_while_the_runtime_does_not
 #[test]
 fn windows_gsa_that_cannot_be_asked_is_unknown_with_the_os_error() {
     let fake = Fake {
-        gsa: Some(GsaFacts::Unknown {
+        software: Some(software(&InstallState::Unknown {
             detail: "OpenSCManagerW: Access is denied. (os error 5)".into(),
-        }),
+        })),
         ..windows()
     };
     let r = check(
         "windows_gsa_unknown",
         &fake,
-        CheckId::GlobalSecureAccess,
-        Some(Finding::GlobalSecureAccessUnknown),
+        CheckId::ProblematicSoftware,
+        Some(Finding::ProblematicSoftwareUnknown),
     );
-    let gsa = r.check(CheckId::GlobalSecureAccess).unwrap();
+    let gsa = r.check(CheckId::ProblematicSoftware).unwrap();
     assert_eq!(gsa.status, Status::Info);
     assert!(
         gsa.detail.as_deref().unwrap().contains("os error 5"),
@@ -999,16 +1011,16 @@ fn windows_gsa_that_cannot_be_asked_is_unknown_with_the_os_error() {
 #[test]
 fn windows_gsa_with_an_unreadable_service_does_not_claim_not_running() {
     let fake = Fake {
-        gsa: Some(GsaFacts::Installed { running: None }),
+        software: Some(software(&InstallState::Installed { running: None })),
         ..windows()
     };
     let r = check(
         "windows_gsa_running_unknown",
         &fake,
-        CheckId::GlobalSecureAccess,
-        Some(Finding::GlobalSecureAccessInstalled),
+        CheckId::ProblematicSoftware,
+        Some(Finding::ProblematicSoftwareInstalled),
     );
-    let summary = &r.check(CheckId::GlobalSecureAccess).unwrap().summary;
+    let summary = &r.check(CheckId::ProblematicSoftware).unwrap().summary;
     assert!(summary.contains("running state unknown"), "{summary}");
     assert!(!summary.contains("not running"), "{summary}");
 }
@@ -1138,7 +1150,7 @@ fn unsupported_arch_skips_the_test_boot() {
 fn linux_all_green() {
     let r = check("linux_all_green", &linux(), CheckId::Hypervisor, None);
     assert!(r.check(CheckId::CodeIntegrity).is_none());
-    assert!(r.check(CheckId::GlobalSecureAccess).is_none());
+    assert!(r.check(CheckId::ProblematicSoftware).is_none());
 }
 
 #[test]
@@ -1291,7 +1303,7 @@ fn other_os_has_no_hypervisor_support() {
             hypervisor_vendor: None,
         },
         ci: None,
-        gsa: None,
+        software: None,
         ..windows()
     };
     check(
@@ -1350,7 +1362,7 @@ fn json_schema_is_versioned_and_stable() {
             "ssh_agent",
             "az_cli",
             "credential_store",
-            "global_secure_access"
+            "problematic_software"
         ]
     );
 }

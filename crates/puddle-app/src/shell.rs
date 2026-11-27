@@ -8,11 +8,10 @@ use puddle_host::{
     HostError, HostOptions, HostShutdown, MsbFactory, RuntimeFactory, SystemPlatform,
 };
 use puddle_lifecycle::LifecycleError;
-use puddle_log::{ScopedFilter, init_stderr};
+use puddle_log::ScopedFilter;
 use puddle_types::Problems;
 use tauri::{AppHandle, Manager, RunEvent, Runtime};
 use tauri_plugin_opener::OpenerExt;
-use tracing_subscriber::filter::{LevelFilter, Targets};
 use url::Url;
 
 use crate::autostart::{self, LoginEntry};
@@ -658,45 +657,33 @@ fn bring_forward_unless_sign_in(args: &[String], bring_forward: impl FnOnce()) {
 /// The variable that sets the log level of Puddle's crates (`puddle_log` has the syntax).
 const PUDDLE_LOG_VAR: &str = "PUDDLE_LOG";
 
-/// The standard filter variable, read when `PUDDLE_LOG` is not set: `debug`, or
-/// `warn,puddle_host=trace` for one crate. It applies to every crate alike.
+/// The standard filter variable, read when `PUDDLE_LOG` is not set, in the same syntax: `debug`, or
+/// `warn,puddle_host=trace` for one crate. Dependencies stay at the `info` ceiling unless named.
 const RUST_LOG_VAR: &str = "RUST_LOG";
-
-/// The filter `RUST_LOG` asks for, `info` when it is unset. A value that does not parse gives
-/// `info` and comes back as the second item, so `run` can say so once logging is on.
-fn log_targets(value: Option<&str>) -> (Targets, Option<String>) {
-    let info = || Targets::new().with_default(LevelFilter::INFO);
-    match value {
-        None => (info(), None),
-        Some(text) => text
-            .parse()
-            .map_or_else(|_| (info(), Some(text.to_owned())), |t| (t, None)),
-    }
-}
 
 /// The filter the two variables ask for: `PUDDLE_LOG` when set, else `RUST_LOG`, else `info`. A
 /// value that is not a filter gives `info` and a sentence for `run` to log once logging is on.
 fn log_filter(puddle_log: Option<&str>, rust_log: Option<&str>) -> (ScopedFilter, Option<String>) {
-    if let Some(text) = puddle_log {
-        return ScopedFilter::parse(text).map_or_else(
-            |_| {
-                let said =
-                    format!("{PUDDLE_LOG_VAR}={text:?} is not a log filter; logging at info");
-                (ScopedFilter::default(), Some(said))
-            },
-            |filter| (filter, None),
-        );
-    }
-    let (targets, bad) = log_targets(rust_log);
-    let said = bad.map(|v| format!("{RUST_LOG_VAR}={v:?} is not a log filter; logging at info"));
-    (ScopedFilter::uniform(targets), said)
+    let (var, text) = match (puddle_log, rust_log) {
+        (Some(text), _) => (PUDDLE_LOG_VAR, text),
+        (None, Some(text)) => (RUST_LOG_VAR, text),
+        (None, None) => return (ScopedFilter::default(), None),
+    };
+    ScopedFilter::parse(text).map_or_else(
+        |_| {
+            let said = format!("{var}={text:?} is not a log filter; logging at info");
+            (ScopedFilter::default(), Some(said))
+        },
+        |filter| (filter, None),
+    )
 }
 
 /// Starts logging to stderr as the variables (`puddle_log`, `rust_log`) ask. The first subscriber
 /// wins; a second call in one process (tests) keeps the first.
 fn init_logging(puddle_log: Option<&str>, rust_log: Option<&str>) {
     let (filter, bad_filter) = log_filter(puddle_log, rust_log);
-    init_stderr(filter, false);
+    // A level from the environment is final; without one the Settings screen sets it.
+    puddle_log::init_logging(filter, false, puddle_log.is_some() || rust_log.is_some());
     if let Some(said) = bad_filter {
         tracing::warn!("{said}");
     }
@@ -712,6 +699,14 @@ fn init_logging_from(var: impl Fn(&str) -> Option<String>) {
     init_logging(var(PUDDLE_LOG_VAR).as_deref(), var(RUST_LOG_VAR).as_deref());
 }
 
+/// Starts keeping the log in a file in the data folder, which the log bundle collects. A folder
+/// that cannot be written costs the file and nothing else.
+fn attach_log_file(data: &std::path::Path) {
+    if let Err(err) = puddle_log::attach_log_file(&puddle_log::log_folder(data)) {
+        tracing::warn!(%err, "the log is not kept in a file");
+    }
+}
+
 /// Runs the app until it quits. The close button hides the window to the tray or quits, as Settings
 /// say ([`desktop`]).
 ///
@@ -724,6 +719,7 @@ pub fn run(options: &Options) -> Result<(), ShellError> {
     puddle_no_dump::harden_from_env().log();
     // Every panic after this writes a crash file into the data folder (nothing is sent).
     if let Some(folder) = data_folder(options) {
+        attach_log_file(&folder);
         crash::install(folder.join(crash::FOLDER));
     }
     // Before the runtime starts any machine: if the shell dies, Windows ends them with it.

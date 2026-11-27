@@ -2,7 +2,7 @@ puddle doctor (puddle 0.1.0, windows x86_64)
 
 ok    CPU virtualization          on (the hypervisor uses it)
 ok    Hypervisor                  Windows Hypervisor Platform is on and the hypervisor runs
-ok    Code integrity              memory integrity (HVCI) on; App Control policy for programs off
+ok    Code integrity              memory integrity on; policy limiting which programs may run off
 warn  Bundled runtime             msb 0.7.7-puddle.2 accepted by the developer override; its files differ from the ones this build ships with
       impact: This development build runs a runtime it wasn't tested with.
       remedy: Unset PUDDLE_DEV_ANY_RUNTIME to test the runtime Puddle ships with.
@@ -42,7 +42,7 @@ No problems found; 1 warning to know about. (1.2 s)
     {
       "id": "code_integrity",
       "status": "ok",
-      "summary": "memory integrity (HVCI) on; App Control policy for programs off",
+      "summary": "memory integrity on; policy limiting which programs may run off",
       "impact": "Windows' code integrity rules guard the system against untrusted code, and Puddle runs alongside them."
     },
     {

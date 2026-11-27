@@ -449,11 +449,9 @@ fn an_entrypoint_that_already_exited_is_not_started_again_by_a_hook_rerun() {
             .unwrap();
         let out = fr.run(&plan);
         assert!(out.status.success(), "{}", show(&out));
-        eventually_blocking(
-            "the entrypoint finishes",
-            Duration::from_secs(5),
-            || fr.path("/run/puddle/entrypoint.exit").exists(),
-        );
+        eventually_blocking("the entrypoint finishes", Duration::from_secs(5), || {
+            fr.path("/run/puddle/entrypoint.exit").exists()
+        });
         let out = fr.run(&plan);
         assert!(out.status.success(), "{}", show(&out));
         assert_eq!(fr.read("/entry.out"), "ran\n", "{}", show(&out));

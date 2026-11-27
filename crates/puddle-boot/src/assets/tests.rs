@@ -42,7 +42,13 @@ fn read_only_takes_regular_files_puddle_wrote() {
             if let Some((_, target)) = line.split_once(" <") {
                 let target = target.split_whitespace().next().unwrap_or_default();
                 assert!(
-                    ["\"$PLAN\"", "\"$1\"", "\"$envfile\""].contains(&target),
+                    [
+                        "\"$PLAN\"",
+                        "\"$1\"",
+                        "\"$envfile\"",
+                        "\"$RUN/entrypoint.pid\""
+                    ]
+                    .contains(&target),
                     "{name}: `{}` reads {target} with `read`",
                     line.trim()
                 );

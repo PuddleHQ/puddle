@@ -2073,9 +2073,8 @@ const WARM_UP_ROUNDS: u32 = 2;
 /// Whether the editor has cached the multi-root file in its own configuration cache: `yes` or `no`.
 const WORKSPACE_CACHED: &str = "ls /workspace/.puddle/code-server/user-data/User/caches/CachedConfigurations/workspaces/*/workspace.json >/dev/null 2>&1 && echo yes || echo no";
 
-/// Four guest memory sums (bytes) one second apart; the round's figure is the lowest of them.
-
-/// What the guest's processes hold in memory, summed (bytes).
+/// What the guest's processes hold in memory, summed (bytes), four samples one second apart; the
+/// round's figure is the lowest of them.
 const GUEST_RSS_SAMPLES: &str =
     "for i in 1 2 3 4; do sleep 1; ps -eo rss= | awk '{ s += $1 } END { print s * 1024 }'; done";
 

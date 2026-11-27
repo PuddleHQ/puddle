@@ -97,11 +97,13 @@ proptest! {
     }
 }
 
+const GRACE: Duration = Duration::from_secs(1);
+
 #[test]
 fn a_kill_logged_first_then_counted_is_reported_once() {
     let t0 = Instant::now();
-    let mut c = Correlator::new(Duration::from_secs(1));
-    c.on_logged();
+    let mut c = Correlator::new(GRACE);
+    assert_eq!(c.on_logged(t0), Logged::New);
     c.on_counted(1, t0);
     assert_eq!(c.due(t0 + Duration::from_secs(10)), 0);
 }
@@ -109,19 +111,19 @@ fn a_kill_logged_first_then_counted_is_reported_once() {
 #[test]
 fn a_kill_counted_first_then_logged_is_reported_once() {
     let t0 = Instant::now();
-    let mut c = Correlator::new(Duration::from_secs(1));
+    let mut c = Correlator::new(GRACE);
     c.on_counted(1, t0);
     assert_eq!(c.due(t0), 0);
-    c.on_logged();
+    assert_eq!(c.on_logged(t0), Logged::New);
     assert_eq!(c.due(t0 + Duration::from_secs(10)), 0);
 }
 
 #[test]
 fn a_counted_kill_without_a_log_line_is_due_after_the_grace_period() {
     let t0 = Instant::now();
-    let mut c = Correlator::new(Duration::from_secs(1));
+    let mut c = Correlator::new(GRACE);
     c.on_counted(3, t0);
-    c.on_logged();
+    assert_eq!(c.on_logged(t0), Logged::New);
     assert_eq!(c.due(t0 + Duration::from_millis(999)), 0);
     c.on_counted(1, t0 + Duration::from_millis(500));
     assert_eq!(c.due(t0 + Duration::from_secs(1)), 2);
@@ -132,11 +134,114 @@ fn a_counted_kill_without_a_log_line_is_due_after_the_grace_period() {
 #[test]
 fn log_lines_ahead_of_the_counter_claim_later_increases() {
     let t0 = Instant::now();
-    let mut c = Correlator::new(Duration::ZERO);
-    c.on_logged();
-    c.on_logged();
+    let mut c = Correlator::new(GRACE);
+    assert_eq!(c.on_logged(t0), Logged::New);
+    assert_eq!(c.on_logged(t0), Logged::New);
     c.on_counted(3, t0);
-    assert_eq!(c.due(t0), 1);
+    assert_eq!(c.due(t0 + GRACE), 1);
+}
+
+#[test]
+fn a_counted_kill_claimed_by_a_line_leaves_nothing_for_the_next_line_to_claim() {
+    let t0 = Instant::now();
+    let mut c = Correlator::new(GRACE);
+    assert_eq!(c.on_logged(t0), Logged::New);
+    c.on_counted(1, t0);
+    // This line is a second kill, ahead of its counter, so the second increase is claimed too.
+    assert_eq!(c.on_logged(t0), Logged::New);
+    c.on_counted(1, t0);
+    assert_eq!(c.due(t0 + GRACE), 0);
+}
+
+#[test]
+fn a_log_line_after_its_unnamed_report_is_the_same_kill() {
+    let t0 = Instant::now();
+    let mut c = Correlator::new(GRACE);
+    c.on_counted(1, t0);
+    assert_eq!(c.due(t0 + GRACE), 1);
+    assert_eq!(c.on_logged(t0 + GRACE), Logged::AlreadyReported);
+    // The line left no stray credit behind: the next counted kill is still reported.
+    c.on_counted(1, t0 + GRACE);
+    assert_eq!(c.due(t0 + GRACE * 2), 1);
+}
+
+#[test]
+fn late_lines_cancel_one_unnamed_report_each() {
+    let t0 = Instant::now();
+    let mut c = Correlator::new(GRACE);
+    c.on_counted(2, t0);
+    assert_eq!(c.due(t0 + GRACE), 2);
+    assert_eq!(c.on_logged(t0 + GRACE), Logged::AlreadyReported);
+    assert_eq!(c.on_logged(t0 + GRACE), Logged::AlreadyReported);
+    // Both reports are used up: a third line is a new kill, ahead of its counter.
+    assert_eq!(c.on_logged(t0 + GRACE), Logged::New);
+    c.on_counted(1, t0 + GRACE);
+    assert_eq!(c.due(t0 + GRACE * 3), 0);
+}
+
+#[test]
+fn a_late_line_cancels_the_oldest_unnamed_report() {
+    let t0 = Instant::now();
+    let mut c = Correlator::new(GRACE);
+    c.on_counted(1, t0);
+    c.on_counted(1, t0 + Duration::from_millis(600));
+    // Reported at t0 + 1.0 s and t0 + 1.6 s.
+    assert_eq!(c.due(t0 + GRACE), 1);
+    assert_eq!(c.due(t0 + Duration::from_millis(1600)), 1);
+    assert_eq!(
+        c.on_logged(t0 + Duration::from_millis(1600)),
+        Logged::AlreadyReported
+    );
+    // The first report went; the second is still within the period at 2.2 s (the first isn't).
+    assert_eq!(
+        c.on_logged(t0 + Duration::from_millis(2200)),
+        Logged::AlreadyReported
+    );
+    assert_eq!(c.on_logged(t0 + Duration::from_millis(2200)), Logged::New);
+}
+
+#[test]
+fn an_unnamed_report_is_forgotten_after_the_grace_period() {
+    let t0 = Instant::now();
+    let mut c = Correlator::new(GRACE);
+    c.on_counted(1, t0);
+    assert_eq!(c.due(t0 + GRACE), 1);
+    // Just inside the period the line still cancels the report; at the period's end it doesn't.
+    let mut inside = Correlator::new(GRACE);
+    inside.on_counted(1, t0);
+    assert_eq!(inside.due(t0 + GRACE), 1);
+    assert_eq!(
+        inside.on_logged(t0 + GRACE + GRACE - Duration::from_millis(1)),
+        Logged::AlreadyReported
+    );
+    assert_eq!(c.on_logged(t0 + GRACE + GRACE), Logged::New);
+}
+
+#[test]
+fn a_log_line_ahead_of_a_counter_that_never_moves_is_forgotten_after_the_grace_period() {
+    let t0 = Instant::now();
+    let mut c = Correlator::new(GRACE);
+    assert_eq!(c.on_logged(t0), Logged::New);
+    // Counter moves later than the grace period: the line no longer covers it.
+    c.on_counted(1, t0 + GRACE);
+    assert_eq!(c.due(t0 + GRACE * 2), 1);
+
+    // Just inside the period it still does.
+    let mut inside = Correlator::new(GRACE);
+    assert_eq!(inside.on_logged(t0), Logged::New);
+    inside.on_counted(1, t0 + GRACE - Duration::from_millis(1));
+    assert_eq!(inside.due(t0 + GRACE * 3), 0);
+}
+
+#[test]
+fn a_stale_log_line_ahead_is_forgotten_when_the_next_line_comes() {
+    let t0 = Instant::now();
+    let mut c = Correlator::new(GRACE);
+    assert_eq!(c.on_logged(t0), Logged::New);
+    assert_eq!(c.on_logged(t0 + GRACE), Logged::New);
+    // Only the second line is still ahead.
+    c.on_counted(2, t0 + GRACE);
+    assert_eq!(c.due(t0 + GRACE * 2), 1);
 }
 
 /// Collects what the tracing subscriber writes, so a test can count warnings.
@@ -308,6 +413,13 @@ impl Polls {
         self.until("reads its baseline", |r| r.taken >= 1).await;
     }
 
+    /// Waits for two more readings: the second began after this call, so the loop has ticked at
+    /// least once in full since. An absence window opens after this, not at the spawn.
+    async fn ticks(&mut self) {
+        let start = self.readings.borrow().taken;
+        self.until("keeps polling", |r| r.taken >= start + 2).await;
+    }
+
     /// Waits until a reading has seen the counter at `value`. Waiting for a reading by count would
     /// not do: one that began before the test changed the counter can end after it.
     async fn counter_at(&mut self, value: u64) {
@@ -332,8 +444,10 @@ async fn next(rx: &mut mpsc::Receiver<AgentMessage>, within: Duration) -> Option
 async fn watch_reports_a_logged_kill_once_with_its_name_and_nothing_from_before_it_started() {
     let fake = Fake::new("named", 5);
     let (tx, mut rx) = mpsc::channel(8);
-    let task = tokio::spawn(watch(fake.sources(), tx));
+    let (task, mut polls) = Polls::start(fake.sources(), tx);
     // Nothing yet: the counter's baseline is 5 and the old log line is skipped.
+    polls.baseline().await;
+    polls.ticks().await;
     assert_eq!(next(&mut rx, Duration::from_millis(300)).await, None);
 
     fake.set_counter(6);
@@ -342,7 +456,10 @@ async fn watch_reports_a_logged_kill_once_with_its_name_and_nothing_from_before_
         next(&mut rx, Duration::from_secs(2)).await,
         Some(AgentMessage::oom_kill(Some(4242), Some("hog".into())))
     );
-    // The counter increase was claimed by the log line: no unnamed report follows.
+    // The counter increase was claimed by the log line: no unnamed report follows. The window
+    // starts once the counter's increase has been read and a grace period could have run out.
+    polls.counter_at(6).await;
+    polls.ticks().await;
     assert_eq!(next(&mut rx, Duration::from_millis(500)).await, None);
     drop(rx);
     tokio::time::timeout(Duration::from_secs(2), task)
@@ -382,6 +499,7 @@ async fn a_log_line_ready_together_with_the_end_of_the_grace_period_is_served_fi
             "round {round}"
         );
     }
+    polls.ticks().await;
     assert_eq!(next(&mut rx, Duration::from_millis(400)).await, None);
     task.abort();
 }
@@ -398,11 +516,15 @@ async fn a_log_line_arriving_during_the_counter_read_that_ends_the_grace_period_
     let kmsg = fake.kmsg();
     let (queued_tx, queued) = std::sync::mpsc::channel();
     let mut stage = 0_u8;
+    let (baseline_tx, baseline) = tokio::sync::oneshot::channel();
+    let mut baseline_tx = Some(baseline_tx);
     let task = tokio::spawn(watch_observed(
         sources,
         tx,
         move |counter| {
-            if counter == Some(1) && stage == 0 {
+            if let Some(done) = baseline_tx.take() {
+                let _ = done.send(());
+            } else if counter == Some(1) && stage == 0 {
                 // The reading that sees the kill: stall until its grace period is over, so the
                 // next tick starts with the entry due.
                 stage = 1;
@@ -425,8 +547,12 @@ async fn a_log_line_arriving_during_the_counter_read_that_ends_the_grace_period_
             let _ = queued_tx.send(());
         },
     ));
-    // Give the watch its baseline before the counter moves.
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // The counter must not move before the watch has read its baseline, or that reading is the
+    // kill's own and nothing is counted.
+    tokio::time::timeout(Duration::from_secs(5), baseline)
+        .await
+        .expect("the watch reads its baseline")
+        .expect("the watch is running");
     fake.set_counter(1);
     assert_eq!(
         next(&mut rx, Duration::from_secs(5)).await,
@@ -451,7 +577,35 @@ async fn watch_reports_a_counted_kill_without_a_log_line_unnamed() {
         next(&mut rx, Duration::from_secs(2)).await,
         Some(AgentMessage::oom_kill(None, None))
     );
+    polls.ticks().await;
     assert_eq!(next(&mut rx, Duration::from_millis(400)).await, None);
+    task.abort();
+}
+
+/// The line arrives after the grace period (a delayed reader thread): the kill was already reported
+/// unnamed and the line must not make a second report, nor leave a credit that swallows the next
+/// counted kill.
+#[tokio::test]
+async fn a_log_line_after_its_unnamed_report_is_not_reported_again() {
+    let fake = Fake::new("late", 0);
+    let (tx, mut rx) = mpsc::channel(8);
+    let (task, mut polls) = Polls::start(fake.sources(), tx);
+    polls.baseline().await;
+    fake.set_counter(1);
+    assert_eq!(
+        next(&mut rx, Duration::from_secs(2)).await,
+        Some(AgentMessage::oom_kill(None, None))
+    );
+    fake.log("3,3,3,-;Out of memory: Killed process 8 (hog) total-vm:9kB\n");
+    polls.blocking_until_log_kill_queued();
+    polls.ticks().await;
+    assert_eq!(next(&mut rx, Duration::from_millis(300)).await, None);
+    // The next kill, whose line is lost, is still reported.
+    fake.set_counter(2);
+    assert_eq!(
+        next(&mut rx, Duration::from_secs(2)).await,
+        Some(AgentMessage::oom_kill(None, None))
+    );
     task.abort();
 }
 
@@ -485,4 +639,90 @@ fn a_full_queue_drops_and_a_closed_one_stops() {
     assert!(send(&tx, AgentMessage::oom_kill(None, None)));
     drop(rx);
     assert!(!send(&tx, AgentMessage::oom_kill(None, None)));
+}
+
+/// A log that plays back a script of reads, then reports end of file.
+struct ScriptedLog(VecDeque<io::Result<Vec<u8>>>);
+
+impl Read for ScriptedLog {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self.0.pop_front() {
+            Some(Ok(bytes)) => {
+                buf[..bytes.len()].copy_from_slice(&bytes);
+                Ok(bytes.len())
+            }
+            Some(Err(err)) => Err(err),
+            None => Ok(0),
+        }
+    }
+}
+
+const KILL_RECORD: &[u8] = b"3,3,3,-;Out of memory: Killed process 9 (hog) total-vm:9kB\n";
+
+fn scripted(steps: Vec<io::Result<Vec<u8>>>) -> ScriptedLog {
+    ScriptedLog(steps.into())
+}
+
+#[test]
+fn the_reader_goes_on_after_records_were_lost_to_an_overrun() {
+    let (tx, mut rx) = mpsc::channel(KILL_QUEUE);
+    let log = scripted(vec![
+        Err(io::ErrorKind::BrokenPipe.into()),
+        Ok(KILL_RECORD.to_vec()),
+    ]);
+    let reader = std::thread::spawn(move || read_log(log, Duration::from_millis(1), &tx, || {}));
+    assert_eq!(rx.blocking_recv(), kill(9, "hog"));
+    // End of file with the queue's receiver gone: the thread ends.
+    drop(rx);
+    reader.join().unwrap();
+}
+
+#[test]
+fn the_reader_stops_on_any_other_read_error() {
+    let (tx, mut rx) = mpsc::channel(KILL_QUEUE);
+    let log = scripted(vec![
+        Err(io::ErrorKind::PermissionDenied.into()),
+        Ok(KILL_RECORD.to_vec()),
+    ]);
+    std::thread::spawn(move || read_log(log, Duration::from_millis(1), &tx, || {}))
+        .join()
+        .unwrap();
+    // It sent nothing and dropped its sender.
+    assert_eq!(rx.blocking_recv(), None);
+}
+
+#[test]
+fn the_reader_ends_when_the_queue_closes_while_it_waits_for_records() {
+    let (tx, rx) = mpsc::channel(KILL_QUEUE);
+    drop(rx);
+    // Nothing to read, receiver gone: the end-of-file check ends the thread.
+    std::thread::spawn(move || read_log(scripted(vec![]), Duration::from_millis(1), &tx, || {}))
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn the_reader_ends_when_it_cannot_queue_a_kill() {
+    let (tx, rx) = mpsc::channel(KILL_QUEUE);
+    drop(rx);
+    let log = scripted(vec![Ok(KILL_RECORD.to_vec()), Ok(KILL_RECORD.to_vec())]);
+    std::thread::spawn(move || read_log(log, Duration::from_secs(60), &tx, || {}))
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn the_reader_reports_each_queued_kill_to_its_observer() {
+    let (tx, mut rx) = mpsc::channel(KILL_QUEUE);
+    let log = scripted(vec![Ok(KILL_RECORD.to_vec())]);
+    let (queued_tx, queued) = std::sync::mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        read_log(log, Duration::from_millis(1), &tx, move || {
+            let _ = queued_tx.send(());
+        });
+    });
+    assert_eq!(rx.blocking_recv(), kill(9, "hog"));
+    queued.recv_timeout(Duration::from_secs(5)).unwrap();
+    drop(rx);
+    reader.join().unwrap();
 }

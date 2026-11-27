@@ -10,8 +10,8 @@ use crate::document::{self, Document};
 use crate::migrate::{self, Migration};
 use crate::{
     AppIconChoice, CloseBehaviour, ConsentKind, Consents, DensityChoice, DiskSpaceLimits,
-    DiskWarningPercent, FirstRun, FreeGb, HexColour, Loaded, PaletteChoice, ServerChoice,
-    SettingsError, TermsVersion, ThemeChoice, WorkspaceLayer,
+    DiskWarningPercent, FirstRun, FreeGb, HexColour, Loaded, LogLevelChoice, PaletteChoice,
+    ServerChoice, SettingsError, TermsVersion, ThemeChoice, WorkspaceLayer,
 };
 
 /// The version of the terms the enable popup for Microsoft's server shows: the licence's address.
@@ -331,6 +331,10 @@ pub struct UiPrefs {
     /// settings screen edits it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ssh_agent_pipe: Option<String>,
+    /// How much Puddle writes to its log; default `info`. The settings screen edits it and it
+    /// takes effect at once; `PUDDLE_LOG` wins over it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_level: Option<LogLevelChoice>,
     #[serde(flatten)]
     pub(crate) extra: BTreeMap<String, Value>,
 }
@@ -440,6 +444,12 @@ impl UiPrefs {
     #[must_use]
     pub fn disk_warning_percent(&self) -> DiskWarningPercent {
         self.disk_warning_percent.unwrap_or_default()
+    }
+
+    /// How much Puddle writes to its log.
+    #[must_use]
+    pub fn log_level(&self) -> LogLevelChoice {
+        self.log_level.unwrap_or_default()
     }
 
     /// Whether an unexpected stop or crash notifies.

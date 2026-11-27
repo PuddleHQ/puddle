@@ -46,6 +46,7 @@ mod first_run;
 mod identities;
 mod interception;
 mod logins;
+mod logs;
 mod meta;
 mod network_health;
 mod orphan_volumes;
@@ -452,6 +453,7 @@ pub(crate) fn slow_router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(doctor::doctor))
         .routes(routes!(backup::create_backup))
+        .routes(routes!(logs::create_log_bundle))
         .merge(restore_upload_router())
         .routes(routes!(first_run::trust_dev_certificate))
         .routes(routes!(credential_store::retry_credential_store))

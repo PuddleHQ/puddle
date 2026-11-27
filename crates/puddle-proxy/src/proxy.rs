@@ -442,14 +442,29 @@ impl Proxy {
     ) -> Result<Decision, PolicyError> {
         let policy = Arc::clone(&self.policy);
         let request = request.clone();
+        let asked = (
+            request.workspace.clone(),
+            request.host.clone(),
+            request.port,
+        );
         // A miss writes a pending row, so the call may block on SQLite.
-        tokio::task::spawn_blocking(move || policy.decide(&request, suffix_allows))
+        let decided = tokio::task::spawn_blocking(move || policy.decide(&request, suffix_allows))
             .await
             .unwrap_or_else(|_| {
                 Err(PolicyError {
                     reason: "policy task failed".into(),
                 })
-            })
+            });
+        // Names and ports only: never a header, a body or a query string.
+        match &decided {
+            Ok(decision) => {
+                tracing::debug!(workspace = %asked.0, host = %asked.1, port = asked.2, ?decision, "egress decision");
+            }
+            Err(err) => {
+                tracing::debug!(workspace = %asked.0, host = %asked.1, port = asked.2, reason = %err.reason, "egress decision failed");
+            }
+        }
+        decided
     }
 
     /// How a refusal names `workspace`: its name, or its id when the policy knows none.
@@ -466,6 +481,7 @@ impl Proxy {
     /// Hands `event` to the connection log on a blocking thread (it may write to SQLite).
     pub(crate) async fn record(&self, event: ConnectionEvent) {
         let log = Arc::clone(&self.log);
+        tracing::debug!(workspace = ?event.workspace, host = %event.host, port = event.port, decision = ?event.decision, outcome = ?event.outcome, reason = ?event.reason, upstream = ?event.upstream, "connection recorded");
         if tokio::task::spawn_blocking(move || log.record(&event))
             .await
             .is_err()

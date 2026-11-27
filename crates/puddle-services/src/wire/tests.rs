@@ -292,6 +292,7 @@ fn global_request_sets_vscode_options() {
             disk_warn_free_gb: Some(50),
             disk_fail_free_gb: Some(10),
             ssh_agent_pipe: Some(r"  \\.\pipe\pageant.alice  ".to_owned()),
+            log_level: Some(LogLevelChoice::Debug),
         },
         tools: GlobalTools { mise: Some(false) },
         limits: Limits { max_cpus: Some(48) },
@@ -327,6 +328,7 @@ fn global_request_sets_vscode_options() {
     let lines = g.ui.disk_limits();
     assert_eq!((lines.warn().gb(), lines.fail().gb()), (50, 10));
     assert_eq!(g.ui.ssh_agent_pipe(), Some(r"\\.\pipe\pageant.alice"));
+    assert_eq!(g.ui.log_level(), settings::LogLevelChoice::Debug);
     assert!(g.vscode_server.telemetry());
     assert!(!g.vscode_server.auto_update());
     assert!(!g.tools.mise());

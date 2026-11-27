@@ -27,7 +27,7 @@ export function sizeText(bytes: number): string {
 const REVOKE_AFTER_MS = 30_000;
 
 /** Offers `blob` to the user as a download named `name`. */
-function save(blob: Blob, name: string): void {
+export function save(blob: Blob, name: string): void {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;

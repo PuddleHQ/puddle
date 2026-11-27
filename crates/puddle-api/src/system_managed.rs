@@ -88,6 +88,7 @@ pub(crate) async fn refresh(state: &AppState) {
     let result = blocking(move || {
         let repo = settings.as_ref();
         let global = load_global(repo)?;
+        crate::routes::settings::apply_log_level(&global.settings);
         let mut direct = Vec::new();
         let mut mise = Vec::new();
         for name in names {

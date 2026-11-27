@@ -6011,6 +6011,7 @@ checksum = "33cb294fe86a74cbcf50d4445b37da762029549ebeea341421c7c70370f86cac"
 name = "puddle"
 version = "0.0.0"
 dependencies = [
+ "flate2",
  "pem",
  "puddle-api",
  "puddle-boot",
@@ -6037,6 +6038,7 @@ dependencies = [
  "rustls",
  "serde_json",
  "sha2 0.11.1",
+ "tar",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -6122,6 +6124,7 @@ dependencies = [
  "puddle-front",
  "puddle-fs",
  "puddle-ipc",
+ "puddle-log",
  "puddle-netpolicy",
  "puddle-repos",
  "puddle-secrets",
@@ -6623,6 +6626,10 @@ dependencies = [
 name = "puddle-log"
 version = "0.0.0"
 dependencies = [
+ "flate2",
+ "serde_json",
+ "tar",
+ "tempfile",
  "thiserror 2.0.21",
  "tracing",
  "tracing-subscriber",

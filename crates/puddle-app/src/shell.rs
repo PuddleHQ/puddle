@@ -8,7 +8,7 @@ use puddle_host::{
     HostError, HostOptions, HostShutdown, MsbFactory, RuntimeFactory, SystemPlatform,
 };
 use puddle_lifecycle::LifecycleError;
-use puddle_log::{ScopedFilter, init_stderr};
+use puddle_log::ScopedFilter;
 use puddle_types::Problems;
 use tauri::{AppHandle, Manager, RunEvent, Runtime};
 use tauri_plugin_opener::OpenerExt;
@@ -689,7 +689,8 @@ fn log_filter(puddle_log: Option<&str>, rust_log: Option<&str>) -> (ScopedFilter
 /// wins; a second call in one process (tests) keeps the first.
 fn init_logging(puddle_log: Option<&str>, rust_log: Option<&str>) {
     let (filter, bad_filter) = log_filter(puddle_log, rust_log);
-    init_stderr(filter, false);
+    // A level from the environment is final; without one the Settings screen sets it.
+    puddle_log::init_logging(filter, false, puddle_log.is_some() || rust_log.is_some());
     if let Some(said) = bad_filter {
         tracing::warn!("{said}");
     }
@@ -705,6 +706,14 @@ fn init_logging_from(var: impl Fn(&str) -> Option<String>) {
     init_logging(var(PUDDLE_LOG_VAR).as_deref(), var(RUST_LOG_VAR).as_deref());
 }
 
+/// Starts keeping the log in a file in the data folder, which the log bundle collects. A folder
+/// that cannot be written costs the file and nothing else.
+fn attach_log_file(data: &std::path::Path) {
+    if let Err(err) = puddle_log::attach_log_file(&puddle_log::log_folder(data)) {
+        tracing::warn!(%err, "the log is not kept in a file");
+    }
+}
+
 /// Runs the app until it quits. The close button hides the window to the tray or quits, as Settings
 /// say ([`desktop`]).
 ///
@@ -717,6 +726,7 @@ pub fn run(options: &Options) -> Result<(), ShellError> {
     puddle_no_dump::harden_from_env().log();
     // Every panic after this writes a crash file into the data folder (nothing is sent).
     if let Some(folder) = data_folder(options) {
+        attach_log_file(&folder);
         crash::install(folder.join(crash::FOLDER));
     }
     // Before the runtime starts any machine: if the shell dies, Windows ends them with it.

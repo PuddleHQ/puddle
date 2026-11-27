@@ -18,7 +18,8 @@ use crate::error::StoreError;
 use crate::rule::Actor;
 use crate::users::UserId;
 
-use super::{Store, lock};
+use super::users::owner_in;
+use super::{AllUsers, Store, lock};
 
 /// How long a decided row is kept for the requests still waiting on it to read.
 const DECIDED_KEPT_MS: u64 = 3_600_000;
@@ -232,23 +233,40 @@ impl Store {
         })
     }
 
-    /// One question, or `None` once it was pruned.
+    /// One question of `workspace`, or `None` once it was pruned (or when it is another
+    /// workspace's).
     ///
     /// # Errors
     /// A database error, or [`StoreError::Corrupt`].
-    pub fn ssh_agent_ask(&self, id: i64) -> Result<Option<SshAgentAsk>, StoreError> {
+    pub fn ssh_agent_ask(
+        &self,
+        workspace: &WorkspaceId,
+        id: i64,
+    ) -> Result<Option<SshAgentAsk>, StoreError> {
         let conn = lock(&self.conn);
-        conn.query_row(&format!("{COLUMNS} WHERE id = ?1"), [id], |r| Ok(read(r)))
-            .optional()?
-            .transpose()
+        conn.query_row(
+            &format!("{COLUMNS} WHERE id = ?1 AND workspace_id = ?2"),
+            params![id, workspace.as_str()],
+            |r| Ok(read(r)),
+        )
+        .optional()?
+        .transpose()
     }
 
-    /// The open questions of `user`'s workspaces (every user's when `None`), of one of them or
-    /// all, most recent first.
+    /// The open questions of every user's workspaces, of one of them or all, most recent first.
     ///
     /// # Errors
     /// A database error, or [`StoreError::Corrupt`].
-    pub fn open_ssh_agent_asks(
+    pub fn open_ssh_agent_asks_every_user(
+        &self,
+        _: &AllUsers,
+        workspace: Option<&WorkspaceId>,
+    ) -> Result<Vec<SshAgentAsk>, StoreError> {
+        self.open_ssh_agent_asks_where(None, workspace)
+    }
+
+    /// The open questions of `user`'s workspaces, of one of them or all, most recent first.
+    pub(super) fn open_ssh_agent_asks_where(
         &self,
         user: Option<UserId>,
         workspace: Option<&WorkspaceId>,
@@ -270,14 +288,22 @@ impl Store {
     /// # Errors
     /// [`StoreError::UnknownSshAgentAsk`] for a question that is not this workspace's,
     /// [`StoreError::SshAgentAskNotOpen`] for one already answered, or a database error.
-    pub fn answer_ssh_agent_ask(
+    pub(super) fn answer_ssh_agent_ask_by(
         &self,
+        user: UserId,
         workspace: &WorkspaceId,
         id: i64,
         answer: SshAgentAnswer,
         actor: Actor,
     ) -> Result<SshAgentAsk, StoreError> {
         self.change(|tx, now, fx| {
+            match owner_in(tx, workspace) {
+                Ok(owner) if owner == user => {}
+                Ok(_) | Err(StoreError::UnknownWorkspace(_)) => {
+                    return Err(StoreError::UnknownSshAgentAsk(id));
+                }
+                Err(err) => return Err(err),
+            }
             let ask = tx
                 .query_row(&format!("{COLUMNS} WHERE id = ?1"), [id], |r| Ok(read(r)))
                 .optional()?

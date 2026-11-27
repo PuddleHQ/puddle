@@ -17,6 +17,7 @@ fn store() -> (Arc<ManualClock>, Store) {
 fn an_audit_record_carries_the_name_its_workspace_had_when_it_was_written() {
     let (_, store) = store();
     let acme = WorkspaceId::new("acme").unwrap();
+    store.set_workspace_owner(&acme, UserId::OWNER).unwrap();
     let op = |workspace: Option<&WorkspaceId>| NewWorkspaceOp {
         op: WorkspaceOpKind::Rename,
         workspace: workspace.cloned(),
@@ -39,11 +40,16 @@ fn an_audit_record_carries_the_name_its_workspace_had_when_it_was_written() {
         .map(|(id, _)| *id)
         .collect();
     assert_eq!(ids.len(), 4);
-    let names = store.audit_workspace_names(&ids).unwrap();
+    let names = store.audit_workspace_names(UserId::OWNER, &ids).unwrap();
     assert_eq!(names.len(), 2, "{names:?}");
     assert_eq!(names[&ids[1]], "Acme shop");
     assert_eq!(names[&ids[2]], "Acme");
-    assert!(store.audit_workspace_names(&[]).unwrap().is_empty());
+    assert!(
+        store
+            .audit_workspace_names(UserId::OWNER, &[])
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
@@ -639,7 +645,7 @@ fn closing_a_store_that_read_the_audit_leaves_no_write_ahead_log() {
             detail: None,
         })
         .unwrap();
-    store.audit_workspace_names(&[1]).unwrap(); // reads through the read-only connection
+    store.audit_workspace_names(UserId::OWNER, &[1]).unwrap(); // reads through the read-only connection
     drop(store);
     assert!(!dir.path().join("puddle.db-wal").exists());
 }

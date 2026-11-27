@@ -3,7 +3,11 @@
 
 use puddle_types::{Decision, Host, WorkspaceId};
 
-use super::{NewRequestRule, RequestRule, Store};
+use super::ssh_agent_asks::{SshAgentAnswer, SshAgentAsk};
+
+use super::rows::load_pending;
+use super::users::owner_in;
+use super::{Decided, NewRequestRule, PendingId, PendingRow, RequestRule, Resolution, Store, lock};
 use crate::error::StoreError;
 use crate::pattern::Pattern;
 use crate::rule::{Actor, Effect, NewRule, Precedence, Rule, Scope};
@@ -90,6 +94,90 @@ impl UserStore<'_> {
     #[must_use]
     pub fn peek(&self, workspace: &WorkspaceId, host: &Host) -> Option<Decision> {
         self.store.peek_by(self.user, workspace, host)
+    }
+
+    /// Approves or denies an open pending row of this user's workspace (R-15 to R-17), in one
+    /// transaction.
+    ///
+    /// # Errors
+    /// [`StoreError::UnknownPending`] for a row of another user's workspace, and the errors of
+    /// [`Store::resolve_pending_by`] for the rest.
+    pub fn resolve_pending(
+        &self,
+        id: PendingId,
+        resolution: &Resolution,
+        actor: Actor,
+    ) -> Result<Decided, StoreError> {
+        self.store
+            .resolve_pending_by(self.user, id, resolution, actor)
+    }
+
+    /// One pending row of this user's workspaces.
+    ///
+    /// # Errors
+    /// [`StoreError::UnknownPending`] for a row that is not theirs or does not exist, or a
+    /// database error.
+    pub fn pending(&self, id: PendingId) -> Result<PendingRow, StoreError> {
+        let conn = lock(&self.store.conn);
+        let row = load_pending(&conn, id)?;
+        match owner_in(&conn, &row.workspace) {
+            Ok(owner) if owner == self.user => Ok(row),
+            Ok(_) | Err(StoreError::UnknownWorkspace(_)) => Err(StoreError::UnknownPending(id)),
+            Err(err) => Err(err),
+        }
+    }
+
+    /// Switches this user's rule on method and path on or off (R-65).
+    ///
+    /// # Errors
+    /// [`StoreError::UnknownRequestRule`] for a rule that is not theirs, and the errors of
+    /// [`Store::set_request_rule_enabled_by`] for the rest.
+    pub fn set_request_rule_enabled(
+        &self,
+        id: i64,
+        enabled: bool,
+        actor: Actor,
+    ) -> Result<RequestRule, StoreError> {
+        self.store
+            .set_request_rule_enabled_by(self.user, id, enabled, actor)
+    }
+
+    /// Deletes this user's rule on method and path.
+    ///
+    /// # Errors
+    /// [`StoreError::UnknownRequestRule`] for a rule that is not theirs, [`StoreError::SystemActor`]
+    /// or a database error.
+    pub fn delete_request_rule(&self, id: i64, actor: Actor) -> Result<RequestRule, StoreError> {
+        self.store.delete_request_rule_by(self.user, id, actor)
+    }
+
+    /// The open questions of this user's workspaces, of one of them or all, most recent first.
+    ///
+    /// # Errors
+    /// A database error, or [`StoreError::Corrupt`].
+    pub fn open_ssh_agent_asks(
+        &self,
+        workspace: Option<&WorkspaceId>,
+    ) -> Result<Vec<SshAgentAsk>, StoreError> {
+        self.store
+            .open_ssh_agent_asks_where(Some(self.user), workspace)
+    }
+
+    /// Answers the open question `id` of `workspace` (theirs).
+    ///
+    /// # Errors
+    /// [`StoreError::UnknownSshAgentAsk`] for a question that is not this workspace's or whose
+    /// workspace is not theirs, [`StoreError::SshAgentAskNotOpen`] for one already answered, or a
+    /// database error.
+    pub fn answer_ssh_agent_ask(
+        &self,
+        workspace: &WorkspaceId,
+        id: i64,
+        answer: SshAgentAnswer,
+        actor: Actor,
+    ) -> Result<SshAgentAsk, StoreError> {
+        self.store
+            .answer_ssh_agent_ask_by(self.user, workspace, id, answer, actor)
     }
 
     /// Allows each of `hosts` for `workspace` (theirs) that no rule decides yet, with an exact

@@ -345,6 +345,7 @@ async fn the_rules_on_method_and_path_follow_the_store_and_their_hosts_are_decry
     assert!(!decrypted.set().contains(&host("beta.example")));
 
     store
+        .as_user(puddle_store::UserId::OWNER)
         .delete_request_rule(own.id, puddle_store::Actor::Api)
         .unwrap();
     add(Some(&ws), "new.example", "/n");

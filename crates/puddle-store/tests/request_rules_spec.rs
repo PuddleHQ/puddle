@@ -159,15 +159,22 @@ fn deleting_a_rule_is_recorded_with_who_did_it() {
         .unwrap();
     drop(sink.take());
     assert!(matches!(
-        store.delete_request_rule(rule.id, Actor::System),
+        store
+            .as_user(puddle_store::UserId::OWNER)
+            .delete_request_rule(rule.id, Actor::System),
         Err(StoreError::SystemActor)
     ));
     assert!(matches!(
-        store.delete_request_rule(99, Actor::Cli),
+        store
+            .as_user(puddle_store::UserId::OWNER)
+            .delete_request_rule(99, Actor::Cli),
         Err(StoreError::UnknownRequestRule(99))
     ));
     assert_eq!(changed(&sink), 0);
-    let gone = store.delete_request_rule(rule.id, Actor::Cli).unwrap();
+    let gone = store
+        .as_user(puddle_store::UserId::OWNER)
+        .delete_request_rule(rule.id, Actor::Cli)
+        .unwrap();
     assert_eq!(gone.id, rule.id);
     assert_eq!(changed(&sink), 1);
     assert_eq!(
@@ -359,15 +366,20 @@ fn a_rule_on_method_and_path_that_is_off_is_kept_listed_and_checks_nothing() {
     assert!(rule.enabled);
     drop(sink.take());
     assert!(matches!(
-        store.set_request_rule_enabled(rule.id, false, Actor::System),
+        store
+            .as_user(puddle_store::UserId::OWNER)
+            .set_request_rule_enabled(rule.id, false, Actor::System),
         Err(StoreError::SystemActor)
     ));
     assert!(matches!(
-        store.set_request_rule_enabled(99, false, Actor::Ui),
+        store
+            .as_user(puddle_store::UserId::OWNER)
+            .set_request_rule_enabled(99, false, Actor::Ui),
         Err(StoreError::UnknownRequestRule(99))
     ));
     assert_eq!(changed(&sink), 0);
     let off = store
+        .as_user(puddle_store::UserId::OWNER)
         .set_request_rule_enabled(rule.id, false, Actor::Ui)
         .unwrap();
     assert!(!off.enabled);
@@ -382,10 +394,12 @@ fn a_rule_on_method_and_path_that_is_off_is_kept_listed_and_checks_nothing() {
     assert!(!listed[0].enabled);
     // The same state again changes and records nothing.
     store
+        .as_user(puddle_store::UserId::OWNER)
         .set_request_rule_enabled(rule.id, false, Actor::Ui)
         .unwrap();
     assert_eq!(changed(&sink), 0);
     store
+        .as_user(puddle_store::UserId::OWNER)
         .set_request_rule_enabled(rule.id, true, Actor::Cli)
         .unwrap();
     assert_eq!(store.request_rules_for(&sb("shop")).unwrap().len(), 1);

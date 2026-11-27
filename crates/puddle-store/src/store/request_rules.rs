@@ -135,6 +135,16 @@ fn load(conn: &Connection, id: i64) -> Result<RequestRule, StoreError> {
     .ok_or(StoreError::UnknownRequestRule(id))?
 }
 
+/// [`load`] for `user`'s rule: another user's reads as one that does not exist.
+fn load_of(conn: &Connection, user: UserId, id: i64) -> Result<RequestRule, StoreError> {
+    let rule = load(conn, id)?;
+    if rule.user == user {
+        Ok(rule)
+    } else {
+        Err(StoreError::UnknownRequestRule(id))
+    }
+}
+
 fn list(
     conn: &Connection,
     condition: &str,
@@ -322,9 +332,11 @@ impl Store {
     /// decrypt. Writes one `rule_switched` record, none when the rule is already in that state.
     ///
     /// # Errors
-    /// [`StoreError::UnknownRequestRule`], [`StoreError::SystemActor`] or a database error.
-    pub fn set_request_rule_enabled(
+    /// [`StoreError::UnknownRequestRule`] (also for another user's rule),
+    /// [`StoreError::SystemActor`] or a database error.
+    pub(super) fn set_request_rule_enabled_by(
         &self,
+        user: UserId,
         id: i64,
         enabled: bool,
         actor: Actor,
@@ -333,7 +345,7 @@ impl Store {
             return Err(StoreError::SystemActor);
         }
         let rule = self.change(|tx, now, fx| {
-            let before = load(tx, id)?;
+            let before = load_of(tx, user, id)?;
             if before.enabled == enabled {
                 return Ok(before);
             }
@@ -366,13 +378,19 @@ impl Store {
     /// Deletes a rule and tells running workspaces to read their rules again.
     ///
     /// # Errors
-    /// [`StoreError::UnknownRequestRule`], [`StoreError::SystemActor`] or a database error.
-    pub fn delete_request_rule(&self, id: i64, actor: Actor) -> Result<RequestRule, StoreError> {
+    /// [`StoreError::UnknownRequestRule`] (also for another user's rule),
+    /// [`StoreError::SystemActor`] or a database error.
+    pub(super) fn delete_request_rule_by(
+        &self,
+        user: UserId,
+        id: i64,
+        actor: Actor,
+    ) -> Result<RequestRule, StoreError> {
         if actor == Actor::System {
             return Err(StoreError::SystemActor);
         }
         let rule = self.change(|tx, now, fx| {
-            let rule = load(tx, id)?;
+            let rule = load_of(tx, user, id)?;
             tx.execute("DELETE FROM request_rules WHERE id = ?1", [id])?;
             append_for(
                 tx,

@@ -298,10 +298,12 @@ impl Store {
         audit_bytes(&lock(&self.conn))
     }
 
-    /// Audit records after id `after`, oldest first, as `(id, JSONL line)`.
+    /// Audit records of every user after id `after`, oldest first, as `(id, JSONL line)`, for a
+    /// test.
     ///
     /// # Errors
     /// A database error.
+    #[cfg(any(test, feature = "testing"))]
     pub fn audit_lines(&self, after: i64, limit: u32) -> Result<Vec<(i64, String)>, StoreError> {
         let conn = lock(&self.conn);
         let mut stmt =
@@ -363,21 +365,27 @@ impl Store {
         self.audit_query_where(&filter, cursor, limit)
     }
 
-    /// The `workspace_name` each of the audit records `ids` was written with; a record written
-    /// before the column existed, or with no workspace, has none and is left out.
+    /// The `workspace_name` each of `user`'s audit records `ids` was written with; a record of
+    /// another user, written before the column existed, or with no workspace, has none and is
+    /// left out.
     ///
     /// # Errors
     ///
     /// Fails if the database can't be read.
-    pub fn audit_workspace_names(&self, ids: &[i64]) -> Result<HashMap<i64, String>, StoreError> {
+    pub fn audit_workspace_names(
+        &self,
+        user: UserId,
+        ids: &[i64],
+    ) -> Result<HashMap<i64, String>, StoreError> {
         let conn = self.audit_read();
         let mut stmt = conn.prepare_cached(
-            "SELECT workspace_name FROM audit WHERE id = ?1 AND workspace_name IS NOT NULL",
+            "SELECT workspace_name FROM audit
+              WHERE id = ?1 AND user_id = ?2 AND workspace_name IS NOT NULL",
         )?;
         let mut names = HashMap::new();
         for id in ids {
             if let Some(name) = stmt
-                .query_row([id], |row| row.get::<_, String>(0))
+                .query_row(params![id, user.get()], |row| row.get::<_, String>(0))
                 .optional()?
             {
                 names.insert(*id, name);

@@ -153,7 +153,7 @@ pub(crate) async fn audit(
             .store
             .audit_query(principal.user, &filter, cursor, limit)?;
         let ids: Vec<i64> = lines.iter().map(|(id, _)| *id).collect();
-        let names = state.store.audit_workspace_names(&ids)?;
+        let names = state.store.audit_workspace_names(principal.user, &ids)?;
         Ok((lines, names))
     })
     .await?;

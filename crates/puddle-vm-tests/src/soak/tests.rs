@@ -168,3 +168,17 @@ fn memory_ten_percent_up_passes_and_eleven_fails() {
     assert!(judge_rss_back(1_000, 400).is_ok());
     assert!(judge_rss_back(0, 5).is_err());
 }
+
+#[test]
+fn a_noisy_host_passes_on_the_floor_and_a_planted_leak_still_fails() {
+    // Samples after the close of round 3 and round 10 on a busy host: single samples swing
+    // 479 to 568 MB (the failure seen in CI), the floors do not.
+    let baseline = rss_floor(&[479_000_000, 441_000_000, 515_000_000, 460_000_000]).unwrap();
+    let noisy = rss_floor(&[568_000_000, 452_000_000, 622_000_000, 447_000_000]).unwrap();
+    assert_eq!((baseline, noisy), (441_000_000, 447_000_000));
+    assert!(judge_rss_back(baseline, noisy).is_ok());
+    // The same swings on top of a leak of 15 % (66 MB): every sample is higher, so the floor is.
+    let leaked = rss_floor(&[634_000_000, 518_000_000, 688_000_000, 513_000_000]).unwrap();
+    assert!(judge_rss_back(baseline, leaked).is_err());
+    assert!(rss_floor(&[]).is_err());
+}

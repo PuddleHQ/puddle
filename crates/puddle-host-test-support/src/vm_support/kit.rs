@@ -229,18 +229,7 @@ fn cache_key(parts: &[&str]) -> u64 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::cache_key;
-
-    #[test]
-    fn the_cache_key_is_fixed_and_tells_the_parts_apart() {
-        assert_eq!(
-            cache_key(&["1", "img", "nft", "script"]),
-            0x5669_5061_04ff_b5b5
-        );
-        assert_ne!(cache_key(&["ab", "c"]), cache_key(&["a", "bc"]));
-    }
-}
+mod tests;
 
 /// Writes `bytes` to `file` by a rename, so a run that reads it never sees half a kit.
 fn save(file: &std::path::Path, bytes: &[u8]) {

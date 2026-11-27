@@ -923,6 +923,7 @@ fn the_rule_set_list_never_mixes_a_switch_from_before_a_commit_with_rows_from_af
         // A commit in flight: it holds the lock and swaps the index before it lets go.
         let conn = lock(&store.conn);
         let reader = scope.spawn(|| store.rule_sets(UserId::OWNER).unwrap());
+        // Ordering with no signal: the reader has no event to say it reached the lock, so give it time to block on it.
         std::thread::sleep(Duration::from_millis(300));
         conn.execute(
             "INSERT INTO rule_set_switches (rule_set, workspace_id, enabled, changed_at, user_id)
@@ -949,6 +950,7 @@ fn one_rule_set_is_read_with_the_index_of_the_same_lock() {
     let seen = std::thread::scope(|scope| {
         let conn = lock(&store.conn);
         let reader = scope.spawn(|| store.rule_set(UserId::OWNER, made.id).unwrap());
+        // Ordering with no signal: the reader has no event to say it reached the lock, so give it time to block on it.
         std::thread::sleep(Duration::from_millis(300));
         conn.execute(
             "INSERT INTO rule_set_switches (rule_set, workspace_id, enabled, changed_at, user_id)

@@ -1,13 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The plain-HTTP addresses a certificate names for fetching what a client needs to check a chain:
 //! the CRL distribution points and the authority-information-access locations (the issuer's
-//! certificate, the OCSP responder).
+//! certificate, the OCSP responder), and the signature check that ties a certificate to its issuer.
 
 use x509_parser::extensions::{DistributionPointName, GeneralName, ParsedExtension};
 use x509_parser::oid_registry::{
     OID_PKIX_ACCESS_DESCRIPTOR_CA_ISSUERS, OID_PKIX_ACCESS_DESCRIPTOR_OCSP,
 };
 use x509_parser::prelude::{FromDer, X509Certificate};
+
+/// Whether `issuer_der`'s key verifies the signature on `der`. A certificate that cannot be read,
+/// or a signature that does not verify, gives `false`: a name match alone proves nothing.
+pub(crate) fn is_signed_by(der: &[u8], issuer_der: &[u8]) -> bool {
+    let (Ok((_, cert)), Ok((_, issuer))) = (
+        X509Certificate::from_der(der),
+        X509Certificate::from_der(issuer_der),
+    ) else {
+        return false;
+    };
+    cert.verify_signature(Some(issuer.public_key())).is_ok()
+}
 
 /// Every `http://` URL in the CRL distribution points and AIA extension of `der`, sorted and
 /// without repeats. A certificate that cannot be read, or names none, gives none. Other schemes

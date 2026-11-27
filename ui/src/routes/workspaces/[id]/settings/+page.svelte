@@ -20,6 +20,7 @@
     fontSizeText,
     parseExtensions,
     parseFontSize,
+    parseCustomSettings,
     parseKeybindings,
     parseTheme,
     type EditorField,
@@ -513,6 +514,19 @@
           onsave={(v) =>
             saveEditor(ownEditor, "keybindings", v, "Key bindings")}
           onreset={() => resetEditor(ownEditor, "keybindings", "Key bindings")}
+        />
+        <EditorOverrideRow
+          id="editor-custom-settings"
+          label="Custom editor settings"
+          hint="A JSON object of editor settings, without comments. It replaces the global object; empty means none."
+          value={settings.effective.editor.settings.value ?? ""}
+          source={settings.effective.editor.settings.source}
+          parse={parseCustomSettings}
+          multiline
+          onsave={(v) =>
+            saveEditor(ownEditor, "settings", v, "Custom editor settings")}
+          onreset={() =>
+            resetEditor(ownEditor, "settings", "Custom editor settings")}
         />
       </tbody>
       <tbody>

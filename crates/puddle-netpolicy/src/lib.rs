@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The destination guard: which destinations a workspace may reach, decided
-//! before any connection. Pure policy, no network I/O; the proxy (`puddle-proxy`) calls it.
+//! before any connection. Policy that sends no traffic (it only binds a UDP socket to test whether an address is the
+//! host's own); the proxy (`puddle-proxy`) calls it.
 //!
 //! | Stage | Item | What |
 //! |---|---|---|

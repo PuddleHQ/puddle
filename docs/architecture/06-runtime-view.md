@@ -335,11 +335,13 @@ sequenceDiagram
 
 1. **Which hosts are decrypted.** The workspace's termination set holds the hosts of its identities,
    secrets and captured logins (`crates/puddle-host/src/injection.rs`). Only port 443 to a name in
-   that set is terminated, unless the user switched on decrypting every host; everything else is
-   spliced (`crates/puddle-proxy/src/terminate/mod.rs` `Termination::mode_for`).
-2. **TLS.** The proxy reads the guest's ClientHello (a name that does not match the `CONNECT` target
-   is refused), connects to the real server first, and answers the guest with a leaf signed by the
-   workspace CA, which the boot hook put in the guest's trust bundle
+   that set is terminated, unless the user switched on decrypting every host (then any name is
+   terminated); everything else is spliced (`crates/puddle-proxy/src/terminate/mod.rs`
+   `Termination::mode_for`).
+2. **TLS.** The proxy reads the guest's ClientHello (on a host with a credential, a name that does
+   not match the `CONNECT` target is refused; on a host decrypted only because of the switch it is
+   passed through), connects to the real server first, and answers the guest with a leaf signed by
+   the workspace CA, which the boot hook put in the guest's trust bundle
    (`crates/puddle-proxy/src/terminate/session.rs`, `crates/puddle-ca/src/authority.rs`).
 3. **Decide per request** (`crates/puddle-inject/src/injector.rs` `decide_git`). The path gives the
    repository and whether it is a push or a pull (`crates/puddle-inject/src/git_path.rs`). The

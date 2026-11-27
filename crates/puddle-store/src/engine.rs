@@ -227,7 +227,10 @@ fn index_pattern(
     position: usize,
 ) {
     match pattern {
-        Pattern::Exact(host) => exact.entry(host.folded().to_string()).or_default().push(position),
+        Pattern::Exact(host) => exact
+            .entry(host.folded().to_string())
+            .or_default()
+            .push(position),
         Pattern::Suffix(s) => suffix
             .entry(s.base().as_str().to_owned())
             .or_default()
@@ -241,7 +244,11 @@ fn positions<'a>(
     suffix: &'a HashMap<String, Vec<usize>>,
     host: &Host,
 ) -> impl Iterator<Item = usize> + 'a {
-    let exact_hits = exact.get(&host.folded().to_string()).into_iter().flatten().copied();
+    let exact_hits = exact
+        .get(&host.folded().to_string())
+        .into_iter()
+        .flatten()
+        .copied();
     let suffixes: Vec<usize> = match host {
         Host::Name(name) => {
             let text = name.as_str();

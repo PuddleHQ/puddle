@@ -1,17 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! TLS termination for the hosts a workspace has a credential for.
+//! TLS termination for the hosts a workspace has a credential for, or for every name when the user
+//! switched on decrypting every host.
 //!
 //! Almost every connection through the proxy is spliced: the guest and the real server talk TLS
 //! to each other and Puddle sees only the name. A *bound* host is the exception, so that a
 //! credential can be added to the request without ever entering the workspace. For those hosts, and
 //! only those, the proxy is the TLS server the guest sees (with a certificate from the
-//! workspace's own CA, `puddle-ca`) and a verifying TLS client to the real server.
+//! workspace's own CA, `puddle-ca`) and a verifying TLS client to the real server. With the
+//! decrypt-every-host switch on, every name is treated that way (see `Termination::mode_for`).
 //!
 //! A connection is terminated only when all of these hold; otherwise it is spliced exactly as
 //! before:
 //!
 //! - the workspace has a [`Termination`] (a [`TerminationSet`], its CA and an [`Injector`]);
-//! - the guest asked for a *name* (an IP literal never matches) in the set;
+//! - the guest asked for a *name* (an IP literal never matches) in the set, or the decrypt-every-host
+//!   switch is on and the name is not one that is skipped;
 //! - the port is 443.
 //!
 //! The rules, the address guard and the IP rules run first and are unchanged: terminating a host
@@ -19,9 +22,11 @@
 //!
 //! On a terminated connection:
 //!
-//! - **Order**: the guest's `ClientHello` is read first and its name checked; a client that sends
-//!   another name, an IP address or none gets a TLS alert and the connection ends with the audit
-//!   reason `sni_mismatch`, and nothing is sent upstream. Then the real server is connected to,
+//! - **Order**: the guest's `ClientHello` is read first and its name checked; on a host in the
+//!   set, a client that sends another name, an IP address or none gets a TLS alert and the
+//!   connection ends with the audit reason `sni_mismatch`, and nothing is sent upstream. On a host
+//!   decrypted only because of the switch no credential is at stake, so such a client is passed
+//!   through (the token endpoints excepted, which are refused). Then the real server is connected to,
 //!   offering the protocols the guest offered (`h2`, `http/1.1`), and the guest is offered what the
 //!   server chose. A server that cannot be used (a certificate that is not accepted) does not stop
 //!   the guest's handshake: the first request is answered with the reason.
@@ -162,8 +167,8 @@ pub(crate) enum Mode {
 impl Termination {
     /// Terminates the hosts of `set`, certified by `ca`, with credentials decided by `injector`.
     ///
-    /// The CA has no name constraint, so `set` is the only limit on which hosts get a leaf from
-    /// it; to change the set while a workspace runs, make a new `Termination` with the same CA
+    /// The CA has no name constraint, so `set` (plus the decrypt-every-host switch) is the only
+    /// limit on which hosts get a leaf from it; to change the set while a workspace runs, make a new `Termination` with the same CA
     /// and [`Terminations::insert`] it (connections already open keep the old set; the next one
     /// sees the new).
     #[must_use]

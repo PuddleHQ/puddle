@@ -344,8 +344,15 @@ async fn the_token_is_in_the_header_and_in_nothing_that_prints() {
     assert!(!injection.headers()[0].value_is(&basic_header("CANARY-PERSONAL")));
     let encoded = basic_header("CANARY-WORK");
     let base64 = encoded.trim_start_matches("Basic ");
-    for secret in ["CANARY-WORK", base64, encoded.as_str()] {
-        assert!(!shown.contains(secret), "{secret} printed in {shown}");
+    for (name, secret) in [
+        ("token", "CANARY-WORK"),
+        ("base64", base64),
+        ("header", encoded.as_str()),
+    ] {
+        assert!(
+            !shown.contains(secret),
+            "the {name} is printed in the decision"
+        );
     }
     assert!(shown.contains("<redacted>"), "{shown}");
 }

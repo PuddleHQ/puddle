@@ -3,16 +3,20 @@ import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { h, url, goto } = await vi.hoisted(() => import("./detail-harness.ts"));
-vi.mock("$app/state", () => ({
-  page: {
-    get url() {
-      return new URL(`http://127.0.0.1${url.pathname}`);
+vi.mock("$app/state", async () => {
+  const { navigations } = await import("./detail-navigation.ts");
+  return {
+    page: {
+      get url() {
+        return new URL(`http://127.0.0.1${url.pathname}`);
+      },
+      get params() {
+        navigations.get("n");
+        return { id: url.id };
+      },
     },
-    get params() {
-      return { id: url.id };
-    },
-  },
-}));
+  };
+});
 vi.mock("$app/navigation", () => ({ goto }));
 vi.mock("#lib/stores/pending.svelte.ts", async (original) =>
   (await import("./detail-harness.ts")).pendingMock(await original()),
@@ -35,6 +39,7 @@ import { workspaces } from "#lib/stores/workspaces.svelte.ts";
 import DetailLayout from "./+layout.svelte";
 import Overview from "./+page.svelte";
 import Network from "./network/+page.svelte";
+import { navigate } from "./detail-navigation.ts";
 import { findHost, installReset, load, queryHost } from "./detail-setup.ts";
 
 const {
@@ -261,6 +266,18 @@ describe("the detail layout", () => {
     expect(
       await screen.findByText(/Couldn't read the workspace/),
     ).toBeInTheDocument();
+  });
+
+  it("says so for an id that never existed after another workspace was shown", async () => {
+    await load();
+    render(DetailLayout, { children: (() => {}) as never });
+    await screen.findByRole("heading", { level: 1, name: "demo" });
+    navigate("nope");
+    expect(
+      await screen.findByRole("heading", { name: "No such workspace" }),
+    ).toBeInTheDocument();
+    await workspaces.refresh();
+    expect(goto).not.toHaveBeenCalled();
   });
 
   it("goes back to the list when the workspace it showed is gone", async () => {

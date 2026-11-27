@@ -9,16 +9,20 @@ import {
 import { describe, expect, it, vi } from "vitest";
 
 const { h, url, goto } = await vi.hoisted(() => import("./detail-harness.ts"));
-vi.mock("$app/state", () => ({
-  page: {
-    get url() {
-      return new URL(`http://127.0.0.1${url.pathname}`);
+vi.mock("$app/state", async () => {
+  const { navigations } = await import("./detail-navigation.ts");
+  return {
+    page: {
+      get url() {
+        return new URL(`http://127.0.0.1${url.pathname}`);
+      },
+      get params() {
+        navigations.get("n");
+        return { id: url.id };
+      },
     },
-    get params() {
-      return { id: url.id };
-    },
-  },
-}));
+  };
+});
 vi.mock("$app/navigation", () => ({ goto }));
 vi.mock("#lib/stores/pending.svelte.ts", async (original) =>
   (await import("./detail-harness.ts")).pendingMock(await original()),

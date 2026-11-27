@@ -10,7 +10,7 @@ import {
   isIdentitiesChanged,
   isWorkspaceGitChanged,
 } from "#lib/identities/events.ts";
-import { sentence } from "#lib/rules/model.ts";
+import { sentence } from "#lib/format/sentence.ts";
 import { workspaces } from "./workspaces.svelte.ts";
 import type { LiveSource } from "./live.svelte.ts";
 import { live } from "./live.svelte.ts";

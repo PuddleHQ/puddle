@@ -7,7 +7,7 @@
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import { bootstrapToken, useSessionToken } from "#lib/api/connection.ts";
 import type { components } from "#lib/api/schema.d.ts";
-import { sentence } from "#lib/rules/model.ts";
+import { sentence } from "#lib/format/sentence.ts";
 import { deviceLabel } from "./device-label.ts";
 
 export type SessionGrant = components["schemas"]["SessionGrant"];

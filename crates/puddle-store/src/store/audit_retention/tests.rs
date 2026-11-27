@@ -417,6 +417,7 @@ fn the_log_checkpoint_never_waits_for_a_reader_and_truncates_once_none_is_left()
         ask_n_hosts(&store, "during", 20);
         let started = std::time::Instant::now();
         store.checkpoint_wal().unwrap();
+        // flake-ok: the old code waited the whole 5 s busy timeout, always; the 2 s bar holds under load
         assert!(
             started.elapsed() < Duration::from_secs(2),
             "the checkpoint waited {:?} for the reader",

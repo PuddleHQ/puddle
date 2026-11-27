@@ -71,8 +71,8 @@ fn a_chunked_reply_is_reassembled_and_a_broken_one_is_an_error() {
 }
 
 #[tokio::test]
-#[should_panic(expected = "GET /api/stalls: no complete answer within")]
-async fn an_exchange_that_never_finishes_panics_naming_method_and_path() {
+#[should_panic(expected = "no complete answer within")]
+async fn an_exchange_that_never_finishes_panics() {
     let (url, _server) = serve(
         vec![b"HTTP/1.1 200 OK\r\n\r\npart".to_vec()],
         Duration::ZERO,
@@ -80,7 +80,7 @@ async fn an_exchange_that_never_finishes_panics_naming_method_and_path() {
     .await;
     let api = Api::new(&url, "t");
     let head = format!("GET /api/stalls HTTP/1.1\r\nHost: {}\r\n\r\n", api.addr);
-    api.exchange("GET", "/api/stalls", head.as_bytes(), b"", SHORT)
+    api.exchange(head.as_bytes(), b"", SHORT)
         .await;
 }
 

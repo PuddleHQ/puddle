@@ -118,14 +118,8 @@ impl Api {
             "{method} {path} HTTP/1.1\r\nHost: {}\r\n{auth}{content}Connection: close\r\n\r\n",
             self.addr
         );
-        self.exchange(
-            method,
-            path,
-            head.as_bytes(),
-            body.as_bytes(),
-            REQUEST_BOUND,
-        )
-        .await
+        self.exchange(head.as_bytes(), body.as_bytes(), REQUEST_BOUND)
+            .await
     }
 
     /// A `POST` whose body is `bytes` (a file), with the token.
@@ -136,20 +130,13 @@ impl Api {
             self.token,
             bytes.len()
         );
-        self.exchange("POST", path, head.as_bytes(), bytes, REQUEST_BOUND)
+        self.exchange(head.as_bytes(), bytes, REQUEST_BOUND)
             .await
     }
 
     /// Sends `head` and `body`, reads until the server closes, all within `within`; a panic
-    /// names the method and path of the exchange that failed or stalled.
-    async fn exchange(
-        &self,
-        method: &str,
-        path: &str,
-        head: &[u8],
-        body: &[u8],
-        within: Duration,
-    ) -> Reply {
+    /// names the failure only, as the request carries the token and stays out of the message.
+    async fn exchange(&self, head: &[u8], body: &[u8], within: Duration) -> Reply {
         let run = async {
             let mut stream = TcpStream::connect(self.addr).await?;
             stream.write_all(head).await?;
@@ -160,9 +147,9 @@ impl Api {
         };
         let raw = tokio::time::timeout(within, run)
             .await
-            .unwrap_or_else(|_| panic!("{method} {path}: no complete answer within {within:?}"))
-            .unwrap_or_else(|e| panic!("{method} {path}: {e}"));
-        parse_reply(&raw).unwrap_or_else(|e| panic!("{method} {path}: {e}"))
+            .unwrap_or_else(|_| panic!("no complete answer within {within:?}"))
+            .unwrap_or_else(|e| panic!("exchange failed: {e}"));
+        parse_reply(&raw).unwrap_or_else(|e| panic!("exchange failed: {e}"))
     }
 
     pub async fn get(&self, path: &str) -> Reply {

@@ -242,7 +242,22 @@ async fn a_new_secret_value_saved_while_it_runs_keeps_the_stand_in_and_restarts_
         secret_body(Some(SECOND), &["api.example.org"]),
     )
     .await;
+    // The guest's file holds the stand-in, which a new value does not change, so the hook has
+    // nothing to rewrite and does not run for it. A plain variable saved after it is the marker:
+    // changes to one workspace apply in order, so once the hook has run for the variable, the
+    // value's change has been applied, and it was the variable alone that ran the hook.
+    put_env(
+        &w.api,
+        "/api/workspaces/acme/env/QA_MODE",
+        json!({"kind": "plain", "value": "one"}),
+    )
+    .await;
     rig.guest.boots_reach(boots + 1).await;
+    assert_eq!(
+        rig.guest.boots(),
+        boots + 1,
+        "the value's change ran the hook"
+    );
 
     assert_eq!(stand_in_of(host, "acme", "API_KEY"), stand_in);
     let after = host.workspaces().termination(&name("acme")).unwrap();

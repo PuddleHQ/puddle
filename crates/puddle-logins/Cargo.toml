@@ -27,6 +27,8 @@ zeroize = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+# `testing`: the registry's read of the real value behind a stand-in, for the tests.
+puddle-proxy = { workspace = true, features = ["testing"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "sync", "test-util", "time"] }
 

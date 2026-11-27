@@ -136,7 +136,7 @@ async fn reply(rig: &Rig, real: &str, scope: &str) -> Option<Value> {
 }
 
 fn registered(rig: &Rig, stand_in: &str, real: &str) -> bool {
-    rig.registry.set_real(stand_in, SecretValue::new(real)) == Ok(true)
+    rig.registry.real_of(stand_in).as_deref() == Some(real)
 }
 
 fn kept(rig: &Rig, slot: Slot) -> (String, String) {

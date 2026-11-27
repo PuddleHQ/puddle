@@ -372,6 +372,10 @@ try {
   const first = await page(mainPort, /^http:\/\/127\.0\.0\.1:\d+\//);
   await until("the Skip setup button", () => first.evaluate(`[...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Skip setup')`), 120_000, 500);
   await first.evaluate(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Skip setup').click(); true`, true);
+  // Skipping asks first: the confirmation's own Skip setup button ends the setup.
+  const confirmSkip = `[...document.querySelectorAll('[role="alertdialog"] button')].find((b) => b.textContent.trim() === 'Skip setup')`;
+  await until("the Skip setup confirmation", () => first.evaluate(`!!${confirmSkip}`), 30_000, 300);
+  await first.evaluate(`${confirmSkip}.click(); true`, true);
   first.close();
 
   // The consent setting, then the choice of Microsoft's server (the API checks the consent first); updates off for the run.

@@ -63,6 +63,7 @@ use crate::git_hosts::{Authors, SshListing};
 use crate::injection::Injection;
 use crate::op_error::{OpError, SAVE_HINT};
 
+mod clone_detail;
 mod repositories;
 
 pub(crate) mod orphans;
@@ -741,6 +742,9 @@ fn kept_login_row(login: &puddle_logins::KeptLogin) -> KeptLogin {
         since: login.since_ms,
     }
 }
+
+#[cfg(test)]
+mod clone_detail_tests;
 
 #[cfg(test)]
 mod room_for_a_grow_tests;

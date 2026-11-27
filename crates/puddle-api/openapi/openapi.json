@@ -14338,6 +14338,17 @@
                 ],
                 "description": "Push on its new repository table row; left out or `null` is on."
               },
+              "push_block": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/PushBlock",
+                    "description": "Why a push to it cannot succeed, when the listing it was picked from said so; kept on\nits new repository table row. Left out or `null` is none known."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "url": {
                 "type": "string",
                 "description": "The repository, as an `https://` URL without credentials."
@@ -19143,6 +19154,17 @@
             "type": "boolean",
             "description": "A push to it may go out."
           },
+          "push_block": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PushBlock",
+                "description": "Why a push to it cannot succeed, when the listing it was picked from said so (archived,\nor an account that can only read it); left out or `null` is none known."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "repo": {
             "type": "string",
             "description": "`repo`, or `project/repo` on Azure DevOps; `.git` is dropped."
@@ -19179,6 +19201,7 @@
           "repo",
           "pull",
           "push",
+          "push_block",
           "created_at"
         ],
         "properties": {
@@ -19208,6 +19231,17 @@
           "push": {
             "type": "boolean",
             "description": "A push to it may go out."
+          },
+          "push_block": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PushBlock",
+                "description": "Why a push to it cannot succeed, from the listing it was added from; `null` when none\nwas known."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "repo": {
             "type": "string",
@@ -20321,6 +20355,17 @@
             ],
             "description": "Push on its new repository table row; left out or `null` is on."
           },
+          "push_block": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PushBlock",
+                "description": "Why a push to it cannot succeed, when the listing it was picked from said so; kept on its\nnew repository table row. Left out or `null` is none known."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "url": {
             "type": "string",
             "description": "The repository to clone, as an `https://` URL without credentials. An SSH address\n(`git@host:path`, `ssh://`) of GitHub, GitLab, Bitbucket or Azure DevOps is kept as its\nHTTPS address; one of any other host is refused with a message that says so. With `local_path` it\nmay be left out or empty: the checkout's `origin` remote gives it (an SSH remote of\nGitHub, GitLab, Bitbucket or Azure DevOps in its HTTPS form)."
@@ -21252,6 +21297,14 @@
           }
         },
         "additionalProperties": false
+      },
+      "PushBlock": {
+        "type": "string",
+        "description": "Why a push to a repository cannot succeed, as its listing said.",
+        "enum": [
+          "archived",
+          "read"
+        ]
       },
       "ReasonCode": {
         "type": "string",

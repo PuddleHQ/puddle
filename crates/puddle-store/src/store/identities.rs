@@ -16,7 +16,7 @@ use crate::identity::{
 };
 use crate::users::UserId;
 use crate::workspace_git::{
-    GitDefaults, GitStart, RepoEntry, RepoGitRequest, RepoRef, RepoToggles, StartBasis,
+    GitDefaults, GitStart, PushBlock, RepoEntry, RepoGitRequest, RepoRef, RepoToggles, StartBasis,
     SwitchChange, SwitchSource, WorkspaceGit,
 };
 
@@ -275,8 +275,8 @@ fn start_in(
     }
     let repo = &request.repo;
     changed |= tx.execute(
-        "INSERT INTO workspace_repos (workspace_id, host, owner, repo, pull, push, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+        "INSERT INTO workspace_repos (workspace_id, host, owner, repo, pull, push, push_block, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
          ON CONFLICT DO NOTHING",
         params![
             ws.as_str(),
@@ -285,6 +285,7 @@ fn start_in(
             repo.repo,
             request.pull,
             request.push,
+            request.push_block.map(PushBlock::as_str),
             sql_ts(now)
         ],
     )? > 0;
@@ -552,7 +553,7 @@ impl Store {
         let only_push_listed = own_push.unwrap_or(defaults.only_push_listed);
         let only_pull_listed = own_pull.unwrap_or(defaults.only_pull_listed);
         let mut stmt = conn.prepare(
-            "SELECT id, host, owner, repo, pull, push, created_at FROM workspace_repos
+            "SELECT id, host, owner, repo, pull, push, push_block, created_at FROM workspace_repos
              WHERE workspace_id = ?1 ORDER BY id",
         )?;
         let rows = stmt
@@ -564,13 +565,14 @@ impl Store {
                     r.get::<_, String>(3)?,
                     r.get::<_, bool>(4)?,
                     r.get::<_, bool>(5)?,
-                    r.get::<_, i64>(6)?,
+                    r.get::<_, Option<String>>(6)?,
+                    r.get::<_, i64>(7)?,
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
         let repos = rows
             .into_iter()
-            .map(|(id, host, owner, repo, pull, push, at)| {
+            .map(|(id, host, owner, repo, pull, push, block, at)| {
                 let repo = RepoRef::new(&host, &owner, &repo).map_err(|e| StoreError::Corrupt {
                     table: "workspace_repos",
                     id,
@@ -581,6 +583,7 @@ impl Store {
                     repo,
                     pull,
                     push,
+                    push_block: block.as_deref().and_then(PushBlock::from_stored),
                     created_at: u64::try_from(at).unwrap_or(0),
                 })
             })
@@ -847,11 +850,12 @@ impl Store {
         ws: &WorkspaceId,
         repo: &RepoRef,
         toggles: RepoToggles,
+        push_block: Option<PushBlock>,
     ) -> Result<RepoEntry, StoreError> {
         let id = self.change(|tx, now, fx| {
             let added = tx.execute(
-                "INSERT INTO workspace_repos (workspace_id, host, owner, repo, pull, push, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                "INSERT INTO workspace_repos (workspace_id, host, owner, repo, pull, push, push_block, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                  ON CONFLICT DO NOTHING",
                 params![
                     ws.as_str(),
@@ -860,6 +864,7 @@ impl Store {
                     repo.repo,
                     toggles.pull,
                     toggles.push,
+                    push_block.map(PushBlock::as_str),
                     sql_ts(now)
                 ],
             )?;

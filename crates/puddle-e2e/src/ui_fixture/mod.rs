@@ -1224,6 +1224,7 @@ impl State {
                         pull: row.pull,
                         push: row.push,
                     },
+                    None,
                 )
                 .map_err(|err| format!("workspace {:?}: {err}", seed.name))?;
         }

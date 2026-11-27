@@ -262,6 +262,7 @@ pub(super) fn git_request(repository: &NewRepository) -> Option<RepoGitRequest> 
         identity: repository.identity,
         pull: repository.pull,
         push: repository.push,
+        push_block: repository.push_block,
     })
 }
 

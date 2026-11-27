@@ -677,7 +677,10 @@ describe("adding a repository", () => {
     expect(screen.getByText(/archived on its Git host/)).toBeInTheDocument();
     await add();
     await waitFor(() =>
-      expect(api.bodies.at(-1)).toMatchObject({ push: false }),
+      expect(api.bodies.at(-1)).toMatchObject({
+        push: false,
+        push_block: "archived",
+      }),
     );
     await waitFor(() => expect(screen.getByLabelText("Push")).toBeEnabled());
     expect(screen.getByLabelText("Push")).toBeChecked();
@@ -695,6 +698,29 @@ describe("adding a repository", () => {
     );
     expect(url_()).toHaveValue("https://github.com/acme/billing");
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+describe("rows with a push block", () => {
+  it("greys out Push on an archived or read-only row, with the reason", async () => {
+    api.git["w-web-shop"]!.repos.push(
+      repoRow(9, { repo: "legacy-site", push: false, push_block: "archived" }),
+      repoRow(10, { repo: "vendor", push: false, push_block: "read" }),
+    );
+    await mount();
+    const push = (name: string) =>
+      table().getByLabelText(`Push github.com/${name}`);
+    expect(push("acme/legacy-site")).toBeDisabled();
+    expect(push("acme/vendor")).toBeDisabled();
+    expect(push("acme/web-shop")).toBeEnabled();
+    expect(push("acme/design-tokens")).toBeEnabled();
+    expect(table().getByText(/archived on its Git host/)).toBeInTheDocument();
+    expect(
+      table().getByText(/account can only read this repository/),
+    ).toBeInTheDocument();
+    expect(push("acme/legacy-site")).toHaveAccessibleDescription(
+      /archived on its Git host/,
+    );
   });
 });
 

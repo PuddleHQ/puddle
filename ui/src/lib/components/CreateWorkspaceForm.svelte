@@ -401,6 +401,7 @@
           ...(directory === "" ? {} : { directory }),
           ...(identity === "" ? {} : { identity_id: Number(identity) }),
           ...(row.push ? {} : { push: false }),
+          ...(row.pushBlock ? { push_block: row.pushBlock } : {}),
         };
       }),
       ...(folder === "" ? {} : { start_folder: folder }),

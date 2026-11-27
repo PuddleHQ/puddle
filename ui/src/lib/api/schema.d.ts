@@ -2683,6 +2683,7 @@ export interface components {
             pull?: boolean | null;
             /** @description Push on its new repository table row; left out or `null` is on. */
             push?: boolean | null;
+            push_block?: components["schemas"]["PushBlock"] | null;
             /** @description The repository, as an `https://` URL without credentials. */
             url: string;
         } | {
@@ -4698,6 +4699,7 @@ export interface components {
             pull: boolean;
             /** @description A push to it may go out. */
             push: boolean;
+            push_block?: components["schemas"]["PushBlock"] | null;
             /** @description `repo`, or `project/repo` on Azure DevOps; `.git` is dropped. */
             repo: string;
         };
@@ -4728,6 +4730,7 @@ export interface components {
             pull: boolean;
             /** @description A push to it may go out. */
             push: boolean;
+            push_block: components["schemas"]["PushBlock"] | null;
             /** @description `repo`, or `project/repo` on Azure DevOps; lower-case, no `.git`. */
             repo: string;
         };
@@ -5255,6 +5258,7 @@ export interface components {
             pull?: boolean | null;
             /** @description Push on its new repository table row; left out or `null` is on. */
             push?: boolean | null;
+            push_block?: components["schemas"]["PushBlock"] | null;
             /**
              * @description The repository to clone, as an `https://` URL without credentials. An SSH address
              *     (`git@host:path`, `ssh://`) of GitHub, GitLab, Bitbucket or Azure DevOps is kept as its
@@ -5719,6 +5723,11 @@ export interface components {
             /** @description The pull proxy reaches the internet through the company proxy setup above. */
             via_upstream: boolean;
         };
+        /**
+         * @description Why a push to a repository cannot succeed, as its listing said.
+         * @enum {string}
+         */
+        PushBlock: "archived" | "read";
         /**
          * @description The reason codes that stand alone, without a prefix. Serialises as its [`ReasonCode::as_str`].
          * @enum {string}

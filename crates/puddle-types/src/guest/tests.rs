@@ -23,6 +23,34 @@ fn an_owner_only_file_never_prints_its_contents() {
 }
 
 #[test]
+fn an_owner_only_merged_file_prints_its_keys_but_not_their_values() {
+    use crate::{MergeEntry, MergeFormat};
+    let spec = MergeSpec::new(
+        MergeFormat::Json,
+        vec![MergeEntry::json(
+            &["auths", "registry"],
+            &serde_json::json!("CANARY-TOKEN"),
+        )],
+    )
+    .unwrap();
+    let owner_only = GuestFile::merged(p("/home/dev/.docker/config.json"), spec.clone())
+        .with_mode(FileMode::new(0o600));
+    let shown = format!("{owner_only:?}");
+    assert!(!shown.contains("CANARY"), "the values leak: {shown}");
+    assert!(
+        shown.contains("auths") && shown.contains("registry"),
+        "{shown}"
+    );
+    assert!(shown.contains("Json"), "{shown}");
+    // A merged file others can read still prints in full.
+    let shared = GuestFile::merged(p("/etc/a.json"), spec);
+    assert!(format!("{shared:?}").contains("CANARY"));
+    // Other apply kinds print as they are, owner-only or not.
+    let replaced = GuestFile::new(p("/etc/k"), b"x".to_vec()).with_mode(FileMode::new(0o600));
+    assert!(format!("{replaced:?}").contains("apply: Replace"));
+}
+
+#[test]
 fn a_plain_file_replaces_and_a_merged_file_starts_from_the_specs_fresh_text() {
     use crate::{MergeEntry, MergeFormat};
     let plain = GuestFile::new(p("/etc/a"), b"x".to_vec());

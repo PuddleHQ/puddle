@@ -16,6 +16,9 @@ use crate::api::ApiReply;
 /// repeat up to an hour.
 const MIN_WAIT_MS: u64 = 60_000;
 const MAX_WAIT_MS: u64 = 60 * 60_000;
+/// The longest a host's own reset time is believed: GitHub's primary limit resets within the
+/// hour, so a reset further away than this is a wrong clock or a bad value, not a real wait.
+const MAX_RESET_MS: u64 = 3 * 60 * 60_000;
 /// How much of a host's own message is kept.
 const MESSAGE_CHARS: usize = 200;
 
@@ -69,6 +72,14 @@ pub(crate) fn message_of(reply: &ApiReply) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
+/// A host's reset time held to at least a second and at most [`MAX_RESET_MS`] past `now_ms`.
+pub(crate) fn bounded_reset(until_ms: u64, now_ms: u64) -> u64 {
+    until_ms.clamp(
+        now_ms.saturating_add(1000),
+        now_ms.saturating_add(MAX_RESET_MS),
+    )
+}
+
 /// A successful GitHub answer that used up the hour's budget: nothing more is asked until it
 /// resets.
 pub(crate) fn github_spent(reply: &ApiReply) -> Option<u64> {
@@ -93,7 +104,7 @@ pub(crate) fn github(reply: &ApiReply, now_ms: u64, strikes: u32) -> Verdict {
             }
             if let Some(until) = github_spent(reply) {
                 return Verdict::Limited {
-                    until_ms: until.max(now_ms.saturating_add(1000)),
+                    until_ms: bounded_reset(until, now_ms),
                     primary: true,
                 };
             }

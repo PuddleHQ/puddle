@@ -14,10 +14,9 @@ import {
   NO_FILTER,
   PAGE_SIZE,
   toQuery,
-  type AuditEntry,
-  type AuditRecord,
   type Filter,
-} from "#lib/audit/model.ts";
+} from "#lib/audit/filter.ts";
+import type { AuditEntry, AuditRecord } from "#lib/audit/model.ts";
 import { live, type LiveSource } from "./live.svelte.ts";
 import { readFailure, SERVICE_DOWN } from "./read-failure.ts";
 

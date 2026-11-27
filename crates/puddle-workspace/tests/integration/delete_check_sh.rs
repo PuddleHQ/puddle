@@ -16,7 +16,9 @@ use puddle_types::WorkspaceId;
 use puddle_workspace::{DELETE_CHECK_SH, DeleteReport, Workspaces};
 
 use crate::common;
-use common::{command, git, hostile_checkout, hostile_commands_that_ran, volume};
+use common::{
+    command, git, hostile_checkout, hostile_commands_that_ran, promisor_checkout, volume,
+};
 
 /// The `shells()` entry that runs the script as `busybox sh`.
 const BUSYBOX: &str = "busybox sh";
@@ -186,6 +188,19 @@ async fn a_checkout_s_config_cannot_make_the_check_run_a_program() {
         };
         assert_eq!(evil.uncommitted.items, ["?? new.txt"], "{shell}");
         assert_eq!(evil.unpushed.total(), 2, "{shell}: {:?}", evil.unpushed);
+    }
+}
+
+/// A partial clone's missing object is not fetched by running the program its remote names.
+#[tokio::test]
+async fn a_promisor_remote_cannot_make_the_check_run_a_program() {
+    for shell in shells() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vol = tmp.path().join("vol");
+        let markers = promisor_checkout(tmp.path(), &vol);
+        let report = check(shell, &vol).await;
+        assert!(!markers.join("ran").exists(), "{shell}: the uploadpack ran");
+        assert!(!report.is_clean(), "{shell}");
     }
 }
 

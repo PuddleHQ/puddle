@@ -6,6 +6,7 @@ import {
   screen,
   within,
 } from "@testing-library/svelte";
+import { SvelteMap } from "svelte/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { components } from "#lib/api/schema.d.ts";
 
@@ -19,10 +20,17 @@ vi.mock("$app/state", () => ({
       return new URL(`http://127.0.0.1${url.pathname}`);
     },
     get params() {
+      navigations.get("n");
       return { id: url.id };
     },
   },
 }));
+// Reading `params` is tracked, so a test can change the id the way a navigation does.
+const navigations = new SvelteMap([["n", 0]]);
+function navigate(id: string) {
+  url.id = id;
+  navigations.set("n", (navigations.get("n") ?? 0) + 1);
+}
 const goto = vi.hoisted(() => vi.fn());
 vi.mock("$app/navigation", () => ({ goto }));
 
@@ -416,6 +424,18 @@ describe("the detail layout", () => {
     expect(
       await screen.findByText(/Couldn't read the workspace/),
     ).toBeInTheDocument();
+  });
+
+  it("says so for an id that never existed after another workspace was shown", async () => {
+    await load();
+    render(DetailLayout, { children: (() => {}) as never });
+    await screen.findByRole("heading", { level: 1, name: "demo" });
+    navigate("nope");
+    expect(
+      await screen.findByRole("heading", { name: "No such workspace" }),
+    ).toBeInTheDocument();
+    await workspaces.refresh();
+    expect(goto).not.toHaveBeenCalled();
   });
 
   it("goes back to the list when the workspace it showed is gone", async () => {

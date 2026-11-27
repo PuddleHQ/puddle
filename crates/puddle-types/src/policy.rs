@@ -315,7 +315,8 @@ pub trait Policy: Send + Sync {
     /// - R-14: after a wildcard allow, an exact allow of a resolved local address admits that
     ///   address.
     ///
-    /// The default answers `None` (no IP rules): nothing is excluded or admitted this way.
+    /// A policy with no IP rules answers `Ok(None)`; there is no default, so a wrapper that
+    /// forwards only [`Self::decide`] does not compile and cannot drop the IP-deny rule.
     ///
     /// The proxy calls it on its runtime threads, once per resolved address, so it must answer
     /// from memory and never do I/O. A policy that needs I/O to decide belongs in [`Self::decide`],
@@ -328,11 +329,7 @@ pub trait Policy: Send + Sync {
         &self,
         request: &EgressRequest,
         suffix_allows: SuffixAllows,
-    ) -> Result<Option<Decision>, PolicyError> {
-        // this implementation has no opinion, so it reads neither argument
-        let _ = (request, suffix_allows);
-        Ok(None)
-    }
+    ) -> Result<Option<Decision>, PolicyError>;
 
     /// The workspace's current name, for text shown to the user. The default knows none, and the
     /// caller then shows the id. It may read the database, like [`Self::decide`].

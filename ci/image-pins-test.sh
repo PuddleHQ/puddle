@@ -4,7 +4,7 @@
 # `curl` (a registry that answers from $FAKE_REG) and a fake `gh` (a table of open pull requests, a log of calls). Cases:
 # `check` passes on equal digest pins and fails on a tag without digest, on two different pins, on a missing pin line and on
 # two pin lines in one file; `refresh` with an unchanged digest does nothing; a moved digest rewrites both files in one commit on
-# ci/refresh-image-pins (never on develop), opens one pull request and arms auto-merge; the same digest again opens no second
+# ci/refresh-image-pins (never on develop), opens one pull request and never arms auto-merge (a person merges it); the same digest again opens no second
 # one; a newer digest updates the branch with a lease; a registry error, a non-200 answer and a digest that is not sha256 change
 # nothing and fail; a dry run pushes nothing; a caught-up open pull request is closed. Prints ok only when every case passes.
 set -uo pipefail
@@ -139,7 +139,7 @@ changed=$(git -C "$tmp/origin.git" diff --name-only develop "$branch" | sort | t
 [ "$(on_branch "$b" | grep -c 'pub const DEFAULT_MAINTENANCE_IMAGE')" = 1 ] || bad "refresh: the rewrite must keep the rest of the file"
 [ -e "$tmp/created" ] || bad "refresh: no pull request was opened"
 grep -q "^pr create .*--base develop --head $branch" "$tmp/log" || bad "refresh: the pull request must target develop from the branch"
-grep -q '^pr merge .*--auto --squash 41' "$tmp/log" || bad "refresh: auto-merge was not armed with squash"
+grep -q '^pr merge' "$tmp/log" && bad "refresh: the pull request must wait for a person, but a merge call was made"
 [ "$(grep -c '^pr create' "$tmp/log")" = 1 ] || bad "refresh: exactly one pull request"
 
 # the same digest again with the pull request open (the workflow starts from develop each night, which still pins the old

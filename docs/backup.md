@@ -45,9 +45,10 @@ and not yet reflected in `puddle.db`, or the other way round.
 
 ## What it leaves out
 
-- **Sign-in secrets.** Each user's password hash and open invite are emptied in the copy
-  (`account_passwords` and `account_invites`), and the file is rebuilt so the removed rows are
-  not left in it. After a restore the users are back and nobody has a password: run
+- **Sign-in secrets.** Each user's password hash, open invite and the refresh token of each
+  signed-in device are emptied in the copy (`account_passwords`, `account_invites` and
+  `account_sessions`), and the file is rebuilt so the removed rows are not left in it. After a
+  restore the users are back and nobody has a password or a signed-in device: run
   `puddle user reset <name>` for each one and send them the invite link it prints.
 - **Credentials.** The database holds references to the operating system's credential store
   and the stand-ins that workspaces see, never the real values. The credential store is not

@@ -55,6 +55,7 @@ impl fmt::Debug for Exchange {
         f.debug_struct("Exchange")
             .field("swap_fields", &self.swap_fields)
             .field("answer", &self.answer.is_some())
+            .field("before", &self.before.is_some())
             .finish()
     }
 }

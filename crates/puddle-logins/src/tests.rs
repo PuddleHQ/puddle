@@ -1754,13 +1754,12 @@ async fn start_with_the_store_down_after_a_login() -> (Rig, String) {
 }
 
 /// What the proxy does first with a request: finishes the exchange's own work.
-async fn first_exchange(rig: &Rig, token_host: &str, path: &str) -> Exchange {
+async fn first_exchange(rig: &Rig, token_host: &str, path: &str) {
     let mut exchange = rig
         .logins
         .begin(&host(token_host), "POST", path)
         .expect("the request is an exchange");
     exchange.prepare().await;
-    exchange
 }
 
 #[tokio::test]
@@ -1834,7 +1833,7 @@ async fn a_start_the_store_answered_has_nothing_to_read_again() {
     first.store.break_it();
     exchange.prepare().await;
     assert_eq!(next.registry.len(), 2);
-    assert!(next.notices.seen().is_empty());
+    assert_eq!(next.notices.seen(), []);
 }
 
 #[tokio::test]

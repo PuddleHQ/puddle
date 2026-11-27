@@ -294,6 +294,35 @@ export class FakeIdentities {
         this.#sync();
         return this.reply(200, this.#view(String(init.params?.path["id"])));
       }
+      case "/api/workspaces/{id}/repositories": {
+        const g = this.#ws(init.params?.path["id"]);
+        const [, owner = "", repo = ""] =
+          /^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/.exec(
+            String(body["url"]),
+          ) ?? [];
+        if (
+          g.repos.some(
+            (r) =>
+              r.owner === owner.toLowerCase() && r.repo === repo.toLowerCase(),
+          )
+        )
+          return this.#clash(
+            "that repository is already on the list",
+            "conflict",
+            409,
+          );
+        g.repos = [
+          ...g.repos,
+          repoRow(this.#row++, {
+            host: "github.com",
+            owner: owner.toLowerCase(),
+            repo: repo.toLowerCase(),
+            pull: body["pull"] as boolean,
+            push: body["push"] as boolean,
+          }),
+        ];
+        return this.reply(202, {});
+      }
       case "/api/workspaces/{id}/git/repos": {
         const g = this.#ws(init.params?.path["id"]);
         const dup = g.repos.some(

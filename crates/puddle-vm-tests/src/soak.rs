@@ -270,6 +270,21 @@ pub fn judge_disk_back(before: u64, after: u64, size: u64) -> Result<(), String>
     Ok(())
 }
 
+/// The settled level of a run of resident-memory samples: the lowest one. A busy host swings a
+/// single sample by a third (415 to 622 MB between rounds), but the floor of a few samples taken a
+/// moment apart after a close stays put, while a leak lifts every sample and so the floor too.
+///
+/// # Errors
+///
+/// A sentence, when `samples` is empty.
+pub fn rss_floor(samples: &[u64]) -> Result<u64, String> {
+    samples
+        .iter()
+        .copied()
+        .min()
+        .ok_or_else(|| "no resident memory sample was read".to_owned())
+}
+
 /// Checks that resident memory is back near its level before a round.
 ///
 /// # Errors

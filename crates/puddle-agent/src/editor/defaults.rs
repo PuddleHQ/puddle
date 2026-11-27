@@ -207,6 +207,9 @@ impl Run<'_> {
         };
         let mut sets = Vec::new();
         let mut removes = Vec::new();
+        // Kept apart until the file holds the values: a refused or failed write must not be
+        // remembered as done.
+        let mut next = self.applied.settings.clone();
         for (key, wanted) in wanted_settings(self.defaults, &self.applied) {
             let now = current.get(key);
             let last = self.applied.settings.get(key);
@@ -217,21 +220,29 @@ impl Run<'_> {
             }
             if let Some(value) = wanted {
                 sets.push(MergeEntry::json(&[key], &value));
-                self.applied.settings.insert(key.to_owned(), value);
+                next.insert(key.to_owned(), value);
             } else {
                 if now.is_some() {
                     removes.push(vec![key.to_owned()]);
                 }
-                self.applied.settings.remove(key);
+                next.remove(key);
             }
         }
         if sets.is_empty() && removes.is_empty() {
+            self.applied.settings = next;
             return Ok(());
         }
         let edited = edit_settings(existing, &sets, &removes);
         match edited {
-            Ok(Some(text)) => self.write_user_file(file, &text),
-            Ok(None) => Ok(()),
+            Ok(Some(text)) => {
+                self.write_user_file(file, &text)?;
+                self.applied.settings = next;
+                Ok(())
+            }
+            Ok(None) => {
+                self.applied.settings = next;
+                Ok(())
+            }
             Err(err) => {
                 tracing::warn!(%err, "the editor settings file is left as it is");
                 Ok(())
@@ -316,8 +327,9 @@ impl Run<'_> {
             );
             return Ok(());
         }
+        self.write_user_file(file, text.as_bytes())?;
         self.applied.keybindings = next;
-        self.write_user_file(file, text.as_bytes())
+        Ok(())
     }
 
     /// Writes `text` to `file` and notes what it made.
@@ -428,10 +440,7 @@ fn missing_extensions(
     let mut install = Vec::new();
     for id in &wanted {
         let known = applied.extensions.contains(id);
-        if installed
-            .iter()
-            .any(|name| name.starts_with(&format!("{id}-")))
-        {
+        if installed.iter().any(|name| is_folder_of(name, id)) {
             if !known {
                 applied.extensions.push(id.clone());
             }
@@ -441,6 +450,14 @@ fn missing_extensions(
     }
     applied.extensions.retain(|id| wanted.contains(id));
     install
+}
+
+/// Whether the folder `name` is an install of extension `id`: `<id>-<version>`, where the version
+/// starts with a digit, so `acme.tool-extra-1.0.0` is not `acme.tool`.
+fn is_folder_of(name: &str, id: &str) -> bool {
+    name.strip_prefix(id)
+        .and_then(|rest| rest.strip_prefix('-'))
+        .is_some_and(|version| version.starts_with(|c: char| c.is_ascii_digit()))
 }
 
 /// The lower-cased folder names in the extensions folder (`publisher.name-version`).

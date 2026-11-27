@@ -418,3 +418,6 @@ pub async fn run(subject: &dyn Subject) {
     a_name_belongs_to_one_workspace(subject).await;
     a_stopped_workspace_starts_again(subject).await;
 }
+
+#[cfg(test)]
+mod tests;

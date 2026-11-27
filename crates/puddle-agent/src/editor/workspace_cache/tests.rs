@@ -86,6 +86,48 @@ fn fill_writes_nothing_without_a_window_address_or_a_file() {
 }
 
 #[test]
+fn fill_reads_the_file_and_stores_its_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let user_data = dir.path().join("user-data");
+    std::fs::create_dir(&user_data).unwrap();
+    let text = "{\"folders\": [{\"path\": \"/workspace/api\"}]}";
+    let server = EditorServer::new("/data", "/workspace", 300)
+        .with_workspace_file(GUEST_FILE)
+        .with_window_authority("w.localhost:1");
+
+    try_fill(&server, &user_data, |file| {
+        assert_eq!(file, GUEST_FILE);
+        Ok(text.to_owned())
+    })
+    .unwrap();
+
+    let entry = entry_path(&user_data, "w.localhost:1", GUEST_FILE).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(entry).unwrap()).unwrap();
+    assert_eq!(written, serde_json::json!({ "content": text }));
+}
+
+#[test]
+fn fill_writes_nothing_when_the_file_is_missing_and_fails_on_other_read_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let user_data = dir.path().join("user-data");
+    std::fs::create_dir(&user_data).unwrap();
+    let server = EditorServer::new("/data", "/workspace", 300)
+        .with_workspace_file(GUEST_FILE)
+        .with_window_authority("w.localhost:1");
+
+    try_fill(&server, &user_data, |_| Err(io::ErrorKind::NotFound.into())).unwrap();
+    assert!(!user_data.join("User").exists());
+
+    let err = try_fill(&server, &user_data, |_| {
+        Err(io::ErrorKind::PermissionDenied.into())
+    })
+    .unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+    assert!(!user_data.join("User").exists());
+}
+
+#[test]
 fn store_replaces_a_copy_of_an_older_file() {
     let dir = tempfile::tempdir().unwrap();
     let user_data = dir.path().join("user-data");

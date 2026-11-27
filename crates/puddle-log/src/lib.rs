@@ -87,17 +87,6 @@ impl ScopedFilter {
         Ok(Self::build(level.unwrap_or(LevelFilter::INFO), named))
     }
 
-    /// A filter that treats every crate alike, for the standard `RUST_LOG` text a user may have
-    /// set for other programs too.
-    #[must_use]
-    pub fn uniform(targets: Targets) -> Self {
-        Self {
-            puddle: targets.clone(),
-            others: targets,
-            level: LevelFilter::TRACE,
-        }
-    }
-
     fn build(level: LevelFilter, named: Targets) -> Self {
         Self {
             puddle: named.clone().with_default(level),

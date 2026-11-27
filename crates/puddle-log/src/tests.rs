@@ -81,13 +81,6 @@ fn the_level_hint_is_the_most_verbose_of_the_two_scopes() {
 }
 
 #[test]
-fn uniform_applies_one_set_of_targets_to_every_crate() {
-    let f = ScopedFilter::uniform("debug".parse().unwrap());
-    assert!(on(&f, "hyper", Level::DEBUG));
-    assert!(on(&f, "puddle_app", Level::DEBUG));
-}
-
-#[test]
 fn a_line_goes_through_the_filter_by_its_crate() {
     use std::sync::{Arc, Mutex};
     #[derive(Clone, Default)]

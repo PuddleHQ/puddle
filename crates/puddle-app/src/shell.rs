@@ -12,7 +12,6 @@ use puddle_log::ScopedFilter;
 use puddle_types::Problems;
 use tauri::{AppHandle, Manager, RunEvent, Runtime};
 use tauri_plugin_opener::OpenerExt;
-use tracing_subscriber::filter::{LevelFilter, Targets};
 use url::Url;
 
 use crate::autostart::{self, LoginEntry};
@@ -651,38 +650,25 @@ fn bring_forward_unless_sign_in(args: &[String], bring_forward: impl FnOnce()) {
 /// The variable that sets the log level of Puddle's crates (`puddle_log` has the syntax).
 const PUDDLE_LOG_VAR: &str = "PUDDLE_LOG";
 
-/// The standard filter variable, read when `PUDDLE_LOG` is not set: `debug`, or
-/// `warn,puddle_host=trace` for one crate. It applies to every crate alike.
+/// The standard filter variable, read when `PUDDLE_LOG` is not set, in the same syntax: `debug`, or
+/// `warn,puddle_host=trace` for one crate. Dependencies stay at the `info` ceiling unless named.
 const RUST_LOG_VAR: &str = "RUST_LOG";
-
-/// The filter `RUST_LOG` asks for, `info` when it is unset. A value that does not parse gives
-/// `info` and comes back as the second item, so `run` can say so once logging is on.
-fn log_targets(value: Option<&str>) -> (Targets, Option<String>) {
-    let info = || Targets::new().with_default(LevelFilter::INFO);
-    match value {
-        None => (info(), None),
-        Some(text) => text
-            .parse()
-            .map_or_else(|_| (info(), Some(text.to_owned())), |t| (t, None)),
-    }
-}
 
 /// The filter the two variables ask for: `PUDDLE_LOG` when set, else `RUST_LOG`, else `info`. A
 /// value that is not a filter gives `info` and a sentence for `run` to log once logging is on.
 fn log_filter(puddle_log: Option<&str>, rust_log: Option<&str>) -> (ScopedFilter, Option<String>) {
-    if let Some(text) = puddle_log {
-        return ScopedFilter::parse(text).map_or_else(
-            |_| {
-                let said =
-                    format!("{PUDDLE_LOG_VAR}={text:?} is not a log filter; logging at info");
-                (ScopedFilter::default(), Some(said))
-            },
-            |filter| (filter, None),
-        );
-    }
-    let (targets, bad) = log_targets(rust_log);
-    let said = bad.map(|v| format!("{RUST_LOG_VAR}={v:?} is not a log filter; logging at info"));
-    (ScopedFilter::uniform(targets), said)
+    let (var, text) = match (puddle_log, rust_log) {
+        (Some(text), _) => (PUDDLE_LOG_VAR, text),
+        (None, Some(text)) => (RUST_LOG_VAR, text),
+        (None, None) => return (ScopedFilter::default(), None),
+    };
+    ScopedFilter::parse(text).map_or_else(
+        |_| {
+            let said = format!("{var}={text:?} is not a log filter; logging at info");
+            (ScopedFilter::default(), Some(said))
+        },
+        |filter| (filter, None),
+    )
 }
 
 /// Starts logging to stderr as the variables (`puddle_log`, `rust_log`) ask. The first subscriber

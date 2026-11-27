@@ -19,6 +19,7 @@ cat >"$tmp/bin/gh" <<'GH'
 # fake gh run list: counts lines "<event>:<sha>" of $FAKE_RUNS matching --commit and, if given, --event.
 echo "$*" >>"$FAKE_LOG"
 [ "${FAKE_FAIL:-}" = 1 ] && exit 1
+[ -n "${FAKE_OUT:-}" ] && { printf '%s\n' "$FAKE_OUT"; exit 0; }
 sha="" event=""
 while [ "$#" -gt 0 ]; do
     case $1 in
@@ -70,6 +71,19 @@ run run=true "nightly, a green run on another commit" GITHUB_EVENT_NAME=schedule
 run run=true "nightly with --events, nothing green" GITHUB_EVENT_NAME=schedule -- windows.yml --events schedule
 run "exit 2" "--events without a list" GITHUB_EVENT_NAME=schedule -- windows.yml --events
 run "exit 2" "an unknown flag" GITHUB_EVENT_NAME=schedule -- windows.yml --bogus
+
+# An API error never skips the nightly: no answer, a failure or garbage all give run=true.
+printf 'schedule:c1\n' >"$tmp/runs"
+run run=true "nightly, API error" GITHUB_EVENT_NAME=schedule FAKE_FAIL=1 -- vm-linux.yml
+run run=true "nightly with --events, API error" GITHUB_EVENT_NAME=schedule FAKE_FAIL=1 -- windows.yml --events schedule,workflow_dispatch
+run run=true "nightly, garbage answer" GITHUB_EVENT_NAME=schedule FAKE_OUT=oops -- vm-linux.yml
+run run=true "nightly with --events, garbage answer" GITHUB_EVENT_NAME=schedule FAKE_OUT=oops -- windows.yml --events schedule,workflow_dispatch
+run run=true "nightly, empty answer" GITHUB_EVENT_NAME=schedule FAKE_OUT=" " -- vm-linux.yml
+run run=true "nightly with --events, empty answer" GITHUB_EVENT_NAME=schedule FAKE_OUT=" " -- windows.yml --events schedule,workflow_dispatch
+run run=false "nightly, a green run answered by gh" GITHUB_EVENT_NAME=schedule FAKE_OUT=1 -- vm-linux.yml
+run run=false "nightly with --events, a green run answered by gh" GITHUB_EVENT_NAME=schedule FAKE_OUT=1 -- windows.yml --events schedule,workflow_dispatch
+run run=true "nightly, gh answers no green run" GITHUB_EVENT_NAME=schedule FAKE_OUT=0 -- vm-linux.yml
+run run=true "nightly with --events, gh answers no green run" GITHUB_EVENT_NAME=schedule FAKE_OUT=0 -- windows.yml --events schedule,workflow_dispatch
 
 # Develop push gate.
 PUSH=(GITHUB_EVENT_NAME=push GITHUB_REF=refs/heads/develop PUDDLE_QUEUE_SKIP_PUSH=on)

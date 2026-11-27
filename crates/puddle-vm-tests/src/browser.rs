@@ -616,6 +616,21 @@ impl BrowserSession {
         .map(drop)
     }
 
+    /// Clicks the first element of `page` that matches the CSS `selector`, as a mouse click does
+    /// (waiting for it to appear and be clickable).
+    ///
+    /// # Errors
+    ///
+    /// [`HarnessError::Browser`] when the page is not open or nothing matched in time.
+    pub async fn click(&mut self, page: PageId, selector: &str) -> Result<(), HarnessError> {
+        self.call(
+            &json!({"op": "click", "page": page.0, "selector": selector, "timeoutMs": 30_000}),
+            START_BUDGET,
+        )
+        .await
+        .map(drop)
+    }
+
     /// Types `text` into the element that has focus in `page`.
     ///
     /// # Errors

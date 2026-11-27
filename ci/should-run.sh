@@ -7,7 +7,8 @@
 #     The nightly gate: sets `run=true|false`. Only scheduled runs can skip; they skip when this
 #     workflow already has a green run on exactly this commit (any event, or only the listed ones:
 #     the Windows release build and flake report count only nightly and manual runs, so a merge
-#     queue run on develop's commit does not stop them).
+#     queue run on develop's commit does not stop them). An API error or an unreadable answer
+#     gives run=true (with a log line): a guess must never skip a nightly.
 #
 #   ci/should-run.sh <workflow-file> --queue-tested
 #     The develop push gate: sets `tested=true|false`. true only on a push to develop with
@@ -62,15 +63,25 @@ if [ "${GITHUB_EVENT_NAME:-}" != "schedule" ]; then
     exit 0
 fi
 
+# count <event or ""> -> 0 or 1 on stdout; fails when gh fails or answers anything else, so an
+# API error never reads as "a green run exists" (it would skip the nightly and close the red issue).
+count() {
+    local n
+    n=$(green "$1") || return 1
+    case $n in 0 | 1) echo "$n" ;; *) return 1 ;; esac
+}
+
 found=0
-if [ -z "$events" ]; then
-    found=$(green "")
-else
-    IFS=, read -r -a list <<<"$events"
-    for e in "${list[@]}"; do
-        [ "$(green "$e")" = 0 ] || { found=1; break; }
-    done
-fi
+list=("")
+[ -z "$events" ] || IFS=, read -r -a list <<<"$events"
+for e in "${list[@]}"; do
+    if ! n=$(count "$e"); then
+        echo "could not list the green runs of $workflow${e:+ ($e)}: running it rather than skipping on a guess"
+        echo "run=true" >>"$GITHUB_OUTPUT"
+        exit 0
+    fi
+    [ "$n" = 0 ] || { found=1; break; }
+done
 if [ "$found" != "0" ]; then
     echo "$workflow already has a green ${events:+$events }run on $GITHUB_SHA; skipping"
     echo "run=false" >>"$GITHUB_OUTPUT"

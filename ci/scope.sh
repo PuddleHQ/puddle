@@ -75,7 +75,9 @@
 #   always   everything runs: manifests and lockfile, toolchain, lint and tool config, workflows and
 #            actions, ci/, scripts/ (except the three data files), the two UI scripts the Rust
 #            diff-coverage and ratchet gates run, the shared VM test crate, the API contract and the
-#            TypeScript types made from it, the notices inputs, a repo-url data file the UI tests read
+#            TypeScript types made from it, the notices inputs, a repo-url data file the UI tests read, and the two files outside
+#            crates/ that Rust tests include (docs/serve.md, ui/src/lib/settings/model.ts; ci/scope-test.sh
+#            fails when a test includes another such path the rules do not run the Rust gates for)
 #   gate     the coverage baseline, diff-coverage exclusions and standalone allowlist: read by the
 #            Linux Rust gates and the UI gate only
 #   fixture  ui/e2e/fixtures/: UI test data that the Rust fixture server includes
@@ -120,7 +122,7 @@ path_class() {
     scripts/diff-coverage-exclusions.txt | scripts/diff-coverage-exclusions/*.txt | scripts/coverage-baseline.json | scripts/standalone-allow.txt)
         echo gate ;;
     scripts/* | ui/scripts/diff-coverage.ts | ui/scripts/coverage-ratchet.ts | crates/puddle-vm-tests/* | crates/puddle-api/openapi/* | crates/puddle-store/tests/data/repo-urls.json | \
-        ui/src/lib/api/schema.d.ts | ui/package-lock.json | ui/THIRD-PARTY-NOTICES.txt)
+        docs/serve.md | ui/src/lib/settings/model.ts | ui/src/lib/api/schema.d.ts | ui/package-lock.json | ui/THIRD-PARTY-NOTICES.txt)
         echo always ;;
     ui/e2e/fixtures/*) echo fixture ;;
     ui/*) echo ui ;;

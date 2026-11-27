@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 [files]
-extend-exclude = ["vendor", "LICENSE", "CLA.md", "*.lock", "ui/package-lock.json", "ui/THIRD-PARTY-NOTICES.txt", "ui/src/lib/api/schema.d.ts"]
+extend-exclude = ["crates/puddle-proxy/src/terminate/stand_in/public_suffix_parents.txt", "vendor", "LICENSE", "CLA.md", "*.lock", "ui/package-lock.json", "ui/THIRD-PARTY-NOTICES.txt", "ui/src/lib/api/schema.d.ts"]
 
 [default]
 # Hex code points in a CSS unicode-range (U+02BA) read as words.

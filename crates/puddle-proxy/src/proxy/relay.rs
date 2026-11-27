@@ -6,7 +6,7 @@ use std::sync::Arc;
 use puddle_agent_proto::host::GuestStream;
 use puddle_types::{
     BlockReason, ConnectionDecision, ConnectionEvent, ConnectionOutcome, ConnectionReason,
-    EgressRequest,
+    EgressRequest, PassThroughCode,
 };
 use tokio::net::TcpStream;
 
@@ -17,10 +17,11 @@ use crate::request_target::Target;
 use crate::ssh;
 use crate::terminate::{self};
 use crate::token_gate::{self};
-use crate::upstream::connect_out;
+use crate::upstream::{Out, connect_out};
 use puddle_upstream::RouteWatch;
 
 use super::admit::{note_block, refuse_not_running, refuse_ssh};
+use super::audit::AuditGuard;
 use super::plan::{Admitted, ConnectionPlan, GuestHints, Seen, Splice};
 use super::{GuestReader, Proxy, Refusal, WorkspaceHandler, admit, apply_reason, refuse, tunnel};
 
@@ -58,6 +59,7 @@ pub(super) async fn relay(
     request: &EgressRequest,
     head: &Head,
     target: &Target,
+    audit: &AuditGuard,
 ) -> ConnectionEvent {
     let proxy = &handler.proxy;
     let seen = proxy.seen(&request.workspace);
@@ -79,6 +81,7 @@ pub(super) async fn relay(
         ConnectionPlan::Admit(plan) => plan,
     };
     let (admitted, mut event) = admit(proxy, request).await;
+    audit.snapshot(&event);
     let admitted = match admitted {
         Ok(admitted) => admitted,
         Err(refusal) => {
@@ -148,12 +151,7 @@ pub(super) async fn relay(
             return event;
         }
     };
-    event.outcome = Some(ConnectionOutcome::Connected);
-    event.resolved_ip = out.addr.map(|addr| addr.ip());
-    event.upstream = out.hop;
-    if let Some(code) = splice.passed_through {
-        event.reason = ConnectionReason::PassedThrough(code);
-    }
+    note_connected(&mut event, &out, splice.passed_through, audit);
     note_tunnel(
         proxy,
         guest,
@@ -164,6 +162,23 @@ pub(super) async fn relay(
     )
     .await;
     event
+}
+
+/// Puts on `event` that the connection to the destination was made, and keeps that as the record
+/// a cut would write.
+fn note_connected(
+    event: &mut ConnectionEvent,
+    out: &Out,
+    passed_through: Option<PassThroughCode>,
+    audit: &AuditGuard,
+) {
+    event.outcome = Some(ConnectionOutcome::Connected);
+    event.resolved_ip = out.addr.map(|addr| addr.ip());
+    event.upstream.clone_from(&out.hop);
+    if let Some(code) = passed_through {
+        event.reason = ConnectionReason::PassedThrough(code);
+    }
+    audit.snapshot(event);
 }
 
 /// Sends a refusal made before admission and returns the audit record that goes with it.

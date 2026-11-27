@@ -2,6 +2,7 @@
 //! A proxy with two routes (one attacked, one bystander) and the guest side that sends them bytes.
 #![expect(
     clippy::unwrap_used,
+    clippy::panic,
     reason = "helpers outside #[test] functions fail the test by panicking"
 )]
 
@@ -68,15 +69,15 @@ impl Guests {
             .kill_on_drop(true)
             .spawn()
             .unwrap();
-        let mut stderr = child.stderr.take().unwrap();
-        let stderr = tokio::spawn(async move {
-            let mut text = String::new();
-            let _ = stderr.read_to_string(&mut text).await;
-            text
+        let mut pipe = child.stderr.take().unwrap();
+        let drain = tokio::spawn(async move {
+            let mut buf = String::new();
+            let _ = pipe.read_to_string(&mut buf).await;
+            buf
         });
         Self {
             lines: GuestLines(BufReader::new(child.stdout.take().unwrap()).lines()),
-            stderr,
+            stderr: drain,
             child,
             said: String::new(),
         }

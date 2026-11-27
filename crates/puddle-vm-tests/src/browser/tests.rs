@@ -170,6 +170,7 @@ fn stub_modules() -> tempfile::TempDir {
                      goto: async (u) => { if (u.endsWith('/hang')) await new Promise(() => {}); url = u; h.console({ type: () => 'log', text: () => 'at ' + u }); },
                      waitForFunction: async (e) => { if (e === 'never') { h.pageerror(new Error('never ready')); throw new Error('timed out'); } },
                      evaluate: async (e) => ({ evaluated: e, url, cookies: jar.map(c => c.name), keys, strict: o.ignoreHTTPSErrors, scheme: o.colorScheme ?? null }),
+                     locator: (sel) => ({ first: () => ({ click: async () => { keys.push('clicked:' + sel); } }) }),
                      keyboard: { press: async (k) => { keys.push(k); }, type: async (t) => { keys.push('typed:' + t); } },
                      close: async () => {},
                    };
@@ -236,13 +237,17 @@ async fn a_session_keeps_its_cookies_and_pages_takes_keys_and_closes_them() {
         .press(first, "Control+Backquote")
         .await
         .expect("keys");
+    session.click(first, ".search").await.expect("click");
     let waited = session
         .wait(first, &PageRequest::new("", "ready").result("r"))
         .await
         .expect("wait");
-    // The first page still is where it went, has the key, and logged nothing new.
+    // The first page still is where it went, has the key and the click, and logged nothing new.
     assert_eq!(waited.result["url"], "http://x.localhost:9/a");
-    assert_eq!(waited.result["keys"], json!(["Control+Backquote"]));
+    assert_eq!(
+        waited.result["keys"],
+        json!(["Control+Backquote", "clicked:.search"])
+    );
     assert!(waited.console.is_empty(), "{:?}", waited.console);
     session.close(first).await.expect("close");
     let err = session

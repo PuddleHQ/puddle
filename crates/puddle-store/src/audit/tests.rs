@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+use super::line::{encoded_len, needs_escape};
 use super::*;
 use crate::pending::PendingState;
 use proptest::prelude::*;
 use puddle_types::{
     BlockReason, CompanySignal, EgressRequest, GitOperation, Host, HttpRequestLine, LocalCategory,
     RefusedReason, RuleId,
+};
+use puddle_types::{
+    ConnectionEvent, ConnectionOutcome, ConnectionProtocol, ConnectionReason, WorkspaceId,
 };
 use serde_json::json;
 

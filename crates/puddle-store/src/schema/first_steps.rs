@@ -1,0 +1,429 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! The SQL of steps 1 to 15, split from the later ones so each file stays readable.
+
+pub(super) const V1: &str = "
+CREATE TABLE rules (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope             TEXT    NOT NULL CHECK (scope IN ('global', 'sandbox')),
+    sandbox_id        TEXT,
+    pattern_kind      TEXT    NOT NULL CHECK (pattern_kind IN ('exact', 'suffix')),
+    pattern           TEXT    NOT NULL,
+    effect            TEXT    NOT NULL CHECK (effect IN ('allow', 'deny')),
+    expires_at        INTEGER,
+    created_at        INTEGER NOT NULL,
+    created_by        TEXT    NOT NULL CHECK (created_by IN ('cli', 'ui', 'api')),
+    source_pending_id INTEGER,
+    CHECK ((scope = 'global') = (sandbox_id IS NULL))
+) STRICT;
+CREATE INDEX rules_sandbox ON rules (sandbox_id);
+CREATE INDEX rules_expiry ON rules (expires_at) WHERE expires_at IS NOT NULL;
+
+CREATE TABLE pending (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    sandbox_id TEXT    NOT NULL,
+    host       TEXT    NOT NULL,
+    port       INTEGER NOT NULL CHECK (port BETWEEN 0 AND 65535),
+    first_seen INTEGER NOT NULL,
+    last_seen  INTEGER NOT NULL,
+    attempts   INTEGER NOT NULL DEFAULT 1,
+    state      TEXT    NOT NULL DEFAULT 'requested'
+               CHECK (state IN ('requested', 'allowed', 'denied', 'expired')),
+    decided_at INTEGER,
+    decided_by TEXT CHECK (decided_by IN ('cli', 'ui', 'api', 'system')),
+    rule_id    INTEGER
+) STRICT;
+-- R-11: at most one open row per (sandbox, host, port).
+CREATE UNIQUE INDEX pending_open_key ON pending (sandbox_id, host, port)
+    WHERE state = 'requested';
+CREATE INDEX pending_state_seen ON pending (state, last_seen);
+-- R-12: a row's identity never changes, and the end states are final.
+CREATE TRIGGER pending_identity_immutable
+BEFORE UPDATE OF id, sandbox_id, host, port, first_seen ON pending
+WHEN NEW.id IS NOT OLD.id OR NEW.sandbox_id IS NOT OLD.sandbox_id OR NEW.host IS NOT OLD.host
+  OR NEW.port IS NOT OLD.port OR NEW.first_seen IS NOT OLD.first_seen
+BEGIN
+    SELECT RAISE(ABORT, 'pending row identity is immutable');
+END;
+CREATE TRIGGER pending_end_state_final
+BEFORE UPDATE OF state ON pending
+WHEN OLD.state <> 'requested' AND NEW.state IS NOT OLD.state
+BEGIN
+    SELECT RAISE(ABORT, 'pending row end state is final');
+END;
+CREATE TRIGGER pending_no_delete
+BEFORE DELETE ON pending
+BEGIN
+    SELECT RAISE(ABORT, 'pending rows are never deleted');
+END;
+
+CREATE TABLE audit (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts         INTEGER NOT NULL,
+    type       TEXT    NOT NULL,
+    sandbox_id TEXT,
+    line       TEXT    NOT NULL CHECK (length(CAST(line AS BLOB)) <= 4096)
+) STRICT;
+CREATE INDEX audit_sandbox ON audit (sandbox_id, id);
+-- Running total of line bytes, so the cap check (R-26) doesn't scan the table.
+CREATE TABLE audit_size (
+    id    INTEGER PRIMARY KEY CHECK (id = 1),
+    bytes INTEGER NOT NULL
+) STRICT;
+INSERT INTO audit_size (id, bytes) VALUES (1, 0);
+CREATE TRIGGER audit_size_insert AFTER INSERT ON audit
+BEGIN
+    UPDATE audit_size SET bytes = bytes + length(CAST(NEW.line AS BLOB)) WHERE id = 1;
+END;
+CREATE TRIGGER audit_size_delete AFTER DELETE ON audit
+BEGIN
+    UPDATE audit_size SET bytes = bytes - length(CAST(OLD.line AS BLOB)) WHERE id = 1;
+END;
+";
+
+/// The audit filters: `host` and `outcome` become columns so the API's filters never
+/// parse JSON, and the filtered scans are indexed. Existing rows are backfilled from their
+/// lines; `AuditRecord::host` and `AuditRecord::outcome` must give the same values (tested).
+pub(super) const V2: &str = "
+ALTER TABLE audit ADD COLUMN host TEXT;
+ALTER TABLE audit ADD COLUMN outcome TEXT;
+UPDATE audit SET
+    host = lower(CASE type
+        WHEN 'connection' THEN json_extract(line, '$.host')
+        WHEN 'pending_created' THEN json_extract(line, '$.pending.host')
+        WHEN 'pending_decided' THEN json_extract(line, '$.pending.host')
+        WHEN 'pending_expired' THEN json_extract(line, '$.pending.host')
+        WHEN 'rule_created' THEN json_extract(line, '$.rule.pattern')
+        WHEN 'rule_updated' THEN json_extract(line, '$.rule.pattern')
+        WHEN 'rule_deleted' THEN json_extract(line, '$.rule.pattern')
+        WHEN 'rule_expired' THEN json_extract(line, '$.rule.pattern')
+    END),
+    outcome = CASE type
+        WHEN 'connection' THEN json_extract(line, '$.decision')
+        WHEN 'pending_created' THEN 'pending'
+        WHEN 'pending_decided' THEN CASE json_extract(line, '$.pending.state')
+            WHEN 'allowed' THEN 'allow'
+            WHEN 'denied' THEN 'deny'
+        END
+        WHEN 'pending_expired' THEN 'expired'
+    END;
+CREATE INDEX audit_type ON audit (type, id);
+CREATE INDEX audit_outcome ON audit (outcome, id) WHERE outcome IS NOT NULL;
+CREATE INDEX audit_ts ON audit (ts);
+";
+
+/// Rule sets (`docs/spec/rules.md` §7). `rules` is rebuilt because SQLite can't change a
+/// `CHECK`: a rule's scope may now be `set`, with the set in `set_id`. The `AUTOINCREMENT`
+/// high-water mark is carried over, so a deleted rule's id is still never reused.
+pub(super) const V3: &str = "
+CREATE TABLE rule_sets (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT    NOT NULL CHECK (length(name) BETWEEN 1 AND 64),
+    description TEXT    NOT NULL DEFAULT '' CHECK (length(description) <= 500),
+    created_at  INTEGER NOT NULL,
+    created_by  TEXT    NOT NULL CHECK (created_by IN ('cli', 'ui', 'api'))
+) STRICT;
+CREATE UNIQUE INDEX rule_sets_name ON rule_sets (name COLLATE NOCASE);
+
+CREATE TABLE rules_v3 (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope             TEXT    NOT NULL CHECK (scope IN ('global', 'sandbox', 'set')),
+    sandbox_id        TEXT,
+    set_id            INTEGER REFERENCES rule_sets (id),
+    pattern_kind      TEXT    NOT NULL CHECK (pattern_kind IN ('exact', 'suffix')),
+    pattern           TEXT    NOT NULL,
+    effect            TEXT    NOT NULL CHECK (effect IN ('allow', 'deny')),
+    expires_at        INTEGER,
+    created_at        INTEGER NOT NULL,
+    created_by        TEXT    NOT NULL CHECK (created_by IN ('cli', 'ui', 'api')),
+    source_pending_id INTEGER,
+    CHECK ((scope = 'sandbox') = (sandbox_id IS NOT NULL)),
+    CHECK ((scope = 'set') = (set_id IS NOT NULL))
+) STRICT;
+INSERT INTO rules_v3 (id, scope, sandbox_id, set_id, pattern_kind, pattern, effect, expires_at,
+                      created_at, created_by, source_pending_id)
+    SELECT id, scope, sandbox_id, NULL, pattern_kind, pattern, effect, expires_at,
+           created_at, created_by, source_pending_id
+    FROM rules;
+DELETE FROM sqlite_sequence WHERE name = 'rules_v3';
+INSERT INTO sqlite_sequence (name, seq) SELECT 'rules_v3', seq FROM sqlite_sequence WHERE name = 'rules';
+DROP TABLE rules;
+ALTER TABLE rules_v3 RENAME TO rules;
+CREATE INDEX rules_sandbox ON rules (sandbox_id);
+CREATE INDEX rules_expiry ON rules (expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX rules_set ON rules (set_id) WHERE set_id IS NOT NULL;
+
+-- The set whose entry decided a row, when one did (`builtin:<slug>`, `user:<id>`, `system`).
+ALTER TABLE pending ADD COLUMN rule_set TEXT;
+
+-- On/off per set: one row for every sandbox (sandbox_id NULL) and one per sandbox override.
+-- No row means the next level decides: the sandbox's, then every sandbox's, then the set's default.
+CREATE TABLE rule_set_switches (
+    rule_set   TEXT    NOT NULL,
+    sandbox_id TEXT,
+    enabled    INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+    changed_at INTEGER NOT NULL
+) STRICT;
+CREATE UNIQUE INDEX rule_set_switches_key ON rule_set_switches (rule_set, ifnull(sandbox_id, ''));
+
+-- Why Puddle allows its System managed hosts, as last derived from the user's setup, so a
+-- restart with the same setup changes (and records) nothing.
+CREATE TABLE system_reasons (
+    sandbox_id TEXT,
+    reason     TEXT NOT NULL
+) STRICT;
+CREATE UNIQUE INDEX system_reasons_key ON system_reasons (ifnull(sandbox_id, ''), reason);
+
+-- The built-in sets' entries as this database last saw them, to record what an update changed.
+CREATE TABLE builtin_sets_seen (
+    slug       TEXT PRIMARY KEY,
+    entries    TEXT    NOT NULL,
+    changed_at INTEGER
+) STRICT;
+";
+
+/// The rules' owner is a workspace, not a sandbox: `sandbox_id` becomes `workspace_id` in every
+/// table that has it (SQLite rewrites the triggers and indexes that name it), and a rule's
+/// `scope` value `sandbox` becomes `workspace`. `rules` is rebuilt because SQLite can't change
+/// a `CHECK`; the `AUTOINCREMENT` high-water mark is carried over as in V3. The stored audit
+/// `line`s are not rewritten (the log is append-only and its lines are capped): the reader
+/// accepts the old key names.
+pub(super) const V4: &str = "
+ALTER TABLE pending RENAME COLUMN sandbox_id TO workspace_id;
+ALTER TABLE audit RENAME COLUMN sandbox_id TO workspace_id;
+ALTER TABLE rule_set_switches RENAME COLUMN sandbox_id TO workspace_id;
+ALTER TABLE system_reasons RENAME COLUMN sandbox_id TO workspace_id;
+DROP INDEX audit_sandbox;
+CREATE INDEX audit_workspace ON audit (workspace_id, id);
+
+CREATE TABLE rules_v4 (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope             TEXT    NOT NULL CHECK (scope IN ('global', 'workspace', 'set')),
+    workspace_id      TEXT,
+    set_id            INTEGER REFERENCES rule_sets (id),
+    pattern_kind      TEXT    NOT NULL CHECK (pattern_kind IN ('exact', 'suffix')),
+    pattern           TEXT    NOT NULL,
+    effect            TEXT    NOT NULL CHECK (effect IN ('allow', 'deny')),
+    expires_at        INTEGER,
+    created_at        INTEGER NOT NULL,
+    created_by        TEXT    NOT NULL CHECK (created_by IN ('cli', 'ui', 'api')),
+    source_pending_id INTEGER,
+    CHECK ((scope = 'workspace') = (workspace_id IS NOT NULL)),
+    CHECK ((scope = 'set') = (set_id IS NOT NULL))
+) STRICT;
+INSERT INTO rules_v4 (id, scope, workspace_id, set_id, pattern_kind, pattern, effect, expires_at,
+                      created_at, created_by, source_pending_id)
+    SELECT id, CASE scope WHEN 'sandbox' THEN 'workspace' ELSE scope END, sandbox_id, set_id,
+           pattern_kind, pattern, effect, expires_at, created_at, created_by, source_pending_id
+    FROM rules;
+DELETE FROM sqlite_sequence WHERE name = 'rules_v4';
+INSERT INTO sqlite_sequence (name, seq) SELECT 'rules_v4', seq FROM sqlite_sequence WHERE name = 'rules';
+DROP TABLE rules;
+ALTER TABLE rules_v4 RENAME TO rules;
+CREATE INDEX rules_workspace ON rules (workspace_id);
+CREATE INDEX rules_expiry ON rules (expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX rules_set ON rules (set_id) WHERE set_id IS NOT NULL;
+";
+
+pub(super) const V5: &str = "
+-- Git identities: an author and credential references (never a secret), several per workspace.
+CREATE TABLE identities (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    label       TEXT    NOT NULL COLLATE NOCASE UNIQUE,
+    author_name TEXT    NOT NULL,
+    author_email TEXT   NOT NULL,
+    credentials TEXT    NOT NULL,
+    signing     TEXT    NOT NULL DEFAULT 'none' CHECK (signing IN ('none')),
+    position    INTEGER NOT NULL,
+    is_default  INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
+    created_at  INTEGER NOT NULL,
+    changed_at  INTEGER NOT NULL
+) STRICT;
+CREATE UNIQUE INDEX identities_one_default ON identities (is_default) WHERE is_default = 1;
+
+-- The identities a workspace has, in its order.
+CREATE TABLE workspace_identities (
+    workspace_id TEXT    NOT NULL,
+    identity_id  INTEGER NOT NULL REFERENCES identities (id) ON DELETE CASCADE,
+    position     INTEGER NOT NULL,
+    PRIMARY KEY (workspace_id, identity_id)
+) STRICT;
+CREATE UNIQUE INDEX workspace_identities_order ON workspace_identities (workspace_id, position);
+
+-- The two switches; no row means the defaults (push list on, pull list off).
+CREATE TABLE workspace_git (
+    workspace_id     TEXT PRIMARY KEY,
+    only_push_listed INTEGER NOT NULL DEFAULT 1 CHECK (only_push_listed IN (0, 1)),
+    only_pull_listed INTEGER NOT NULL DEFAULT 0 CHECK (only_pull_listed IN (0, 1))
+) STRICT;
+
+-- The repository table: one row per repository with its Pull and Push toggles.
+CREATE TABLE workspace_repos (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id TEXT    NOT NULL,
+    host         TEXT    NOT NULL,
+    owner        TEXT    NOT NULL,
+    repo         TEXT    NOT NULL,
+    pull         INTEGER NOT NULL CHECK (pull IN (0, 1)),
+    push         INTEGER NOT NULL CHECK (push IN (0, 1)),
+    created_at   INTEGER NOT NULL
+) STRICT;
+CREATE UNIQUE INDEX workspace_repos_key ON workspace_repos (workspace_id, host, owner, repo);
+";
+
+pub(super) const V6: &str = "
+-- Environment variables and secrets: one row per name in a scope (workspace_id NULL = every
+-- workspace). A plain variable keeps its value here. A secret keeps only `secret_id`, the id of
+-- its value in the operating system's credential store, and the hosts it may be sent to (a JSON
+-- array): its value is never in this database.
+CREATE TABLE env_vars (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id TEXT,
+    name         TEXT    NOT NULL,
+    kind         TEXT    NOT NULL CHECK (kind IN ('plain', 'secret')),
+    value        TEXT,
+    secret_id    TEXT,
+    hosts        TEXT,
+    changed_at   INTEGER NOT NULL,
+    CHECK ((kind = 'plain') = (value IS NOT NULL)),
+    CHECK ((kind = 'secret') = (secret_id IS NOT NULL)),
+    CHECK ((kind = 'secret') = (hosts IS NOT NULL))
+) STRICT;
+CREATE UNIQUE INDEX env_vars_key ON env_vars (ifnull(workspace_id, ''), name);
+
+-- The stand-in a workspace holds for a secret, made the first time it starts with it and kept, so
+-- a file the workspace wrote with it keeps working after a restart. A stand-in is worthless
+-- without the secret's hosts; the real value is not here.
+CREATE TABLE env_stand_ins (
+    workspace_id TEXT    NOT NULL,
+    env_id       INTEGER NOT NULL REFERENCES env_vars (id) ON DELETE CASCADE,
+    stand_in     TEXT    NOT NULL,
+    PRIMARY KEY (workspace_id, env_id)
+) STRICT;
+";
+
+pub(super) const V7: &str = "
+-- The two switches become overrides: NULL follows the default for new workspaces (below). Rows
+-- written before this stay as explicit values.
+CREATE TABLE workspace_git_v7 (
+    workspace_id     TEXT PRIMARY KEY,
+    only_push_listed INTEGER CHECK (only_push_listed IN (0, 1)),
+    only_pull_listed INTEGER CHECK (only_pull_listed IN (0, 1))
+) STRICT;
+INSERT INTO workspace_git_v7 SELECT workspace_id, only_push_listed, only_pull_listed FROM workspace_git;
+DROP TABLE workspace_git;
+ALTER TABLE workspace_git_v7 RENAME TO workspace_git;
+
+-- The default of the two switches for every workspace that has not set its own: one row, absent
+-- until the user changes it (then push list on, pull list off).
+CREATE TABLE git_defaults (
+    id               INTEGER PRIMARY KEY CHECK (id = 1),
+    only_push_listed INTEGER NOT NULL CHECK (only_push_listed IN (0, 1)),
+    only_pull_listed INTEGER NOT NULL CHECK (only_pull_listed IN (0, 1))
+) STRICT;
+";
+
+pub(super) const V8: &str = "
+-- The shell init of a workspace: a script its login shells source, written by the user in the UI.
+-- This row is the only source of truth; the workspace sees a read-only copy of it. A workspace
+-- with no script has no row.
+CREATE TABLE shell_init (
+    workspace_id TEXT PRIMARY KEY,
+    content      TEXT    NOT NULL CHECK (content <> ''),
+    changed_at   INTEGER NOT NULL
+) STRICT;
+";
+
+pub(super) const V9: &str = "
+-- Pinned port forwards: a port in a workspace that comes back on the same port of this computer
+-- every time the workspace starts. One row per workspace and guest port; the host port is the one
+-- the user chose (or the guest's own number). Rows go with the workspace.
+CREATE TABLE pinned_ports (
+    workspace_id TEXT    NOT NULL,
+    guest_port   INTEGER NOT NULL CHECK (guest_port BETWEEN 1 AND 65535),
+    host_port    INTEGER NOT NULL CHECK (host_port BETWEEN 1 AND 65535),
+    PRIMARY KEY (workspace_id, guest_port)
+) STRICT;
+";
+
+pub(super) const V10: &str = "
+-- Decrypting every host: a per-workspace switch (off unless a row says on) and the names that are
+-- never decrypted while it is on, for one workspace or for every workspace. Rows go with the
+-- workspace; the global list stays.
+CREATE TABLE workspace_interception (
+    workspace_id TEXT    NOT NULL PRIMARY KEY,
+    decrypt_all  INTEGER NOT NULL CHECK (decrypt_all IN (0, 1))
+) STRICT;
+CREATE TABLE never_decrypt (
+    workspace_id TEXT NOT NULL,
+    pattern      TEXT NOT NULL,
+    PRIMARY KEY (workspace_id, pattern)
+) STRICT;
+CREATE TABLE never_decrypt_global (
+    pattern TEXT NOT NULL PRIMARY KEY
+) STRICT;
+";
+
+pub(super) const V11: &str = "
+-- How long Puddle leaves a host alone after a tool refused its certificate, and how many such
+-- hosts a workspace remembers. One row for every workspace; no row means the built-in values.
+CREATE TABLE learned_limits (
+    id       INTEGER NOT NULL PRIMARY KEY CHECK (id = 1),
+    ttl_secs INTEGER NOT NULL CHECK (ttl_secs > 0),
+    cap      INTEGER NOT NULL CHECK (cap > 0)
+) STRICT;
+";
+
+pub(super) const V12: &str = "
+-- Rules on the method and path of a request (R-49): they only ever refuse. A global rule applies
+-- to every workspace, a workspace rule to its own; rows of a workspace go with it. `methods` is
+-- the upper-case names separated by commas (empty: every method); `path` is a canonical path
+-- pattern.
+CREATE TABLE request_rules (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope        TEXT    NOT NULL CHECK (scope IN ('global', 'workspace')),
+    workspace_id TEXT,
+    host         TEXT    NOT NULL,
+    methods      TEXT    NOT NULL,
+    path         TEXT    NOT NULL,
+    created_at   INTEGER NOT NULL,
+    created_by   TEXT    NOT NULL CHECK (created_by IN ('cli', 'ui', 'api')),
+    CHECK ((scope = 'workspace') = (workspace_id IS NOT NULL))
+) STRICT;
+CREATE INDEX request_rules_workspace ON request_rules (workspace_id);
+";
+
+/// The colour of a rule set the user made: a JSON `Fill` (`{"kind":"solid","color":"#rrggbb"}`),
+/// or `NULL` for the default of its number. Sets written before this column have `NULL`.
+pub(super) const V13: &str = "
+ALTER TABLE rule_sets ADD COLUMN fill TEXT;
+";
+
+pub(super) const V14: &str = "
+-- Where in a request a secret's stand-in is swapped: NULL for header values, `path`, or
+-- `query:<name>`. Only a secret has a place.
+ALTER TABLE env_vars ADD COLUMN place TEXT CHECK (place IS NULL OR kind = 'secret');
+";
+
+/// The audit search box: one column with the text a person would type to find a record, lower
+/// case (ASCII), one part per line: host (a rule's pattern), method, path and reason of a
+/// connection, host and path of a rule on method and path. Existing rows are backfilled from
+/// their lines; `AuditRecord::search_text` must give the same values (tested).
+pub(super) const V15: &str = "
+ALTER TABLE audit ADD COLUMN search TEXT;
+UPDATE audit SET search = nullif(lower(
+    CASE type
+        WHEN 'connection' THEN
+            ifnull(char(10) || nullif(json_extract(line, '$.host'), ''), '') ||
+            ifnull(char(10) || nullif(json_extract(line, '$.method'), ''), '') ||
+            ifnull(char(10) || nullif(json_extract(line, '$.path'), ''), '') ||
+            ifnull(char(10) || nullif(json_extract(line, '$.reason'), ''), '')
+        WHEN 'request_rule_created' THEN
+            ifnull(char(10) || nullif(json_extract(line, '$.rule.host'), ''), '') ||
+            ifnull(char(10) || nullif(json_extract(line, '$.rule.path'), ''), '')
+        WHEN 'request_rule_deleted' THEN
+            ifnull(char(10) || nullif(json_extract(line, '$.rule.host'), ''), '') ||
+            ifnull(char(10) || nullif(json_extract(line, '$.rule.path'), ''), '')
+        ELSE ifnull(char(10) || nullif(host, ''), '')
+    END), '');
+UPDATE audit SET search = substr(search, 2) WHERE search IS NOT NULL;
+";

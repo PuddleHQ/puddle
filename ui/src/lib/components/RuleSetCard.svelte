@@ -9,6 +9,7 @@
     type RuleSetEntry,
   } from "#lib/rules/sets.ts";
   import { workspaces as workspaceStore } from "#lib/stores/workspaces.svelte.ts";
+  import HostName from "./HostName.svelte";
   import SetChip from "./SetChip.svelte";
   import ThreeWaySwitch from "./ThreeWaySwitch.svelte";
   import "#lib/theme/controls.css";
@@ -212,7 +213,7 @@
             <span class="chip {entry.effect}">
               {entry.effect === "allow" ? "Allow" : "Deny"}
             </span>
-            <span class="mono">{entryPattern(entry)}</span>
+            <HostName host={entryPattern(entry)} />
             {#if entry.note !== ""}<span class="muted">{entry.note}</span>{/if}
             {#if mine}
               <button

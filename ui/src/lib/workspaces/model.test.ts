@@ -32,6 +32,7 @@ import {
   canRename,
   statusLabel,
   byteCountText,
+  elapsedText,
   operationOfStep,
   statusTone,
   stepLabel,
@@ -147,6 +148,15 @@ describe("image download counts", () => {
     expect(byteCountText({ done: 2048, total: 1024 })).toBe(
       "2.0 KB of 1.0 KB, 100 %",
     );
+  });
+});
+
+describe("elapsed time", () => {
+  it("prints seconds under a minute, then minutes with zero-padded seconds", () => {
+    expect(elapsedText(0)).toBe("0 s");
+    expect(elapsedText(8.9)).toBe("8 s");
+    expect(elapsedText(65)).toBe("1 min 05 s");
+    expect(elapsedText(125)).toBe("2 min 05 s");
   });
 });
 

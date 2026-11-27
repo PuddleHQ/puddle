@@ -5,6 +5,7 @@
   import type { Progress } from "#lib/stores/workspaces.svelte.ts";
   import {
     byteCountText,
+    elapsedText,
     operationLabel,
     STEP_HINTS,
     stepLabel,
@@ -26,6 +27,30 @@
     repositories?: readonly { directory: string }[];
     onDismiss?: () => void;
   } = $props();
+
+  /** When the step now shown began, and the clock that moves the seconds on. */
+  let stepSince = $state(Date.now());
+  let now = $state(Date.now());
+  let lastStep: string | null = null;
+  $effect(() => {
+    const step = progress && !progress.failed ? progress.step : null;
+    if (step !== lastStep) {
+      lastStep = step;
+      stepSince = Date.now();
+      now = stepSince;
+    }
+    if (step === null) return;
+    const timer = setInterval(() => {
+      now = Date.now();
+    }, 1000);
+    return () => clearInterval(timer);
+  });
+  /** Seconds on this step, once it has run long enough that a still screen would look stuck. */
+  const elapsed = $derived(
+    progress && !progress.failed && now - stepSince >= 3000
+      ? elapsedText((now - stepSince) / 1000)
+      : null,
+  );
 
   const operation = $derived(busy ?? progress?.operation ?? null);
   /** "Cloning api, 2 of 3": which checkout a cloning step is on, and where it is in the list. */
@@ -85,6 +110,7 @@
           step {position.index} of {position.of}
         </span>{/if}
       {#if count}<span class="muted">{count}</span>{/if}
+      {#if elapsed}<span class="muted">{elapsed}</span>{/if}
       {#if share !== null}<progress
           class="bar"
           max="100"

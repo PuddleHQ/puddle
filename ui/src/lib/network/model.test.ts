@@ -71,8 +71,9 @@ describe("findings", () => {
     const r = report();
     r.proxy.pac_state = "unreachable";
     expect(findings(r)[0]?.title).toContain("http://wpad.corp.example");
+    expect(findings(r)[0]?.title).not.toContain("the proxy script");
     r.proxy.pac_url = null;
-    expect(findings(r)[0]?.title).toContain("the proxy script");
+    expect(findings(r)[0]?.title).toBe("The proxy script isn't answering.");
   });
 
   it("explains a failed sign-in with the scheme and detail when there are some", () => {

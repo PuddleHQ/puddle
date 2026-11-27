@@ -25,7 +25,7 @@
     identities as store,
     type SignInStart,
   } from "#lib/stores/identities.svelte.ts";
-  import type { RepoView } from "#lib/repos/model.ts";
+  import { pushBlock, type RepoView } from "#lib/repos/model.ts";
   import { RepoLists } from "#lib/stores/repos.svelte.ts";
   import { toasts } from "#lib/stores/toasts.svelte.ts";
   import "#lib/theme/controls.css";
@@ -71,6 +71,7 @@
     workspaceActions.openCreate({
       url: repo.url,
       identity: identity?.id ?? null,
+      pushBlock: pushBlock(repo),
     });
   }
 

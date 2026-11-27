@@ -11,8 +11,12 @@
   import { parseRepoUrl } from "#lib/identities/repo.ts";
   import {
     matchingUrl,
+    pushBlock,
+    pushBlockText,
     tableCannotHold,
     TABLE_CANNOT_HOLD,
+    type PushBlock,
+    type RepoView,
   } from "#lib/repos/model.ts";
   import {
     identities as identityStore,
@@ -80,7 +84,11 @@
      * A repository to start from, as "Create a workspace for this" gives it: its address and the
      * identity that listed it. Give a new object each time the form should take one.
      */
-    prefill?: { url: string; identity: number | null } | null;
+    prefill?: {
+      url: string;
+      identity: number | null;
+      pushBlock?: PushBlock | null;
+    } | null;
     /** Called with the new workspace (still being created) once the service accepted it. */
     onCreated?: (workspace: Workspace) => void;
     /** Called when Cancel is pressed, after the draft was dropped. */
@@ -107,7 +115,10 @@
   function firstRow(): RowDraft {
     const given = untrack(() => prefill);
     const row = fresh(given?.url ?? "");
-    if (given) row.listedBy = given.identity;
+    if (given) {
+      row.listedBy = given.identity;
+      blockPush(row, given.pushBlock ?? null);
+    }
     return row;
   }
 
@@ -167,6 +178,7 @@
       taken = prefill;
       const row = fresh(prefill.url);
       row.listedBy = prefill.identity;
+      blockPush(row, prefill.pushBlock ?? null);
       rows = [row];
       rowErrors = {};
     }
@@ -307,9 +319,20 @@
     else focus("new-ws-add");
   }
 
-  function picked(row: RowDraft, repo: { url: string }, by: number | null) {
+  /** Sets or clears what stops a push to the row's repository; a blocked row is not pushed to. */
+  function blockPush(row: RowDraft, block: PushBlock | null) {
+    row.pushBlock = block;
+    if (block) row.push = false;
+  }
+
+  function picked(
+    row: RowDraft,
+    repo: Pick<RepoView, "url" | "archived" | "role">,
+    by: number | null,
+  ) {
     row.url = repo.url;
     row.listedBy = by;
+    blockPush(row, pushBlock(repo));
     row.identity = null;
     if (row === rows[0]) focus("new-ws-name");
     else focus(rowId(row, "directory"));
@@ -567,6 +590,7 @@
           picker={row.source === "address"}
           oninput={() => {
             row.listedBy = null;
+            blockPush(row, null);
             row.identity = null;
             rowErrors = { ...rowErrors, [row.key]: {} };
             left = { ...left, [row.key]: false };
@@ -660,6 +684,7 @@
             <input
               type="checkbox"
               bind:checked={row.push}
+              disabled={!!row.pushBlock}
               aria-describedby={rowId(row, "boxes-hint")}
             />
             Push
@@ -668,6 +693,7 @@
         <p class="hint" id={rowId(row, "boxes-hint")}>
           The workspace can always fetch from this repository. Push says whether
           it may also send to it. You can change that later on its Git tab.
+          {#if row.pushBlock}{pushBlockText(row.pushBlock)}{/if}
         </p>
 
         <div>

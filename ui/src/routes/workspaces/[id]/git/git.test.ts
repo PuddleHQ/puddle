@@ -57,6 +57,7 @@ import { identities } from "#lib/stores/identities.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
 import { workspaces } from "#lib/stores/workspaces.svelte.ts";
 import { credential, identity, repoRow } from "#lib/testing/fake-identities.ts";
+import { repoView } from "#lib/testing/fake-repos.ts";
 import Page from "./+page.svelte";
 
 const { api, workspace } = h;
@@ -660,6 +661,27 @@ describe("adding a repository", () => {
         "That repository is already listed.",
       ),
     );
+  });
+
+  it("greys out Push with the reason for an archived repository and clones without push", async () => {
+    const before = h.lists.repos;
+    h.lists.repos = [repoView("acme", "old", { archived: true })];
+    await mount();
+    await fireEvent.click(screen.getByText("Choose from your repositories"));
+    await fireEvent.click(
+      await screen.findByRole("button", { name: /acme\/old/ }),
+    );
+    const push = screen.getByLabelText("Push");
+    expect(push).toBeDisabled();
+    expect(push).not.toBeChecked();
+    expect(screen.getByText(/archived on its Git host/)).toBeInTheDocument();
+    await add();
+    await waitFor(() =>
+      expect(api.bodies.at(-1)).toMatchObject({ push: false }),
+    );
+    await waitFor(() => expect(screen.getByLabelText("Push")).toBeEnabled());
+    expect(screen.getByLabelText("Push")).toBeChecked();
+    h.lists.repos = before;
   });
 
   it("fills the address from the repository picked in the search", async () => {

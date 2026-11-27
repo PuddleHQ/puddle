@@ -874,7 +874,11 @@ describe("CreateWorkspaceForm identities and repositories", () => {
   });
 
   function open(
-    prefill: { url: string; identity: number | null } | null = null,
+    prefill: {
+      url: string;
+      identity: number | null;
+      pushBlock?: "archived" | "read" | null;
+    } | null = null,
     result: ActionResult<Workspace> = {
       ok: true,
       value: workspace("web", { busy: "creating", status: "created" }),
@@ -1075,6 +1079,55 @@ describe("CreateWorkspaceForm identities and repositories", () => {
     expect(identityBox()).toHaveDisplayValue(
       /Personal \(listed this repository\)/,
     );
+  });
+
+  it("greys out Push with the reason for an archived repository, and frees it when the address is typed over", async () => {
+    const repos = new FakeRepos();
+    repos.repos = [repoView("acme", "old", { archived: true })];
+    repos.sources = [repoSource({ repo_count: 1 })];
+    h.repos = repos;
+    open();
+    await screen.findByRole("region");
+    await fireEvent.click(screen.getByText("Choose from your repositories"));
+    await fireEvent.click(
+      await screen.findByRole("button", { name: /acme\/old/ }),
+    );
+    const push = screen.getByLabelText("Push");
+    expect(push).toBeDisabled();
+    expect(push).not.toBeChecked();
+    expect(
+      screen.getByText(/archived on its Git host, so it is read-only/),
+    ).toBeInTheDocument();
+    await type("Git repository (HTTPS)", "https://github.com/acme/web");
+    expect(screen.getByLabelText("Push")).toBeEnabled();
+    expect(screen.queryByText(/archived on its Git host/)).toBeNull();
+  });
+
+  it("greys out Push for a repository the account can only read", async () => {
+    const repos = new FakeRepos();
+    repos.repos = [repoView("acme", "docs", { role: "read" })];
+    repos.sources = [repoSource({ repo_count: 1 })];
+    h.repos = repos;
+    open();
+    await screen.findByRole("region");
+    await fireEvent.click(screen.getByText("Choose from your repositories"));
+    await fireEvent.click(
+      await screen.findByRole("button", { name: /acme\/docs/ }),
+    );
+    expect(screen.getByLabelText("Push")).toBeDisabled();
+    expect(
+      screen.getByText(/can only read this repository/),
+    ).toBeInTheDocument();
+  });
+
+  it("greys out Push for a repository handed in as archived", async () => {
+    open({
+      url: "https://github.com/acme/old",
+      identity: 1,
+      pushBlock: "archived",
+    });
+    await screen.findByRole("region");
+    expect(screen.getByLabelText("Push")).toBeDisabled();
   });
 
   it("forgets the identity that listed it when the address is typed over", async () => {

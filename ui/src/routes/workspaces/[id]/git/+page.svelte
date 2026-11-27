@@ -12,6 +12,11 @@
   } from "#lib/identities/model.ts";
   import { parseRepoUrl, repoName } from "#lib/identities/repo.ts";
   import RepositoryAddress from "#lib/components/RepositoryAddress.svelte";
+  import {
+    pushBlock,
+    pushBlockText,
+    type PushBlock,
+  } from "#lib/repos/model.ts";
   import { identities } from "#lib/stores/identities.svelte.ts";
   import { toasts } from "#lib/stores/toasts.svelte.ts";
   import {
@@ -33,6 +38,8 @@
   let repoUrl = $state("");
   let newPull = $state(true);
   let newPush = $state(true);
+  // What the picked repository's listing says stops a push to it; the Push box is off and greyed.
+  let newPushBlock = $state<PushBlock | null>(null);
   let cloneNow = $state(true);
   let adding = $state(false);
   let repoProblem = $state<string | null>(null);
@@ -44,6 +51,13 @@
   $effect(() => {
     if (wid) return store.start(wid);
   });
+
+  /** The picked repository no longer stands: its block goes, and Push is back to ticked. */
+  function clearPushBlock() {
+    if (newPushBlock === null) return;
+    newPushBlock = null;
+    newPush = true;
+  }
 
   const git = $derived(store.git);
   const attachedIds = $derived(git?.identities.map((i) => i.id) ?? []);
@@ -196,6 +210,7 @@
           : `Listed ${repoName(parsed)}.`,
       );
       repoUrl = "";
+      clearPushBlock();
     } finally {
       adding = false;
     }
@@ -468,10 +483,15 @@
         identities={identities.identities}
         error={repoProblem}
         hint="The list holds for Git over HTTPS and over SSH to GitHub, GitLab, Bitbucket and Azure DevOps. An address like git@github.com:owner/repo.git is listed as the same repository as its HTTPS address; owner/repo means GitHub."
-        oninput={() => (repoProblem = null)}
+        oninput={() => {
+          repoProblem = null;
+          clearPushBlock();
+        }}
         onPick={(repo) => {
           repoUrl = repo.url;
           repoProblem = null;
+          newPushBlock = pushBlock(repo);
+          if (newPushBlock) newPush = false;
         }}
       />
       <div class="add-row">
@@ -479,7 +499,12 @@
           <input type="checkbox" bind:checked={newPull} />Pull
         </label>
         <label class="choice">
-          <input type="checkbox" bind:checked={newPush} />Push
+          <input
+            type="checkbox"
+            bind:checked={newPush}
+            disabled={newPushBlock !== null}
+            aria-describedby={newPushBlock ? `${fid}-push-block` : undefined}
+          />Push
         </label>
         <label class="choice">
           <input type="checkbox" bind:checked={cloneNow} />Clone immediately
@@ -489,6 +514,11 @@
         </button>
       </div>
     </form>
+    {#if newPushBlock}
+      <p class="muted note" id="{fid}-push-block">
+        {pushBlockText(newPushBlock)}
+      </p>
+    {/if}
     <p class="muted note">
       With Clone immediately on, Puddle clones the repository into the running
       workspace now and lists it. Off, it only lists the repository, so Git may

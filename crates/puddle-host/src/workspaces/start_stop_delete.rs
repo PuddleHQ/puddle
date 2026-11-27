@@ -91,6 +91,10 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             tracing::debug!(workspace = %name, "workspace start: booting a new sandbox");
             self.boot_new(&record, &mut created_volume, BootFor::Start)
                 .await?;
+            if exists {
+                // The progress notice above ends with the start; this one stays.
+                self.raise_rebuilt(&record.id, moved, route_alive);
+            }
         }
         let booted = began.elapsed();
         tracing::debug!(workspace = %name, restarted_in_place = restarted, boot_ms = millis(booted), "workspace start: sandbox up, settling");
@@ -265,6 +269,31 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 }
                 OpError::from(e)
             })
+    }
+
+    /// Raises the problem that a start made the sandbox of `name` again, so its root disk (the
+    /// home folder, installed packages) is gone and only the volume with the work is left.
+    /// It stays until the workspace is deleted, or a later rebuild replaces it.
+    fn raise_rebuilt(&self, name: &WorkspaceId, moved: bool, route_alive: bool) {
+        let why = if moved {
+            "its sandbox mounted the volume at an older folder that cannot be bound at the new one"
+        } else if !route_alive {
+            "its sandbox was made with a route this run of Puddle cannot serve"
+        } else {
+            "the workspace's variables could not be applied to its sandbox"
+        };
+        self.inner.problems.raise(
+            Problem::new(
+                problem_key("rebuilt", name),
+                format!("{} was made again", self.label(name)),
+                format!(
+                    "Puddle made its sandbox again at the last start because {why}. The volume \
+                     with your work is kept. What was installed outside it (the home folder, \
+                     installed packages and toolchains) is gone: install it again."
+                ),
+            )
+            .about(name.clone()),
+        );
     }
 
     /// Raises the problem that the runtime refused to start `name` and why.
@@ -499,6 +528,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         inner
             .problems
             .clear_prefix(&format!("{}:", problem_key("clone", &record.id)));
+        inner.problems.clear(&problem_key("rebuilt", &record.id));
         // A step that failed is a notice; the sweep at the next start tries it again. When all
         // went, `conclude` notes the id as cleaned and the next start skips it.
         let gone = self

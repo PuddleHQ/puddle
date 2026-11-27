@@ -2,7 +2,7 @@ puddle doctor (puddle 0.1.0, windows x86_64)
 
 ok    CPU virtualization          on (the hypervisor uses it)
 ok    Hypervisor                  Windows Hypervisor Platform is on and the hypervisor runs
-ok    Code integrity              memory integrity (HVCI) on; App Control policy for programs off
+ok    Code integrity              memory integrity on; policy limiting which programs may run off
 FAIL  Bundled runtime             you aren't allowed to read or run C:\Users\dev\AppData\Local\Programs\puddle\runtime\msb.exe
       impact: Puddle can't start any workspace: your account may not run its runtime.
       remedy: Reset the permissions of the runtime file, or reinstall Puddle.
@@ -48,7 +48,7 @@ ok    Known problematic software  none found
     {
       "id": "code_integrity",
       "status": "ok",
-      "summary": "memory integrity (HVCI) on; App Control policy for programs off",
+      "summary": "memory integrity on; policy limiting which programs may run off",
       "impact": "Windows' code integrity rules guard the system against untrusted code, and Puddle runs alongside them."
     },
     {

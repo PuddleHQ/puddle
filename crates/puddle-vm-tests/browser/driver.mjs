@@ -8,6 +8,7 @@
 //       opens a new page, waits until `ready` is truthy and evaluates `result`; the page stays open
 //   {"op":"wait","page":<id>,"ready":...,"result":...,"timeoutMs":...}   the same on an open page
 //   {"op":"press","page":<id>,"keys":"Control+Backquote"}                  presses keys in the page
+//   {"op":"click","page":<id>,"selector":"..."}                           clicks the first element matching a CSS selector
 //   {"op":"type","page":<id>,"text":"..."}                                 types text into the focused element
 //   {"op":"close","page":<id>}                                             closes the page (its sockets end)
 //   {"op":"crash","page":<id>}                                             kills the page's renderer, as a killed
@@ -69,6 +70,9 @@ const run = async (command) => {
       return ready(page(command.page), command);
     case "press":
       await page(command.page).page.keyboard.press(command.keys);
+      return null;
+    case "click":
+      await page(command.page).page.locator(command.selector).first().click({ timeout: command.timeoutMs });
       return null;
     case "type":
       await page(command.page).page.keyboard.type(command.text, { delay: 10 });

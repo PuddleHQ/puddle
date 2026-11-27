@@ -4,7 +4,8 @@
 #![expect(
     clippy::unwrap_used,
     clippy::panic,
-    reason = "helpers outside #[test] functions fail the test by panicking"
+    clippy::indexing_slicing,
+    reason = "helpers outside #[test] functions fail the test by panicking; every slice is cut at an offset found in, or checked against, the same buffer"
 )]
 
 use std::net::SocketAddr;
@@ -68,6 +69,7 @@ pub struct Api {
 }
 
 /// One answer: the status code and the body.
+#[derive(Debug)]
 pub struct Reply {
     pub status: u16,
     pub body: String,
@@ -98,7 +100,6 @@ impl Api {
         body: Option<&str>,
         token: bool,
     ) -> Reply {
-        let mut stream = TcpStream::connect(self.addr).await.unwrap();
         let auth = if token {
             format!("Authorization: Bearer {}\r\n", self.token)
         } else {
@@ -113,50 +114,55 @@ impl Api {
                 body.len()
             )
         };
-        let request = format!(
-            "{method} {path} HTTP/1.1\r\nHost: {}\r\n{auth}{content}Connection: close\r\n\r\n{body}",
+        let head = format!(
+            "{method} {path} HTTP/1.1\r\nHost: {}\r\n{auth}{content}Connection: close\r\n\r\n",
             self.addr
         );
-        stream.write_all(request.as_bytes()).await.unwrap();
-        let mut raw = Vec::new();
-        stream.read_to_end(&mut raw).await.unwrap();
-        let text = String::from_utf8_lossy(&raw).into_owned();
-        let (head, body) = text.split_once("\r\n\r\n").unwrap_or((&text, ""));
-        let status = head
-            .split(' ')
-            .nth(1)
-            .and_then(|s| s.parse().ok())
-            .unwrap_or_else(|| panic!("no status in {head:?}"));
-        Reply {
-            status,
-            body: dechunk(head, body),
-        }
+        self.exchange(
+            method,
+            path,
+            head.as_bytes(),
+            body.as_bytes(),
+            REQUEST_BOUND,
+        )
+        .await
     }
 
     /// A `POST` whose body is `bytes` (a file), with the token.
     pub async fn post_bytes(&self, path: &str, bytes: &[u8]) -> Reply {
-        let mut stream = TcpStream::connect(self.addr).await.unwrap();
         let head = format!(
             "POST {path} HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\nContent-Type: application/gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             self.addr,
             self.token,
             bytes.len()
         );
-        stream.write_all(head.as_bytes()).await.unwrap();
-        stream.write_all(bytes).await.unwrap();
-        let mut raw = Vec::new();
-        stream.read_to_end(&mut raw).await.unwrap();
-        let text = String::from_utf8_lossy(&raw).into_owned();
-        let (head, body) = text.split_once("\r\n\r\n").unwrap_or((&text, ""));
-        let status = head
-            .split(' ')
-            .nth(1)
-            .and_then(|s| s.parse().ok())
-            .unwrap_or_else(|| panic!("no status in {head:?}"));
-        Reply {
-            status,
-            body: dechunk(head, body),
-        }
+        self.exchange("POST", path, head.as_bytes(), bytes, REQUEST_BOUND)
+            .await
+    }
+
+    /// Sends `head` and `body`, reads until the server closes, all within `within`; a panic
+    /// names the method and path of the exchange that failed or stalled.
+    async fn exchange(
+        &self,
+        method: &str,
+        path: &str,
+        head: &[u8],
+        body: &[u8],
+        within: Duration,
+    ) -> Reply {
+        let run = async {
+            let mut stream = TcpStream::connect(self.addr).await?;
+            stream.write_all(head).await?;
+            stream.write_all(body).await?;
+            let mut raw = Vec::new();
+            stream.read_to_end(&mut raw).await?;
+            std::io::Result::Ok(raw)
+        };
+        let raw = tokio::time::timeout(within, run)
+            .await
+            .unwrap_or_else(|_| panic!("{method} {path}: no complete answer within {within:?}"))
+            .unwrap_or_else(|e| panic!("{method} {path}: {e}"));
+        parse_reply(&raw).unwrap_or_else(|e| panic!("{method} {path}: {e}"))
     }
 
     pub async fn get(&self, path: &str) -> Reply {
@@ -187,72 +193,163 @@ impl Api {
             self.addr, self.token
         );
         stream.write_all(request.as_bytes()).await.unwrap();
-        let mut events = Events {
-            stream,
-            buf: String::new(),
-            seen: Vec::new(),
-        };
+        let mut events = Events::over(stream);
         // The response head tells the stream is open: events emitted from here on are seen.
         events
-            .fill_until(|buf| buf.contains("\r\n\r\n"), Duration::from_secs(10))
+            .fill_until(
+                |buf| find(buf, b"\r\n\r\n").is_some(),
+                Duration::from_secs(10),
+            )
             .await;
-        assert!(events.buf.starts_with("HTTP/1.1 200"), "{}", events.buf);
-        events.buf = events.buf.split_once("\r\n\r\n").unwrap().1.to_owned();
+        let end = find(&events.buf, b"\r\n\r\n").unwrap();
+        let head = String::from_utf8_lossy(&events.buf[..end]).into_owned();
+        assert!(head.starts_with("HTTP/1.1 200"), "{head}");
+        events.chunked = is_chunked(&head);
+        let rest = events.buf.split_off(end + 4);
+        events.buf.clear();
+        events.absorb(&rest);
         events
     }
 }
 
-/// A chunked body, reassembled; other bodies unchanged.
-fn dechunk(head: &str, body: &str) -> String {
-    if !head
-        .to_ascii_lowercase()
+/// How long one API exchange may take, from connect to the server closing the connection.
+const REQUEST_BOUND: Duration = Duration::from_secs(120);
+
+fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+fn is_chunked(head: &str) -> bool {
+    head.to_ascii_lowercase()
         .contains("transfer-encoding: chunked")
-    {
-        return body.to_owned();
+}
+
+/// A whole answer read to the end of the connection: its status and its body, with a chunked
+/// body reassembled. The split is made on bytes, so a body that is not UTF-8 cannot shift it.
+fn parse_reply(raw: &[u8]) -> Result<Reply, String> {
+    let end = find(raw, b"\r\n\r\n").ok_or_else(|| {
+        format!(
+            "the answer has no end of head: {:?}",
+            String::from_utf8_lossy(raw)
+        )
+    })?;
+    let head = String::from_utf8_lossy(&raw[..end]).into_owned();
+    let status = head
+        .split(' ')
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| format!("no status in {head:?}"))?;
+    let body = &raw[end + 4..];
+    let body = if is_chunked(&head) {
+        dechunk(body)?
+    } else {
+        body.to_vec()
+    };
+    Ok(Reply {
+        status,
+        body: String::from_utf8_lossy(&body).into_owned(),
+    })
+}
+
+/// The next whole chunk at the front of `raw`, removed from it: `Ok(None)` while it is still
+/// incomplete, `Ok(Some(empty))` for the last chunk. A size that is not hexadecimal or a chunk
+/// not followed by CRLF is an error, never a short body.
+fn take_chunk(raw: &mut Vec<u8>) -> Result<Option<Vec<u8>>, String> {
+    let Some(line_end) = find(raw, b"\r\n") else {
+        return Ok(None);
+    };
+    let line = std::str::from_utf8(&raw[..line_end])
+        .map_err(|_| format!("chunk size line is not text: {:?}", &raw[..line_end]))?;
+    let size_text = line.split(';').next().unwrap_or_default().trim();
+    let size = usize::from_str_radix(size_text, 16)
+        .map_err(|e| format!("malformed chunk size {line:?}: {e}"))?;
+    let data_start = line_end + 2;
+    if size == 0 {
+        raw.clear();
+        return Ok(Some(Vec::new()));
     }
-    let mut out = String::new();
-    let mut rest = body;
-    while let Some((size, tail)) = rest.split_once("\r\n") {
-        let size = usize::from_str_radix(size.trim(), 16).unwrap_or(0);
-        if size == 0 {
-            break;
+    let data_end = data_start + size;
+    if raw.len() < data_end + 2 {
+        return Ok(None);
+    }
+    if &raw[data_end..data_end + 2] != b"\r\n" {
+        return Err(format!("chunk of {size} bytes is not followed by CRLF"));
+    }
+    let data = raw[data_start..data_end].to_vec();
+    raw.drain(..data_end + 2);
+    Ok(Some(data))
+}
+
+/// A chunked body, reassembled. A body that ends before its last chunk, or a malformed size,
+/// is an error.
+fn dechunk(body: &[u8]) -> Result<Vec<u8>, String> {
+    let mut raw = body.to_vec();
+    let mut out = Vec::new();
+    loop {
+        match take_chunk(&mut raw)? {
+            Some(chunk) if chunk.is_empty() => return Ok(out),
+            Some(chunk) => out.extend_from_slice(&chunk),
+            None => {
+                return Err(format!(
+                    "chunked body ends before its last chunk ({} bytes read)",
+                    out.len()
+                ));
+            }
         }
-        out.push_str(tail.get(..size).unwrap_or_default());
-        rest = tail.get(size + 2..).unwrap_or_default();
     }
-    out
 }
 
 /// The server-sent events of the API, parsed as they arrive.
 pub struct Events {
     stream: TcpStream,
-    buf: String,
+    /// Body bytes not yet part of a whole record.
+    buf: Vec<u8>,
+    /// Chunk-framed bytes not yet part of a whole chunk (chunked streams only).
+    raw: Vec<u8>,
+    chunked: bool,
     pub seen: Vec<Value>,
 }
 
 impl Events {
-    /// Events read from an already connected stream.
+    /// Events read from an already connected stream whose response head is consumed.
     pub fn over(stream: TcpStream) -> Self {
         Self {
             stream,
-            buf: String::new(),
+            buf: Vec::new(),
+            raw: Vec::new(),
+            chunked: false,
             seen: Vec::new(),
+        }
+    }
+
+    /// Adds bytes read from the socket to the body, unwrapping chunks when the stream is chunked.
+    fn absorb(&mut self, bytes: &[u8]) {
+        if !self.chunked {
+            self.buf.extend_from_slice(bytes);
+            return;
+        }
+        self.raw.extend_from_slice(bytes);
+        while let Some(chunk) =
+            take_chunk(&mut self.raw).unwrap_or_else(|e| panic!("event stream: {e}"))
+        {
+            self.buf.extend_from_slice(&chunk);
         }
     }
 
     /// Reads until `done` holds for the buffer; false when the deadline passed first. A read
     /// is tried even with no time left (`timeout` polls the read first), so what a stalled
     /// test thread finds already in the socket is not dropped.
-    async fn try_fill_until(&mut self, done: impl Fn(&str) -> bool, within: Duration) -> bool {
+    async fn try_fill_until(&mut self, done: impl Fn(&[u8]) -> bool, within: Duration) -> bool {
         let deadline = Instant::now() + within;
         let mut chunk = [0_u8; 4096];
         while !done(&self.buf) {
             let left = deadline.saturating_duration_since(Instant::now());
             match tokio::time::timeout(left, self.stream.read(&mut chunk)).await {
-                Ok(Ok(0)) => panic!("the event stream ended; buffer: {:?}", self.buf),
-                Ok(Ok(n)) => self
-                    .buf
-                    .push_str(&String::from_utf8_lossy(chunk.get(..n).unwrap())),
+                Ok(Ok(0)) => panic!(
+                    "the event stream ended; buffer: {:?}",
+                    String::from_utf8_lossy(&self.buf)
+                ),
+                Ok(Ok(n)) => self.absorb(chunk.get(..n).unwrap()),
                 Ok(Err(e)) => panic!("event stream: {e}"),
                 Err(_) => return false,
             }
@@ -260,29 +357,25 @@ impl Events {
         true
     }
 
-    async fn fill_until(&mut self, done: impl Fn(&str) -> bool, within: Duration) {
+    async fn fill_until(&mut self, done: impl Fn(&[u8]) -> bool, within: Duration) {
         assert!(
             self.try_fill_until(done, within).await,
             "timed out; buffer: {:?}",
-            self.buf
+            String::from_utf8_lossy(&self.buf)
         );
     }
 
     /// Reads events until one satisfies `pred`; returns it. Every event read is kept in `seen`.
+    /// Records are decoded whole, so a character split across reads survives; a record whose
+    /// data is not JSON panics, and a record with no data line (a keep-alive comment) is skipped.
     // flake-ok: reads the server-sent event stream (it consumes input, so a re-run probe cannot do it);
     // bounded by `within`, and the panic lists every event seen.
     pub async fn until(&mut self, pred: impl Fn(&Value) -> bool, within: Duration) -> Value {
         let deadline = Instant::now() + within;
         loop {
-            while let Some((record, rest)) = self.buf.split_once("\n\n") {
-                let record = record.to_owned();
-                self.buf = String::from(rest);
-                let data: String = record
-                    .lines()
-                    .filter_map(|l| l.strip_prefix("data:"))
-                    .map(str::trim_start)
-                    .collect();
-                if let Ok(value) = serde_json::from_str::<Value>(&data) {
+            while let Some(at) = find(&self.buf, b"\n\n") {
+                let record: Vec<u8> = self.buf.drain(..at + 2).collect();
+                if let Some(value) = parse_record(&record[..at]) {
                     self.seen.push(value.clone());
                     if pred(&value) {
                         return value;
@@ -292,7 +385,7 @@ impl Events {
             let left = deadline.saturating_duration_since(Instant::now());
             let before = self.buf.len();
             let filled = self
-                .try_fill_until(|b| b.len() > before && b.contains("\n\n"), left)
+                .try_fill_until(|b| b.len() > before && find(b, b"\n\n").is_some(), left)
                 .await;
             assert!(
                 filled,
@@ -310,6 +403,27 @@ impl Events {
             .filter_map(|e| e["step"].as_str().map(str::to_owned))
             .collect()
     }
+}
+
+/// The JSON of one server-sent record, or `None` for a record with no data line. Panics on a
+/// record that is not UTF-8 or whose data is not JSON: the stream broke its contract.
+fn parse_record(record: &[u8]) -> Option<Value> {
+    let text = std::str::from_utf8(record)
+        .unwrap_or_else(|e| panic!("event record is not UTF-8 ({e}): {record:?}"));
+    let data: Vec<&str> = text
+        .lines()
+        .filter_map(|l| l.strip_prefix("data:"))
+        .map(str::trim_start)
+        .collect();
+    if data.is_empty() {
+        return None;
+    }
+    let data = data.join("\n");
+    Some(
+        serde_json::from_str(&data).unwrap_or_else(|e| {
+            panic!("event data is not JSON ({e}): {data:?} in record {text:?}")
+        }),
+    )
 }
 
 /// Matches the `workspace_progress` event of `workspace` that ends an operation.
@@ -489,5 +603,152 @@ pub struct FixedSpace(pub u64);
 impl puddle_host::Space for FixedSpace {
     fn free_bytes(&self) -> std::io::Result<u64> {
         Ok(self.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::net::TcpListener;
+
+    use super::*;
+
+    const SHORT: Duration = Duration::from_millis(300);
+
+    async fn serve(
+        parts: Vec<Vec<u8>>,
+        pause: Duration,
+    ) -> (url::Url, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = url::Url::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+        let task = tokio::spawn(async move {
+            let (mut conn, _) = listener.accept().await.unwrap();
+            let mut seen = [0_u8; 4096];
+            let _ = conn.read(&mut seen).await;
+            for part in parts {
+                conn.write_all(&part).await.unwrap();
+                conn.flush().await.unwrap();
+                tokio::time::sleep(pause).await;
+            }
+            // Hold the connection open: the test decides when it is over.
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        (url, task)
+    }
+
+    #[test]
+    fn dechunk_joins_chunks_and_counts_sizes_in_bytes() {
+        // "é" is two bytes; the size says so and the body holds it whole.
+        let body = "1\r\na\r\n2\r\n\u{e9}\r\n3;ext=1\r\nbcd\r\n0\r\n\r\n";
+        assert_eq!(dechunk(body.as_bytes()).unwrap(), "a\u{e9}bcd".as_bytes());
+    }
+
+    #[test]
+    fn dechunk_refuses_a_malformed_size_instead_of_truncating() {
+        let err = dechunk(b"1\r\na\r\nzz\r\nbb\r\n0\r\n\r\n").unwrap_err();
+        assert!(err.contains("malformed chunk size"), "{err}");
+    }
+
+    #[test]
+    fn dechunk_refuses_a_body_that_stops_before_the_last_chunk() {
+        let err = dechunk(b"3\r\nabc\r\n5\r\nab").unwrap_err();
+        assert!(err.contains("before its last chunk"), "{err}");
+    }
+
+    #[test]
+    fn dechunk_refuses_a_chunk_without_its_crlf() {
+        let err = dechunk(b"3\r\nabcXX0\r\n\r\n").unwrap_err();
+        assert!(err.contains("not followed by CRLF"), "{err}");
+    }
+
+    #[test]
+    fn a_reply_is_split_on_bytes_so_a_non_utf8_head_cannot_shift_the_body() {
+        let mut raw = b"HTTP/1.1 200 OK\r\nX-Junk: ".to_vec();
+        raw.extend_from_slice(&[0xff, 0xfe, 0xff]);
+        raw.extend_from_slice(b"\r\n\r\n{\"a\":1}");
+        let reply = parse_reply(&raw).unwrap();
+        assert_eq!((reply.status, reply.body.as_str()), (200, "{\"a\":1}"));
+    }
+
+    #[test]
+    fn a_chunked_reply_is_reassembled_and_a_broken_one_is_an_error() {
+        let ok = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nhi\r\n0\r\n\r\n";
+        assert_eq!(parse_reply(ok).unwrap().body, "hi");
+        let bad = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nq\r\nhi\r\n0\r\n\r\n";
+        assert!(
+            parse_reply(bad)
+                .unwrap_err()
+                .contains("malformed chunk size")
+        );
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "GET /api/stalls: no complete answer within")]
+    async fn an_exchange_that_never_finishes_panics_naming_method_and_path() {
+        let (url, _server) = serve(
+            vec![b"HTTP/1.1 200 OK\r\n\r\npart".to_vec()],
+            Duration::ZERO,
+        )
+        .await;
+        let api = Api::new(&url, "t");
+        let head = format!("GET /api/stalls HTTP/1.1\r\nHost: {}\r\n\r\n", api.addr);
+        api.exchange("GET", "/api/stalls", head.as_bytes(), b"", SHORT)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn events_decodes_a_character_split_across_reads() {
+        let record = "data: {\"name\":\"caf\u{e9}\"}\n\n".as_bytes().to_vec();
+        let at = record.iter().position(|b| *b == 0xc3).unwrap() + 1;
+        let parts = vec![record[..at].to_vec(), record[at..].to_vec()];
+        let (url, _server) = serve(parts, Duration::from_millis(100)).await;
+        let mut events = Events::over(
+            TcpStream::connect(url.socket_addrs(|| None).unwrap()[0])
+                .await
+                .unwrap(),
+        );
+        // The server reads one request first.
+        events.stream.write_all(b"go").await.unwrap();
+        let event = events.until(|_| true, Duration::from_secs(5)).await;
+        assert_eq!(event["name"], "caf\u{e9}");
+    }
+
+    #[tokio::test]
+    async fn events_skips_a_keep_alive_comment_and_reads_chunked_framing() {
+        let head = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
+        let ka = b": ka\n\n";
+        let rec = "data: {\"n\":\"\u{e9}\"}\n\n".as_bytes();
+        // The record is split in the middle of the two-byte character, across two chunks.
+        let cut = rec.iter().position(|b| *b == 0xc3).unwrap() + 1;
+        let mut framed = Vec::new();
+        for piece in [&ka[..], &rec[..cut], &rec[cut..]] {
+            framed.extend_from_slice(format!("{:x}\r\n", piece.len()).as_bytes());
+            framed.extend_from_slice(piece);
+            framed.extend_from_slice(b"\r\n");
+        }
+        let (url, _server) = serve(vec![head, framed], Duration::from_millis(50)).await;
+        let api = Api::new(&url, "t");
+        let mut events = api.events().await;
+        let event = events.until(|_| true, Duration::from_secs(5)).await;
+        assert_eq!(event["n"], "\u{e9}");
+        assert_eq!(events.seen.len(), 1, "the comment is not an event");
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "event data is not JSON")]
+    async fn events_panics_on_a_data_record_that_is_not_json() {
+        let (url, _server) = serve(
+            vec![b"data: {\"ok\":1}\n\ndata: not json\n\n".to_vec()],
+            Duration::ZERO,
+        )
+        .await;
+        let mut events = Events::over(
+            TcpStream::connect(url.socket_addrs(|| None).unwrap()[0])
+                .await
+                .unwrap(),
+        );
+        events.stream.write_all(b"go").await.unwrap();
+        events
+            .until(|e| e["never"] == 1, Duration::from_secs(5))
+            .await;
     }
 }

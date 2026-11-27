@@ -89,19 +89,89 @@ pub async fn sh<S: Sandbox>(sb: &S, script: &str) -> ExecOutput {
     out
 }
 
-/// Accepts connections on `listener` and returns the first line of each.
-pub fn collect_lines(mut listener: Listener) -> tokio::task::JoinHandle<Vec<String>> {
-    tokio::spawn(async move {
+/// How long a connection may take to send its line and close before the collector reports it.
+const LINE_READ_BOUND: Duration = Duration::from_secs(5);
+
+/// How long the collector keeps accepting after the stop signal, so a connection already queued
+/// on the endpoint is not lost.
+const DRAIN_IDLE: Duration = Duration::from_millis(250);
+
+/// Collects the first line of each connection that reaches an endpoint, until the test says it
+/// is done.
+pub struct LineCollector {
+    stop: tokio::sync::oneshot::Sender<()>,
+    task: tokio::task::JoinHandle<Result<Vec<String>, String>>,
+}
+
+impl LineCollector {
+    /// Signals that the senders are finished (the sandboxes are stopped) and returns the lines
+    /// in arrival order. Connections queued before the signal are still taken.
+    ///
+    /// # Errors
+    ///
+    /// When a connection did not send and close within its bound, or the accept itself failed: a
+    /// short or missing line then says so instead of passing for what the sender sent.
+    pub async fn finish(self) -> Result<Vec<String>, String> {
+        let _ = self.stop.send(());
+        self.task
+            .await
+            .map_err(|e| format!("collector task: {e}"))?
+    }
+}
+
+/// Accepts connections on `listener` until [`LineCollector::finish`] and keeps the first line
+/// of each. There is no idle bound: the VMs boot for a time that varies, so only the test knows
+/// when no more can come.
+pub fn collect_lines(listener: Listener) -> LineCollector {
+    collect_lines_within(listener, LINE_READ_BOUND)
+}
+
+fn collect_lines_within(mut listener: Listener, read_bound: Duration) -> LineCollector {
+    let (stop, mut stopped) = tokio::sync::oneshot::channel::<()>();
+    let task = tokio::spawn(async move {
         let mut lines = Vec::new();
-        while let Ok(Ok(mut conn)) =
-            tokio::time::timeout(Duration::from_secs(20), listener.accept()).await
-        {
+        let mut problems = Vec::new();
+        let mut draining = false;
+        loop {
+            let conn = if draining {
+                match tokio::time::timeout(DRAIN_IDLE, listener.accept()).await {
+                    Ok(conn) => conn,
+                    Err(_) => break,
+                }
+            } else {
+                tokio::select! {
+                    _ = &mut stopped => {
+                        draining = true;
+                        continue;
+                    }
+                    conn = listener.accept() => conn,
+                }
+            };
+            let mut conn = match conn {
+                Ok(conn) => conn,
+                Err(e) => {
+                    problems.push(format!("accept failed: {e}"));
+                    break;
+                }
+            };
             let mut buf = Vec::new();
-            let _ = tokio::time::timeout(Duration::from_secs(5), conn.read_to_end(&mut buf)).await;
+            match tokio::time::timeout(read_bound, conn.read_to_end(&mut buf)).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => problems.push(format!("read failed after {buf:?}: {e}")),
+                Err(_) => problems.push(format!(
+                    "read timed out after {read_bound:?} with {:?} received",
+                    String::from_utf8_lossy(&buf)
+                )),
+            }
             lines.push(String::from_utf8_lossy(&buf).trim_end().to_owned());
         }
-        lines
-    })
+        if problems.is_empty() {
+            Ok(lines)
+        } else {
+            Err(format!("{problems:#?}; lines so far: {lines:?}"))
+        }
+    });
+    LineCollector { stop, task }
 }
 
 /// Stops and removes the named sandboxes, ignoring the ones already gone.
@@ -149,4 +219,57 @@ pub async fn vsock_sweep<S: Sandbox>(sb: &S, cid: u32, message: &str, ports: &[&
         .collect();
     let summary = out.stderr_text().trim_end().to_owned();
     Sweep { accepted, summary }
+}
+
+#[cfg(test)]
+mod tests {
+    use puddle_ipc::IpcRoot;
+    use tokio::io::AsyncWriteExt;
+
+    use super::*;
+
+    async fn send(path: &std::path::Path, bytes: &[u8]) {
+        let mut conn = puddle_ipc::connect(path).await.unwrap();
+        conn.write_all(bytes).await.unwrap();
+        conn.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_sender_that_connects_after_a_long_idle_is_still_collected() {
+        let root = IpcRoot::new().unwrap();
+        let listener = root.listen().unwrap();
+        let path = listener.endpoint().path().to_owned();
+        let collector = collect_lines_within(listener, Duration::from_secs(5));
+        // A stalled boot sends late; only the test's signal ends the collection.
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        send(&path, b"late\n").await;
+        send(&path, b"later\n").await;
+        assert_eq!(collector.finish().await.unwrap(), ["late", "later"]);
+    }
+
+    #[tokio::test]
+    async fn the_stop_signal_ends_a_collector_that_saw_nothing() {
+        let root = IpcRoot::new().unwrap();
+        let collector = collect_lines(root.listen().unwrap());
+        let lines = tokio::time::timeout(Duration::from_secs(5), collector.finish())
+            .await
+            .expect("finish returns on the signal, not on an idle bound");
+        assert_eq!(lines.unwrap(), Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    async fn a_sender_that_stalls_is_reported_as_a_read_timeout() {
+        let root = IpcRoot::new().unwrap();
+        let listener = root.listen().unwrap();
+        let path = listener.endpoint().path().to_owned();
+        let collector = collect_lines_within(listener, Duration::from_millis(200));
+        let mut conn = puddle_ipc::connect(&path).await.unwrap();
+        conn.write_all(b"half").await.unwrap();
+        let err = collector.finish().await.unwrap_err();
+        assert!(
+            err.contains("read timed out") && err.contains("half"),
+            "{err}"
+        );
+        drop(conn);
+    }
 }

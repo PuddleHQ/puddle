@@ -6566,6 +6566,16 @@
               }
             }
           },
+          "413": {
+            "description": "the file is larger than a backup can be; nothing is staged",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
           "421": {
             "description": "Host is not the API's own address",
             "content": {

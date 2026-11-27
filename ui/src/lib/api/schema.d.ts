@@ -13145,6 +13145,15 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description the file is larger than a backup can be; nothing is staged */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
             /** @description Host is not the API's own address */
             421: {
                 headers: {

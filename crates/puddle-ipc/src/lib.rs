@@ -18,8 +18,8 @@
 //!
 //! | Threat to a stable name | Windows | Linux |
 //! |---|---|---|
-//! | Someone learns the name | the name is `puddle-<install id>-<workspace>`; the install id is 128 random bits kept in an owner-only file of Puddle's data folder, made once, so another user cannot compute the name while Puddle is not running (the pipe namespace shows a name only while Puddle serves it) | the socket sits in a `0700` folder that only the owner can enter, so the name needs no secrecy |
-//! | Someone creates the name before Puddle starts | the first instance of the pipe is created with `FILE_FLAG_FIRST_PIPE_INSTANCE`; a taken name is refused ([`IpcError::NameTaken`]) and the workspace gets a sandbox with a random route instead of the old one | a folder of another user, a symlink or a folder that is not mode `0700` is refused ([`IpcError::Root`]) |
+//! | Someone learns the name | the name is `puddle-<install id>-<workspace>`; the install id is 128 random bits kept in an owner-only file of Puddle's data folder, made once and never remade, so another user cannot compute the name while Puddle is not running (the pipe namespace shows a name only while Puddle serves it) | the socket sits in a `0700` folder inside the data folder (not in the runtime folder, which differs between a desktop session, ssh and cron), so the name needs no secrecy |
+//! | Someone creates the name before Puddle starts | the first instance of the pipe is created with `FILE_FLAG_FIRST_PIPE_INSTANCE`; a taken name is refused ([`IpcError::NameTaken`]) and the caller refuses the start: a random route would make the sandbox again and drop its root disk | a folder of another user, a symlink or a folder that is not mode `0700` is refused ([`IpcError::Root`]) |
 //! | A dead Puddle left the name behind | nothing: a pipe goes with its process | a socket file whose listener is gone is replaced; a socket that still answers is another process and is refused ([`IpcError::NameTaken`]) |
 //! | Another Puddle of the same user serves it | refused, as a squatter | refused, as a live socket |
 //! | A guest reaches another workspace's endpoint | no: msb connects a guest only to the routes of its own spec, and the host tells workspaces apart by the endpoint a connection arrived on, as before | the same |
@@ -112,9 +112,11 @@ impl IpcRoot {
     /// user's SID can't be read; [`IpcError::Random`] when the system random source fails.
     pub fn stable(state_dir: &Path) -> Result<Self, IpcError> {
         let id = install_id(state_dir)?;
-        Ok(Self {
-            inner: sys::Root::stable(&id)?,
-        })
+        #[cfg(unix)]
+        let inner = sys::Root::stable_in(state_dir, &id)?;
+        #[cfg(windows)]
+        let inner = sys::Root::stable(&id)?;
+        Ok(Self { inner })
     }
 
     /// The endpoint of `name` in a stable root: the same on every run of Puddle for the same
@@ -188,7 +190,7 @@ impl IpcRoot {
 #[cfg(unix)]
 impl IpcRoot {
     /// [`IpcRoot::stable`] with the socket folder below `parent` (which must exist) instead of
-    /// the runtime directory.
+    /// `state_dir`.
     ///
     /// # Errors
     ///
@@ -219,21 +221,35 @@ impl IpcRoot {
 }
 
 /// The install's random id, 32 lowercase hex digits: read from `<state_dir>/ipc-id`, or made and
-/// written there (owner-only, atomically) when the file is missing or holds anything else.
+/// written there (owner-only, atomically) only when the file is missing. Every route name follows
+/// from the id, and a sandbox keeps its route in its spec, so a new id makes every sandbox again
+/// and drops its root disk: a file that cannot be read or holds anything but an id is refused
+/// (delete it to start over), never replaced.
 fn install_id(state_dir: &Path) -> Result<String, IpcError> {
     let file = state_dir.join(INSTALL_ID_FILE);
-    if let Ok(text) = std::fs::read_to_string(&file) {
-        let id = text.trim();
-        if name::is_install_id(id) {
-            return Ok(id.to_owned());
-        }
-    }
-    let id = name::random_name::<16>()?;
-    puddle_fs::private::write_atomic(&file, id.as_bytes()).map_err(|source| IpcError::Root {
+    let root_err = |source| IpcError::Root {
         path: file.clone(),
         source,
-    })?;
-    Ok(id)
+    };
+    match std::fs::read_to_string(&file) {
+        Ok(text) => {
+            let id = text.trim();
+            if name::is_install_id(id) {
+                Ok(id.to_owned())
+            } else {
+                Err(root_err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "it does not hold an install id; delete it to make a new one, which makes every sandbox again",
+                )))
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let id = name::random_name::<16>()?;
+            puddle_fs::private::write_atomic(&file, id.as_bytes()).map_err(root_err)?;
+            Ok(id)
+        }
+        Err(e) => Err(root_err(e)),
+    }
 }
 
 /// The file in the state folder that holds the install's id.

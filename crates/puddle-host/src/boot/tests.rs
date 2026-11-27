@@ -206,3 +206,27 @@ fn the_guest_mount_is_the_path_the_agent_is_told() {
         puddle_agent_proto::editor::GUEST_DIR
     );
 }
+
+#[tokio::test]
+async fn a_taken_stable_route_refuses_the_start_instead_of_giving_a_random_one() {
+    // A random route is not the one an earlier sandbox has: it would be made again and lose its
+    // root disk. Another process holding the name must stop the start.
+    let state = tempfile::tempdir().unwrap();
+    let root = IpcRoot::stable(state.path()).unwrap();
+    let workspace = WorkspaceId::new("w-acme").unwrap();
+    let _holder = root.listen_named(workspace.as_str()).unwrap();
+    let err = stable_listener(&root, &workspace)
+        .err()
+        .expect("the name is taken");
+    assert!(
+        matches!(
+            &err,
+            BootInputError::RouteUnavailable {
+                source: IpcError::NameTaken { .. },
+                ..
+            }
+        ),
+        "{err}"
+    );
+    assert!(err.to_string().contains("w-acme"), "{err}");
+}

@@ -442,6 +442,17 @@ describe("appearance and notifications", () => {
     expect(api.ui.sound).toBe(true);
     expect(api.ui.close_behaviour).toBe("quit");
   });
+
+  it("saves the log detail, from the default and from a level already chosen", async () => {
+    await open();
+    expect(api.ui.log_level).toBeNull();
+    await choose("Log detail", "debug");
+    await save();
+    expect(api.ui.log_level).toBe("debug");
+    await choose("Log detail", "trace");
+    await save();
+    expect(api.ui.log_level).toBe("trace");
+  });
 });
 
 describe("notifications in this browser", () => {

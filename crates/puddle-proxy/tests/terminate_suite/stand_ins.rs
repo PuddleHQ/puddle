@@ -179,6 +179,52 @@ async fn a_stand_in_added_while_a_connection_is_open_applies_from_its_next_reque
     assert_eq!(server.accepted(), 1, "all on one upstream connection");
 }
 
+const SECOND_KEY: &str = "sk-live-second-8e3f61b09d4c";
+
+/// The value of a secret changes while a connection is open (the host replaces the
+/// secret entries with the same stand-in and a new real value); the next request on that same
+/// connection carries the new value, and the stand-in the guest sends is unchanged.
+#[tokio::test]
+async fn a_new_real_value_for_a_stand_in_applies_from_the_next_request_on_an_open_connection() {
+    let pki = Pki::new();
+    let server = upstream(&pki, "bound.test", ok_handler()).await;
+    let (stand_ins, stand_in) = registry();
+    let rig = RigBuilder::new(&pki)
+        .name("bound.test", server.addr)
+        .injector(pass_through())
+        .stand_ins(&stand_ins)
+        .build();
+    let mut guest = rig.guest();
+    let mut client = guest.tls("bound.test:443", None).await.unwrap();
+    let ask = format!("GET /x HTTP/1.1\r\nHost: bound.test\r\nX-Api-Key: {stand_in}\r\n\r\n");
+    client.send(ask.as_bytes()).await;
+    assert_eq!(client.response("GET").await.status, 200);
+
+    let changed = StandIn::new(
+        StandInOrigin::Secret,
+        "API_KEY",
+        &stand_in,
+        SecretValue::new(SECOND_KEY),
+        TerminationSet::parse(["bound.test"]).unwrap(),
+    )
+    .unwrap();
+    stand_ins
+        .replace_origin(StandInOrigin::Secret, vec![changed])
+        .unwrap();
+    client.send(ask.as_bytes()).await;
+    assert_eq!(client.response("GET").await.status, 200);
+
+    let sent: Vec<_> = server
+        .recorded()
+        .iter()
+        .map(|r| r.header("x-api-key").unwrap().to_owned())
+        .collect();
+    assert_eq!(sent, [REAL_KEY, SECOND_KEY]);
+    assert_eq!(stand_ins.ids(), ["stand-in:secret:API_KEY"]);
+    assert_eq!(server.accepted(), 1, "all on one upstream connection");
+    assert!(!captured_logs().contains(SECOND_KEY));
+}
+
 #[tokio::test]
 async fn a_stand_in_toward_another_decrypted_host_goes_out_unchanged_and_is_flagged() {
     let pki = Pki::new();

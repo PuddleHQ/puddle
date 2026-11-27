@@ -8,7 +8,8 @@
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import type { components } from "#lib/api/schema.d.ts";
 import { isRulesChanged } from "#lib/rules/events.ts";
-import { sentence, type Rule } from "#lib/rules/model.ts";
+import { sentence } from "#lib/format/sentence.ts";
+import type { Rule } from "#lib/rules/model.ts";
 import { live, type LiveSource } from "./live.svelte.ts";
 import { readFailure, SERVICE_DOWN } from "./read-failure.ts";
 

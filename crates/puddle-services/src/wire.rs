@@ -87,8 +87,8 @@ pub use identities::{
     GitRepoRequest, GitRepoToggles, GitRepoView, GitSwitchesRequest, IdentityAuthor,
     IdentityCredential, IdentityCredentialView, IdentityDeleted, IdentityList,
     IdentityOrderRequest, IdentityRequest, IdentitySigning, IdentityView, LastCheck,
-    NewWorkspaceIdentity, NewWorkspaceIdentityBasis, SwitchSource, TokenLeft, WorkspaceGitView,
-    WorkspaceIdentitiesRequest, WorkspaceSwitchesRequest,
+    NewWorkspaceIdentity, NewWorkspaceIdentityBasis, PushBlock, SwitchSource, TokenLeft,
+    WorkspaceGitView, WorkspaceIdentitiesRequest, WorkspaceSwitchesRequest,
 };
 pub use interception::{
     GlobalNeverDecrypt, InterceptionRequest, InterceptionSettingsRequest, InterceptionSettingsView,

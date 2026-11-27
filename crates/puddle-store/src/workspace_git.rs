@@ -231,6 +231,37 @@ impl std::fmt::Display for RepoRef {
     }
 }
 
+/// Why a push to a repository cannot succeed, as its listing said when the row was made.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PushBlock {
+    /// Archived on its Git host, so read-only.
+    Archived,
+    /// The listing account can only read it.
+    Read,
+}
+
+impl PushBlock {
+    /// The spelling the database holds.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Archived => "archived",
+            Self::Read => "read",
+        }
+    }
+
+    /// The block a stored spelling names.
+    #[must_use]
+    pub fn from_stored(text: &str) -> Option<Self> {
+        match text {
+            "archived" => Some(Self::Archived),
+            "read" => Some(Self::Read),
+            _ => None,
+        }
+    }
+}
+
 /// The Pull and Push toggles of one row of the repository table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RepoToggles {
@@ -275,6 +306,8 @@ pub struct RepoEntry {
     pub pull: bool,
     /// A push to it may go out (when "only push to allowed repositories" is on).
     pub push: bool,
+    /// Why a push to it cannot succeed, when its listing said so at the time it was added.
+    pub push_block: Option<PushBlock>,
     /// Epoch ms it was added.
     pub created_at: u64,
 }
@@ -325,6 +358,8 @@ pub struct RepoGitRequest {
     pub pull: bool,
     /// Push on its table row, when the row is new.
     pub push: bool,
+    /// Why a push to it cannot succeed, kept on its table row when the row is new.
+    pub push_block: Option<PushBlock>,
 }
 
 /// What [`crate::Store::start_repository_git`] set up.

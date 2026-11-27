@@ -199,6 +199,32 @@ const type = (label: string, value: string) =>
   fireEvent.input(field(label), { target: { value } });
 
 describe("CreateWorkspaceForm", () => {
+  it("selects the suggested name on focus so typing replaces it, and leaves a typed name alone", async () => {
+    mount();
+    await screen.findByRole("region");
+    await type("Git repository (HTTPS)", "https://github.com/acme/shop");
+    const name = field("Name");
+    expect(name.value).toBe("shop");
+    name.focus();
+    expect([name.selectionStart, name.selectionEnd]).toEqual([0, 4]);
+    await fireEvent.input(name, { target: { value: "mine" } });
+    name.setSelectionRange(4, 4);
+    name.blur();
+    name.focus();
+    expect([name.selectionStart, name.selectionEnd]).toEqual([4, 4]);
+  });
+
+  it("keeps the suggested name selected through the mouse-up of the focusing click only", async () => {
+    mount();
+    await screen.findByRole("region");
+    await type("Git repository (HTTPS)", "https://github.com/acme/shop");
+    const name = field("Name");
+    expect(await fireEvent.mouseUp(name)).toBe(true);
+    name.focus();
+    expect(await fireEvent.mouseUp(name)).toBe(false);
+    expect(await fireEvent.mouseUp(name)).toBe(true);
+  });
+
   it("is a dialog with the repository first", async () => {
     mount();
     const dialog = await screen.findByRole("region", { name: "New workspace" });
@@ -1120,14 +1146,25 @@ describe("CreateWorkspaceForm identities and repositories", () => {
     ).toBeInTheDocument();
   });
 
-  it("greys out Push for a repository handed in as archived", async () => {
-    open({
+  it("greys out Push for a repository handed in as archived and sends the block with the create", async () => {
+    const { create } = open({
       url: "https://github.com/acme/old",
       identity: 1,
       pushBlock: "archived",
     });
     await screen.findByRole("region");
     expect(screen.getByLabelText("Push")).toBeDisabled();
+    await fireEvent.click(submit());
+    await vi.waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create.mock.calls[0]?.[0]).toMatchObject({
+      repositories: [
+        {
+          url: "https://github.com/acme/old",
+          push: false,
+          push_block: "archived",
+        },
+      ],
+    });
   });
 
   it("forgets the identity that listed it when the address is typed over", async () => {

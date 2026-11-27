@@ -630,6 +630,53 @@ async fn a_repository_row_is_added_normalised_and_a_duplicate_or_odd_one_is_refu
 }
 
 #[tokio::test]
+async fn a_repository_row_keeps_why_a_push_to_it_cannot_succeed() {
+    let api = start().await;
+    workspace(&api, "shop").await;
+    let archived = json!({
+        "host": "github.com", "owner": "acme", "repo": "old",
+        "pull": true, "push": false, "push_block": "archived"
+    });
+    let row = api
+        .send("POST", "/api/workspaces/shop/git/repos", Some(&archived))
+        .await;
+    assert_eq!(row.status, 201, "{}", row.body);
+    assert_eq!(row.json()["push_block"], "archived");
+    let id = row.json()["id"].as_i64().unwrap();
+    let plain = api
+        .send("POST", "/api/workspaces/shop/git/repos", Some(&add_docs()))
+        .await;
+    assert_eq!(plain.json()["push_block"], Value::Null);
+    // The table read shows it on the row, and a toggle change keeps it.
+    api.send(
+        "PUT",
+        &format!("/api/workspaces/shop/git/repos/{id}"),
+        Some(&json!({"pull": false, "push": false})),
+    )
+    .await;
+    let git = api.get("/api/workspaces/shop/git").await.json();
+    let blocks: Vec<(&str, &Value)> = git["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r["repo"].as_str().unwrap(), &r["push_block"]))
+        .collect();
+    assert!(blocks.contains(&("old", &json!("archived"))), "{blocks:?}");
+    assert!(blocks.contains(&("docs", &Value::Null)), "{blocks:?}");
+    let odd = json!({
+        "host": "github.com", "owner": "acme", "repo": "x",
+        "pull": true, "push": false, "push_block": "locked"
+    });
+    assert_eq!(
+        api.send("POST", "/api/workspaces/shop/git/repos", Some(&odd))
+            .await
+            .status,
+        422
+    );
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_repository_rows_pull_and_push_toggle() {
     let (api, id) = api_with_a_docs_row().await;
     let toggled = api

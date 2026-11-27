@@ -325,6 +325,7 @@ async fn the_empty_service_says_it_is_unavailable() {
         identity: None,
         pull: true,
         push: true,
+        push_block: None,
         local: None,
     }];
     let all = [

@@ -256,7 +256,7 @@ impl World {
     /// Lists `repo` (`host/owner/name`) in the table.
     pub fn list(&self, repo: &str, toggles: RepoToggles) {
         self.store
-            .add_repo(&self.workspace, &repo_ref(repo), toggles)
+            .add_repo(&self.workspace, &repo_ref(repo), toggles, None)
             .unwrap();
     }
 

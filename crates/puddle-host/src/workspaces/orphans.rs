@@ -299,6 +299,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 identity: None,
                 pull: true,
                 push: true,
+                push_block: None,
                 local: None,
             })
             .collect();

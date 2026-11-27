@@ -13,6 +13,7 @@ fn entry(text: &str, toggles: RepoToggles) -> RepoEntry {
         repo: repo(text),
         pull: toggles.pull,
         push: toggles.push,
+        push_block: None,
         created_at: 0,
     }
 }

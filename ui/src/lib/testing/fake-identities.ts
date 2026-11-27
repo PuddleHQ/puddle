@@ -73,6 +73,7 @@ export function repoRow(id: number, over: Partial<RepoRow> = {}): RepoRow {
     repo: `repo-${id}`,
     pull: true,
     push: true,
+    push_block: null,
     created_at: 1_000,
     ...over,
   };
@@ -351,6 +352,7 @@ export class FakeIdentities {
             repo: repo.toLowerCase(),
             pull: body["pull"] as boolean,
             push: body["push"] as boolean,
+            push_block: (body["push_block"] as RepoRow["push_block"]) ?? null,
           }),
         ];
         return this.reply(202, {});

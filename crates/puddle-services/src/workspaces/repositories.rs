@@ -186,6 +186,8 @@ pub struct NewRepository {
     pub pull: bool,
     /// Push on its new repository table row.
     pub push: bool,
+    /// Why a push cannot succeed, kept on its new repository table row.
+    pub push_block: Option<puddle_store::PushBlock>,
     /// The `.git` directory of the checkout on this computer it is cloned from (canonical), or
     /// `None` to clone from its address.
     pub local: Option<PathBuf>,
@@ -235,6 +237,8 @@ pub struct RepositoryDraft {
     pub pull: Option<bool>,
     /// Push; `None` is on.
     pub push: Option<bool>,
+    /// Why a push cannot succeed, from the listing it was picked from.
+    pub push_block: Option<puddle_store::PushBlock>,
     /// A checkout on this computer to clone from, as given; [`RepositoryDraft::url`] may then be
     /// empty (the checkout's `origin` is used).
     pub local: Option<String>,
@@ -464,6 +468,7 @@ pub fn check_repositories_with(
             identity: draft.identity,
             pull: draft.pull.unwrap_or(true),
             push: draft.push.unwrap_or(true),
+            push_block: draft.push_block,
             local: local.map(|found| found.git_dir.clone()),
         });
     }

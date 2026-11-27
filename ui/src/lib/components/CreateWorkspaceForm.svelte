@@ -267,6 +267,20 @@
     name = suggestName(folder === null ? (first?.url ?? "") : `/${folder}`);
   });
 
+  // The suggested name arrives selected, so the first thing typed replaces it. A click's mouse-up
+  // would collapse that selection, so the one that follows the focusing click is cancelled.
+  let selectedByFocus = false;
+  function selectSuggestedName(e: FocusEvent) {
+    if (nameTouched) return;
+    (e.currentTarget as HTMLInputElement).select();
+    selectedByFocus = true;
+  }
+  function keepSuggestedNameSelected(e: MouseEvent) {
+    if (!selectedByFocus) return;
+    selectedByFocus = false;
+    e.preventDefault();
+  }
+
   /** Drops the draft: what was sent, or what Cancel gives up. */
   let done = false;
   function discard() {
@@ -401,6 +415,7 @@
           ...(directory === "" ? {} : { directory }),
           ...(identity === "" ? {} : { identity_id: Number(identity) }),
           ...(row.push ? {} : { push: false }),
+          ...(row.pushBlock ? { push_block: row.pushBlock } : {}),
         };
       }),
       ...(folder === "" ? {} : { start_folder: folder }),
@@ -729,6 +744,8 @@
         autocomplete="off"
         spellcheck="false"
         bind:value={name}
+        onfocus={selectSuggestedName}
+        onmouseup={keepSuggestedNameSelected}
         oninput={() => {
           nameTouched = true;
         }}

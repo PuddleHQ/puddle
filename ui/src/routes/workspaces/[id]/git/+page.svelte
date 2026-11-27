@@ -191,6 +191,7 @@
             url: resolved.url,
             pull: newPull,
             push: newPush,
+            ...(newPushBlock ? { push_block: newPushBlock } : {}),
           })
         : await store.addRepo({
             host: parsed.host,
@@ -198,6 +199,7 @@
             repo: parsed.repo,
             pull: newPull,
             push: newPush,
+            ...(newPushBlock ? { push_block: newPushBlock } : {}),
           });
       if (!result.ok) {
         repoProblem = result.message;
@@ -448,12 +450,21 @@
                     type="checkbox"
                     aria-label="Push {repoName(row)}"
                     checked={row.push}
+                    disabled={!!row.push_block}
+                    aria-describedby={row.push_block
+                      ? `${fid}-push-block-${row.id}`
+                      : undefined}
                     onchange={(e) => {
                       const next = e.currentTarget.checked;
                       e.currentTarget.checked = row.push;
                       void toggle(row, row.pull, next);
                     }}
                   />
+                  {#if row.push_block}
+                    <span class="muted note" id="{fid}-push-block-{row.id}">
+                      {pushBlockText(row.push_block)}
+                    </span>
+                  {/if}
                 </td>
                 <td class="actions">
                   <button

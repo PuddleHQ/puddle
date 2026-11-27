@@ -1335,7 +1335,7 @@ async fn a_write_that_times_out_with_nothing_to_put_back_refuses_after_one_timeo
     store.then([SetStep::Park(started, wait)]);
     let exchange = logins.begin(&host("platform.claude.com"), "POST", "/v1/oauth/token");
     let answer = claude_access_only_answer(REAL_ACCESS);
-    let mut capture = Box::pin(answered(exchange, 200, Some("application/json"), &answer));
+    let mut capture = Box::pin(rewritten(exchange, 200, Some("application/json"), &answer));
     // A parked blocking call stops the paused clock from advancing by itself: move it by hand,
     // once the write is parked, by one store timeout and no more.
     tokio::select! {
@@ -1349,11 +1349,10 @@ async fn a_write_that_times_out_with_nothing_to_put_back_refuses_after_one_timeo
     };
     // Let the parked write go, so the blocking thread ends with the test.
     let _ = go.send(());
-    assert_eq!(
-        given,
-        Some(None),
-        "the capture lock was still held a store timeout after a write that left nothing to put back"
+    let given = given.expect(
+        "the capture lock was still held a store timeout after a write that left nothing to put back",
     );
+    assert_refused(&given);
 }
 
 #[tokio::test]

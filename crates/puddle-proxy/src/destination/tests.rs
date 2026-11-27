@@ -120,7 +120,7 @@ fn a_double_lets_no_distribution_point_through_unless_it_says_so() {
 
 #[test]
 fn the_product_guard_lets_a_distribution_point_use_private_addresses_only() {
-    let guard = NetPolicy::new(std::sync::Arc::new(puddle_netpolicy::LocalAccess::NONE));
+    let guard = NetPolicy::new(Arc::new(puddle_netpolicy::LocalAccess::NONE));
     let host = Host::parse_normalised("pki.corp.example").unwrap();
     let check: &dyn AddressCheck = &guard;
     for (addr, expected) in [
@@ -136,4 +136,53 @@ fn the_product_guard_lets_a_distribution_point_use_private_addresses_only() {
             "{addr}"
         );
     }
+}
+
+/// Jobs run on the slots' blocking threads at most `limit` at a time, however many are queued,
+/// and a job that is queued starts once a slot frees (a lookup's timeout drops its waiter, never
+/// its thread, so only the slots bound the threads).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn blocking_jobs_run_at_most_as_many_at_a_time_as_there_are_slots() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
+
+    let slots = Arc::new(BlockingSlots::new(2));
+    let active = Arc::new(AtomicUsize::new(0));
+    let peak = Arc::new(AtomicUsize::new(0));
+    let release = Arc::new(AtomicBool::new(false));
+    let jobs: Vec<_> = (0..6)
+        .map(|n| {
+            let (slots, active, peak, release) = (
+                Arc::clone(&slots),
+                Arc::clone(&active),
+                Arc::clone(&peak),
+                Arc::clone(&release),
+            );
+            tokio::spawn(async move {
+                slots
+                    .run(move || {
+                        let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+                        peak.fetch_max(now, Ordering::SeqCst);
+                        let deadline = Instant::now() + Duration::from_secs(10);
+                        while !release.load(Ordering::SeqCst) && Instant::now() < deadline {
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
+                        active.fetch_sub(1, Ordering::SeqCst);
+                        n
+                    })
+                    .await
+            })
+        })
+        .collect();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while active.load(Ordering::SeqCst) < 2 && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(active.load(Ordering::SeqCst), 2, "two run, four wait");
+    release.store(true, Ordering::SeqCst);
+    for (n, job) in jobs.into_iter().enumerate() {
+        assert_eq!(job.await.unwrap().unwrap(), n);
+    }
+    assert_eq!(peak.load(Ordering::SeqCst), 2);
 }

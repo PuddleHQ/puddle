@@ -515,3 +515,82 @@ async fn a_silent_stream_is_closed_after_the_idle_limit() {
     let (mut guest, served) = w.stream("box", Duration::from_secs(1));
     closed(&mut guest, served).await;
 }
+
+/// A gate whose `record` (which runs on the blocking thread of every request) holds the thread
+/// until released, counting the threads held at once per workspace.
+#[derive(Default)]
+struct HoldingGate {
+    active: Mutex<HashMap<WorkspaceId, usize>>,
+    peak: Mutex<HashMap<WorkspaceId, usize>>,
+    release: std::sync::atomic::AtomicBool,
+}
+
+impl AgentGate for HoldingGate {
+    fn pin_host_key(&self, _: &WorkspaceId, _: &str, _: &str) -> Result<(), PinFailure> {
+        Ok(())
+    }
+
+    fn approve(&self, _: &WorkspaceId, _: &str, _: &[u8]) -> Result<(), Disapproval> {
+        Ok(())
+    }
+
+    fn record(&self, workspace: &WorkspaceId, _: Option<&str>, _: &Outcome) {
+        let now = {
+            let mut active = self.active.lock().unwrap();
+            let n = active.entry(workspace.clone()).or_default();
+            *n += 1;
+            *n
+        };
+        {
+            let mut peak = self.peak.lock().unwrap();
+            let p = peak.entry(workspace.clone()).or_default();
+            *p = (*p).max(now);
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !self.release.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        *self.active.lock().unwrap().get_mut(workspace).unwrap() -= 1;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_workspace_holds_at_most_its_cap_of_blocking_threads_however_many_streams_wait() {
+    let gate = Arc::new(HoldingGate::default());
+    let agents = Arc::new(SshAgents::new(Arc::new(FakeAgent::default()), gate.clone()));
+    let cap = MAX_BLOCKED_PER_WORKSPACE;
+    let streams = cap * 3;
+    let mut open = Vec::new();
+    for _ in 0..streams {
+        let (mut guest, host_end) = duplex(64 * 1024);
+        let served = tokio::spawn(serve(
+            Arc::clone(&agents),
+            None,
+            workspace("box"),
+            host_end,
+            IDLE_LIMIT,
+        ));
+        guest
+            .write_all(&puddle_ssh_agent::wire::request_identities())
+            .await
+            .unwrap();
+        open.push((guest, served));
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        gate.active.lock().unwrap().get(&workspace("box")).copied(),
+        Some(cap),
+        "the rest wait without a thread"
+    );
+    gate.release.store(true, Ordering::SeqCst);
+    for (mut guest, served) in open {
+        let mut len = [0_u8; 4];
+        tokio::time::timeout(WAIT, guest.read_exact(&mut len))
+            .await
+            .unwrap()
+            .unwrap();
+        drop(guest);
+        tokio::time::timeout(WAIT, served).await.unwrap().unwrap();
+    }
+    assert_eq!(gate.peak.lock().unwrap()[&workspace("box")], cap);
+}

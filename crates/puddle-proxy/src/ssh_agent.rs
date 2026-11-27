@@ -24,12 +24,18 @@ use puddle_ssh_agent::{AgentEndpoint, AgentError, Identity};
 use puddle_types::{Host, WorkspaceId};
 use ssh_key::public::KeyData;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::sync::Semaphore;
 
 use crate::terminate::TerminationSource;
 
 /// How long an agent stream may sit between two requests before it is closed. `ssh` keeps its
 /// agent connection open while it logs in, which includes waiting for a password or a prompt.
 pub const IDLE_LIMIT: Duration = Duration::from_secs(600);
+
+/// Most requests of one workspace that hold a blocking thread at once. A request may wait on the
+/// user's answer for minutes (`AgentGate::approve`), and tokio's blocking pool is shared with every
+/// workspace, so further requests wait on the async side, holding no thread.
+pub(crate) const MAX_BLOCKED_PER_WORKSPACE: usize = 4;
 
 /// The user's own SSH agent on this machine, as the filter uses it.
 pub trait HostAgent: Send + Sync {
@@ -139,6 +145,7 @@ pub struct SshAgents {
     gate: Arc<dyn AgentGate>,
     seen: Mutex<Vec<Seen>>,
     next_id: AtomicU64,
+    blocked: Mutex<HashMap<WorkspaceId, Arc<Semaphore>>>,
 }
 
 impl std::fmt::Debug for SshAgents {
@@ -156,7 +163,21 @@ impl SshAgents {
             gate,
             seen: Mutex::new(Vec::new()),
             next_id: AtomicU64::new(0),
+            blocked: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The workspace's share of blocking threads; one is held by each request until it is answered.
+    fn blocked_slots(&self, workspace: &WorkspaceId) -> Arc<Semaphore> {
+        let mut map = self.blocked.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(slots) = map.get(workspace) {
+            return Arc::clone(slots);
+        }
+        // Idle entries (nobody holds or waits on them) are recreated on demand.
+        map.retain(|_, slots| Arc::strong_count(slots) > 1);
+        let slots = Arc::new(Semaphore::new(MAX_BLOCKED_PER_WORKSPACE));
+        map.insert(workspace.clone(), Arc::clone(&slots));
+        slots
     }
 
     fn sessions(&self) -> std::sync::MutexGuard<'_, Vec<Seen>> {
@@ -317,11 +338,15 @@ pub(crate) async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
             workspace: workspace.clone(),
             hosts,
         };
+        let Ok(slot) = agents.blocked_slots(&workspace).acquire_owned().await else {
+            return;
+        };
         let answered = tokio::task::spawn_blocking(move || {
             let (answer, outcome) = filter.answer(&message, &cx);
             cx.agents
                 .gate
                 .record(&cx.workspace, filter.host(), &outcome);
+            drop(slot);
             (filter, answer, outcome)
         })
         .await;

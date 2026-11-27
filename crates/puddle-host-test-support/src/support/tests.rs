@@ -80,8 +80,7 @@ async fn an_exchange_that_never_finishes_panics() {
     .await;
     let api = Api::new(&url, "t");
     let head = format!("GET /api/stalls HTTP/1.1\r\nHost: {}\r\n\r\n", api.addr);
-    api.exchange(head.as_bytes(), b"", SHORT)
-        .await;
+    api.exchange(head.as_bytes(), b"", SHORT).await;
 }
 
 #[tokio::test]

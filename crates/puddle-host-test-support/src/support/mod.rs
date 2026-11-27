@@ -130,8 +130,7 @@ impl Api {
             self.token,
             bytes.len()
         );
-        self.exchange(head.as_bytes(), bytes, REQUEST_BOUND)
-            .await
+        self.exchange(head.as_bytes(), bytes, REQUEST_BOUND).await
     }
 
     /// Sends `head` and `body`, reads until the server closes, all within `within`; a panic

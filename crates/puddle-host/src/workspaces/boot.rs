@@ -105,7 +105,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         match inner
             .kit
             .hook()
-            .create_kept(&inner.runtime, spec, &plan, &gate, &self.keeper())
+            .create_kept(&inner.runtime, spec, &plan, &gate, &self.keeper(name))
             .await
         {
             Ok(gated) => {

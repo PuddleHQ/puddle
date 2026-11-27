@@ -236,7 +236,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 &name.sandbox_name(),
                 plan,
                 &gate,
-                &self.keeper(),
+                &self.keeper(name),
             )
             .await
             .map_err(|e| {

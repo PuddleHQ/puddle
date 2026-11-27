@@ -223,6 +223,11 @@ describe("WorkspaceRow", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Cloning web, 2 of 3");
   });
 
+  it("shows no Start while the workspace is being created", () => {
+    mount({}, workspace("demo", { status: "created", busy: "creating" }));
+    expect(screen.queryByRole("button", { name: /Start/ })).toBeNull();
+  });
+
   it("tells a workspace with no volume how to get out, and keeps Start", () => {
     const calls = mount({}, workspace("demo", { status: "volume_missing" }));
     const card = screen.getByRole("article");

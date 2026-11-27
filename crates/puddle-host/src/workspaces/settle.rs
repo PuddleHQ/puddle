@@ -518,6 +518,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
 pub(super) struct LifecycleKeeper<'a, R: Runtime> {
     pub(super) runtime: &'a R,
     pub(super) lifecycle: &'a Lifecycle<R>,
+    /// Told the workspace waits for its agent once the VM is up (the boot hook runs next).
+    pub(super) events: &'a dyn EventSink,
+    pub(super) workspace: &'a WorkspaceId,
 }
 
 impl<R: Runtime> puddle_boot::Keeper<R::Sandbox> for LifecycleKeeper<'_, R> {
@@ -532,7 +535,17 @@ impl<R: Runtime> puddle_boot::Keeper<R::Sandbox> for LifecycleKeeper<'_, R> {
             Err(e) => return Err((owning, e.to_string())),
         };
         match self.lifecycle.manage(owning, vec![mount]) {
-            Ok(_) => Ok(borrowed),
+            Ok(_) => {
+                self.events.emit(Event::WorkspaceProgress {
+                    workspace: self.workspace.clone(),
+                    step: WorkspaceStep::WaitingForAgent,
+                    detail: None,
+                    repository: None,
+                    bytes_done: None,
+                    bytes_total: None,
+                });
+                Ok(borrowed)
+            }
             Err(owning) => Err((owning, OpError::ShuttingDown.to_string())),
         }
     }

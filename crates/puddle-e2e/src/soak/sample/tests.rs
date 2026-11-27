@@ -213,6 +213,7 @@ async fn a_keep_alive_comment_and_a_data_line_each_show_the_stream_is_alive() {
     assert_eq!(reconnects, 0);
     task.abort();
 
+    // flake-ok: one fixed sleep per scripted stream, an absence/age window; no condition is polled
     for script in [
         "HTTP/1.0 200 OK\r\n\r\n<pause>: keep-alive\n\n",
         "HTTP/1.0 200 OK\r\n\r\n<pause>data: {}\n\n",

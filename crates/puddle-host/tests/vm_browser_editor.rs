@@ -2039,12 +2039,11 @@ const WARM_UP_ROUNDS: u32 = 2;
 /// Whether the editor has cached the multi-root file in its own configuration cache: `yes` or `no`.
 const WORKSPACE_CACHED: &str = "ls /workspace/.puddle/code-server/user-data/User/caches/CachedConfigurations/workspaces/*/workspace.json >/dev/null 2>&1 && echo yes || echo no";
 
-/// Memory samples per round, and the wait before each: the round's figure is the lowest of them.
-const RSS_SAMPLES: usize = 4;
-const RSS_SETTLE: Duration = Duration::from_secs(1);
+/// Four guest memory sums (bytes) one second apart; the round's figure is the lowest of them.
 
 /// What the guest's processes hold in memory, summed (bytes).
-const GUEST_RSS: &str = "ps -eo rss= | awk '{ s += $1 } END { print s * 1024 }'";
+const GUEST_RSS_SAMPLES: &str =
+    "for i in 1 2 3 4; do sleep 1; ps -eo rss= | awk '{ s += $1 } END { print s * 1024 }'; done";
 
 /// K tier, code-server, soak bar. The window opened and closed ten times in a row: after each
 /// close the guest has no extension host, and after the tenth the guest's memory floor (the lowest of four samples after the close) is within 10 % of
@@ -2127,11 +2126,12 @@ async fn vm_soak_browser_code_server_ten_opens_and_closes_leave_no_extension_hos
         )
         .await;
         // A single sample swings by a third on a busy host: settle, then keep the lowest of a few.
-        let mut samples = Vec::new();
-        for _ in 0..RSS_SAMPLES {
-            tokio::time::sleep(RSS_SETTLE).await;
-            samples.push(editor.guest(GUEST_RSS).await.trim().parse::<u64>().unwrap());
-        }
+        let samples: Vec<u64> = editor
+            .guest(GUEST_RSS_SAMPLES)
+            .await
+            .split_whitespace()
+            .map(|n| n.parse().unwrap())
+            .collect();
         let rss = puddle_vm_tests::soak::rss_floor(&samples).unwrap();
         eprintln!(
             "round {round}: guest memory floor {rss} bytes of {samples:?}; open {open}; closed {closed}"

@@ -365,6 +365,8 @@
   }
   .group-head {
     display: flex;
+    /* The count drops below the domain before the domain is squeezed into breaking inside a label. */
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--space-3);
     padding: var(--space-3) var(--space-4);

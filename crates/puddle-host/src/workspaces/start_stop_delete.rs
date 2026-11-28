@@ -28,6 +28,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         self.progress(name, WorkspaceStep::Starting, None);
         inner.problems.clear(&problem_key("forced-stop", name));
         inner.problems.clear(&problem_key("start-refused", name));
+        self.check_memory_for_start(&record).await;
         inner.reports.begin(name, &record.name);
         let sandbox = inner
             .runtime

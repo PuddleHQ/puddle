@@ -605,5 +605,23 @@ impl Drop for LocalBox {
     }
 }
 
+/// The commit the system can still promise (`ullAvailPageFile` of `GlobalMemoryStatusEx`), in bytes.
+///
+/// # Errors
+///
+/// The call fails.
+pub fn available_commit() -> io::Result<u64> {
+    use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    // SAFETY: an all-zero MEMORYSTATUSEX is a valid value (plain integers).
+    let mut status: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
+    status.dwLength = u32::try_from(size_of::<MEMORYSTATUSEX>()).unwrap_or(0);
+    // SAFETY: `status` is a valid place for the answer with `dwLength` set as the call requires.
+    let ok = unsafe { GlobalMemoryStatusEx(&raw mut status) };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(status.ullAvailPageFile)
+}
+
 #[cfg(test)]
 mod tests;

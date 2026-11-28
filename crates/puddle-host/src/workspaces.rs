@@ -72,6 +72,7 @@ mod access;
 mod boot;
 mod create_and_grow;
 mod images;
+mod memory_at_start;
 mod monitor;
 mod operations;
 mod plumbing;

@@ -596,6 +596,89 @@ fn an_entrypoint_that_fails_at_once_or_ends_cleanly_leaves_its_exit_too() {
     }
 }
 
+/// `plan` with `lines` run by the hook just before the plan ends.
+fn plan_with_lines(plan: &BootPlan, lines: &str) -> Vec<u8> {
+    let text = String::from_utf8(plan.render()).unwrap();
+    let at = text.rfind("puddle_plan_end").unwrap();
+    format!("{}{lines}\n{}", &text[..at], &text[at..]).into_bytes()
+}
+
+#[test]
+fn a_record_the_hook_cannot_append_to_fails_the_boot_with_its_name() {
+    let plan = BootPlan::builder(&ImageConfig::default())
+        .no_agent()
+        .build()
+        .unwrap();
+    // Each case turns the file into a directory, so the append fails, then calls what appends.
+    let cases = [
+        (
+            "triggers",
+            "puddle_on_change a b",
+            "cannot record a trigger",
+        ),
+        ("steps", "puddle_step x", "cannot record a step"),
+        (
+            "agent.env.new",
+            "puddle_agent_env K V",
+            "cannot record the agent's settings",
+        ),
+        ("agent.env.new", ":", "cannot record the agent's settings"),
+        (
+            "entry-env",
+            "puddle_entrypoint_env K=V",
+            "cannot record the entrypoint environment",
+        ),
+        (
+            "files.new",
+            "puddle_file /etc/x 644 hi",
+            "cannot record a written file",
+        ),
+    ];
+    for (name, call, said) in cases {
+        let fr = FakeRoot::new(&shells()[0]);
+        let lines = format!("rm -f \"$RUN/{name}\"; mkdir \"$RUN/{name}\"; {call}");
+        let out = fr.run_raw(&plan_with_lines(&plan, &lines), &[], true);
+        assert_eq!(out.status.code(), Some(1), "{name}: {}", show(&out));
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains(said),
+            "{name}: {}",
+            show(&out)
+        );
+        assert!(!fr.path("/run/puddle/boot.done").exists(), "{name}");
+    }
+}
+
+#[test]
+fn the_lists_of_written_and_merged_files_are_replaced_whole_or_not_at_all() {
+    let plan = full_plan("CA\n");
+    for (name, said) in [
+        ("boot-files", "cannot record the files written"),
+        ("merge-files", "cannot record the files merged"),
+    ] {
+        let fr = FakeRoot::new(&shells()[0]);
+        assert!(fr.run(&plan).status.success());
+        let before = fr.read(&format!("/var/lib/puddle/{name}"));
+        // The temporary sits next to the target, so a blocked temporary stops the replacement.
+        let tmp = fr.path(&format!("/var/lib/puddle/{name}.new"));
+        std::fs::create_dir(&tmp).unwrap();
+        let out = fr.run(&plan);
+        assert_eq!(out.status.code(), Some(1), "{name}: {}", show(&out));
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains(said),
+            "{name}: {}",
+            show(&out)
+        );
+        assert_eq!(
+            fr.read(&format!("/var/lib/puddle/{name}")),
+            before,
+            "{name}"
+        );
+        std::fs::remove_dir_all(&tmp).unwrap();
+        assert!(fr.run(&plan).status.success(), "{name}");
+        assert!(!tmp.exists(), "{name}: no temporary is left behind");
+    }
+}
+
 #[test]
 fn boot_d_steps_run_in_name_order_and_a_failing_one_fails_the_boot() {
     let fr = FakeRoot::new(&shells()[0]);
@@ -1617,5 +1700,59 @@ fn a_root_session_user_changes_no_user_database_and_owns_nothing() {
         !String::from_utf8(plan.render())
             .unwrap()
             .contains("puddle_session_user")
+    );
+}
+
+const LEAK_ENV: &str = "PUDDLE_BOOT_TEST_LEAK_REPORT";
+
+/// Not a test of its own: the child process of `a_killed_test_process_leaves_no_supervisor_or_folder`,
+/// which runs it with `--ignored`. Starts the hook, reports where, and waits to be killed.
+#[test]
+#[ignore = "child process of a_killed_test_process_leaves_no_supervisor_or_folder"]
+fn killed_process_helper() {
+    let report = std::env::var_os(LEAK_ENV).expect("set by the parent test");
+    let fr = FakeRoot::new(&shells()[0]);
+    assert!(fr.run(&full_plan("CA\n")).status.success());
+    let line = format!(
+        "{} {}",
+        fr.recorded_pid("supervisor.pid").unwrap(),
+        fr.root.display()
+    );
+    std::fs::write(&report, line).unwrap();
+    loop {
+        std::thread::park();
+    }
+}
+
+/// nextest SIGTERMs a test that outlives its timeout and never runs `FakeRoot::drop`; the
+/// supervisor and the folder under `/tmp` used to stay for good (14 supervisors, 4.5 h).
+#[test]
+fn a_killed_test_process_leaves_no_supervisor_or_folder() {
+    let report = tempfile::NamedTempFile::new().unwrap();
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--ignored", "--exact", "killed_process_helper"])
+        .env(LEAK_ENV, report.path())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let line = eventually_blocking(
+        "the helper reports its root",
+        Duration::from_secs(30),
+        || {
+            Some(std::fs::read_to_string(report.path()).unwrap_or_default())
+                .filter(|l| !l.is_empty())
+        },
+    );
+    let (supervisor, root) = line.split_once(' ').unwrap();
+    let supervisor: u32 = supervisor.parse().unwrap();
+    let root = std::path::PathBuf::from(root);
+    assert!(alive(supervisor) && root.exists());
+    child.kill().unwrap();
+    child.wait().unwrap();
+    eventually_blocking(
+        "the supervisor is gone and its folder removed",
+        Duration::from_secs(20),
+        || !alive(supervisor) && !root.exists(),
     );
 }

@@ -55,9 +55,17 @@ async fn post(api: &Api, path: &str) -> Reply {
     api.send("POST", path, Some(&json!({}))).await
 }
 
-/// Creates `name` and waits until it exists and is idle.
+/// Creates `name` and waits until it exists and is idle: a create ends running, so this
+/// stops it again and the workspace is down.
 async fn created(api: &Api, name: &str) {
-    create(api, name).await;
+    let id = create(api, name).await["id"].as_str().unwrap().to_owned();
+    api.workspaces.idle().await;
+    assert_eq!(
+        post(api, &format!("/api/workspaces/{id}/stop"))
+            .await
+            .status,
+        202
+    );
     api.workspaces.idle().await;
 }
 
@@ -245,7 +253,7 @@ async fn create_is_accepted_busy_and_finishes_with_progress_events() {
         "only creating answers with them"
     );
     assert_eq!(detail["busy"], Value::Null);
-    assert_eq!(detail["status"], "created");
+    assert_eq!(detail["status"], "running");
     assert_eq!(
         api.get("/api/workspaces").await.json()["workspaces"][0],
         detail
@@ -1594,7 +1602,10 @@ async fn a_rename_is_refused_while_the_workspace_is_created_or_deleted() {
         rename(&api, "web", &json!({"name": "Web"})).await.status,
         200
     );
-    // Starting and stopping are not in the way: only the name changes.
+    // Starting and stopping are not in the way: only the name changes. The create ended
+    // running, so stop it first.
+    assert_eq!(post(&api, "/api/workspaces/web/stop").await.status, 202);
+    api.workspaces.idle().await;
     api.workspaces.hold();
     assert_eq!(post(&api, "/api/workspaces/web/start").await.status, 202);
     let during = rename(&api, "web", &json!({"name": "Web 2"})).await;

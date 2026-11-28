@@ -405,6 +405,37 @@ async fn a_dropped_attachment_releases_its_reservation() {
 }
 
 #[tokio::test]
+async fn a_dropped_re_prepare_by_the_owner_keeps_the_attachment() {
+    let rt = FakeRuntime::new();
+    let w = Workspaces::default();
+    let id = ws("acme");
+    w.prepare(&rt, &id, &name("one"), None)
+        .await
+        .unwrap()
+        .commit();
+    assert_eq!(w.holder(&id).unwrap().kind, HoldKind::Attached);
+    let again = w.prepare_existing(&rt, &id, &name("one")).await.unwrap();
+    assert_eq!(w.holder(&id).unwrap().kind, HoldKind::Attaching);
+    drop(again);
+    assert_eq!(
+        w.holder(&id).map(|h| (h.sandbox.to_string(), h.kind)),
+        Some(("one".to_owned(), HoldKind::Attached))
+    );
+    // A re-prepare that fails part way keeps it too.
+    rt.inject(
+        Op::Volume,
+        Fault::once(ComputeError::Runtime {
+            op: "x",
+            message: "down".into(),
+        }),
+    );
+    w.prepare_existing(&rt, &id, &name("one"))
+        .await
+        .unwrap_err();
+    assert_eq!(w.holder(&id).unwrap().kind, HoldKind::Attached);
+}
+
+#[tokio::test]
 async fn a_failed_runtime_lookup_releases_the_reservation() {
     let rt = FakeRuntime::new();
     let w = Workspaces::default();

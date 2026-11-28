@@ -11,7 +11,8 @@ repository.workspace = true
 publish.workspace = true
 
 [features]
-# `FakeWorkspaces`, `FakeLauncher` and `contract`, the workspace-service suite every implementation runs.
+# Every in-memory fake (`FakeWorkspaces`, `FakeLauncher`, `FakeBackup`, `FakeRestore` and the rest) and
+# `contract`, the workspace-service suite every implementation runs.
 # For tests and the UI fixture; never in a shipped program.
 testing = []
 

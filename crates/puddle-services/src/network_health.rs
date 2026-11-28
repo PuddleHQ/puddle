@@ -8,7 +8,9 @@
 //! text from outside enters it passes through [`puddle_upstream::redact_text`] or
 //! [`puddle_upstream::redact_url`] first.
 
-use std::sync::{Arc, Mutex, PoisonError, RwLock};
+#[cfg(any(test, feature = "testing"))]
+use std::sync::Mutex;
+use std::sync::{Arc, PoisonError, RwLock};
 
 use futures_util::future::BoxFuture;
 use puddle_certs::{CertKind, CorporateRoots};
@@ -434,6 +436,7 @@ fn roots_report(state: Option<&RootsState>, left_out_of_tls: Vec<SkippedRoot>) -
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 /// An in-memory [`NetworkHealthService`] for tests and the UI fixture: it serves the report it
 /// was given, stamped with the clock's time, and [`FakeNetworkHealth::set`] replaces it.
 pub struct FakeNetworkHealth {
@@ -442,12 +445,14 @@ pub struct FakeNetworkHealth {
     sign_ins: Option<Arc<dyn ProxySignInService>>,
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl std::fmt::Debug for FakeNetworkHealth {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FakeNetworkHealth").finish_non_exhaustive()
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl FakeNetworkHealth {
     /// Serves a machine with no proxy until [`FakeNetworkHealth::set`] says otherwise.
     #[must_use]
@@ -473,6 +478,7 @@ impl FakeNetworkHealth {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl NetworkHealthService for FakeNetworkHealth {
     fn report(&self) -> BoxFuture<'_, Result<NetworkHealth, NetworkHealthError>> {
         Box::pin(async move {

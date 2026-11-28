@@ -301,13 +301,20 @@ same() { command -v cmp >/dev/null 2>&1 && cmp -s "$1" "$2"; }
 merge_result() { # merge_result <path> <tool output>
     case $2 in
     changed | removed)
-        printf '%s\n' "$1" >>"$RUN/changed"
+        printf '%s\n' "$1" >>"$RUN/changed" || die "cannot record a changed file"
         say "$1: Puddle's own lines were $2 (everything else in the file is as it was)"
         ;;
     unchanged) ;;
     left:*) say "$1 left as it is: ${2#left: }" ;;
     *) die "unexpected answer from the merge tool for $1: $2" ;;
     esac
+}
+
+# replace_whole <source> <target>: the target is replaced whole or not at all. The copy is made
+# next to it, because a rename from /run to /var/lib crosses file systems and is a copy too.
+replace_whole() {
+    cp "$1" "$2.new" || return 1
+    mv -f "$2.new" "$2"
 }
 
 # shellcheck disable=SC2329 # the plan calls these
@@ -326,7 +333,7 @@ $1"; }
         chmod "$2" "$tmp" || die "cannot set mode $2 on $1"
         if [ "$IS_ROOT" = 1 ]; then chown 0:0 "$tmp" || die "cannot make root own $1"; fi
         if ! { [ -f "$dst" ] && [ ! -L "$dst" ] && same "$tmp" "$dst"; }; then
-            printf '%s\n' "$1" >>"$RUN/changed"
+            printf '%s\n' "$1" >>"$RUN/changed" || die "cannot record a changed file"
             # Something was there and was not Puddle's text: the host reads this line to tell the
             # user that the workspace changed a file Puddle owns. Not said for a file that is new,
             # and not without cmp (then every file looks changed).
@@ -342,7 +349,7 @@ $1"; }
         }
         mv -f "$tmp" "$dst" || die "cannot move $1 into place"
         if session_owns "$1"; then own "$SESSION_OWNER" "$dst"; fi
-        printf '%s\n' "$1" >>"$RUN/files.new"
+        printf '%s\n' "$1" >>"$RUN/files.new" || die "cannot record a written file"
     }
     puddle_merge_tool() { MERGE_TOOL=$1; }
     puddle_merge() { # puddle_merge <path> <octal mode> <printf format of the merge spec (JSON)>
@@ -357,22 +364,22 @@ $1"; }
         merge_result "$1" "$out"
         # Below the home every file is the session user's, also one the tool just made as root.
         if session_owns "$1" && [ -f "$dst" ] && [ ! -L "$dst" ]; then own "$SESSION_OWNER" "$dst"; fi
-        printf '%s\n' "$1" >>"$RUN/merge.new"
+        printf '%s\n' "$1" >>"$RUN/merge.new" || die "cannot record a merged file"
     }
     puddle_keep() { # puddle_keep <path>: a file an earlier plan merged stays as it is, still Puddle's
         if [ -f "$STATE/merge-files" ] && grep -Fxq -- "$1" "$STATE/merge-files"; then
-            printf '%s\n' "$1" >>"$RUN/merge.new"
+            printf '%s\n' "$1" >>"$RUN/merge.new" || die "cannot record a merged file"
         fi
     }
-    puddle_on_change() { printf '%s %s\n' "$1" "$2" >>"$RUN/triggers"; }
-    puddle_step() { printf '%s\n' "$1" >>"$RUN/steps"; }
+    puddle_on_change() { printf '%s %s\n' "$1" "$2" >>"$RUN/triggers" || die "cannot record a trigger"; }
+    puddle_step() { printf '%s\n' "$1" >>"$RUN/steps" || die "cannot record a step"; }
     puddle_git_include() { GIT_INCLUDE=$1; }
     puddle_agent() { AGENT=$1 AGENT_PORT=$2; }
-    puddle_agent_env() { printf '%s=%s\n' "$1" "$2" >>"$RUN/agent.env.new"; }
+    puddle_agent_env() { printf '%s=%s\n' "$1" "$2" >>"$RUN/agent.env.new" || die "cannot record the agent's settings"; }
     puddle_capture() { # puddle_capture on|off
         case $1 in on | off) CAPTURE=$1 ;; *) die "bad capture mode '$1' in the plan" 2 ;; esac
     }
-    puddle_entrypoint_env() { printf '%s\n' "$1" >>"$RUN/entry-env"; }
+    puddle_entrypoint_env() { printf '%s\n' "$1" >>"$RUN/entry-env" || die "cannot record the entrypoint environment"; }
     puddle_entrypoint_cwd() { ENTRY_CWD=$1; }
     puddle_plan_end() { PLAN_DONE=1; }
 }
@@ -382,7 +389,7 @@ $1"; }
 [ "$PLAN_DONE" = 1 ] || die "the plan did not reach puddle_plan_end" 2
 # The agent's settings: the supervisor reads this file before every start of the agent, so a
 # restarted agent has them; replaced whole, so a restart between two boots never sees half of it.
-printf 'PUDDLE_AGENT_CAPTURE=%s\n' "$CAPTURE" >>"$RUN/agent.env.new"
+printf 'PUDDLE_AGENT_CAPTURE=%s\n' "$CAPTURE" >>"$RUN/agent.env.new" || die "cannot record the agent's settings"
 # Whether they differ from the last boot's, which an agent that is already running started with.
 AGENT_ENV_CHANGED=
 if [ -f "$RUN/agent.env" ] && [ "$(cat "$RUN/agent.env.new")" != "$(cat "$RUN/agent.env")" ]; then
@@ -398,11 +405,11 @@ if [ -f "$STATE/boot-files" ]; then
         grep -Fxq -- "$p" "$RUN/files.new" && continue
         grep -Fxq -- "$p" "$RUN/merge.new" && continue
         rm -f "$ROOT$p" || die "cannot remove $p"
-        printf '%s\n' "$p" >>"$RUN/changed"
+        printf '%s\n' "$p" >>"$RUN/changed" || die "cannot record a changed file"
         say "removed $p (no longer in the plan)"
     done <"$STATE/boot-files"
 fi
-mv -f "$RUN/files.new" "$STATE/boot-files" || die "cannot record the files written"
+replace_whole "$RUN/files.new" "$STATE/boot-files" || die "cannot record the files written"
 
 # Merged files an earlier plan listed and this one doesn't: remove only Puddle's keys (and the
 # file, if Puddle created it and nothing else is left). One that is written whole now only loses
@@ -413,7 +420,7 @@ if [ -f "$STATE/merge-files" ]; then
         grep -Fxq -- "$p" "$RUN/merge.new" && continue
         if [ -z "$MERGE_TOOL" ] || [ ! -x "$ROOT$MERGE_TOOL" ]; then
             say "Puddle's keys stay in $p for now: no merge tool at ${MERGE_TOOL:-(none)}"
-            printf '%s\n' "$p" >>"$RUN/merge.new"
+            printf '%s\n' "$p" >>"$RUN/merge.new" || die "cannot record a merged file"
         elif grep -Fxq -- "$p" "$STATE/boot-files"; then
             out=$("$ROOT$MERGE_TOOL" merge-file forget "$STATE/merge" "$p" </dev/null 2>&1) ||
                 die "cannot drop the merge record of $p: $out"
@@ -425,7 +432,7 @@ if [ -f "$STATE/merge-files" ]; then
         fi
     done <"$STATE/merge-files"
 fi
-mv -f "$RUN/merge.new" "$STATE/merge-files" || die "cannot record the files merged"
+replace_whole "$RUN/merge.new" "$STATE/merge-files" || die "cannot record the files merged"
 say "files applied ($(grep -c '' "$RUN/changed") changed)"
 
 # git reads Puddle's settings through one include in the system config, which works whether or

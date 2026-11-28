@@ -228,6 +228,21 @@ async fn a_new_secret_value_saved_while_it_runs_keeps_the_stand_in_and_restarts_
     put_acme_api_key(&w).await;
     let stand_in = stand_in_of(host, "acme", "API_KEY");
     let registry = host.workspaces().termination(&name("acme")).unwrap();
+    // The stand-in is registered before the hook runs for the first save, so count boots only
+    // once a plan has written it; otherwise that plan lands after the count and adds a run.
+    eventually(
+        "the first save's boot plan wrote the stand-in",
+        APPLY,
+        || {
+            (0..rig.guest.boots()).any(|n| {
+                rig.guest
+                    .plan_files(n)
+                    .get("/etc/profile.d/01-puddle-env.sh")
+                    .is_some_and(|file| String::from_utf8_lossy(file).contains(&stand_in))
+            })
+        },
+    )
+    .await;
     let boots = rig.guest.boots();
     let (creates, starts, stops) = (
         calls_of(rig, "Create"),

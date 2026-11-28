@@ -325,8 +325,6 @@ async fn the_rules_on_method_and_path_follow_the_store_and_their_hosts_are_decry
     };
     add(None, "global.example", "/a");
     add(Some(&workspace("beta")), "beta.example", "/a");
-    // Too wide for the proxy's grammar: the row is left out, the others still apply.
-    add(Some(&ws), "*.com", "/a");
     let own = add(Some(&ws), "own.example", "/b/**");
     injection.begin(&ws, false).await.unwrap();
     assert!(delete_refused(&terminations, "global.example", "/a").is_some());

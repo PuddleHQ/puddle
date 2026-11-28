@@ -151,7 +151,7 @@ pub(crate) fn azure(reply: &ApiReply, now_ms: u64, strikes: u32) -> Verdict {
 
 /// Whether a page is Azure DevOps' sign-in page: it names the service and asks to sign in.
 fn looks_like_azure_sign_in(reply: &ApiReply) -> bool {
-    let head = &reply.body[..reply.body.len().min(16 * 1024)];
+    let head = reply.body.chunks(16 * 1024).next().unwrap_or_default();
     let page = String::from_utf8_lossy(head).to_ascii_lowercase();
     page.contains("sign in") && (page.contains("azure devops") || page.contains("visualstudio.com"))
 }

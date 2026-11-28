@@ -1568,13 +1568,12 @@ fn a_root_session_user_changes_no_user_database_and_owns_nothing() {
 
 const LEAK_ENV: &str = "PUDDLE_BOOT_TEST_LEAK_REPORT";
 
-/// Not a test of its own: the child process of `a_killed_test_process_leaves_no_supervisor_or_folder`.
-/// Starts the hook, reports where, and waits to be killed.
+/// Not a test of its own: the child process of `a_killed_test_process_leaves_no_supervisor_or_folder`,
+/// which runs it with `--ignored`. Starts the hook, reports where, and waits to be killed.
 #[test]
+#[ignore = "child process of a_killed_test_process_leaves_no_supervisor_or_folder"]
 fn killed_process_helper() {
-    let Some(report) = std::env::var_os(LEAK_ENV) else {
-        return;
-    };
+    let report = std::env::var_os(LEAK_ENV).expect("set by the parent test");
     let fr = FakeRoot::new(&shells()[0]);
     assert!(fr.run(&full_plan("CA\n")).status.success());
     let line = format!(
@@ -1583,19 +1582,18 @@ fn killed_process_helper() {
         fr.root.display()
     );
     std::fs::write(&report, line).unwrap();
-    std::thread::sleep(Duration::from_secs(300));
+    loop {
+        std::thread::park();
+    }
 }
 
 /// nextest SIGTERMs a test that outlives its timeout and never runs `FakeRoot::drop`; the
 /// supervisor and the folder under `/tmp` used to stay for good (14 supervisors, 4.5 h).
 #[test]
 fn a_killed_test_process_leaves_no_supervisor_or_folder() {
-    if std::env::var_os(LEAK_ENV).is_some() {
-        return;
-    }
     let report = tempfile::NamedTempFile::new().unwrap();
     let mut child = std::process::Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "killed_process_helper", "--test-threads=1"])
+        .args(["--ignored", "--exact", "killed_process_helper"])
         .env(LEAK_ENV, report.path())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())

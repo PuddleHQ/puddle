@@ -32,6 +32,7 @@ const noLayer = (): S["SettingsLayer"] => ({
     font_size: null,
     extensions: null,
     keybindings: null,
+    settings: null,
   },
 });
 
@@ -253,6 +254,10 @@ export class FakeSettings {
           keybindings: {
             value: l.editor.keybindings,
             source: l.editor.keybindings === null ? "default" : "global",
+          },
+          settings: {
+            value: l.editor.settings,
+            source: l.editor.settings === null ? "default" : "global",
           },
         },
       },

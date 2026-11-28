@@ -68,6 +68,9 @@ use relay::relay;
 /// #     fn decide(&self, _: &EgressRequest, _: SuffixAllows) -> Result<Decision, PolicyError> {
 /// #         Err(PolicyError { reason: "demo".into() })
 /// #     }
+/// #     fn lookup(&self, _: &EgressRequest, _: SuffixAllows) -> Result<Option<Decision>, PolicyError> {
+/// #         Ok(None)
+/// #     }
 /// # }
 /// let proxy = Arc::new(Proxy::new(Arc::new(Store), Arc::new(NullSink)));
 /// # let _ = proxy;

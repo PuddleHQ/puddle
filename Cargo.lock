@@ -5435,7 +5435,7 @@ dependencies = [
 [[package]]
 name = "pageant"
 version = "0.2.5"
-source = "git+https://github.com/PuddleHQ/russh?tag=v0.65.2-puddle.1#1fa97aaaadd68215406af1667e64c7764b6a8ecc"
+source = "git+https://github.com/PuddleHQ/russh?tag=v0.65.2-puddle.2#d7be74282199f14b00570996d7cd9876ddfa6eb9"
 dependencies = [
  "base16ct",
  "byteorder",
@@ -7516,7 +7516,7 @@ dependencies = [
 [[package]]
 name = "russh"
 version = "0.65.2"
-source = "git+https://github.com/PuddleHQ/russh?tag=v0.65.2-puddle.1#1fa97aaaadd68215406af1667e64c7764b6a8ecc"
+source = "git+https://github.com/PuddleHQ/russh?tag=v0.65.2-puddle.2#d7be74282199f14b00570996d7cd9876ddfa6eb9"
 dependencies = [
  "aes",
  "aws-lc-rs",
@@ -7586,7 +7586,7 @@ dependencies = [
 [[package]]
 name = "russh-cryptovec"
 version = "0.62.0"
-source = "git+https://github.com/PuddleHQ/russh?tag=v0.65.2-puddle.1#1fa97aaaadd68215406af1667e64c7764b6a8ecc"
+source = "git+https://github.com/PuddleHQ/russh?tag=v0.65.2-puddle.2#d7be74282199f14b00570996d7cd9876ddfa6eb9"
 dependencies = [
  "log",
  "nix 0.31.4",
@@ -7617,7 +7617,7 @@ dependencies = [
 [[package]]
 name = "russh-util"
 version = "0.52.0"
-source = "git+https://github.com/PuddleHQ/russh?tag=v0.65.2-puddle.1#1fa97aaaadd68215406af1667e64c7764b6a8ecc"
+source = "git+https://github.com/PuddleHQ/russh?tag=v0.65.2-puddle.2#d7be74282199f14b00570996d7cd9876ddfa6eb9"
 dependencies = [
  "chrono",
  "tokio",

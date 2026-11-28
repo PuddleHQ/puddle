@@ -353,7 +353,7 @@ impl BootHook {
         let _boot = gate.lock_boot().await;
         let mut booting = Booting::open(gate);
         let sandbox = runtime.create(spec).await?;
-        booting.vm_runs();
+        booting.mark_vm_running();
         let sandbox = kept(sandbox, keeper).await?;
         self.finish(sandbox, plan, booting).await
     }
@@ -391,13 +391,15 @@ impl BootHook {
         let _boot = gate.lock_boot().await;
         let mut booting = Booting::open(gate);
         let sandbox = runtime.start(name).await?;
-        booting.vm_runs();
+        booting.mark_vm_running();
         let sandbox = kept(sandbox, keeper).await?;
         self.finish(sandbox, plan, booting).await
     }
 
     /// Re-adopts a running sandbox a previous Puddle left behind and runs the hook again
     /// (idempotent: it converges and starts nothing twice).
+    /// The host has no caller for this: it re-runs the hook on a sandbox it kept with
+    /// [`BootHook::run`]. The gate tests are the only callers.
     ///
     /// # Errors
     ///
@@ -412,7 +414,7 @@ impl BootHook {
         let _boot = gate.lock_boot().await;
         let mut booting = Booting::open(gate);
         let sandbox = runtime.get(name).await?;
-        booting.vm_runs();
+        booting.mark_vm_running();
         self.finish(sandbox, plan, booting).await
     }
 
@@ -449,7 +451,7 @@ impl BootHook {
 /// One boot's hold on the gate: `Booting` from [`Booting::open`] until [`Booting::settle`]. A boot
 /// that ends another way (a runtime error, or the caller dropping the future at an await) puts
 /// the gate back, so it never stays `Booting` with nobody booting: to the state from before while
-/// the runtime call has not answered, to `Down` once it has ([`Booting::vm_runs`]). Neither
+/// the runtime call has not answered, to `Down` once it has ([`Booting::mark_vm_running`]). Neither
 /// overwrites a stop that closed the gate meanwhile.
 struct Booting<'g> {
     gate: &'g Gate,
@@ -471,7 +473,7 @@ impl<'g> Booting<'g> {
     /// from before no longer describes it (a gate left `Ready` by a VM that died unstopped would
     /// let exec in on an unhooked VM), so a boot that ends from here without a verdict leaves
     /// the gate `Down`.
-    fn vm_runs(&mut self) {
+    fn mark_vm_running(&mut self) {
         self.on_drop = Some(GateState::Down);
     }
 

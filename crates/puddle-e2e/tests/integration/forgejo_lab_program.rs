@@ -15,25 +15,11 @@
 #![cfg(unix)]
 
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use puddle_e2e::lab::clean_git;
-
-/// The running program; stopped (through its stop file, then a kill) when dropped.
-struct Program {
-    child: Child,
-    stop: std::path::PathBuf,
-}
-
-impl Drop for Program {
-    fn drop(&mut self) {
-        std::fs::write(&self.stop, "").ok();
-        if self.child.wait().is_err() {
-            self.child.kill().ok();
-        }
-    }
-}
+use puddle_test_kit::ProcessGuard;
 
 fn run(cmd: &mut Command) -> String {
     let out = cmd.stdin(Stdio::null()).output().unwrap();
@@ -93,7 +79,7 @@ fn the_program_serves_ssh_and_its_info_file_lets_git_clone_with_the_key_and_chec
         .stdin(Stdio::null())
         .spawn()
         .unwrap();
-    let mut program = Program { child, stop };
+    let mut program = ProcessGuard::new(child, Some(stop));
     let deadline = Instant::now() + Duration::from_mins(3);
     // flake-ok: waiting for a program to write its file, bounded, failing with its state.
     let info: serde_json::Value = loop {
@@ -101,7 +87,7 @@ fn the_program_serves_ssh_and_its_info_file_lets_git_clone_with_the_key_and_chec
             break serde_json::from_str(&text).unwrap();
         }
         assert!(
-            program.child.try_wait().unwrap().is_none() && Instant::now() < deadline,
+            program.child().try_wait().unwrap().is_none() && Instant::now() < deadline,
             "the program wrote no info file"
         );
         std::thread::sleep(Duration::from_millis(250));

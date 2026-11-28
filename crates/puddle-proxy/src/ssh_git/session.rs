@@ -330,13 +330,11 @@ async fn watch_connection<S>(
     }
 }
 
-/// A session channel the client opened and has not used yet.
+/// A session channel the client opened and has not used yet; a command or a shell takes it out.
 struct Slot {
-    channel: Option<Channel<Msg>>,
+    channel: Channel<Msg>,
     /// The `GIT_PROTOCOL` versions the guest named, in order.
     versions: Vec<u8>,
-    /// A command or a shell was started on it.
-    started: bool,
 }
 
 /// The SSH server's handler for one connection.
@@ -344,7 +342,8 @@ struct Conn {
     ctx: Arc<Ctx>,
     libssh2: bool,
     slots: HashMap<ChannelId, Slot>,
-    /// The channels' tasks; dropped with the connection, which ends them.
+    /// The channels' tasks; dropped with the connection, which ends them, and joined when they
+    /// finish, at the next spawn.
     tasks: JoinSet<()>,
     limits: GitSshLimits,
 }
@@ -424,9 +423,8 @@ impl russh::server::Handler for Conn {
         self.slots.insert(
             id,
             Slot {
-                channel: Some(channel),
+                channel,
                 versions: Vec::new(),
-                started: false,
             },
         );
         reply.accept().await;
@@ -511,11 +509,12 @@ impl russh::server::Handler for Conn {
         session: &mut Session,
     ) -> Result<(), Self::Error> {
         let accepted = match self.slots.get_mut(&channel) {
-            Some(slot) if !slot.started && name == "GIT_PROTOCOL" => protocol_versions(value)
-                .is_some_and(|versions| {
+            Some(slot) if name == "GIT_PROTOCOL" => {
+                protocol_versions(value).is_some_and(|versions| {
                     slot.versions = versions;
                     true
-                }),
+                })
+            }
             _ => false,
         };
         if accepted {
@@ -541,7 +540,7 @@ impl russh::server::Handler for Conn {
         let ctx = Arc::clone(&self.ctx);
         let command = std::str::from_utf8(command).map(str::to_owned).ok();
         tracing::debug!(workspace = %self.ctx.workspace, command = command.as_deref().unwrap_or("(not text)"), "ssh exec request");
-        self.tasks.spawn(async move {
+        self.spawn(async move {
             run_exec(&ctx, taken.channel, command, taken.versions).await;
             ctx.open.remove(channel);
         });
@@ -560,7 +559,7 @@ impl russh::server::Handler for Conn {
         };
         session.channel_success(channel)?;
         let ctx = Arc::clone(&self.ctx);
-        self.tasks.spawn(async move {
+        self.spawn(async move {
             run_shell(&ctx, taken.channel).await;
             ctx.open.remove(channel);
         });
@@ -616,17 +615,21 @@ struct Taken {
 }
 
 impl Conn {
-    /// The channel of `id` if nothing was started on it yet; marks it started.
+    /// The channel of `id` if nothing was started on it yet; its slot is gone after, so a second
+    /// request finds none.
     fn take(&mut self, id: ChannelId) -> Option<Taken> {
-        let slot = self.slots.get_mut(&id)?;
-        if slot.started {
-            return None;
-        }
-        slot.started = true;
+        let slot = self.slots.remove(&id)?;
         Some(Taken {
-            channel: slot.channel.take()?,
-            versions: std::mem::take(&mut slot.versions),
+            channel: slot.channel,
+            versions: slot.versions,
         })
+    }
+
+    /// Runs `work` as one of the connection's tasks, after joining the ones that finished: a
+    /// connection that runs commands for ever keeps nothing for the ones that ended.
+    fn spawn(&mut self, work: impl Future<Output = ()> + Send + 'static) {
+        while self.tasks.try_join_next().is_some() {}
+        self.tasks.spawn(work);
     }
 }
 

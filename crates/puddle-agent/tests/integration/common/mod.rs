@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use puddle_agent::config::{OomSources, Target};
 use puddle_agent::{Agent, Config};
-use puddle_agent_proto::host::{HostConfig, serve_session};
+use puddle_agent_proto::host::{HostConfig, SessionId, serve_session};
 use puddle_agent_proto::testing::AllowAll;
 use puddle_test_kit::eventually;
 use puddle_types::{Event, EventSink, WorkspaceId};
@@ -171,6 +171,7 @@ fn start_counted_host(
                 let _ = serve_session(
                     conn,
                     workspace(),
+                    SessionId::next(),
                     sink,
                     Arc::new(AllowAll),
                     HostConfig::default(),

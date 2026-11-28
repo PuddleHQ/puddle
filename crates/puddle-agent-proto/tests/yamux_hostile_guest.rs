@@ -25,9 +25,12 @@ fn header(kind: u8, flags: u16, stream: u32, length: u32) -> [u8; 12] {
     h
 }
 
-/// Resident set size of this process in KiB.
+/// Resident set size of this process in KiB; 0 where there is no `/proc` (Windows), so the
+/// message reports no figure there and the assertions are the same.
 fn rss_kib() -> u64 {
-    let statm = std::fs::read_to_string("/proc/self/statm").unwrap();
+    let Ok(statm) = std::fs::read_to_string("/proc/self/statm") else {
+        return 0;
+    };
     let pages: u64 = statm.split_whitespace().nth(1).unwrap().parse().unwrap();
     pages * 4
 }

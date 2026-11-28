@@ -283,9 +283,7 @@ async fn registry_answer(rig: &Rig, method: &str, real: &str) -> Value {
 }
 
 fn swapped(rig: &Rig, stand_in: &str, real: &str) -> bool {
-    rig.registry
-        .set_real(stand_in, puddle_proxy::SecretValue::new(real))
-        == Ok(true)
+    rig.registry.real_of(stand_in).as_deref() == Some(real)
 }
 
 #[tokio::test]

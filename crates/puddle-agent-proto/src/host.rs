@@ -4,7 +4,7 @@
 //!
 //! ```no_run
 //! # use std::sync::Arc;
-//! # use puddle_agent_proto::host::{serve_session, GuestStream, HostConfig, StreamHandler};
+//! # use puddle_agent_proto::host::{serve_session, GuestStream, HostConfig, SessionId, StreamHandler};
 //! # use puddle_types::{NullSink, WorkspaceId};
 //! struct Proxy;
 //! impl StreamHandler for Proxy {
@@ -17,7 +17,7 @@
 //! #     conn: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 //! # ) -> Result<(), Box<dyn std::error::Error>> {
 //! let workspace = WorkspaceId::new("box")?;
-//! serve_session(conn, workspace, Arc::new(NullSink), Arc::new(Proxy), HostConfig::default()).await?;
+//! serve_session(conn, workspace, SessionId::next(), Arc::new(NullSink), Arc::new(Proxy), HostConfig::default()).await?;
 //! # Ok(()) }
 //! ```
 
@@ -26,7 +26,7 @@ use std::io;
 use std::ops::ControlFlow;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -240,8 +240,24 @@ pub trait GuestWatcher: Send + Sync + 'static {
 
     /// An agent session of `workspace` ended, however it ended. The guest's agent restarting
     /// ends one too, so this proves nothing alone; the VM dying is the case it is a fast hint
-    /// for.
-    fn session_ended(&self, workspace: &WorkspaceId);
+    /// for. `session` is the one that ended: a link whose [`GuestLink::session`] is another one
+    /// is not affected.
+    fn session_ended(&self, workspace: &WorkspaceId, session: SessionId);
+}
+
+/// Names one agent session. The host mints one per accepted connection, hands it to
+/// [`serve_session`], and reports it to [`GuestWatcher::session_ended`] when the session ends; the
+/// session's [`GuestLink`] carries it. Unique within the process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SessionId(u64);
+
+impl SessionId {
+    /// A new identity, different from every earlier one.
+    #[must_use]
+    pub fn next() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        Self(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
 }
 
 /// A report from the guest that UDP was refused: the guest's own claim, cleaned by the host
@@ -372,9 +388,10 @@ struct Shared<H> {
 }
 
 /// Serves one connection from a workspace's agent until it closes. `workspace` is the workspace the
-/// route belongs to (the route is the identity): nothing the guest sends can change it.
+/// route belongs to (the route is the identity): nothing the guest sends can change it. `session`
+/// names this connection (see [`SessionId`]) and goes on the link handed to the handler.
 ///
-/// Every stream task is owned here and ends when the session does.
+/// Every stream task is owned here and has ended when this returns.
 ///
 /// # Errors
 ///
@@ -384,6 +401,7 @@ struct Shared<H> {
 pub async fn serve_session<IO, H>(
     mut io: IO,
     workspace: WorkspaceId,
+    session_id: SessionId,
     sink: Arc<dyn EventSink>,
     handler: Arc<H>,
     config: HostConfig,
@@ -406,7 +424,7 @@ where
         server_config(),
     );
     let shared = Arc::new(Shared {
-        link: GuestLink::new(session.control()),
+        link: GuestLink::new(session.control(), session_id),
         workspace,
         sink,
         handler,
@@ -415,11 +433,11 @@ where
         control_open: AtomicBool::new(false),
     });
     let mut tasks = JoinSet::new();
-    loop {
+    let ended = loop {
         tokio::select! {
             inbound = session.next() => match inbound {
-                None => return Ok(()),
-                Some(Err(err)) => return Err(err.into()),
+                None => break Ok(()),
+                Some(Err(err)) => break Err(err.into()),
                 Some(Ok(stream)) => {
                     tasks.spawn(serve_stream(stream, Arc::clone(&shared)));
                 }
@@ -432,7 +450,9 @@ where
                 }
             }
         }
-    }
+    };
+    tasks.shutdown().await;
+    ended
 }
 
 /// Reads the first byte within `limit`; `None` at a clean end of stream.

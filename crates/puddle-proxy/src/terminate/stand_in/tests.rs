@@ -581,6 +581,20 @@ fn the_registry_changes_while_in_use() {
 }
 
 #[test]
+fn the_real_value_behind_a_stand_in_is_readable_to_tests() {
+    let registry = registry();
+    assert_eq!(registry.real_of(GH).as_deref(), Some(REAL_GH));
+    assert_eq!(registry.real_of(API).as_deref(), Some(REAL_API));
+    assert_eq!(
+        registry.set_real(GH, SecretValue::new("ghp_refreshed")),
+        Ok(true)
+    );
+    assert_eq!(registry.real_of(GH).as_deref(), Some("ghp_refreshed"));
+    assert_eq!(registry.real_of(API).as_deref(), Some(REAL_API));
+    assert_eq!(registry.real_of("nope-nope-nope-nope"), None);
+}
+
+#[test]
 fn the_hosts_to_terminate_are_the_hosts_of_every_entry() {
     let registry = registry();
     let hosts = registry.hosts();

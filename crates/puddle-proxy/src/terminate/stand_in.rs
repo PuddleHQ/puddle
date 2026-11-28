@@ -453,6 +453,20 @@ impl StandIns {
         Ok(true)
     }
 
+    /// The real value behind the stand-in `stand_in`, for tests of whoever fills the registry:
+    /// `set_real` is the only other way to touch it, so without this a test cannot tell a refresh
+    /// that set the new token from one that left the old one.
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn real_of(&self, stand_in: &str) -> Option<String> {
+        self.entries
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .find(|e| e.text == stand_in)
+            .map(|e| e.real.expose().to_owned())
+    }
+
     /// How many stand-ins are registered.
     #[must_use]
     pub fn len(&self) -> usize {

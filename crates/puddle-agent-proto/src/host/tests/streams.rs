@@ -59,11 +59,11 @@ async fn a_control_stream_with_a_bad_preamble_is_dropped() {
     send(&mut s, &AgentMessage::oom_kill(Some(1), None)).await;
     let mut buf = [0u8; 1];
     assert!(s.read(&mut buf).await.is_err());
-    // Closing joins the session, which drops its end of the channel: no event is read at once, and a
-    // late one would still show inside the window.
+    // Closing joins the session, which drops its end of the channel: the channel then reads as closed, and an
+    // event sent before shows first.
     let mut events = std::mem::replace(&mut h.events, mpsc::unbounded_channel().1);
     h.close().await.unwrap();
-    no_event_for(
+    closes_without_event(
         "an event for a stream with a bad preamble",
         Duration::from_millis(200),
         &mut events,
@@ -147,6 +147,7 @@ async fn a_connection_that_is_not_yamux_is_refused() {
     let server = tokio::spawn(serve_session(
         host,
         name(),
+        SessionId::next(),
         Arc::new(puddle_types::NullSink),
         Arc::new(Echo),
         HostConfig::default(),
@@ -163,6 +164,7 @@ async fn a_silent_connection_times_out() {
         serve_session(
             host,
             name(),
+            SessionId::next(),
             Arc::new(puddle_types::NullSink),
             Arc::new(Echo),
             HostConfig {
@@ -211,6 +213,7 @@ async fn a_failing_connection_is_an_io_error() {
     let result = serve_session(
         Broken,
         name(),
+        SessionId::next(),
         Arc::new(puddle_types::NullSink),
         Arc::new(Echo),
         HostConfig::default(),
@@ -326,4 +329,64 @@ async fn a_guest_cannot_open_the_kinds_only_the_host_opens() {
     send(&mut c, &AgentMessage::oom_kill(Some(3), None)).await;
     assert_eq!(h.next_event().await, Event::oom_kill(name(), 3, "unknown"));
     h.close().await.unwrap();
+}
+
+/// Holds every proxied stream open and says when a stream task is dropped.
+struct Hold {
+    started: Arc<AtomicBool>,
+    dropped: Arc<AtomicBool>,
+}
+
+impl StreamHandler for Hold {
+    async fn handle(&self, _stream: GuestStream) {
+        struct Dropped(Arc<AtomicBool>);
+        impl Drop for Dropped {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let _dropped = Dropped(Arc::clone(&self.dropped));
+        self.started.store(true, Ordering::SeqCst);
+        std::future::pending::<()>().await;
+    }
+}
+
+#[tokio::test]
+async fn a_stream_task_is_gone_when_its_session_has_returned() {
+    let dropped = Arc::new(AtomicBool::new(false));
+    let started = Arc::new(AtomicBool::new(false));
+    let hold = Hold {
+        started: Arc::clone(&started),
+        dropped: Arc::clone(&dropped),
+    };
+    let (guest, host) = tokio::io::duplex(1 << 20);
+    let mut client = Session::new_client(guest, client_config());
+    let mut control = client.control();
+    tokio::spawn(async move { while client.next().await.is_some() {} });
+    // The session runs in this task, so nothing else runs between its return and the check below.
+    let (served, ()) = tokio::join!(
+        serve_session(
+            host,
+            name(),
+            SessionId::next(),
+            Arc::new(puddle_types::NullSink),
+            Arc::new(hold),
+            HostConfig::default(),
+        ),
+        async {
+            let mut stream = control.open_stream().await.unwrap();
+            stream.write_all(b"GET / HTTP/1.1\r\n\r\n").await.unwrap();
+            stream.flush().await.unwrap();
+            eventually("the handler holds the stream", WAIT, || {
+                started.load(Ordering::SeqCst)
+            })
+            .await;
+            control.close().await;
+        }
+    );
+    served.unwrap();
+    assert!(
+        dropped.load(Ordering::SeqCst),
+        "the stream task outlived its session"
+    );
 }

@@ -6,7 +6,9 @@
 //! The pass-through lives in memory in the running workspace and the history of refusals in the
 //! database, so both are read and changed through the host.
 
+#[cfg(any(test, feature = "testing"))]
 use std::collections::BTreeMap;
+#[cfg(any(test, feature = "testing"))]
 use std::sync::{Mutex, PoisonError};
 
 use puddle_types::WorkspaceId;
@@ -54,6 +56,7 @@ impl LearnedService for NoLearned {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 /// An in-memory service for tests and the UI fixture: hosts are added by hand with the history
 /// of their refusals.
 #[derive(Debug, Default)]
@@ -61,6 +64,7 @@ pub struct FakeLearned {
     state: Mutex<BTreeMap<WorkspaceId, Vec<LearnedHost>>>,
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl FakeLearned {
     /// A fake with nothing learned.
     #[must_use]
@@ -99,6 +103,7 @@ impl FakeLearned {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl LearnedService for FakeLearned {
     fn list(&self, workspace: &WorkspaceId) -> Vec<LearnedHost> {
         let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);

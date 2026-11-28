@@ -464,9 +464,6 @@ impl FakeWorkspaces {
         let next = entry.record.apply(Move::End(outcome));
         if failure.is_none() {
             match op {
-                // The in-memory service boots nothing, so what it creates stays `created`: a
-                // known difference from the real service, which starts it.
-                Operation::Creating => entry.record.status = WorkspaceStatus::Created,
                 Operation::Reclaiming => {
                     entry.record.disk_used_mib = entry.record.disk_used_mib.map(|used| used / 2);
                 }
@@ -1055,7 +1052,7 @@ impl WorkspaceService for FakeWorkspaces {
         git: &'a dyn GitSetup,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            let name = DisplayName::parse(id.as_str()).map_err(|e| {
+            DisplayName::parse(id.as_str()).map_err(|e| {
                 WorkspaceError::Invalid(format!("this name can't be a workspace: {e}"))
             })?;
             let (record, new) = {
@@ -1066,19 +1063,14 @@ impl WorkspaceService for FakeWorkspaces {
                         id.volume_name()
                     )));
                 };
-                if state.entries.contains_key(id)
-                    || crate::label_taken(
-                        state.entries.values().map(|e| &e.record),
-                        owner,
-                        name.as_str(),
-                        None,
-                    )
-                    .is_some()
-                {
+                if let Some(entry) = state.entries.get(id) {
                     return Err(WorkspaceError::Conflict(format!(
-                        "a workspace named {name} already exists; nothing was replaced"
+                        "{} already uses the disk {}; nothing was replaced",
+                        entry.record.name,
+                        id.volume_name()
                     )));
                 }
+                let named_after_checkout = found.is_some();
                 let Some(url) = found.or(repository) else {
                     return Err(WorkspaceError::Invalid(format!(
                         "Puddle could not read a repository address from {}; enter the address of the repository on it",
@@ -1091,8 +1083,18 @@ impl WorkspaceService for FakeWorkspaces {
                     directory: CheckoutDir::from_url(url.as_str()),
                     url,
                 };
-                let mut record =
-                    WorkspaceRecord::new(id.clone(), owner, name.clone(), vec![entry.clone()]);
+                // Named as the host names it: after the checkout the disk holds, else its id.
+                let base = if named_after_checkout {
+                    entry.directory.as_str().to_owned()
+                } else {
+                    id.to_string()
+                };
+                let name = crate::workspaces::free_label(
+                    state.entries.values().map(|e| &e.record),
+                    owner,
+                    &base,
+                );
+                let mut record = WorkspaceRecord::new(id.clone(), owner, name, vec![entry.clone()]);
                 record.created_at = self.inner.clock.now_ms();
                 record.status = WorkspaceStatus::Stopped;
                 state.orphans.remove(id);

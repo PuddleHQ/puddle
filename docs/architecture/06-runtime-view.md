@@ -459,7 +459,13 @@ sequenceDiagram
 
 **Port forwards.** The Ports tab forwards a guest port to a port on `127.0.0.1` of the computer over
 the agent's `forward` stream, not over SSH, so forwards work with direct SSH off. Pinned forwards
-come back at every start (`crates/puddle-ports`).
+come back at every start (`crates/puddle-ports`). The host also builds `Ports` with
+`with_auto_forward` (`crates/puddle-host/src/host.rs`): each port the agent newly reports as
+listening in a running workspace is forwarded to the same number on `127.0.0.1` when that number is
+free, and closed again when the guest stops listening. A port the user closed is not reopened while
+it keeps listening, a port with a pin is left to the pin, and a taken port is skipped without a
+notice. The report is the guest's claim, so the guest decides which numbers are tried
+(`docs/spec/ports-and-front.md`).
 
 ## 6.6 Stop, start and delete
 

@@ -1501,7 +1501,7 @@ impl Attachment<'_> {
 
     /// The create failed: removes what it left (a down sandbox record, a stale directory,
     /// unless they were there before) and the volume if [`Workspaces::prepare`] created it, then
-    /// releases the reservation.
+    /// releases the reservation (or puts back the attachment the sandbox held before it).
     ///
     /// # Errors
     ///
@@ -1527,10 +1527,13 @@ impl Attachment<'_> {
                 }
             }
         }
-        self.reservation
-            .workspaces
-            .registry
-            .release(&self.reservation.id, &self.reservation.sandbox);
+        // The owner's earlier hold stays: only a hold this attachment made is released.
+        let registry = &self.reservation.workspaces.registry;
+        if self.reservation.was_attached {
+            registry.attach(&self.reservation.id, &self.reservation.sandbox);
+        } else {
+            registry.release(&self.reservation.id, &self.reservation.sandbox);
+        }
         result
     }
 }

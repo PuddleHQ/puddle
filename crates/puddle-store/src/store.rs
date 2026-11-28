@@ -95,8 +95,8 @@ pub struct Limits {
     /// Most open pending rows per workspace (R-45). A request for a new host past it gets no
     /// row of its own and is answered like any waiting one; it is listed once room is made.
     pub max_open_rows: u64,
-    /// The audit is only warned about when its lines exceed this many bytes: nothing is deleted
-    /// for size, because a workspace could then flood out its own records. Records go by age
+    /// The audit is only warned about when the database file (less its free pages) exceeds this
+    /// many bytes: nothing is deleted for size, because a workspace could then flood out its own records. Records go by age
     /// ([`Store::audit_retention_days`]).
     pub audit_warn_bytes: u64,
     /// `connection` records per workspace per second (R-26).

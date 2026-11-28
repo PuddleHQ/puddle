@@ -8,15 +8,20 @@ export type AuditSize = components["schemas"]["AuditSize"];
 
 const DAY_MS = 86_400_000;
 
-/** Whether the log's lines are over the size Puddle warns at. */
+/** What the database file holds now: its size less the free pages. This is what fills the disk. */
+function fileInUse(size: AuditSize): number {
+  return size.file_bytes - size.free_bytes;
+}
+
+/** Whether the database file is over the size Puddle warns at. */
 export function isLarge(size: AuditSize): boolean {
-  return size.bytes > size.warn_bytes;
+  return fileInUse(size) > size.warn_bytes;
 }
 
 /** The warning above the numbers; nothing while the log is a normal size. */
 export function largeWarning(size: AuditSize): string | null {
   return isLarge(size)
-    ? `The activity log is getting large: ${bytesLabel(size.bytes)}, and Puddle warns at ${bytesLabel(size.warn_bytes)}. Keep it for fewer days to make it smaller.`
+    ? `The activity log is getting large: its file holds ${bytesLabel(fileInUse(size))}, and Puddle warns at ${bytesLabel(size.warn_bytes)}. Keep it for fewer days to make it smaller.`
     : null;
 }
 

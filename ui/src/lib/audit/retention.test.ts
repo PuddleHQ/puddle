@@ -21,18 +21,18 @@ const size: AuditSize = {
   bytes_last_week: 7_168,
   retention_days: 90,
   warn_bytes: 3_000,
-  file_bytes: 1_048_576,
-  free_bytes: 0,
+  file_bytes: 4_000,
+  free_bytes: 1_000,
 };
 
 describe("the activity log's size", () => {
-  it("is large only above the warning size, not at it", () => {
+  it("is large only when the file in use is above the warning size, not at it", () => {
     expect(isLarge(size)).toBe(false);
     expect(largeWarning(size)).toBeNull();
-    const big = { ...size, bytes: 3_001 };
+    const big = { ...size, free_bytes: 999 };
     expect(isLarge(big)).toBe(true);
     expect(largeWarning(big)).toBe(
-      "The activity log is getting large: 2.9 KB, and Puddle warns at 2.9 KB. Keep it for fewer days to make it smaller.",
+      "The activity log is getting large: its file holds 2.9 KB, and Puddle warns at 2.9 KB. Keep it for fewer days to make it smaller.",
     );
   });
 

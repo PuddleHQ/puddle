@@ -3,7 +3,7 @@
 //!
 //! Records go by age only: the retention is a number of days. There is no cap per workspace and no
 //! size cap that deletes, because a workspace that floods its own log could then push out the
-//! records it wants gone. The size only warns ([`super::Limits::audit_warn_bytes`]).
+//! records it wants gone. The size of the file only warns ([`super::Limits::audit_warn_bytes`]).
 
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -61,6 +61,15 @@ pub struct AuditPrune {
     pub deleted: u64,
 }
 
+impl AuditStats {
+    /// What the file holds now: `file_bytes` less `free_bytes`. The warning compares this with
+    /// `warn_bytes`.
+    #[must_use]
+    pub fn file_in_use_bytes(&self) -> u64 {
+        self.file_bytes.saturating_sub(self.free_bytes)
+    }
+}
+
 /// What the audit holds and how fast it grows, for the admin to judge its size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AuditStats {
@@ -80,7 +89,7 @@ pub struct AuditStats {
     pub bytes_last_week: u64,
     /// The days the audit is kept.
     pub retention_days: u32,
-    /// The size of the lines above which Puddle warns.
+    /// The size of the file in use (`file_bytes` less `free_bytes`) above which Puddle warns.
     pub warn_bytes: u64,
     /// The size of the database file (everything in it, not only the audit).
     pub file_bytes: u64,
@@ -103,18 +112,37 @@ fn pragma_u64(conn: &Connection, name: &str) -> Result<u64, StoreError> {
     Ok(u64::try_from(value).unwrap_or(0))
 }
 
-/// How many records, and how many bytes of their lines, have a `ts` of `since` or later.
+/// The size of the database file less its free pages: what the file holds now, indexes included.
+/// This, and not the counted line bytes, is what fills the disk (the file is 1.3 times the lines).
+pub(super) fn file_in_use_bytes(conn: &Connection) -> Result<u64, StoreError> {
+    let page_size = pragma_u64(conn, "page_size")?;
+    let pages = pragma_u64(conn, "page_count")?.saturating_sub(pragma_u64(conn, "freelist_count")?);
+    Ok(pages.saturating_mul(page_size))
+}
+
+/// How many records, and how many bytes of their lines, have a `ts` of `since` or later: the
+/// minutes after the one `since` is in from the `audit_minutes` counter, and that one minute from
+/// its rows (at most a minute's worth), so the figure is exact without reading a day of rows.
 fn written_since(conn: &Connection, since: i64) -> Result<(u64, u64), StoreError> {
+    let minute = since.div_euclid(MINUTE_MS);
     let (count, bytes): (i64, i64) =
-        conn.query_row(WRITTEN_SINCE, [since], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        conn.query_row(WRITTEN_SINCE, params![since, minute], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?;
     Ok((
         u64::try_from(count).unwrap_or(0),
         u64::try_from(bytes).unwrap_or(0),
     ))
 }
 
-const WRITTEN_SINCE: &str = "SELECT count(*), coalesce(sum(length(CAST(line AS BLOB))), 0)
-                             FROM audit WHERE ts >= ?1";
+const MINUTE_MS: i64 = 60_000;
+
+const WRITTEN_SINCE: &str = "SELECT
+    (SELECT count(*) FROM audit WHERE ts >= ?1 AND ts < (?2 + 1) * 60000)
+        + (SELECT coalesce(sum(records), 0) FROM audit_minutes WHERE minute > ?2),
+    (SELECT coalesce(sum(length(CAST(line AS BLOB))), 0)
+         FROM audit WHERE ts >= ?1 AND ts < (?2 + 1) * 60000)
+        + (SELECT coalesce(sum(bytes), 0) FROM audit_minutes WHERE minute > ?2)";
 
 fn retention_days(conn: &Connection) -> Result<u32, StoreError> {
     let days: Option<i64> = conn
@@ -166,7 +194,10 @@ impl Store {
         // writer's lock (RS-14).
         let conn = self.audit_read();
         let retention_days = retention_days(&conn)?;
-        let records: i64 = conn.query_row("SELECT count(*) FROM audit", [], |row| row.get(0))?;
+        let records: i64 =
+            conn.query_row("SELECT records FROM audit_size WHERE id = 1", [], |row| {
+                row.get(0)
+            })?;
         let oldest: Option<i64> =
             conn.query_row("SELECT min(ts) FROM audit", [], |row| row.get(0))?;
         let since = |ms: u64| written_since(&conn, sql_ts(now.saturating_sub(ms)));
@@ -213,6 +244,11 @@ impl Store {
             if chunk == 0 {
                 break;
             }
+            // The minutes the chunk emptied are not kept as zero rows.
+            tx.execute(
+                "DELETE FROM audit_minutes WHERE records <= 0 AND minute < ?1 / 60000",
+                [cutoff],
+            )?;
             let chunk = u64::try_from(chunk).unwrap_or(0);
             let oldest: Option<i64> =
                 tx.query_row("SELECT min(ts) FROM audit", [], |row| row.get(0))?;

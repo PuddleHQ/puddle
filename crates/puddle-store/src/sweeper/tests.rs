@@ -67,30 +67,33 @@ async fn a_sweeper_whose_task_was_cancelled_says_so_when_shut_down() {
 }
 
 #[tokio::test]
-async fn a_log_over_its_warning_size_is_a_problem_that_deletes_nothing_until_it_shrinks() {
-    let clock = Arc::new(ManualClock::new(1_000_000));
+async fn a_file_over_its_warning_size_is_a_problem_that_deletes_nothing_until_it_shrinks() {
+    let dir = tempfile::tempdir().unwrap();
+    let clock = Arc::new(ManualClock::new(1_800_000_000_000));
     let store = Arc::new(
-        Store::open_in_memory(
+        Store::open(
+            &dir.path().join("puddle.db"),
             clock.clone(),
             Limits {
-                audit_warn_bytes: 200,
+                max_open_rows: 100_000,
+                audit_warn_bytes: 1024 * 1024,
                 ..Limits::default()
             },
         )
         .unwrap(),
     );
-    store
-        .as_user(UserId::OWNER)
-        .add_rule(&NewRule {
-            scope: Scope::Global,
-            pattern: Pattern::parse("kept.example").unwrap(),
-            effect: Effect::Allow,
-            expires_at: None,
-            created_by: Actor::Cli,
-        })
-        .unwrap();
-    let records = store.audit_lines(0, 100).unwrap().len();
-    assert!(store.audit_bytes().unwrap() > 200);
+    assert!(store.audit_file_in_use_bytes().unwrap() < 1024 * 1024);
+    let workspace = puddle_types::WorkspaceId::new("a").unwrap();
+    crate::testing::own(&store, &workspace);
+    for n in 0..3000 {
+        let host = puddle_types::Host::parse_normalised(&format!("h{n}.example")).unwrap();
+        let request = puddle_types::EgressRequest::new(workspace.clone(), host, 443);
+        store
+            .decide(&request, puddle_types::SuffixAllows::Count)
+            .unwrap();
+    }
+    let records = store.audit_lines(0, 100_000).unwrap().len();
+    assert!(store.audit_file_in_use_bytes().unwrap() > 1024 * 1024);
     let problems = Arc::new(Problems::new(Arc::new(NullSink)));
     let sweeper =
         Sweeper::spawn_reporting(store.clone(), Duration::from_millis(20), problems.clone());
@@ -102,15 +105,16 @@ async fn a_log_over_its_warning_size_is_a_problem_that_deletes_nothing_until_it_
     assert_eq!(problem.key, AUDIT_SIZE_PROBLEM);
     assert!(problem.detail.contains("90 days"), "{problem:?}");
     assert_eq!(
-        store.audit_lines(0, 100).unwrap().len(),
+        store.audit_lines(0, 100_000).unwrap().len(),
         records,
         "nothing was deleted"
     );
-    // Once the records are past their days they go, and the problem goes with them.
+    // Once the records are past their days they go, the file gives their space back, and the
+    // problem goes with them.
     clock.advance(91 * 24 * 60 * 60 * 1000);
     store.set_audit_retention_days(90).unwrap();
     // A pass that would delete every record waits for the next one an hour later.
-    eventually("the problem to end", Duration::from_secs(5), || {
+    eventually("the problem to end", Duration::from_secs(20), || {
         clock.advance(2 * 60 * 60 * 1000);
         problems.list().is_empty()
     })

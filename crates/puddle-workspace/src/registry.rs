@@ -67,8 +67,9 @@ impl Registry {
     }
 
     /// Reserves `id` for `sandbox` while it is created. Refused with the current holder when
-    /// another sandbox holds or borrows it.
-    pub(crate) fn reserve(&self, id: &WorkspaceId, sandbox: &SandboxName) -> Result<(), Holder> {
+    /// another sandbox holds or borrows it. `Ok(true)` when `sandbox` already held it attached
+    /// (a recreate under the same name): a reservation that is dropped puts that back.
+    pub(crate) fn reserve(&self, id: &WorkspaceId, sandbox: &SandboxName) -> Result<bool, Holder> {
         let mut entries = self.lock();
         let entry = entries.entry(id.clone()).or_default();
         if let Some(b) = &entry.borrower {
@@ -79,12 +80,13 @@ impl Registry {
         }
         match &entry.owner {
             Some(h) if h.sandbox != *sandbox || h.kind == HoldKind::Attaching => Err(h.clone()),
-            _ => {
+            prior => {
+                let was_attached = prior.is_some();
                 entry.owner = Some(Holder {
                     sandbox: sandbox.clone(),
                     kind: HoldKind::Attaching,
                 });
-                Ok(())
+                Ok(was_attached)
             }
         }
     }

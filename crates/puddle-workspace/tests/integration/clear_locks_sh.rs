@@ -1158,3 +1158,78 @@ async fn an_index_git_dies_on_is_left_alone_and_reported() {
         assert_eq!(std::fs::read(&index).unwrap(), before, "{shell}");
     }
 }
+
+/// A `git` that is killed on the subcommand `sub` (as an out-of-memory kill under host load
+/// would), otherwise the real one. Returns the directory to put first on the `PATH`.
+fn git_killed_on(fx: &Fixture, sub: &str) -> PathBuf {
+    let real_git = String::from_utf8(
+        Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let bin = fx.tmp.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    puddle_test_kit::write_executable(
+        &bin.join("git"),
+        &format!(
+            "#!/bin/sh\nif [ \"$1\" = {sub} ]; then kill -KILL $$; fi\nexec {} \"$@\"\n",
+            real_git.trim()
+        ),
+    );
+    bin
+}
+
+/// A git subprocess that dies is no verdict on the repository: the run reports an `E` record
+/// naming the checkout and leaves the damaged `HEAD` as it found it.
+#[tokio::test]
+async fn a_git_that_dies_while_checking_the_last_commit_is_reported_not_read_as_a_missing_commit() {
+    for shell in shells() {
+        let fx = repair_fixture();
+        let api = fx.vol.join("api");
+        zero_fill(&api.join(".git/HEAD"), 24);
+        let bin = git_killed_on(&fx, "cat-file");
+        let report = run_with_path(shell, &fx, Some(&bin)).await;
+        assert!(report.damaged.is_empty(), "{shell}: {report:?}");
+        assert!(report.repaired.is_empty(), "{shell}: {report:?}");
+        assert_eq!(report.errors.len(), 1, "{shell}: {report:?}");
+        assert!(
+            report.errors[0].starts_with("api/.git/HEAD: git failed"),
+            "{shell}: {:?}",
+            report.errors
+        );
+        assert_eq!(
+            std::fs::read(api.join(".git/HEAD")).unwrap(),
+            vec![0_u8; 24],
+            "{shell}"
+        );
+    }
+}
+
+/// The same for the branch-name check: a dead `git check-ref-format` must not make the checkout
+/// read as detached.
+#[tokio::test]
+async fn a_git_that_dies_while_checking_the_branch_name_is_reported_not_read_as_a_detached_head() {
+    for shell in shells() {
+        let fx = repair_fixture();
+        let api = fx.vol.join("api");
+        zero_fill(&api.join(".git/HEAD"), 24);
+        let bin = git_killed_on(&fx, "check-ref-format");
+        let report = run_with_path(shell, &fx, Some(&bin)).await;
+        assert!(report.repaired.is_empty(), "{shell}: {report:?}");
+        assert!(report.damaged.is_empty(), "{shell}: {report:?}");
+        assert_eq!(report.errors.len(), 1, "{shell}: {report:?}");
+        assert!(
+            report.errors[0].starts_with("api/.git/HEAD: git failed"),
+            "{shell}: {:?}",
+            report.errors
+        );
+        assert_eq!(
+            std::fs::read(api.join(".git/HEAD")).unwrap(),
+            vec![0_u8; 24],
+            "{shell}"
+        );
+    }
+}

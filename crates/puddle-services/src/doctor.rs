@@ -6,11 +6,15 @@
 //! The checks themselves live in `puddle-doctor`; the host hands [`HostDoctor`] a function that
 //! runs them against the real machine, so this crate never names the runtime folder.
 
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
+#[cfg(any(test, feature = "testing"))]
+use std::sync::{Mutex, PoisonError};
 
 use futures_util::future::BoxFuture;
 
-use crate::wire::{DoctorCheck, DoctorReport, DoctorStatus};
+use crate::wire::DoctorReport;
+#[cfg(any(test, feature = "testing"))]
+use crate::wire::{DoctorCheck, DoctorStatus};
 
 /// Why a report could not be made.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -86,24 +90,28 @@ impl DoctorService for HostDoctor {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 /// An in-memory [`DoctorService`] for tests and the UI fixture: it serves the report it was
 /// given, and [`FakeDoctor::set`] replaces it.
 pub struct FakeDoctor {
     report: Mutex<DoctorReport>,
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl std::fmt::Debug for FakeDoctor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FakeDoctor").finish_non_exhaustive()
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl Default for FakeDoctor {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl FakeDoctor {
     /// Serves a healthy machine until [`FakeDoctor::set`] says otherwise.
     #[must_use]
@@ -175,6 +183,7 @@ impl FakeDoctor {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl DoctorService for FakeDoctor {
     fn run(&self, boot: bool) -> BoxFuture<'_, Result<DoctorReport, DoctorError>> {
         Box::pin(async move {

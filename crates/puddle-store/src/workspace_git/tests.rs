@@ -198,3 +198,11 @@ fn the_switches_decide_what_the_toggles_mean() {
     git.only_push_listed = false;
     assert!(git.allows_push(&b) && git.allows_push(&d));
 }
+
+#[test]
+fn a_push_block_is_stored_by_its_spelling_and_an_unknown_spelling_names_none() {
+    for block in [PushBlock::Archived, PushBlock::Read] {
+        assert_eq!(PushBlock::from_stored(block.as_str()), Some(block));
+    }
+    assert_eq!(PushBlock::from_stored("writable"), None);
+}

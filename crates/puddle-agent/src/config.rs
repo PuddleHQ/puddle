@@ -3,13 +3,13 @@
 //!
 //! | Variable | Default | |
 //! |---|---|---|
-//! | `PUDDLE_AGENT_LISTEN` | `127.0.0.1:3128` | proxy listener (the sandbox's own processes) |
+//! | `PUDDLE_AGENT_LISTEN` | `127.0.0.1:3128` | proxy listener (the sandbox's own processes): a fixed port, 1 to 65535; a wildcard address is allowed (tests listen on every interface) |
 //! | `PUDDLE_AGENT_BRIDGE` | `172.17.0.1:3128` | the Docker bridge address nested containers use as their proxy: the agent listens there only while a bridge interface owns that address; `off` disables it |
 //! | `PUDDLE_AGENT_BRIDGE_POLL_MS` | `200` | how often the bridge is looked for |
 //! | `PUDDLE_AGENT_TARGET` | `vsock://2:5000` | the host: `vsock://<cid>:<port>`, or `unix:///path` for tests without a VM |
 //! | `PUDDLE_AGENT_MUX` | `4` | yamux sessions (vsock connections) to spread streams over, 1–64 |
-//! | `PUDDLE_AGENT_VSOCK_BUF` | `16777216` | vsock socket buffer in bytes; `0` keeps the kernel default (reproduces a slow-upload stall) |
-//! | `PUDDLE_AGENT_WINDOW` | `16777216` | yamux receive window per stream (download direction), for experiments |
+//! | `PUDDLE_AGENT_VSOCK_BUF` | `16777216` | vsock socket buffer in bytes; `0` keeps the kernel default (reproduces a slow-upload stall); no upper limit, for experiments |
+//! | `PUDDLE_AGENT_WINDOW` | `16777216` | yamux receive window per stream (download direction), for experiments: at least 65536 |
 //! | `PUDDLE_AGENT_OOM` | `1` | `0` turns the OOM watch off |
 //! | `PUDDLE_AGENT_VMSTAT` | `/proc/vmstat` | where the `oom_kill` counter is read |
 //! | `PUDDLE_AGENT_KMSG` | `/dev/kmsg` | where `Killed process` lines are read |
@@ -19,17 +19,17 @@
 //! | `PUDDLE_AGENT_PORTS` | `1` | `0` turns the listening-ports watch off (the workspace's Ports tab then lists nothing; forwards to a port still work) |
 //! | `PUDDLE_AGENT_PORTS_DIR` | `/proc/net` | where the `tcp` and `tcp6` socket tables are read |
 //! | `PUDDLE_AGENT_PORTS_POLL_MS` | `1000` | how often they are read |
-//! | `PUDDLE_AGENT_DNS` | `off` | the stub DNS server for tools that ignore the proxy settings: `on` (`198.18.0.1:53`), `off`, or `<ipv4>:<port>`. Binds exactly that address, retrying until an interface has it |
+//! | `PUDDLE_AGENT_DNS` | `off` | the stub DNS server for tools that ignore the proxy settings: `on` (`198.18.0.1:53`), `off`, or `<ipv4>:<port>` (a specific address and a fixed port). Binds exactly that address, retrying until an interface has it |
 //! | `PUDDLE_AGENT_DNS_TABLE` | `/run/puddle/dns-table` | where the stub keeps its name ⇄ address table across restarts; `off` keeps none |
-//! | `PUDDLE_AGENT_EDITOR_DIR` (+ `_PORT`, `_DATA`, `_FOLDER`, `_GRACE`) | unset | the browser editor's server: the release folder switches it on; the rest (`_KIND` for Microsoft's server, `_TELEMETRY`) are in `puddle_agent_proto::editor` |
-//! | `PUDDLE_AGENT_EDITOR_PASSWORD_FILE` | `/run/puddle/editor-password` | where the server's password is written |
+//! | `PUDDLE_AGENT_EDITOR_DIR` (+ `_PORT`, `_DATA`, `_FOLDER`, `_GRACE`) | unset | the browser editor's server: the release folder switches it on; the rest are in `puddle_agent_proto::editor`: `_KIND` and `_TELEMETRY` and `_AUTO_UPDATE` for Microsoft's server, `_USER` (the session user), `_WINDOW_AUTHORITY` and `_WORKSPACE_FILE` (what the editor opens) |
+//! | `PUDDLE_AGENT_EDITOR_PASSWORD_FILE` | `/run/puddle/editor-password` | where the server's password is written; set, it must not be empty |
 //! | `PUDDLE_AGENT_CAPTURE` | `off` | transparent capture for tools that ignore the proxy settings: `on` installs the redirect rules, keeps them in place and listens for the redirected connections; it needs the stub DNS (`PUDDLE_AGENT_DNS` set to an address, or unset, which then means `on`), and `PUDDLE_AGENT_DNS=off` with it is an error. Linux guest only |
 //! | `PUDDLE_AGENT_CAPTURE_PORT` | `3129` | the port redirected connections arrive on (all addresses: containers' connections arrive on the bridge address) |
 //! | `PUDDLE_AGENT_CAPTURE_IFACE` | `dummy0` | the dummy interface that carries the stub's address; made when missing |
 //! | `PUDDLE_AGENT_CAPTURE_POLL_MS` | `500` | how often the rules are compared with the kernel's table |
 //! | `PUDDLE_AGENT_CAPTURE_LOG_GROUP` | `1291` | the netfilter log group refused UDP is read from; `0` leaves the logging out |
 //! | `PUDDLE_AGENT_SSH_AGENT` | `off` | the guest's SSH agent socket (`/run/puddle/ssh-agent.sock` when the host turns it on): each client is carried to the host's filtered agent; `off` makes none |
-//! | `PUDDLE_AGENT_SSH_AGENT_USER` | `root` | the session user, who owns the socket (mode 0600) |
+//! | `PUDDLE_AGENT_SSH_AGENT_USER` | `root` | the session user, who owns the socket (mode 0600); set, it must not be empty |
 //! | `PUDDLE_AGENT_LOG` | `info` | `error`, `warn`, `info`, `debug` or `trace` (to stderr) |
 
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
@@ -45,6 +45,9 @@ use crate::editor::EditorConfig;
 /// The vsock buffer the agent asks for: above msb's 8 MiB, so the guest's send window is the
 /// host's and msb's 4 MiB credit updates arrive.
 pub const DEFAULT_VSOCK_BUFFER: u64 = 16 * 1024 * 1024;
+
+/// Smallest yamux receive window the agent accepts per stream.
+const MIN_WINDOW: u32 = 64 * 1024;
 
 /// Most yamux sessions the agent keeps.
 const MAX_MUX: usize = 64;
@@ -323,6 +326,9 @@ impl Config {
             config.listen = v
                 .parse()
                 .map_err(|_| bad(var, &v, "expected <ip>:<port>"))?;
+            if config.listen.port() == 0 {
+                return Err(bad(var, &v, "expected a fixed port"));
+            }
         }
         let mut bridge = BridgeConfig::default();
         if let Some((v, var)) = lookup("PUDDLE_AGENT_BRIDGE_POLL_MS") {
@@ -350,7 +356,11 @@ impl Config {
             config.vsock_buffer = v.parse().map_err(|_| bad(var, &v, "expected bytes"))?;
         }
         if let Some((v, var)) = lookup("PUDDLE_AGENT_WINDOW") {
-            config.window = v.parse().map_err(|_| bad(var, &v, "expected bytes"))?;
+            config.window = v
+                .parse()
+                .ok()
+                .filter(|w| *w >= MIN_WINDOW)
+                .ok_or_else(|| bad(var, &v, "expected bytes, at least 65536"))?;
         }
         config.oom = oom_watch(&lookup)?;
         config.entrypoint = match lookup("PUDDLE_AGENT_ENTRYPOINT_EXIT") {
@@ -364,19 +374,18 @@ impl Config {
         config.ports = port_watch(&lookup)?;
         config.ssh_agent = ssh_agent(&lookup)?;
         (config.capture, config.dns) = capture_and_dns(&lookup)?;
-        config.editor = EditorServer::from_lookup(&get)
-            .map_err(|e| bad(e.var, &get(e.var).unwrap_or_default(), &e.reason))?
-            .map(|server| {
-                let password_file = get("PUDDLE_AGENT_EDITOR_PASSWORD_FILE")
-                    .filter(|p| !p.is_empty())
-                    .map_or_else(|| PathBuf::from(editor::PASSWORD_FILE), PathBuf::from);
-                EditorConfig {
-                    server,
-                    password_file,
-                    boot_id: PathBuf::from(crate::editor::BOOT_ID_FILE),
-                    root: PathBuf::from("/"),
-                }
-            });
+        let editor_server = EditorServer::from_lookup(&get)
+            .map_err(|e| bad(e.var, &get(e.var).unwrap_or_default(), &e.reason))?;
+        let password_file = match lookup("PUDDLE_AGENT_EDITOR_PASSWORD_FILE") {
+            None => PathBuf::from(editor::PASSWORD_FILE),
+            Some((v, var)) => path(var, &v)?,
+        };
+        config.editor = editor_server.map(|server| EditorConfig {
+            server,
+            password_file,
+            boot_id: PathBuf::from(crate::editor::BOOT_ID_FILE),
+            root: PathBuf::from("/"),
+        });
         if let Some((v, var)) = lookup("PUDDLE_AGENT_LOG") {
             config.log = v
                 .parse()
@@ -434,12 +443,24 @@ fn ssh_agent(lookup: Lookup<'_>) -> Result<Option<SshAgentConfig>, ConfigError> 
     match lookup("PUDDLE_AGENT_SSH_AGENT") {
         None => Ok(None),
         Some((v, _)) if v == "off" => Ok(None),
-        Some((v, var)) => Ok(Some(SshAgentConfig {
-            socket: path(var, &v)?,
-            user: lookup("PUDDLE_AGENT_SSH_AGENT_USER")
-                .map_or_else(|| "root".to_owned(), |(user, _)| user),
-            owner_wait: Duration::from_secs(60),
-        })),
+        Some((v, var)) => {
+            let user = match lookup("PUDDLE_AGENT_SSH_AGENT_USER") {
+                None => "root".to_owned(),
+                Some((user, _)) if user.is_empty() => {
+                    return Err(bad(
+                        "PUDDLE_AGENT_SSH_AGENT_USER",
+                        &user,
+                        "expected a user name",
+                    ));
+                }
+                Some((user, _)) => user,
+            };
+            Ok(Some(SshAgentConfig {
+                socket: path(var, &v)?,
+                user,
+                owner_wait: Duration::from_secs(60),
+            }))
+        }
     }
 }
 
@@ -542,6 +563,9 @@ fn dns_addr(var: &'static str, value: &str) -> Result<SocketAddrV4, ConfigError>
             value,
             "expected a specific address, not a wildcard",
         ));
+    }
+    if addr.port() == 0 {
+        return Err(bad(var, value, "expected a fixed port"));
     }
     Ok(addr)
 }

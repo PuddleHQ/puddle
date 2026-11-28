@@ -3,7 +3,7 @@
 # Self-test of ci/fetch-baseline-msi.sh with a fake `gh` (no network): a release's MSI wins; a
 # release without one fails; with no release, the newest develop run with a passing msi job on another commit that
 # kept an MSI is taken, and runs of this commit, of other branches, expired ones and red ones are
-# passed over; no candidate fails with the reason. The fake answers `--jq` with jq over a fixture,
+# passed over, as are runs that started after this one (a higher package version); no candidate fails with the reason. The fake answers `--jq` with jq over a fixture,
 # so the script's own filter is what selects. Prints ok only when every case passes.
 set -uo pipefail
 
@@ -30,7 +30,12 @@ for ((i = 0; i < ${#args[@]}; i++)); do
     esac
 done
 case "$1 $2" in
-"release list") printf '[%s]' "${FAKE_TAG:+{\"tagName\":\"$FAKE_TAG\"\}}" | jq -r "$jq_filter" ;;
+"release list")
+    if [ -n "${FAKE_TAGS:-}" ]; then
+        printf "%s" "$FAKE_TAGS" | jq -rc "$jq_filter"
+        exit 0
+    fi
+    printf '[%s]' "${FAKE_TAG:+{\"tagName\":\"$FAKE_TAG\"\}}" | jq -r "$jq_filter" ;;
 "release download")
     [ -n "${FAKE_RELEASE_MSI:-}" ] || { echo "no assets match the file pattern" >&2; exit 1; }
     : >"$dir/$FAKE_RELEASE_MSI"
@@ -68,7 +73,7 @@ run() {
     : >"$tmp/log"
     : >"$tmp/summary"
     rc=0
-    out=$(env PATH="$tmp/bin:$PATH" GITHUB_REPOSITORY=o/r GITHUB_SHA=thiscommit GITHUB_STEP_SUMMARY="$tmp/summary" \
+    out=$(env PATH="$tmp/bin:$PATH" GITHUB_REPOSITORY=o/r GITHUB_SHA=thiscommit GITHUB_RUN_ID=61 GITHUB_STEP_SUMMARY="$tmp/summary" \
         FAKE_LOG="$tmp/log" FAKE_ARTIFACTS="$tmp/artifacts.json" FAKE_CONCLUSIONS="$tmp/green" "$@" \
         "$script" "$dir" 2>"$tmp/err") || rc=$?
     err=$(cat "$tmp/err")
@@ -91,6 +96,12 @@ grep -q "^run download 56 " "$tmp/log" || bad "no release: did not take run 56 (
 grep -qE "^run view (60|59|58) " "$tmp/log" && bad "no release: looked at a run of this commit, another branch or an expired MSI"
 [[ $err == *"develop at ddddddddd (msi run 56; no release yet)"* ]] || bad "no release: the source is not named: $err"
 
+# Runs 60 and 59 started after run 58 here: their versions are higher than this build's.
+run "a develop run that started later" FAKE_TAG= GITHUB_RUN_ID=56
+[ "$rc" = 0 ] || bad "a later develop run: exit $rc ($err)"
+grep -q "^run download 55 " "$tmp/log" || bad "a later develop run: did not take run 55 (run 56 is this run's own number): $(cat "$tmp/log")"
+grep -qE "^run view (60|59|58|57|56) " "$tmp/log" && bad "a later develop run: looked at a run that is not older than this one"
+
 run "no green run" FAKE_TAG= FAKE_CONCLUSIONS="$tmp/red"
 [ "$rc" = 1 ] || bad "no green run: exit $rc, want 1"
 [[ $err == *"no release and no develop run of msi.yml with a passing msi job"* ]] || bad "no green run: the reason is not named: $err"
@@ -112,5 +123,17 @@ grep -qE "^(release|api) " "$tmp/log" && bad "an asked-for run: looked at the re
 
 run "a run id that is not one" FAKE_TAG= BASELINE_RUN='12; x'
 [ "$rc" = 1 ] && [[ $err == *"is not a run id"* ]] || bad "a bad run id: exit $rc ($err)"
+
+# A named release is taken, not the newest.
+: >"$tmp/log"
+env PATH="$tmp/bin:$PATH" GITHUB_REPOSITORY=o/r GITHUB_SHA=thiscommit FAKE_LOG="$tmp/log" \
+    FAKE_TAG=v0.3.0 FAKE_RELEASE_MSI=Puddle_0.1.0_x64_en-US.msi "$script" "$tmp/named" v0.1.0 >/dev/null 2>&1 ||
+    bad "a named release: exit $?"
+grep -q "^release download v0.1.0 " "$tmp/log" || bad "a named release: did not download v0.1.0: $(cat "$tmp/log")"
+grep -q "^release list" "$tmp/log" && bad "a named release: asked for the newest release too"
+
+list() { env PATH="$tmp/bin:$PATH" GITHUB_REPOSITORY=o/r FAKE_LOG="$tmp/log" "$@" "$script" --list; }
+[ "$(list FAKE_TAGS='[{"tagName":"v0.2.0"},{"tagName":"v0.1.0"}]')" = '["v0.2.0","v0.1.0"]' ] || bad "--list: not every release, newest first"
+[ "$(list FAKE_TAGS='[]')" = '[""]' ] || bad "--list with no release: not one empty entry for the develop fallback"
 
 if [ "$fail" = 0 ]; then echo "fetch-baseline-msi-test: ok"; else exit 1; fi

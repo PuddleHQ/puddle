@@ -96,6 +96,8 @@ mod tools_edit;
 #[cfg(feature = "mise")] // needs the managed mise layer, dormant in the shipped build
 #[path = "fake_host/tools_install.rs"]
 mod tools_install;
+#[path = "fake_host/upgrade_fixtures.rs"]
+mod upgrade_fixtures;
 #[path = "fake_host/workspace_list_at_start.rs"]
 mod workspace_list_at_start;
 

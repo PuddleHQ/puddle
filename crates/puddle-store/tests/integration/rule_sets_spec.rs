@@ -273,7 +273,10 @@ fn r38_sets_you_make_hold_rules_and_inbox_approvals() {
     let in_b = pending(decide(&store, "b", "login.microsoftonline.com"));
     let mut into_set = Resolution::allow();
     into_set.scope = ScopeChoice::Set(azure);
-    let decided = store.resolve_pending(in_a, &into_set, Actor::Ui).unwrap();
+    let decided = store
+        .as_user(puddle_store::UserId::OWNER)
+        .resolve_pending(in_a, &into_set, Actor::Ui)
+        .unwrap();
     assert_eq!(decided.rule.scope, Scope::Set(azure));
     assert_eq!(decided.also_closed, vec![in_b]);
     assert_eq!(
@@ -296,14 +299,16 @@ fn r38_sets_you_make_hold_rules_and_inbox_approvals() {
         .unwrap();
     let in_c = pending(decide(&store, "c", "graph.microsoft.com"));
     assert!(matches!(
-        store.resolve_pending(in_c, &into_set, Actor::Ui),
+        store.as_user(puddle_store::UserId::OWNER).resolve_pending(in_c, &into_set, Actor::Ui),
         Err(StoreError::RuleSetOff { set, workspace }) if set == format!("user:{azure}") && workspace == "c"
     ));
     assert_eq!(store.pending(in_c).unwrap().state, PendingState::Requested);
     // Nor into a set that doesn't exist.
     into_set.scope = ScopeChoice::Set(999);
     assert!(matches!(
-        store.resolve_pending(in_c, &into_set, Actor::Ui),
+        store
+            .as_user(puddle_store::UserId::OWNER)
+            .resolve_pending(in_c, &into_set, Actor::Ui),
         Err(StoreError::UnknownRuleSet(_))
     ));
     assert!(matches!(
@@ -1395,7 +1400,10 @@ fn r59_approving_a_request_into_a_group_takes_the_groups_default() {
     let row = pending(decide(&store, "a", "approve.example.com"));
     let mut into_set = Resolution::allow();
     into_set.scope = ScopeChoice::Set(set);
-    let decided = store.resolve_pending(row, &into_set, Actor::Ui).unwrap();
+    let decided = store
+        .as_user(puddle_store::UserId::OWNER)
+        .resolve_pending(row, &into_set, Actor::Ui)
+        .unwrap();
     assert_eq!(decided.rule.precedence, prec(7));
 }
 

@@ -120,6 +120,7 @@ async fn hostile_hg12_a_hundred_thousand_unmatched_names_wait_and_are_never_deni
     // The request that waited first is still there and still answerable.
     assert_eq!(store.pending(real).unwrap().state, PendingState::Requested);
     store
+        .as_user(puddle_store::UserId::OWNER)
         .resolve_pending(real, &Resolution::allow(), Actor::Ui)
         .unwrap();
     let audit: Vec<String> = store

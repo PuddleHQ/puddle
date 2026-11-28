@@ -436,6 +436,32 @@ async fn a_dropped_re_prepare_by_the_owner_keeps_the_attachment() {
 }
 
 #[tokio::test]
+async fn an_abort_of_a_re_prepare_by_the_owner_keeps_the_attachment() {
+    let rt = FakeRuntime::new();
+    let w = Workspaces::default();
+    let id = ws("acme");
+    w.prepare(&rt, &id, &name("one"), None)
+        .await
+        .unwrap()
+        .commit();
+    let again = w.prepare_existing(&rt, &id, &name("one")).await.unwrap();
+    again.abort(&rt).await.unwrap();
+    assert_eq!(
+        w.holder(&id).map(|h| (h.sandbox.to_string(), h.kind)),
+        Some(("one".to_owned(), HoldKind::Attached))
+    );
+    // A first attach that is aborted still leaves the workspace unheld.
+    let other = ws("beta");
+    w.prepare(&rt, &other, &name("two"), None)
+        .await
+        .unwrap()
+        .abort(&rt)
+        .await
+        .unwrap();
+    assert_eq!(w.holder(&other), None);
+}
+
+#[tokio::test]
 async fn a_failed_runtime_lookup_releases_the_reservation() {
     let rt = FakeRuntime::new();
     let w = Workspaces::default();

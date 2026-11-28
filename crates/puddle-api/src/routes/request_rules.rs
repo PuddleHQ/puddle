@@ -120,10 +120,14 @@ pub(crate) async fn create_request_rule(
 )]
 pub(crate) async fn delete_request_rule(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<i64>,
 ) -> Result<Json<RequestRule>, ApiError> {
     let rule = blocking(move || {
-        let rule = state.store.delete_request_rule(id, Actor::Api)?;
+        let rule = state
+            .store
+            .as_user(principal.user)
+            .delete_request_rule(id, Actor::Api)?;
         let never = state.store.never_decrypt_names(rule.user)?;
         Ok(RequestRule::new(rule, &never))
     })
@@ -146,12 +150,14 @@ pub(crate) async fn delete_request_rule(
 )]
 pub(crate) async fn set_request_rule_enabled(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<i64>,
     crate::extract::Json(body): crate::extract::Json<RuleEnabledRequest>,
 ) -> Result<Json<RequestRule>, ApiError> {
     let rule = blocking(move || {
         let rule = state
             .store
+            .as_user(principal.user)
             .set_request_rule_enabled(id, body.enabled, Actor::Api)?;
         let never = state.store.never_decrypt_names(rule.user)?;
         Ok(RequestRule::new(rule, &never))

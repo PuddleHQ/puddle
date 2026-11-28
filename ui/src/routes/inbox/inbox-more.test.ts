@@ -93,7 +93,13 @@ describe("keyboard", () => {
       registrable_domain: "example.net",
     });
     await tick();
+    // Held behind the line until asked for; a row shown later still never takes the current row.
+    expect(queryHostEl("evil.example.net")).toBeNull();
+    await fireEvent.click(
+      screen.getByRole("button", { name: "1 new request" }),
+    );
     expect(hostEl("evil.example.net")).toBeTruthy();
+    expect(rowOf("a.example.com")).toHaveAttribute("aria-current", "true");
     await press("a");
     await vi.waitFor(() =>
       expect(inbox.rules[0]).toMatchObject({

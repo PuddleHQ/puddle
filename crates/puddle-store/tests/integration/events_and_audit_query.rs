@@ -193,6 +193,7 @@ fn approving_closes_the_row_and_reports_the_rule_and_every_other_row_it_decides(
     resolution.pattern = puddle_store::PatternChoice::Suffix("example.com".into());
     // The CLI path emits like the API path: events come from the store, not the caller.
     let decided = store
+        .as_user(UserId::OWNER)
         .resolve_pending(first, &resolution, Actor::Cli)
         .unwrap();
     assert_eq!(decided.also_closed, [second]);
@@ -239,6 +240,7 @@ fn denying_reports_denied() {
     let id = new_id(ask(&store, "a", "bad.example"));
     drop(sink.take());
     store
+        .as_user(UserId::OWNER)
         .resolve_pending(id, &Resolution::deny(), Actor::Api)
         .unwrap();
     assert!(sink.take().iter().any(|e| matches!(
@@ -302,10 +304,12 @@ fn a_change_that_fails_emits_nothing() {
     let (_, sink, store) = fixture(Limits::default());
     let id = new_id(ask(&store, "a", "example.com"));
     store
+        .as_user(UserId::OWNER)
         .resolve_pending(id, &Resolution::allow(), Actor::Cli)
         .unwrap();
     drop(sink.take());
     store
+        .as_user(UserId::OWNER)
         .resolve_pending(id, &Resolution::allow(), Actor::Cli)
         .unwrap_err();
     store

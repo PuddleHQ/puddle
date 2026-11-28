@@ -175,3 +175,11 @@ mod windows {
         );
     }
 }
+
+#[test]
+fn the_quit_flag_is_found_only_as_a_whole_argument() {
+    assert!(asks_to_quit(["puddle-app", "--quit"]));
+    assert!(!asks_to_quit(["puddle-app", "--quits"]));
+    assert!(!asks_to_quit(["puddle-app", "--at-login"]));
+    assert!(!asks_to_quit(Vec::<String>::new()));
+}

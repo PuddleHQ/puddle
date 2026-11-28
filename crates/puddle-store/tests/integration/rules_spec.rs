@@ -176,7 +176,10 @@ fn r04_suffix_must_be_longer_than_a_public_suffix() {
     let audit_before = audit(&store).len();
     let mut too_wide = Resolution::allow();
     too_wide.pattern = PatternChoice::Suffix("co.uk".into());
-    let err = store.resolve_pending(id, &too_wide, Actor::Ui).unwrap_err();
+    let err = store
+        .as_user(puddle_store::UserId::OWNER)
+        .resolve_pending(id, &too_wide, Actor::Ui)
+        .unwrap_err();
     assert!(matches!(
         err,
         StoreError::Pattern(PatternError::PublicSuffix(_))
@@ -367,6 +370,7 @@ fn r08_concurrent_decisions_never_see_half_a_change() {
         })
         .collect();
     store
+        .as_user(puddle_store::UserId::OWNER)
         .resolve_pending(id, &Resolution::allow(), Actor::Ui)
         .unwrap();
     assert!(matches!(
@@ -504,7 +508,10 @@ fn r11_request_after_the_row_ended_opens_a_new_row() {
     let first = new_pending(decide(&store, "a", "example.com"));
     let mut temporary = Resolution::allow();
     temporary.expires_in = Some(Duration::from_secs(60));
-    store.resolve_pending(first, &temporary, Actor::Ui).unwrap();
+    store
+        .as_user(puddle_store::UserId::OWNER)
+        .resolve_pending(first, &temporary, Actor::Ui)
+        .unwrap();
     clock.advance(60_000);
     let second = new_pending(decide(&store, "a", "example.com"));
     assert!(second > first);
@@ -519,7 +526,10 @@ fn r11_undoing_a_decision_deletes_its_rule_and_reopens_the_requests_it_closed() 
     decide(&store, "a", "one.example.com");
     let mut wide = Resolution::deny();
     wide.pattern = PatternChoice::Suffix("example.com".into());
-    let decided = store.resolve_pending(first, &wide, Actor::Ui).unwrap();
+    let decided = store
+        .as_user(puddle_store::UserId::OWNER)
+        .resolve_pending(first, &wide, Actor::Ui)
+        .unwrap();
     assert_eq!(decided.also_closed, vec![second]);
 
     let (rule, reopened) = store.undo_decision(decided.rule.id, Actor::Ui).unwrap();
@@ -560,7 +570,10 @@ fn r11_undoing_does_not_repeat_a_request_that_was_asked_again_meanwhile() {
     let first = new_pending(decide(&store, "a", "example.com"));
     let mut temporary = Resolution::allow();
     temporary.expires_in = Some(Duration::from_secs(60));
-    let decided = store.resolve_pending(first, &temporary, Actor::Ui).unwrap();
+    let decided = store
+        .as_user(puddle_store::UserId::OWNER)
+        .resolve_pending(first, &temporary, Actor::Ui)
+        .unwrap();
     clock.advance(60_000);
     // The rule lapsed and the workspace asked again, so an open row exists for the host.
     let open = new_pending(decide(&store, "a", "example.com"));
@@ -583,9 +596,11 @@ fn r11_undoing_does_not_reopen_a_request_that_another_rule_decides() {
             .unwrap(),
     );
     let first = store
+        .as_user(puddle_store::UserId::OWNER)
         .resolve_pending(plain, &Resolution::allow(), Actor::Ui)
         .unwrap();
     let second = store
+        .as_user(puddle_store::UserId::OWNER)
         .resolve_pending(local, &Resolution::allow(), Actor::Ui)
         .unwrap();
     // A wider rule arrives after both rows closed. It decides the plain request again, but a
@@ -616,6 +631,7 @@ fn r21_undoing_a_global_rule_does_not_reopen_requests_of_a_deleted_workspace() {
     let gone = new_pending(decide(&store, "a", "example.com"));
     let kept = new_pending(decide(&store, "b", "example.com"));
     let decided = store
+        .as_user(puddle_store::UserId::OWNER)
         .resolve_pending(
             gone,
             &Resolution {
@@ -648,6 +664,7 @@ fn r12_pending_rows_are_immutable_and_ids_never_reused() {
     own_workspaces(&store);
     let id = new_pending(decide(&store, "a", "example.com"));
     store
+        .as_user(puddle_store::UserId::OWNER)
         .resolve_pending(id, &Resolution::deny(), Actor::Cli)
         .unwrap();
     drop(store);
@@ -733,6 +750,7 @@ fn r45_open_rows_are_capped_without_refusing_and_room_lists_the_next_request() {
     }
     // Making room lists the next request that asks.
     store
+        .as_user(puddle_store::UserId::OWNER)
         .resolve_pending(first, &Resolution::deny(), Actor::Ui)
         .unwrap();
     new_pending(decide(&store, "a", "three.example"));
@@ -780,6 +798,7 @@ fn r45_a_hundred_thousand_new_hosts_keep_the_store_bounded_and_the_inbox_fast() 
     // The request that was there first is still waiting and still answerable.
     assert_eq!(store.pending(real).unwrap().state, PendingState::Requested);
     store
+        .as_user(puddle_store::UserId::OWNER)
         .resolve_pending(real, &Resolution::allow(), Actor::Ui)
         .unwrap();
     assert_eq!(audit_of(&store, "pending_suppressed"), Vec::<Value>::new());
@@ -816,6 +835,7 @@ fn r14_suffix_allow_is_no_match_when_an_exact_allow_is_required() {
         }
     );
     let decided = store
+        .as_user(puddle_store::UserId::OWNER)
         .resolve_pending(id, &Resolution::allow(), Actor::Ui)
         .unwrap();
     assert_eq!(
@@ -837,6 +857,7 @@ fn r14_a_row_that_needs_an_exact_allow_is_never_closed_by_a_suffix_allow() {
     // now decides).
     let other = new_pending(decide(&store, "a", "web.corp.example"));
     store
+        .as_user(puddle_store::UserId::OWNER)
         .resolve_pending(
             other,
             &Resolution {
@@ -901,7 +922,7 @@ fn r16_approving_a_row_that_needs_an_exact_allow_with_a_suffix_or_a_set_is_refus
         ..Resolution::allow()
     };
     assert!(matches!(
-        store.resolve_pending(id, &suffix, Actor::Ui),
+        store.as_user(puddle_store::UserId::OWNER).resolve_pending(id, &suffix, Actor::Ui),
         Err(StoreError::ExactAllowOnly(refused)) if refused == id
     ));
     let into_set = Resolution {
@@ -909,7 +930,9 @@ fn r16_approving_a_row_that_needs_an_exact_allow_with_a_suffix_or_a_set_is_refus
         ..Resolution::allow()
     };
     assert!(matches!(
-        store.resolve_pending(id, &into_set, Actor::Ui),
+        store
+            .as_user(puddle_store::UserId::OWNER)
+            .resolve_pending(id, &into_set, Actor::Ui),
         Err(StoreError::ExactAllowOnly(_))
     ));
     // Nothing changed: the row is open and no rule exists.
@@ -920,13 +943,17 @@ fn r16_approving_a_row_that_needs_an_exact_allow_with_a_suffix_or_a_set_is_refus
         pattern: PatternChoice::Suffix(".corp.example".into()),
         ..Resolution::deny()
     };
-    store.resolve_pending(id, &deny, Actor::Ui).unwrap();
+    store
+        .as_user(puddle_store::UserId::OWNER)
+        .resolve_pending(id, &deny, Actor::Ui)
+        .unwrap();
     let other = new_pending(
         store
             .decide(&req("a", "x.third.example", 22), SuffixAllows::Ignore)
             .unwrap(),
     );
     store
+        .as_user(puddle_store::UserId::OWNER)
         .resolve_pending(other, &Resolution::allow(), Actor::Ui)
         .unwrap();
     assert_eq!(store.pending(other).unwrap().state, PendingState::Allowed);
@@ -934,6 +961,7 @@ fn r16_approving_a_row_that_needs_an_exact_allow_with_a_suffix_or_a_set_is_refus
     let public = new_pending(decide(&store, "a", "web.other.example"));
     assert!(!store.pending(public).unwrap().exact_only);
     store
+        .as_user(puddle_store::UserId::OWNER)
         .resolve_pending(
             public,
             &Resolution {
@@ -1017,6 +1045,7 @@ fn r15_approve_defaults_to_this_workspace_exact_host_permanent() {
     let (_, store) = fixture();
     let id = new_pending(decide(&store, "a", "api.example.com"));
     let decided = store
+        .as_user(puddle_store::UserId::OWNER)
         .resolve_pending(id, &Resolution::allow(), Actor::Ui)
         .unwrap();
     let rule = decided.rule;
@@ -1049,7 +1078,10 @@ fn r15_all_four_choices_are_honoured() {
         pattern: PatternChoice::Suffix("*.example.com".into()),
         expires_in: Some(Duration::from_secs(3600)),
     };
-    let decided = store.resolve_pending(id, &resolution, Actor::Api).unwrap();
+    let decided = store
+        .as_user(puddle_store::UserId::OWNER)
+        .resolve_pending(id, &resolution, Actor::Api)
+        .unwrap();
     assert_eq!(decided.row.state, PendingState::Denied);
     assert_eq!(decided.rule.scope, Scope::Global);
     assert_eq!(decided.rule.pattern.to_string(), ".example.com");
@@ -1073,23 +1105,33 @@ fn r15_invalid_choices_are_refused() {
     let mut other = Resolution::allow();
     other.pattern = PatternChoice::Suffix("other.com".into());
     assert!(matches!(
-        store.resolve_pending(id, &other, Actor::Ui),
+        store
+            .as_user(puddle_store::UserId::OWNER)
+            .resolve_pending(id, &other, Actor::Ui),
         Err(StoreError::Pattern(PatternError::NotASuffixOf { .. }))
     ));
     let mut wide = Resolution::allow();
     wide.pattern = PatternChoice::Suffix("example.com".into());
     assert!(matches!(
-        store.resolve_pending(ip, &wide, Actor::Ui),
+        store
+            .as_user(puddle_store::UserId::OWNER)
+            .resolve_pending(ip, &wide, Actor::Ui),
         Err(StoreError::Pattern(PatternError::SuffixOfIp))
     ));
     let mut zero = Resolution::allow();
     zero.expires_in = Some(Duration::ZERO);
     assert!(matches!(
-        store.resolve_pending(id, &zero, Actor::Ui),
+        store
+            .as_user(puddle_store::UserId::OWNER)
+            .resolve_pending(id, &zero, Actor::Ui),
         Err(StoreError::ExpiryNotInFuture)
     ));
     assert!(matches!(
-        store.resolve_pending(id, &Resolution::allow(), Actor::System),
+        store.as_user(puddle_store::UserId::OWNER).resolve_pending(
+            id,
+            &Resolution::allow(),
+            Actor::System
+        ),
         Err(StoreError::SystemActor)
     ));
     let mut system_rule = rule(None, "example.com", Effect::Allow);
@@ -1122,6 +1164,7 @@ fn r16_a_decision_closes_every_other_row_the_rule_decides() {
     let mut workspace_suffix = Resolution::allow();
     workspace_suffix.pattern = PatternChoice::Suffix("example.com".into());
     let decided = store
+        .as_user(puddle_store::UserId::OWNER)
         .resolve_pending(target, &workspace_suffix, Actor::Ui)
         .unwrap();
     assert_eq!(decided.also_closed, vec![same_workspace]);
@@ -1139,7 +1182,10 @@ fn r16_a_decision_closes_every_other_row_the_rule_decides() {
     let mut global_deny = Resolution::deny();
     global_deny.scope = ScopeChoice::Global;
     global_deny.pattern = PatternChoice::Suffix("example.com".into());
-    let decided = store.resolve_pending(id, &global_deny, Actor::Ui).unwrap();
+    let decided = store
+        .as_user(puddle_store::UserId::OWNER)
+        .resolve_pending(id, &global_deny, Actor::Ui)
+        .unwrap();
     let closed: HashSet<_> = decided.also_closed.into_iter().collect();
     assert_eq!(closed, HashSet::from([other_workspace, c_row]));
     assert_eq!(
@@ -1239,6 +1285,7 @@ fn r17_stale_ids_are_refused_and_nothing_changes() {
     let (_, store) = fixture();
     let id = new_pending(decide(&store, "a", "example.com"));
     store
+        .as_user(puddle_store::UserId::OWNER)
         .resolve_pending(id, &Resolution::allow(), Actor::Cli)
         .unwrap();
     let before = (
@@ -1246,6 +1293,7 @@ fn r17_stale_ids_are_refused_and_nothing_changes() {
         audit(&store).len(),
     );
     let err = store
+        .as_user(puddle_store::UserId::OWNER)
         .resolve_pending(id, &Resolution::deny(), Actor::Cli)
         .unwrap_err();
     assert!(matches!(
@@ -1257,6 +1305,7 @@ fn r17_stale_ids_are_refused_and_nothing_changes() {
     ));
     assert!(err.to_string().contains("already allowed"), "{err}");
     let err = store
+        .as_user(puddle_store::UserId::OWNER)
         .resolve_pending(PendingId(999), &Resolution::allow(), Actor::Cli)
         .unwrap_err();
     assert!(matches!(err, StoreError::UnknownPending(PendingId(999))));
@@ -1282,6 +1331,7 @@ fn r17_success_echoes_exactly_what_was_approved() {
             .unwrap(),
     );
     let decided = store
+        .as_user(puddle_store::UserId::OWNER)
         .resolve_pending(id, &Resolution::allow(), Actor::Cli)
         .unwrap();
     assert_eq!(
@@ -1370,6 +1420,7 @@ fn r46_open_rows_never_expire_by_age() {
         Decision::Pending(PendingOutcome::Repeat(old))
     );
     store
+        .as_user(puddle_store::UserId::OWNER)
         .resolve_pending(old, &Resolution::allow(), Actor::Ui)
         .unwrap();
 }
@@ -1465,6 +1516,7 @@ fn r23_every_stored_line_is_tagged_json_with_nulls_written() {
     let (_, store) = fixture();
     let id = new_pending(decide(&store, "a", "example.com"));
     store
+        .as_user(puddle_store::UserId::OWNER)
         .resolve_pending(id, &Resolution::allow(), Actor::Ui)
         .unwrap();
     for (_, line) in store.audit_lines(0, 1000).unwrap() {
@@ -1485,6 +1537,7 @@ fn r24_the_store_writes_each_record_type_it_owns() {
     let a = new_pending(decide(&store, "a", "a.example"));
     new_pending(decide(&store, "a", "b.example"));
     let decided = store
+        .as_user(puddle_store::UserId::OWNER)
         .resolve_pending(a, &Resolution::allow(), Actor::Ui)
         .unwrap();
     store
@@ -1555,6 +1608,7 @@ fn r26_a_flood_of_waiting_requests_cannot_push_real_history_out_of_the_audit() {
     store.record_connection(&connection("a")).unwrap();
     let answered = new_pending(decide(&store, "a", "answered.example"));
     store
+        .as_user(puddle_store::UserId::OWNER)
         .resolve_pending(answered, &Resolution::deny(), Actor::Ui)
         .unwrap();
     let before = audit(&store).len();
@@ -1942,7 +1996,7 @@ proptest! {
                     if let Some(id) = ids.get(usize::from(row)) {
                         let mut temporary = Resolution::allow();
                         temporary.expires_in = Some(Duration::from_secs(1000));
-                        let _ = store.resolve_pending(*id, &temporary, Actor::Ui);
+                        let _ = store.as_user(puddle_store::UserId::OWNER).resolve_pending(*id, &temporary, Actor::Ui);
                     }
                 }
                 Step::Advance { ms } => clock.advance(u64::from(ms)),

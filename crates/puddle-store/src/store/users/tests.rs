@@ -21,6 +21,18 @@ fn name(text: &str) -> UserName {
 }
 
 #[test]
+fn a_user_being_deleted_cannot_be_given_a_workspace() {
+    let store = store();
+    let ann = store.add_user(&name("Ann")).unwrap().id;
+    store.begin_user_delete(UserId::OWNER, ann).unwrap();
+    assert!(matches!(
+        store.set_workspace_owner(&ws("late"), ann),
+        Err(StoreError::UnknownUser(u)) if u == ann
+    ));
+    assert_eq!(store.workspaces_of(ann).unwrap(), []);
+}
+
+#[test]
 fn a_new_database_has_the_owner_and_nobody_else() {
     let users = store().users().unwrap();
     assert_eq!(users.len(), 1);

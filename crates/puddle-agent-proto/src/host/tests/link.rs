@@ -215,3 +215,29 @@ async fn editor_password_sends_password_and_returns_the_agents_answer() {
     assert_eq!(link.editor_password().await.unwrap(), hex);
     assert_eq!(requests.recv().await.unwrap(), b"password\n");
 }
+
+/// Keeps the link the agent's hello produced.
+#[derive(Default)]
+struct KeepLink(std::sync::Mutex<Option<GuestLink>>);
+
+impl StreamHandler for KeepLink {
+    async fn handle(&self, _stream: GuestStream) {}
+
+    async fn guest_link(&self, link: GuestLink) {
+        *self.0.lock().unwrap() = Some(link);
+    }
+}
+
+#[tokio::test]
+async fn the_link_carries_the_identity_the_session_was_given() {
+    let kept = Arc::new(KeepLink::default());
+    let id = SessionId::next();
+    let mut h = start_session(Arc::clone(&kept), HostConfig::default(), id);
+    let mut control = h.control_stream().await;
+    send(&mut control, &AgentMessage::hello()).await;
+    let link = eventually("the link", WAIT, || kept.0.lock().unwrap().clone()).await;
+    assert_eq!(link.session(), id);
+    assert_ne!(id, SessionId::next());
+    drop(control);
+    h.close().await.unwrap();
+}

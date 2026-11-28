@@ -122,7 +122,9 @@ impl Running {
         self.control("GET", "/control/state", None).await.json()
     }
 
-    /// An open SSE stream on the API.
+    /// An open SSE stream on the API, returned once the response head has come: the handler has
+    /// subscribed by then, so an event sent after this returns is on the stream. The head is read
+    /// a byte at a time so that no event is consumed with it.
     async fn events(&self) -> TcpStream {
         let mut tcp = TcpStream::connect(self.api).await.unwrap();
         let request = format!(
@@ -131,6 +133,14 @@ impl Running {
             self.token
         );
         tcp.write_all(request.as_bytes()).await.unwrap();
+        let mut head = Vec::new();
+        tokio::time::timeout(STEP, async {
+            while !head.ends_with(b"\r\n\r\n") {
+                head.push(tcp.read_u8().await.unwrap());
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("no response head; saw {:?}", String::from_utf8_lossy(&head)));
         tcp
     }
 }

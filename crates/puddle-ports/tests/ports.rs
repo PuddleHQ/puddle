@@ -17,7 +17,7 @@ use puddle_agent::config::{PortWatch, Target};
 use puddle_agent::{Agent, Config};
 use puddle_agent_proto::forward::GuestLink;
 use puddle_agent_proto::host::{
-    GuestStream, GuestWatcher, HostConfig, StreamHandler, serve_session,
+    GuestStream, GuestWatcher, HostConfig, SessionId, StreamHandler, serve_session,
 };
 use puddle_ipc::IpcRoot;
 use puddle_netpolicy::{EndpointKind, OwnAddresses, PuddleEndpoints};
@@ -133,7 +133,7 @@ impl StreamHandler for Route {
 async fn an_ended_agent_session_is_announced_by_workspace() {
     let rig = rig("ended").await;
     let mut ended = rig.ports.agent_sessions_ended();
-    GuestWatcher::session_ended(&rig.ports, &rig.workspace);
+    GuestWatcher::session_ended(&rig.ports, &rig.workspace, SessionId::next());
     assert_eq!(ended.next().await, rig.workspace);
 }
 
@@ -142,9 +142,36 @@ async fn a_reader_that_fell_behind_still_gets_a_name() {
     let rig = rig("behind").await;
     let mut ended = rig.ports.agent_sessions_ended();
     for _ in 0..200 {
-        GuestWatcher::session_ended(&rig.ports, &rig.workspace);
+        GuestWatcher::session_ended(&rig.ports, &rig.workspace, SessionId::next());
     }
     assert_eq!(ended.next().await, rig.workspace);
+}
+
+#[tokio::test]
+async fn the_end_of_the_session_that_gave_the_link_takes_the_link_away() {
+    let rig = rig("link-ended").await;
+    rig.started().await;
+    let link = rig
+        .ports
+        .guest_link_within(&rig.workspace, Duration::from_secs(5))
+        .await
+        .unwrap();
+    GuestWatcher::session_ended(&rig.ports, &rig.workspace, link.session());
+    assert!(rig.ports.guest_link(&rig.workspace).is_none());
+}
+
+#[tokio::test]
+async fn the_end_of_another_session_leaves_the_link_alone() {
+    let rig = rig("link-kept").await;
+    rig.started().await;
+    let link = rig
+        .ports
+        .guest_link_within(&rig.workspace, Duration::from_secs(5))
+        .await
+        .unwrap();
+    GuestWatcher::session_ended(&rig.ports, &rig.workspace, SessionId::next());
+    let kept = rig.ports.guest_link(&rig.workspace).unwrap();
+    assert_eq!(kept.session(), link.session());
 }
 
 struct Rig {
@@ -204,6 +231,7 @@ fn rig_without_agent(tag: &str, tweak: impl FnOnce(Ports) -> Ports) -> Rig {
                 let _ = serve_session(
                     conn,
                     route.workspace.clone(),
+                    SessionId::next(),
                     sink,
                     Arc::new(route),
                     HostConfig::default(),

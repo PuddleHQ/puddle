@@ -59,7 +59,6 @@ async fn the_network_health_report_is_seeded_stamped_and_replaced_by_a_step() {
     assert_eq!(body["routes"].as_array().unwrap().len(), 3);
 
     let mut stream = run.events().await;
-    read_until(&mut stream, |s| s.contains("\r\n\r\n")).await;
     let ran = run
         .control("POST", "/control/script/network-change", None)
         .await;

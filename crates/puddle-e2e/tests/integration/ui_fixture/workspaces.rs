@@ -161,7 +161,6 @@ async fn every_remote_note_of_a_seeded_checkout_says_why_it_cannot_be_managed() 
 async fn scripted_steps_hold_and_fail_workspace_operations() {
     let run = start("empty").await;
     let mut stream = run.events().await;
-    read_until(&mut stream, |s| s.contains("\r\n\r\n")).await;
     let step = |body: Value| {
         let run = &run;
         async move { run.control("POST", "/control/step", Some(&body)).await }
@@ -209,7 +208,6 @@ async fn scripted_steps_hold_and_fail_workspace_operations() {
 async fn scripted_steps_raise_and_end_background_problems() {
     let run = start("lived-in").await;
     let mut stream = run.events().await;
-    read_until(&mut stream, |s| s.contains("\r\n\r\n")).await;
     let step = |body: Value| {
         let run = &run;
         async move { run.control("POST", "/control/step", Some(&body)).await }

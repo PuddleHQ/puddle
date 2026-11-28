@@ -7,7 +7,6 @@ use super::*;
 async fn emit_puts_an_event_on_the_stream_and_any_event_json_is_accepted() {
     let run = start("empty").await;
     let mut stream = run.events().await;
-    read_until(&mut stream, |s| s.contains("\r\n\r\n")).await;
     // The stream is subscribed once the hub has a receiver; emit until it shows up.
     let event = json!({"type": "oom_kill", "workspace": "web-shop", "pid": 7, "process": "node"});
     let sent = run.control("POST", "/control/emit", Some(&event)).await;
@@ -81,7 +80,6 @@ async fn a_spread_adds_that_many_pending_requests_and_an_orphan_volume_is_listed
 async fn restart_ends_open_streams_and_keeps_the_data_on_the_same_port() {
     let run = start("lived-in").await;
     let mut stream = run.events().await;
-    read_until(&mut stream, |s| s.contains("\r\n\r\n")).await;
     let before = run.get("/api/pending").await.body;
     let restarted = run.control("POST", "/control/restart", None).await;
     assert_eq!(restarted.status, 204);

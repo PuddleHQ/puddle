@@ -41,7 +41,11 @@ mod devices;
 pub(crate) use devices::{insert_device, revoke_devices_in};
 mod environment;
 #[cfg(test)]
-mod failures;
+mod failure_tests;
+#[cfg(test)]
+mod decision_tests;
+#[cfg(test)]
+mod test_fixtures;
 mod identities;
 mod interception;
 mod learned;

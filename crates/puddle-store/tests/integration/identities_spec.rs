@@ -502,7 +502,7 @@ fn a_picked_identity_and_toggles_are_used_and_a_later_repository_reuses_the_list
     let toggles: Vec<_> = git
         .repos
         .iter()
-        .map(|r| (r.repo.repo.clone(), r.pull, r.push))
+        .map(|r| (r.repo.repo().to_owned(), r.pull, r.push))
         .collect();
     assert_eq!(
         toggles,

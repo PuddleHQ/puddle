@@ -58,7 +58,7 @@ impl FakeHook {
         let runs = Arc::new(AtomicU32::new(0));
         let counter = runs.clone();
         rt.on_exec(
-            move |_: &mut ExecContext<'_>, r: &ExecRequest| -> Option<ExecOutput> {
+            move |ctx: &mut ExecContext<'_>, r: &ExecRequest| -> Option<ExecOutput> {
                 if !is_hook(r) {
                     return None;
                 }
@@ -66,8 +66,8 @@ impl FakeHook {
                 assert_eq!(r.user.as_deref(), Some("root"));
                 assert!(r.stdin.starts_with(PLAN_HEADER.as_bytes()));
                 counter.fetch_add(1, Ordering::SeqCst);
-                // Simulated slow command: the gate runs it for `delay`.
-                std::thread::sleep(delay);
+                // Simulated slow command: the fake waits `delay` before it answers.
+                ctx.delay(delay);
                 Some(ExecOutput::new(code, "puddle-boot: ready\n", stderr))
             },
         );
@@ -115,7 +115,7 @@ async fn hook_runs_after_create_before_any_user_exec() {
     assert_eq!(gate.state(), GateState::Down);
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test(start_paused = true)]
 async fn callers_wait_while_booting_then_pass() {
     let rt = FakeRuntime::new();
     let _hook = FakeHook::install(&rt, 0, "", Duration::from_millis(300));

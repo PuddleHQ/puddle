@@ -52,6 +52,7 @@ pub struct ExecContext<'a> {
     pub(super) spec: &'a SandboxSpec,
     pub(super) root: &'a mut Files,
     pub(super) volumes: &'a mut BTreeMap<String, super::VolumeRecord>,
+    pub(super) delay: Duration,
 }
 
 /// Where a guest path lives.
@@ -69,6 +70,14 @@ enum Location<'p> {
 }
 
 impl ExecContext<'_> {
+    /// Makes the call take `delay` more time to return, as a slow guest command would.
+    ///
+    /// The fake waits after it released its state, with `tokio::time::sleep`, so the wait follows
+    /// a paused test clock and a caller that drops the call cancels it.
+    pub fn delay(&mut self, delay: Duration) {
+        self.delay += delay;
+    }
+
     /// The sandbox the command runs in.
     #[must_use]
     pub fn sandbox(&self) -> &SandboxName {

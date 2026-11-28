@@ -49,7 +49,11 @@ fn git_view(
             .into_iter()
             .map(|identity| view(state, identity))
             .collect::<Result<_, _>>()?,
-        repos: git.repos.into_iter().map(GitRepoView::from_store).collect(),
+        repos: git
+            .repos
+            .into_iter()
+            .map(|entry| GitRepoView::from_store(&entry))
+            .collect(),
         only_push_listed: git.only_push_listed,
         only_pull_listed: git.only_pull_listed,
         push_from: git.push_from.into(),
@@ -625,7 +629,7 @@ pub(crate) async fn add_git_repo(
             Some(&name),
             Some(format!("{repo} in the Git settings")),
         );
-        Ok(GitRepoView::from_store(entry))
+        Ok(GitRepoView::from_store(&entry))
     })
     .await?;
     Ok((StatusCode::CREATED, Json(row)))
@@ -666,7 +670,7 @@ pub(crate) async fn set_git_repo(
                 on_off(body.push)
             )),
         );
-        Ok(GitRepoView::from_store(entry))
+        Ok(GitRepoView::from_store(&entry))
     })
     .await?;
     Ok(Json(row))

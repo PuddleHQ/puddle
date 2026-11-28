@@ -309,6 +309,36 @@ fn r08_changes_apply_to_the_next_request_without_restart() {
 }
 
 #[test]
+fn extending_an_expired_rule_closes_the_requests_it_decides_again() {
+    let (clock, store) = fixture();
+    let mut short = rule(Some("a"), "example.com", Effect::Allow);
+    short.expires_at = Some(T0 + 5);
+    let id = store
+        .as_user(puddle_store::UserId::OWNER)
+        .add_rule(&short)
+        .unwrap()
+        .id;
+    clock.advance(10);
+    let waiting = new_pending(decide(&store, "a", "example.com"));
+    let other_workspace = new_pending(decide(&store, "b", "example.com"));
+    store.set_rule_expiry(id, None, Actor::Ui).unwrap();
+    let state = |pending: PendingId| store.pending(pending).unwrap().state;
+    assert_eq!(state(waiting), PendingState::Allowed);
+    assert_eq!(state(other_workspace), PendingState::Requested);
+}
+
+#[test]
+fn an_unchanged_expiry_writes_no_record_and_sends_no_event() {
+    let (_, store) = fixture();
+    let id = add(&store, Some("a"), "example.com", Effect::Allow);
+    store.set_rule_expiry(id, None, Actor::Ui).unwrap();
+    assert_eq!(audit_of(&store, "rule_updated").len(), 0);
+    store.set_rule_expiry(id, Some(T0 + 10), Actor::Ui).unwrap();
+    store.set_rule_expiry(id, Some(T0 + 10), Actor::Ui).unwrap();
+    assert_eq!(audit_of(&store, "rule_updated").len(), 1);
+}
+
+#[test]
 fn r08_concurrent_decisions_never_see_half_a_change() {
     // An approve creates a rule and closes rows in one change. A decider racing it sees either
     // the old world (pending, the row still open) or the new one (allowed), never an allow while

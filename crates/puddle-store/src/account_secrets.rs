@@ -210,13 +210,14 @@ impl AccountSecrets {
             .map(|hash| CheckedPassword { user, hash }))
     }
 
-    /// Whether `user` has a password.
+    /// Whether `user` has a password. A user being deleted has none.
     ///
     /// # Errors
     /// A database error.
     pub fn has_password(&self, user: UserId) -> Result<bool, StoreError> {
         Ok(lock(&self.conn).query_row(
-            "SELECT count(*) > 0 FROM account_passwords WHERE user_id = ?1",
+            "SELECT count(*) > 0 FROM account_passwords p JOIN users u ON u.id = p.user_id
+             WHERE p.user_id = ?1 AND u.deleting_at IS NULL",
             [user.get()],
             |r| r.get(0),
         )?)
@@ -277,21 +278,23 @@ impl AccountSecrets {
     }
 
     /// Gives `device` the refresh token with this `digest` (a hash of the token, never the
-    /// token), replacing the one before.
+    /// token), replacing the one before. `false`, writing nothing, when the device is unknown or
+    /// revoked.
     ///
     /// # Errors
-    /// [`StoreError::InviteInvalid`] for a digest shorter than [`MIN_INVITE_DIGEST_BYTES`], or a
-    /// database error.
-    pub fn put_session(&self, device: DeviceId, digest: &[u8]) -> Result<(), StoreError> {
+    /// [`StoreError::SessionDigestInvalid`] for a digest shorter than
+    /// [`MIN_INVITE_DIGEST_BYTES`], or a database error.
+    pub fn put_session(&self, device: DeviceId, digest: &[u8]) -> Result<bool, StoreError> {
         if digest.len() < MIN_INVITE_DIGEST_BYTES {
-            return Err(StoreError::InviteInvalid);
+            return Err(StoreError::SessionDigestInvalid);
         }
-        lock(&self.conn).execute(
-            "INSERT INTO account_sessions (device_id, refresh_digest) VALUES (?1, ?2)
+        let written = lock(&self.conn).execute(
+            "INSERT INTO account_sessions (device_id, refresh_digest)
+             SELECT id, ?2 FROM devices WHERE id = ?1 AND revoked_at IS NULL
              ON CONFLICT (device_id) DO UPDATE SET refresh_digest = excluded.refresh_digest",
             params![device.get(), digest],
         )?;
-        Ok(())
+        Ok(written > 0)
     }
 
     /// The device a refresh token's `digest` belongs to, while that device is neither revoked

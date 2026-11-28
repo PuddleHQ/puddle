@@ -131,6 +131,22 @@ pub(super) fn reconcile_problems(report: &puddle_lifecycle::ReconcileReport) -> 
             ),
         ));
     }
+    if !report.forced.is_empty() {
+        let names: Vec<_> = report.forced.iter().map(ToString::to_string).collect();
+        problems.push(Problem::new(
+            "reconcile-forced-sandboxes",
+            format!(
+                "Puddle had to end {} sandbox{} by force that an earlier run left running",
+                names.len(),
+                if names.len() == 1 { "" } else { "es" }
+            ),
+            format!(
+                "{}. They did not shut down in time, so what their guests had not yet written \
+                 to disk may be lost. Check the work in the affected workspaces.",
+                names.join(", ")
+            ),
+        ));
+    }
     if !report.failures.is_empty() {
         let what: Vec<_> = report
             .failures

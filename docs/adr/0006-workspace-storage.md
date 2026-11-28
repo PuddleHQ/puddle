@@ -137,8 +137,8 @@ Two findings from the rerun put requirements on Puddle rather than on the choice
   runtime's fork can expose the root disk's own ext4 at `/.msb/rootfs/upperfs`, which `fstrim` accepts.
 - **Crash safety:** filesystem-level consistency after a VMM crash and after host power loss is
   measured (on Linux, where msb turns a guest flush into an `fsync` of the image; the Windows
-  `FlushFileBuffers` path is not). A power cut can leave a zero-filled git index or `HEAD`, which a
-  boot repair would have to handle.
+  `FlushFileBuffers` path is not). A power cut can leave a zero-filled git index or `HEAD`, which the
+  boot step (`guest/clear-locks.sh`) repairs.
 
 ## Open risks
 

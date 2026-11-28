@@ -7,10 +7,13 @@
 //! No method returns a secret, and nothing here reaches a workspace: the lists are read on the
 //! host with the credential's own token and kept in memory.
 
+#[cfg(any(test, feature = "testing"))]
 use std::sync::{Mutex, PoisonError};
 
 use futures_util::future::BoxFuture;
-use puddle_repos::{Problem, ProblemKind, Profile, ProfileRead, Read, Repos, SourceList};
+#[cfg(any(test, feature = "testing"))]
+use puddle_repos::{Problem, ProblemKind, Profile};
+use puddle_repos::{ProfileRead, Read, Repos, SourceList};
 use puddle_secrets::SourceSpec;
 use puddle_store::Identity;
 
@@ -75,6 +78,7 @@ impl RepoService for Repos {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 /// Answers from what a test or the UI fixture put in it: the lists to show (those of the
 /// identities asked for) and the profile of each source. Records what was asked.
 #[derive(Default)]
@@ -82,6 +86,7 @@ pub struct FakeRepos {
     state: Mutex<FakeState>,
 }
 
+#[cfg(any(test, feature = "testing"))]
 #[derive(Default)]
 struct FakeState {
     lists: Vec<SourceList>,
@@ -89,12 +94,14 @@ struct FakeState {
     reads: Vec<Read>,
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl std::fmt::Debug for FakeRepos {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FakeRepos").finish_non_exhaustive()
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl FakeRepos {
     /// Nothing listed; every profile says the host could not be asked.
     #[must_use]
@@ -125,6 +132,7 @@ impl FakeRepos {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl RepoService for FakeRepos {
     fn lists<'a>(
         &'a self,

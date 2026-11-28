@@ -9,6 +9,9 @@ use rusqlite::{OptionalExtension, Transaction, params};
 use super::{Store, lock, write_tx};
 use crate::error::StoreError;
 
+/// The newest refusal of one workspace (`?1`), if it has any.
+const NEWEST_REFUSAL: &str = "SELECT max(last_at) FROM learned_hosts WHERE workspace_id = ?1";
+
 /// One host a workspace's tools refused Puddle's certificate for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LearnedRow {
@@ -41,11 +44,8 @@ impl Store {
         let tx = write_tx(&mut conn)?;
         // A clock that stepped back must not make this refusal the oldest: stamp it no earlier
         // than the newest row, so the cap evicts an older row and never the one just recorded.
-        let newest: Option<i64> = tx.query_row(
-            "SELECT max(last_at) FROM learned_hosts WHERE workspace_id = ?1",
-            [workspace.as_str()],
-            |r| r.get(0),
-        )?;
+        let newest: Option<i64> =
+            tx.query_row(NEWEST_REFUSAL, [workspace.as_str()], |r| r.get(0))?;
         let now = i64::try_from(now).unwrap_or(i64::MAX);
         let stamp = now.max(newest.unwrap_or(0));
         tx.execute(

@@ -9,8 +9,7 @@ use super::rows::load_pending;
 use super::users::owner_in;
 use super::{Decided, NewRequestRule, PendingId, PendingRow, RequestRule, Resolution, Store, lock};
 use crate::error::StoreError;
-use crate::pattern::Pattern;
-use crate::rule::{Actor, Effect, NewRule, Precedence, Rule, Scope};
+use crate::rule::{Actor, NewRule, Precedence, Rule};
 use crate::users::UserId;
 
 impl Store {
@@ -31,7 +30,7 @@ impl Store {
     ///
     /// # Errors
     /// [`StoreError::UnknownWorkspace`] for a workspace with no recorded user, or a database
-    /// error; the rules made before it stay.
+    /// error; nothing is made then.
     pub fn allow_hosts_for_create(
         &self,
         workspace: &WorkspaceId,
@@ -188,25 +187,12 @@ impl UserStore<'_> {
     ///
     /// # Errors
     /// [`StoreError::UnknownWorkspace`] for a workspace that is not theirs, or a database error;
-    /// the rules made before it stay.
+    /// nothing is made then.
     fn allow_hosts_for_create(
         &self,
         workspace: &WorkspaceId,
         hosts: &[Host],
     ) -> Result<Vec<Rule>, StoreError> {
-        let mut made = Vec::new();
-        for host in hosts {
-            if self.peek(workspace, host).is_some() {
-                continue;
-            }
-            made.push(self.add_rule(&NewRule {
-                scope: Scope::Workspace(workspace.clone()),
-                pattern: Pattern::Exact(host.clone()),
-                effect: Effect::Allow,
-                expires_at: None,
-                created_by: Actor::WorkspaceCreate,
-            })?);
-        }
-        Ok(made)
+        self.store.allow_hosts_by(self.user, workspace, hosts)
     }
 }

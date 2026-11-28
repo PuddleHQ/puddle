@@ -6,6 +6,7 @@
 //! file it makes and names it.
 
 use std::pin::Pin;
+#[cfg(any(test, feature = "testing"))]
 use std::sync::{Mutex, PoisonError};
 
 use futures_util::future::BoxFuture;
@@ -115,9 +116,11 @@ fn civil_from_days(days: u64) -> (u64, u64, u64) {
     (year, month, day)
 }
 
+#[cfg(any(test, feature = "testing"))]
 /// The bytes [`FakeBackup`] serves: not an archive, only a recognisable payload.
 pub const FAKE_BACKUP_BYTES: &[u8] = b"Puddle fake backup: not a real archive\n";
 
+#[cfg(any(test, feature = "testing"))]
 /// An in-memory [`BackupService`] for tests and the UI fixture: it serves [`FAKE_BACKUP_BYTES`], or
 /// the failure set with [`FakeBackup::fail_with`], and counts how many backups were asked for.
 #[derive(Debug, Default)]
@@ -125,12 +128,14 @@ pub struct FakeBackup {
     state: Mutex<FakeState>,
 }
 
+#[cfg(any(test, feature = "testing"))]
 #[derive(Debug, Default)]
 struct FakeState {
     failure: Option<String>,
     requested: usize,
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl FakeBackup {
     /// A fake that makes every backup.
     #[must_use]
@@ -156,6 +161,7 @@ impl FakeBackup {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl BackupService for FakeBackup {
     fn create(&self) -> BoxFuture<'_, Result<BackupArchive, BackupServiceError>> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);

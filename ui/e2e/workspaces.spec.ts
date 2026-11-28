@@ -205,7 +205,7 @@ test.describe("creating", () => {
     await expect(created).toContainText("step 3 of 3");
     await backend.control.step({ do: "release_workspaces" });
     await expect(toast(page, "Created Ledger_Service.")).toBeVisible();
-    await expect(created).toContainText("Not started");
+    await expect(created).toContainText("Running");
     await expect(created).not.toContainText("Cloning");
     const made = (await workspaceList(request, backend)).find(
       (w) => w.name === "Ledger_Service",

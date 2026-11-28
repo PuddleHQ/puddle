@@ -2,60 +2,17 @@
 //! What the store does when SQLite fails in the middle of a change: the error comes back as it is
 //! and the change leaves nothing behind.
 
-use puddle_types::{ConnectionDecision, ConnectionReason, Host, PatternKind, RuleSetId};
+use puddle_types::{ConnectionDecision, ConnectionReason, RuleSetId};
 
 use puddle_types::{ConnectionEvent, ConnectionLog};
 
+use super::test_fixtures::{new_pending, request, store, store_with, workspace, workspace_rule};
 use super::*;
 use crate::clock::ManualClock;
 use crate::rule::{Effect, Precedence, RuleEdit};
 use crate::test_support::Logs;
 
 const DISK_FULL: &str = "database error: disk full";
-
-fn store_with(limits: Limits) -> (Arc<ManualClock>, Store) {
-    let clock = Arc::new(ManualClock::new(1_000_000));
-    let store = Store::open_in_memory(clock.clone(), limits).unwrap();
-    crate::testing::own(&store, &workspace());
-    (clock, store)
-}
-
-fn store() -> Store {
-    store_with(Limits::default()).1
-}
-
-fn workspace() -> WorkspaceId {
-    WorkspaceId::new("box").unwrap()
-}
-
-fn request(host: &str) -> EgressRequest {
-    EgressRequest::new(workspace(), Host::parse_normalised(host).unwrap(), 443)
-}
-
-fn new_pending(store: &Store, host: &str) -> PendingId {
-    let decision = store.decide(&request(host), SuffixAllows::Count).unwrap();
-    assert!(matches!(
-        decision,
-        Decision::Pending(PendingOutcome::New(_))
-    ));
-    let open = store
-        .open_pending_every_user(&crate::testing::all_users(), Some(&workspace()))
-        .unwrap();
-    open.into_iter()
-        .find(|row| row.host.to_string() == host)
-        .unwrap()
-        .id
-}
-
-fn workspace_rule(host: &str) -> NewRule {
-    NewRule {
-        scope: Scope::Workspace(workspace()),
-        pattern: Pattern::parse(host).unwrap(),
-        effect: Effect::Allow,
-        expires_at: None,
-        created_by: Actor::Cli,
-    }
-}
 
 /// The `type` of every audit record, oldest first.
 fn audit_kinds(store: &Store) -> Vec<String> {
@@ -72,51 +29,6 @@ fn audit_kinds(store: &Store) -> Vec<String> {
 
 const PENDING_UPDATES_FAIL: &str = "CREATE TRIGGER pending_updates_fail BEFORE UPDATE ON pending
      BEGIN SELECT RAISE(ABORT, 'disk full'); END";
-
-#[test]
-fn the_open_row_cap_is_the_one_the_store_was_opened_with() {
-    let (_, store) = store_with(Limits {
-        max_open_rows: 7,
-        ..Limits::default()
-    });
-    assert_eq!(store.max_open_rows(), 7);
-}
-
-#[test]
-fn a_rule_that_arrived_while_a_request_waited_for_the_database_decides_it() {
-    let (_, waiting) = store_with(Limits::default());
-    let (_, committed) = store_with(Limits::default());
-    let rule = committed
-        .as_user(UserId::OWNER)
-        .add_rule(&workspace_rule("x.example"))
-        .unwrap();
-    // The snapshot the waiting request finds once it has the lock.
-    *waiting.rules.write().unwrap() = committed.snapshot();
-
-    let decision = waiting
-        .decide_locked(
-            &mut lock(&waiting.conn),
-            &request("x.example"),
-            1_000_000,
-            SuffixAllows::Count,
-        )
-        .unwrap();
-
-    assert_eq!(
-        decision,
-        Decision::Allow {
-            rule_id: rule.id,
-            pattern: PatternKind::Exact
-        }
-    );
-    assert!(
-        waiting
-            .open_pending_every_user(&crate::testing::all_users(), None)
-            .unwrap()
-            .is_empty(),
-        "no pending row was made"
-    );
-}
 
 #[test]
 fn a_repeat_request_that_cannot_be_counted_leaves_its_row_as_it_was() {
@@ -362,55 +274,6 @@ fn a_decision_whose_record_cannot_be_written_makes_no_rule() {
         store.rules_every_user(&crate::testing::all_users()),
         Vec::<Rule>::new()
     );
-    assert_eq!(store.pending(id).unwrap().state, PendingState::Requested);
-}
-
-#[test]
-fn a_decision_is_logged_with_its_effect() {
-    let store = store();
-    let id = new_pending(&store, "x.example");
-    let logs = Logs::capture();
-
-    let decided = store
-        .as_user(UserId::OWNER)
-        .resolve_pending(id, &Resolution::allow(), Actor::Ui)
-        .unwrap();
-
-    assert_eq!(
-        logs.lines(),
-        [format!(
-            "INFO pending request decided pending={id} workspace=box host=x.example rule={} effect=\"allow\"",
-            decided.rule.id
-        )]
-    );
-}
-
-#[test]
-fn a_rule_in_a_set_that_is_off_leaves_the_open_requests_it_matches_open() {
-    let store = store();
-    let created = store
-        .create_rule_set(UserId::OWNER, "Blocks", "", None, Actor::Ui)
-        .unwrap();
-    let set: i64 = created.id.to_string()[5..].parse().unwrap();
-    store
-        .switch_rule_set(
-            UserId::OWNER,
-            RuleSetId::User(set),
-            None,
-            Some(false),
-            Actor::Ui,
-        )
-        .unwrap();
-    let id = new_pending(&store, "x.example");
-
-    store
-        .as_user(UserId::OWNER)
-        .add_rule(&NewRule {
-            scope: Scope::Set(set),
-            ..workspace_rule("x.example")
-        })
-        .unwrap();
-
     assert_eq!(store.pending(id).unwrap().state, PendingState::Requested);
 }
 

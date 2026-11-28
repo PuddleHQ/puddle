@@ -47,9 +47,11 @@ fn store() -> (Arc<ManualClock>, Store, Arc<Seen>) {
 const KEY: &str = "SHA256:abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ";
 
 fn open(store: &Store, workspace: &str, host: &str) -> i64 {
-    store
-        .set_workspace_owner(&ws(workspace), UserId::OWNER)
-        .unwrap();
+    if store.workspace_owner(&ws(workspace)).unwrap().is_none() {
+        store
+            .set_workspace_owner(&ws(workspace), UserId::OWNER)
+            .unwrap();
+    }
     match store
         .start_ssh_agent_ask(&ws(workspace), host, KEY, "ssh-ed25519")
         .unwrap()
@@ -341,9 +343,32 @@ fn decided_questions_are_pruned_after_an_hour() {
 #[test]
 fn a_user_sees_only_the_questions_of_their_own_workspaces() {
     let (_, store, _) = store();
-    open(&store, "a", "h.example.com");
-    let nobody = UserId::from_stored(999);
-    assert_eq!(store.as_user(nobody).open_ssh_agent_asks(None).unwrap(), []);
+    let ann = store
+        .admin_add_user(UserId::OWNER, &crate::UserName::new("ann").unwrap())
+        .unwrap()
+        .id;
+    store.set_workspace_owner(&ws("c"), ann).unwrap();
+    let mine = open(&store, "a", "h.example.com");
+    let hers = open(&store, "c", "h.example.com");
+    let ids = |user: UserId, workspace: Option<&WorkspaceId>| -> Vec<i64> {
+        let mut ids: Vec<i64> = store
+            .as_user(user)
+            .open_ssh_agent_asks(workspace)
+            .unwrap()
+            .iter()
+            .map(|ask| ask.id)
+            .collect();
+        ids.sort_unstable();
+        ids
+    };
+    assert_eq!(ids(UserId::OWNER, None), [mine]);
+    assert_eq!(ids(ann, None), [hers]);
+    assert_eq!(ids(ann, Some(&ws("a"))), Vec::<i64>::new());
+    assert_eq!(ids(UserId::from_stored(999), None), Vec::<i64>::new());
+    assert_eq!(store
+            .open_ssh_agent_asks_every_user(&AllUsers::new(), None)
+            .unwrap()
+            .len(), 2);
 }
 
 #[test]

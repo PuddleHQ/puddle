@@ -223,6 +223,7 @@ fn every_variable_is_read() {
 fn invalid_values_are_errors_that_name_the_variable() {
     let cases = [
         ("PUDDLE_AGENT_LISTEN", "3128"),
+        ("PUDDLE_AGENT_LISTEN", "127.0.0.1:0"),
         ("PUDDLE_AGENT_BRIDGE", "172.17.0.1"),
         ("PUDDLE_AGENT_BRIDGE", "0.0.0.0:3128"),
         ("PUDDLE_AGENT_BRIDGE", "127.0.0.1:3128"),
@@ -241,6 +242,8 @@ fn invalid_values_are_errors_that_name_the_variable() {
         ("PUDDLE_AGENT_MUX", "65"),
         ("PUDDLE_AGENT_VSOCK_BUF", "-1"),
         ("PUDDLE_AGENT_WINDOW", "big"),
+        ("PUDDLE_AGENT_WINDOW", "0"),
+        ("PUDDLE_AGENT_WINDOW", "65535"),
         ("PUDDLE_AGENT_VMSTAT", ""),
         ("PUDDLE_AGENT_KMSG", ""),
         ("PUDDLE_AGENT_OOM_POLL_MS", "0"),
@@ -251,6 +254,7 @@ fn invalid_values_are_errors_that_name_the_variable() {
         ("PUDDLE_AGENT_DNS", "224.0.0.1:53"),
         ("PUDDLE_AGENT_DNS", "198.18.0.1"),
         ("PUDDLE_AGENT_DNS", "[::1]:53"),
+        ("PUDDLE_AGENT_DNS", "198.18.0.1:0"),
         ("PUDDLE_AGENT_DNS_TABLE", ""),
         ("PUDDLE_AGENT_LOG", "loud"),
     ];
@@ -348,4 +352,35 @@ fn an_echoed_value_is_cut() {
     let long = "x".repeat(500);
     let err = from(&[("PUDDLE_AGENT_LISTEN", &long)]).unwrap_err();
     assert_eq!(err.value.len(), 64);
+}
+
+#[test]
+fn the_smallest_window_and_the_lowest_ports_are_accepted() {
+    let c = from(&[
+        ("PUDDLE_AGENT_WINDOW", "65536"),
+        ("PUDDLE_AGENT_LISTEN", "127.0.0.1:1"),
+        ("PUDDLE_AGENT_DNS", "198.18.0.1:1"),
+    ])
+    .unwrap();
+    assert_eq!(c.window, 65536);
+    assert_eq!(c.listen.port(), 1);
+    assert_eq!(c.dns.unwrap().listen.port(), 1);
+}
+
+#[test]
+fn an_empty_session_user_or_password_file_is_an_error_like_every_other_empty_value() {
+    let err = from(&[
+        ("PUDDLE_AGENT_SSH_AGENT", "/x/agent.sock"),
+        ("PUDDLE_AGENT_SSH_AGENT_USER", ""),
+    ])
+    .unwrap_err();
+    assert_eq!(err.var, "PUDDLE_AGENT_SSH_AGENT_USER");
+    let err = from(&[
+        ("PUDDLE_AGENT_EDITOR_DIR", "/x/editor"),
+        ("PUDDLE_AGENT_EDITOR_DATA", "/x/data"),
+        ("PUDDLE_AGENT_EDITOR_FOLDER", "/x/ws"),
+        ("PUDDLE_AGENT_EDITOR_PASSWORD_FILE", ""),
+    ])
+    .unwrap_err();
+    assert_eq!(err.var, "PUDDLE_AGENT_EDITOR_PASSWORD_FILE");
 }

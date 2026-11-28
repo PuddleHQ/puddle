@@ -5,7 +5,9 @@
 # unit tier and its merge-queue lookup are reusable workflows). Fails when a file is over 1000 lines
 # again, when a dot-sourced part or a called workflow is missing, when a PowerShell function is defined
 # in two parts (the later definition would silently win), when a called workflow lacks `workflow_call`,
-# or when msi.yml no longer runs for a change to a part. Prints ok only when every check passes.
+# when msi.yml no longer runs for a change to a part, or when the env: block of a called workflow
+# differs from ci.yml's. It also holds scripts/quality-gate.py and ci/scope-test.sh (split into sibling
+# files) to the same 1000-line limit. Prints ok only when every check passes.
 set -uo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -16,7 +18,8 @@ bad() { echo "workflow-split-test: FAIL: $*" >&2; fail=1; }
 main=ci/msi-install-test.ps1
 parts=(ci/msi-install-test/*.ps1)
 
-for f in "$main" .github/workflows/ci.yml "${parts[@]}"; do
+for f in "$main" .github/workflows/ci.yml "${parts[@]}" \
+    scripts/quality-gate.py scripts/quality_gate_*.py ci/scope-test.sh ci/scope-test/*.sh; do
     [ -f "$f" ] || { bad "$f is missing"; continue; }
     n=$(wc -l <"$f")
     [ "$n" -le 1000 ] || bad "$f has $n lines (limit 1000): split it"
@@ -54,5 +57,16 @@ done < <(sed -n 's|^    uses: \./\(\.github/workflows/.*\.yml\)$|\1|p' .github/w
 grep -q '^    uses: \./\.github/workflows/' .github/workflows/ci.yml || bad "ci.yml calls no reusable workflow"
 
 grep -qF 'ci/msi-install-test/**' .github/workflows/msi.yml || bad "msi.yml paths do not list ci/msi-install-test/**"
+
+# The top-level `env:` block of each called workflow is a copy of ci.yml's (a called workflow does not
+# inherit it): a change to one that misses the others makes the jobs run with different settings.
+env_block() { awk '/^env:$/ {p=1; print; next} p && /^[^ #]/ {exit} p && NF {print}' "$1"; }
+want_env=$(env_block .github/workflows/ci.yml)
+[ -n "$want_env" ] || bad "ci.yml has no top-level env: block"
+for wf in ci-unit ci-unit-ui ci-queue-tested; do
+    f=.github/workflows/$wf.yml
+    [ -f "$f" ] || continue
+    [ "$(env_block "$f")" = "$want_env" ] || bad "$f: its env: block differs from ci.yml's (copy it again)"
+done
 
 if [ "$fail" = 0 ]; then echo "workflow-split-test: ok"; else exit 1; fi

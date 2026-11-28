@@ -1105,3 +1105,57 @@ fn an_error_made_from_a_cause_says_the_causes_message() {
         WorkspaceError::Internal("disk gone".to_owned())
     );
 }
+
+#[test]
+fn a_free_label_keeps_the_base_until_it_is_taken_then_numbers_it() {
+    let mk = |id: &str, shown: &str, owner: UserId| {
+        WorkspaceRecord::new(
+            WorkspaceId::new(id).unwrap(),
+            owner,
+            DisplayName::parse(shown).unwrap(),
+            Vec::new(),
+        )
+    };
+    let none: [WorkspaceRecord; 0] = [];
+    assert_eq!(free_label(&none, UserId::OWNER, "api").as_str(), "api");
+    let one = [mk("a", "api", UserId::OWNER)];
+    assert_eq!(free_label(&one, UserId::OWNER, "API").as_str(), "API (2)");
+    let two = [
+        mk("a", "api", UserId::OWNER),
+        mk("b", "api (2)", UserId::OWNER),
+    ];
+    assert_eq!(free_label(&two, UserId::OWNER, "api").as_str(), "api (3)");
+    // Another owner's label is no clash.
+    let theirs = [mk("a", "api", UserId::from_stored(2))];
+    assert_eq!(free_label(&theirs, UserId::OWNER, "api").as_str(), "api");
+}
+
+#[test]
+fn a_free_label_is_cut_to_make_room_for_its_number() {
+    let long = "n".repeat(DisplayName::MAX_CHARS);
+    let taken = [WorkspaceRecord::new(
+        WorkspaceId::new("a").unwrap(),
+        UserId::OWNER,
+        DisplayName::parse(&long).unwrap(),
+        Vec::new(),
+    )];
+    let free = free_label(&taken, UserId::OWNER, &long);
+    assert_eq!(free.as_str().chars().count(), DisplayName::MAX_CHARS);
+    assert_eq!(
+        free.as_str(),
+        format!("{} (2)", "n".repeat(DisplayName::MAX_CHARS - 4))
+    );
+    // A stem that ends in a space loses it before the number.
+    let spaced = format!("{} x", "n".repeat(DisplayName::MAX_CHARS - 6));
+    let taken = [WorkspaceRecord::new(
+        WorkspaceId::new("a").unwrap(),
+        UserId::OWNER,
+        DisplayName::parse(&spaced).unwrap(),
+        Vec::new(),
+    )];
+    let free = free_label(&taken, UserId::OWNER, &spaced);
+    assert_eq!(
+        free.as_str(),
+        format!("{} x (2)", "n".repeat(DisplayName::MAX_CHARS - 6))
+    );
+}

@@ -134,7 +134,7 @@ jobs:
       # No Rust cache here: this job's nextest archive build restored an entry on 0 of the last 22 pull
       # requests, and with the ci entry restored (exact) it was no faster than a cold build, so the
       # restore only cost time and the repo's 10 GB cap more space (cache-gc.yml, budget table).
-      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
         if: steps.changed.outputs.run == 'true'
         with:
           tool: cargo-nextest@0.9.146
@@ -281,7 +281,12 @@ jobs:
           echo "ok=true" >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/kvm
         if: steps.kvm.outputs.ok == 'true'
-      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+      # Ubuntu 24.04 runners refuse an unprivileged user namespace (AppArmor); the full-disk tests make
+      # a small RAM disk in one (`unshare --user --map-root-user`, "write failed /proc/self/uid_map").
+      - name: allow user namespaces (full-disk tests)
+        if: steps.kvm.outputs.ok == 'true'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || echo "sysctl not present; nothing to relax"
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
         if: steps.kvm.outputs.ok == 'true'
         with:
           tool: cargo-nextest@0.9.146
@@ -354,7 +359,7 @@ jobs:
           name: vm-linux-agent
           path: ${{ runner.temp }}/bundle
       # The browser client (node and Chromium, crates/puddle-vm-tests/src/browser.rs) is installed only on a
-      # partition that runs a `vm_browser_*` test: listing the partition's share tells. Chromium is the build the UI jobs use (ui/package-lock.json pins
+      # partition that runs a `vm_browser_*` or `vm_soak_browser_*` test: listing the partition's share tells. Chromium is the build the UI jobs use (ui/package-lock.json pins
       # Playwright), restored from their cache entry and never saved here.
       - name: does this partition run a browser test?
         id: browser
@@ -364,10 +369,10 @@ jobs:
           # partition's tests as `test(=<name>)`. The hash split (no `test(=`) cannot be read, so the partition is
           # assumed to need the browser: installing it never hurts.
           sel=$(ci/vm-partition.sh args "${{ matrix.partition }}" "${{ strategy.job-total }}" \
-            "$RUNNER_TEMP/bundle/vm-tests.list" ci/vm-test-timings-linux.tsv 'test(/(^|::)vm_browser_/)') || exit 1
+            "$RUNNER_TEMP/bundle/vm-tests.list" ci/vm-test-timings-linux.tsv 'test(/(^|::)vm_(soak_)?browser_/)') || exit 1
           if ! grep -q 'test(=' <<<"$sel"; then
             echo "hash split: browser assumed"; echo "needed=true" >> "$GITHUB_OUTPUT"
-          elif grep -Eq 'test\(=([A-Za-z0-9_]+::)*vm_browser_' <<<"$sel"; then
+          elif grep -Eq 'test\(=([A-Za-z0-9_]+::)*vm_(soak_)?browser_' <<<"$sel"; then
             echo "browser tests in this partition"; echo "needed=true" >> "$GITHUB_OUTPUT"
           else
             echo "no browser test in this partition"; echo "needed=false" >> "$GITHUB_OUTPUT"

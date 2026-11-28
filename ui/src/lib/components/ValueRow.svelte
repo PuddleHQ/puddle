@@ -100,8 +100,10 @@
         type="submit"
         class="btn primary"
         aria-label="Save {label}"
-        disabled={!parsed.ok || busy}>Save</button
+        disabled={!parsed.ok || busy}
       >
+        Save
+      </button>
     {/if}
   </form>
   {#if problem}<p class="problem" id="{id}-problem" role="alert">

@@ -142,6 +142,13 @@ async fn a_restart_that_cannot_serve_the_sandboxes_route_makes_it_again_and_says
                 .is_some_and(|d| d.contains("made again") && d.contains("volume"))
     });
     assert!(said, "no notice that the sandbox was made again");
+    let lasting = again
+        .problems()
+        .list()
+        .into_iter()
+        .find(|p| p.key == "rebuilt:acme")
+        .expect("the rebuild is a problem on the workspace, not only a progress line");
+    assert!(lasting.detail.contains("route"), "{lasting:?}");
     assert_eq!(rig.runtime.list_volumes().await.unwrap().len(), 1);
     // The new sandbox has the new run's stable route: a second restart keeps it.
     again.shutdown().await;
@@ -155,6 +162,86 @@ async fn a_restart_that_cannot_serve_the_sandboxes_route_makes_it_again_and_says
     assert_eq!(calls_of(&rig, "Create"), 2);
     assert_eq!(calls_of(&rig, "Remove"), 1);
     third.shutdown().await;
+}
+
+/// A sandbox an older Puddle made mounts the workspace's volume at a folder named by the id
+/// (`/workspaces/<id>`; QA 11 F1, an upgrade). A start keeps that sandbox, and with it the root
+/// disk (the home folder, installed packages): no sandbox is made or removed, and every boot of it
+/// runs the step that binds the volume at `/workspace`, first among the steps.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sandbox_with_the_volume_at_the_old_folder_is_kept_and_the_volume_bound_at_the_workspace_folder()
+ {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api1 = api(&host);
+    let mut events = api1.events().await;
+    create(&api1, &mut events, "acme").await;
+    assert!(
+        !String::from_utf8(rig.guest.plan_bytes(rig.guest.boots() - 1))
+            .unwrap()
+            .contains(OLDER_MOUNT_STEP_GUEST),
+        "a sandbox with the volume at /workspace got the older-mount step"
+    );
+    api1.post("/api/workspaces/acme/stop", "").await;
+    events.until(ended("acme"), Duration::from_secs(20)).await;
+    host.shutdown().await;
+    drop(host);
+    drop(events);
+    let sandbox = SandboxName::new("acme").unwrap();
+    assert!(
+        rig.runtime
+            .move_volume_mounts(&sandbox, &GuestPath::new("/workspaces/acme").unwrap())
+    );
+
+    for run in 0..2 {
+        let again = rig.start().await;
+        let api2 = api(&again);
+        let mut events = api2.events().await;
+        let boots = rig.guest.boots();
+        api2.post("/api/workspaces/acme/start", "").await;
+        let end = events.until(ended("acme"), Duration::from_secs(20)).await;
+        assert_eq!(end["step"], "done", "run {run}: {end}");
+        assert_eq!(calls_of(&rig, "Create"), 1, "run {run}: a sandbox was made");
+        assert_eq!(
+            calls_of(&rig, "Remove"),
+            0,
+            "run {run}: the sandbox was removed"
+        );
+        let made_again = events.seen.iter().any(|e| {
+            e["type"] == "workspace_progress"
+                && e["detail"]
+                    .as_str()
+                    .is_some_and(|d| d.contains("made again"))
+        });
+        assert!(
+            !made_again,
+            "run {run}: a notice says the sandbox is made again"
+        );
+        assert_eq!(rig.guest.boots(), boots + 1, "run {run}");
+        let plan = String::from_utf8(rig.guest.plan_bytes(boots)).unwrap();
+        let first_step = plan.lines().find(|l| l.starts_with("puddle_step "));
+        assert_eq!(
+            first_step,
+            Some(format!("puddle_step '{OLDER_MOUNT_STEP_GUEST}'").as_str()),
+            "run {run}: {plan}"
+        );
+        let step = pem_of(&rig.guest.plan_files(boots), OLDER_MOUNT_STEP_GUEST);
+        assert!(
+            step.starts_with("PUDDLE_OLDER_MOUNT='/workspaces/acme'\n"),
+            "run {run}: {step}"
+        );
+        assert!(step.ends_with(OLDER_MOUNT_SH), "run {run}");
+        again.shutdown().await;
+        drop(again);
+        drop(events);
+    }
+    let mounts: Vec<String> = rig
+        .runtime
+        .volume_mounts(&sandbox)
+        .iter()
+        .map(|m| m.guest.to_string())
+        .collect();
+    assert_eq!(mounts, ["/workspaces/acme"]);
 }
 
 /// Docker's data folder is a disk of the sandbox itself: every sandbox the host makes has one,
@@ -311,13 +398,22 @@ async fn the_end_of_an_agent_session_finds_a_dead_vm_without_a_list() {
     let id = WorkspaceId::new("acme").unwrap();
 
     // The agent restarting ends a session too: the VM is up, so nothing changes.
-    puddle_agent_proto::host::GuestWatcher::session_ended(host.workspaces().ports(), &id);
+    puddle_agent_proto::host::GuestWatcher::session_ended(
+        host.workspaces().ports(),
+        &id,
+        puddle_agent_proto::host::SessionId::next(),
+    );
+    // An absence window: nothing signals that the status stayed as it was.
     tokio::time::sleep(Duration::from_secs(3)).await;
     assert_eq!(status_of(&api.get("/api/workspaces/acme").await), "running");
 
     // The VM dies and its session ends: the host reads the sandboxes by itself, no list asked.
     assert!(rig.runtime.crash(&SandboxName::new("acme").unwrap()));
-    puddle_agent_proto::host::GuestWatcher::session_ended(host.workspaces().ports(), &id);
+    puddle_agent_proto::host::GuestWatcher::session_ended(
+        host.workspaces().ports(),
+        &id,
+        puddle_agent_proto::host::SessionId::next(),
+    );
     events
         .until(
             |e| e["type"] == "status_changed" && e["status"] == "crashed",
@@ -375,6 +471,8 @@ enum VmAfterKill {
     Died,
     /// It went on running (no watchdog or job object ended it): the next start must stop it.
     LeftRunning,
+    /// It was left in the state the stop had put it in: the runtime refuses to connect to it.
+    LeftDraining,
 }
 
 /// Puddle is killed (no shutdown) while a stop runs, at the stop's first guest command. Whatever
@@ -384,7 +482,11 @@ enum VmAfterKill {
 // requests need one; on the one CPU the nightly stress job pins to, the default of one worker starved them for 20 s.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn puddle_killed_during_a_stop_leaves_the_workspace_stopped_or_crashed_and_a_start_works() {
-    for vm in [VmAfterKill::Died, VmAfterKill::LeftRunning] {
+    for vm in [
+        VmAfterKill::Died,
+        VmAfterKill::LeftRunning,
+        VmAfterKill::LeftDraining,
+    ] {
         let rig = Rig::named_ids();
         let host = rig.start().await;
         let api1 = api(&host);
@@ -408,6 +510,9 @@ async fn puddle_killed_during_a_stop_leaves_the_workspace_stopped_or_crashed_and
         let set = match vm {
             VmAfterKill::Died => rig.runtime.set_status(&sandbox, WorkspaceStatus::Crashed),
             VmAfterKill::LeftRunning => rig.runtime.outlive_owner(&sandbox),
+            VmAfterKill::LeftDraining => {
+                rig.runtime.set_status(&sandbox, WorkspaceStatus::Draining)
+            }
         };
         assert!(set, "{vm:?}");
 

@@ -1,0 +1,39 @@
+{
+  "version": 2,
+  "workspaces": [
+    {
+      "created_at": 1760000000000,
+      "creating": false,
+      "disk_size_mib": 32768,
+      "display_name": "Shop API ü",
+      "id": "shop",
+      "image": "mcr.microsoft.com/devcontainers/base:debian",
+      "memory_mib": 8192,
+      "name": "shop",
+      "repositories": [
+        {
+          "directory": "shop",
+          "url": "https://github.com/acme/shop.git"
+        },
+        {
+          "directory": "docs",
+          "url": "https://github.com/acme/docs.git"
+        }
+      ],
+      "session_user": "agent",
+      "start_folder": "shop/src"
+    },
+    {
+      "created_at": 1,
+      "creating": false,
+      "disk_size_mib": 64,
+      "id": "tools",
+      "image": "alpine:3",
+      "memory_mib": 512,
+      "name": "tools",
+      "repositories": [],
+      "session_user": "root",
+      "start_folder": null
+    }
+  ]
+}

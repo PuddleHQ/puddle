@@ -21,16 +21,18 @@ use puddle_store::{AdminAction, Role, Store, UserFacts, UserId};
 use puddle_types::{WorkspaceId, WorkspaceStatus};
 use tokio::sync::{Notify, watch};
 
-use crate::error::{ApiError, ErrorCode, blocking};
 use crate::signin::SignIn;
-use crate::wire::{
+use puddle_services::error::{ApiError, ErrorCode, blocking};
+use puddle_services::owned::OwnedWorkspace;
+use puddle_services::wire::{
     AdminActionKind, AdminAuditLine, AdminAuditList, AdminStats, AdminUser, AdminUserList,
     AdminUserState, InviteIssued,
 };
-use crate::workspaces::{WorkspaceRecord, WorkspaceService};
+use puddle_services::workspaces::{WorkspaceError, WorkspaceRecord, WorkspaceService};
 
-/// How often the reaper looks for deletions to finish when nobody asks.
-const REAP_EVERY: Duration = Duration::from_secs(10);
+/// How often the reaper looks for deletions to finish when nobody asks, unless the
+/// configuration says otherwise.
+pub(crate) const REAP_EVERY: Duration = Duration::from_secs(10);
 
 /// The most audit lines the screen asks for.
 pub(crate) const AUDIT_LINES: u32 = 100;
@@ -41,6 +43,7 @@ pub(crate) struct AdminService {
     sign_in: Arc<SignIn>,
     workspaces: Arc<dyn WorkspaceService>,
     reap: Notify,
+    reap_every: Duration,
 }
 
 fn conflict(message: &str) -> ApiError {
@@ -83,12 +86,14 @@ impl AdminService {
         store: Arc<Store>,
         sign_in: Arc<SignIn>,
         workspaces: Arc<dyn WorkspaceService>,
+        reap_every: Duration,
     ) -> Self {
         Self {
             store,
             sign_in,
             workspaces,
             reap: Notify::new(),
+            reap_every,
         }
     }
 
@@ -300,14 +305,20 @@ impl AdminService {
             if record.busy.is_some() {
                 continue;
             }
+            let store = self.store.clone();
+            let id = record.id.clone();
+            let handle = blocking(move || {
+                Ok(OwnedWorkspace::resolve(&*store, user, &id).map_err(WorkspaceError::from)?)
+            })
+            .await?;
             let step = if is_up(record.status) {
-                self.workspaces.stop(&record.id).await.map(|_| ())
+                self.workspaces.stop(&handle).await.map(|_| ())
             } else {
                 // The owner confirmed in the dialog that this loses everything of the user's,
                 // so the delete goes ahead with the fingerprint of what it found.
-                let check = self.workspaces.delete_check(&record.id).await?;
+                let check = self.workspaces.delete_check(&handle).await?;
                 self.workspaces
-                    .delete(&record.id, Some(&check.fingerprint))
+                    .delete(&handle, Some(&check.fingerprint))
                     .await
                     .map(|_| ())
             };
@@ -325,7 +336,7 @@ impl AdminService {
             self.reap_once().await;
             tokio::select! {
                 () = self.reap.notified() => {}
-                () = tokio::time::sleep(REAP_EVERY) => {}
+                () = tokio::time::sleep(self.reap_every) => {}
                 _ = shutdown.changed() => return,
             }
         }

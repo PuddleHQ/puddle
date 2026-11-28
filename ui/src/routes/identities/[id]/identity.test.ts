@@ -59,8 +59,6 @@ import {
   identity,
 } from "#lib/testing/fake-identities.ts";
 import { repoSource, repoView } from "#lib/testing/fake-repos.ts";
-import { workspaces } from "#lib/stores/workspaces.svelte.ts";
-import { workspace } from "#lib/testing/fake-workspaces.ts";
 import Page from "./+page.svelte";
 
 const { api } = h;
@@ -421,22 +419,15 @@ describe("one identity", () => {
     ).toBeInTheDocument();
   });
 
-  it("opens the create form on this page with the repository and the identity that listed it", async () => {
+  it("opens the New workspace screen with the repository and the identity that listed it", async () => {
     render(Page);
     await fireEvent.click(
       await screen.findByRole("button", {
         name: "Create a workspace for this: acme/web",
       }),
     );
-    const dialog = await screen.findByRole("dialog", { name: "New workspace" });
-    expect(within(dialog).getByLabelText("Git repository (HTTPS)")).toHaveValue(
-      "https://github.com/acme/web",
-    );
-    expect(within(dialog).getByLabelText("Name")).toHaveValue("web");
-    await waitFor(() =>
-      expect(
-        within(dialog).getByRole("combobox", { name: "Git identity" }),
-      ).toHaveDisplayValue(/Work/),
+    expect(goto).toHaveBeenCalledWith(
+      "/workspaces/new?url=https%3A%2F%2Fgithub.com%2Facme%2Fweb&identity=1",
     );
   });
 
@@ -480,37 +471,5 @@ describe("one identity", () => {
     );
     expect(api.calls).not.toContain("POST /api/credentials/sign-in");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  });
-
-  it("goes to the new workspace after the form made it, and closes on cancel", async () => {
-    const create = vi
-      .spyOn(workspaces, "create")
-      .mockResolvedValue({ ok: true, value: workspace("web") });
-    render(Page);
-    await fireEvent.click(
-      await screen.findByRole("button", {
-        name: "Create a workspace for this: acme/web",
-      }),
-    );
-    await fireEvent.click(
-      await screen.findByRole("button", { name: "Create workspace" }),
-    );
-    await waitFor(() => expect(goto).toHaveBeenCalledWith("/workspaces/w-web"));
-    expect(create).toHaveBeenCalledWith({
-      name: "web",
-      repositories: [{ url: "https://github.com/acme/web", identity_id: 1 }],
-    });
-    await fireEvent.click(
-      await screen.findByRole("button", {
-        name: "Create a workspace for this: acme/web",
-      }),
-    );
-    await fireEvent.click(
-      await screen.findByRole("button", { name: "Cancel" }),
-    );
-    await waitFor(() =>
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
-    );
-    create.mockRestore();
   });
 });

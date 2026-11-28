@@ -3,7 +3,7 @@
 //! three sandboxes at once with their own routes, `--max-memory` never set, the guest's open-file
 //! limits, a stop that gives the guest's processes their SIGTERM first, and (fork) SSH reporting a
 //! signal-killed command as a failure.
-mod support;
+use puddle_compute_msb_test_support as support;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -30,7 +30,7 @@ async fn vm_volume_and_owned_disk_are_ext4() {
     let vol = VolumeName::new(&format!("{}-ext4", settings.prefix)).unwrap();
     let s = spec(&settings, "ext4")
         .with_volume(
-            VolumeMount::named(vol.clone(), path("/workspaces/ws")).ensure_size(DiskSize::mib(256)),
+            VolumeMount::named(vol.clone(), path("/workspace")).ensure_size(DiskSize::mib(256)),
         )
         .with_owned_disk(OwnedDisk {
             guest: path("/var/lib/docker"),
@@ -40,16 +40,13 @@ async fn vm_volume_and_owned_disk_are_ext4() {
     let sb = rt.create(s).await.expect("create");
     let out = sh(
         &sb,
-        r#"awk '$2 == "/workspaces/ws" || $2 == "/var/lib/docker" { print $2, $3 }' /proc/mounts | sort"#,
+        r#"awk '$2 == "/workspace" || $2 == "/var/lib/docker" { print $2, $3 }' /proc/mounts | sort"#,
     )
     .await;
     sb.stop().await.unwrap();
     cleanup(&rt, &[&n]).await;
     let _ = rt.remove_volume(&vol).await;
-    assert_eq!(
-        out.stdout_text(),
-        "/var/lib/docker ext4\n/workspaces/ws ext4\n"
-    );
+    assert_eq!(out.stdout_text(), "/var/lib/docker ext4\n/workspace ext4\n");
 }
 
 /// Three sandboxes at once, each with its own route and file mount: every one runs commands,
@@ -108,9 +105,10 @@ async fn vm_three_sandboxes_at_once_each_with_its_own_route() {
     }
     cleanup(&rt, &names.iter().collect::<Vec<_>>()).await;
     for (i, collector) in collectors.into_iter().enumerate() {
-        let lines = collector.await.unwrap();
-        if lines != [format!("from-{i}")] {
-            failures.push(format!("{i}: endpoint got {lines:?}"));
+        match collector.finish().await {
+            Ok(lines) if lines == [format!("from-{i}")] => {}
+            Ok(lines) => failures.push(format!("{i}: endpoint got {lines:?}")),
+            Err(e) => failures.push(format!("{i}: endpoint collector: {e}")),
         }
     }
     assert!(failures.is_empty(), "{failures:#?}");
@@ -289,6 +287,57 @@ async fn vm_a_stop_the_vm_never_answers_ends_by_force() {
     assert!(status.unwrap().is_down());
 }
 
+/// A VM in `Draining` (msb marks it so once the guest has accepted a stop's shutdown request) is
+/// ended by `Runtime::kill` by name, which is what a restarted Puddle does to the VM a dead one
+/// left that way (`get` refuses a VM in that state). A process that ignores SIGTERM keeps the
+/// guest from powering off until the grace period ends, so the real msb state stays `Draining`
+/// for a while; the test polls the list for it while the stop waits, then kills.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vm_kill_ends_a_vm_stuck_in_draining() {
+    use puddle_types::WorkspaceStatus;
+
+    let settings = support::settings();
+    let rt = support::runtime(&settings).await;
+    let s = spec(&settings, "drain");
+    let n = s.name.clone();
+    let sb = rt.create(s).await.expect("create");
+    let stubborn =
+        "setsid sh -c 'trap \"\" TERM; while :; do sleep 1; done' </dev/null >/dev/null 2>&1 &";
+    assert!(sh(&sb, stubborn).await.status.success());
+
+    let drive = async {
+        let seen = eventually_async(
+            "the VM reads Draining while its stop waits for a process that ignores SIGTERM",
+            Duration::from_secs(20),
+            || async {
+                let all = rt.list().await.ok()?;
+                all.into_iter()
+                    .find(|i| i.name == n.as_str() && i.status == WorkspaceStatus::Draining)
+            },
+        )
+        .await;
+        let refused = rt.get(&n).await.is_err();
+        let killed = rt.kill(&n).await;
+        (seen.status, refused, killed)
+    };
+    let (_stop, (seen, refused, killed)) = tokio::join!(sb.stop(), drive);
+    let after = rt
+        .list()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|i| i.name == n.as_str())
+        .map(|i| i.status);
+    cleanup(&rt, &[&n]).await;
+    assert_eq!(seen, WorkspaceStatus::Draining);
+    assert!(refused, "get connected to a draining VM");
+    killed.expect("kill by name ends a draining VM");
+    assert!(
+        after.is_some_and(WorkspaceStatus::is_down),
+        "after the kill the sandbox reads {after:?}"
+    );
+}
+
 /// The other side of the bar above: a stop the guest answers is not by force.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn vm_a_stop_the_guest_answers_is_not_by_force() {
@@ -409,7 +458,7 @@ async fn vm_volume_used_matches_what_the_guest_holds() {
     let settings = support::settings();
     let rt = support::runtime(&settings).await;
     let vol = VolumeName::new(&format!("{}-used", settings.prefix)).unwrap();
-    let mount = "/workspaces/ws";
+    let mount = "/workspace";
     let s = spec(&settings, "used")
         .with_volume(VolumeMount::named(vol.clone(), path(mount)).ensure_size(DiskSize::mib(1024)));
     let n = s.name.clone();

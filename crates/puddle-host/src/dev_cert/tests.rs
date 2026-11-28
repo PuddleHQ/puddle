@@ -280,3 +280,19 @@ async fn a_start_goes_on_without_a_certificate_when_the_source_has_none_panics_o
             .is_none()
     );
 }
+
+#[test]
+fn a_workspace_start_never_asks_to_trust_even_after_a_no() {
+    let store = Answering::new(Ok(TrustOutcome::Declined));
+    let (_dir, service) = trusting(&store);
+    // A start before any answer, then the first-run press that is declined, then more starts
+    // (each app start boots a workspace again): only the press asks.
+    assert!(service.guest_cert().is_some());
+    assert_eq!(
+        service.trust().dev_certificate,
+        DevCertificate::TrustDeclined
+    );
+    assert!(service.guest_cert().is_some());
+    assert!(service.guest_cert().is_some());
+    assert_eq!(store.asked.load(std::sync::atomic::Ordering::SeqCst), 1);
+}

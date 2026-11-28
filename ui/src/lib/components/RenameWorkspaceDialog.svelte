@@ -81,15 +81,14 @@
         <p class="error" id="{id}-error" role="alert">{shown}</p>
       {:else}
         <p class="hint" id="{id}-hint">
-          The workspace id, <span class="mono">{workspace.id}</span>, stays as
-          it is.
+          The new name shows everywhere, and in the prompt of new terminals.
         </p>
       {/if}
     </div>
     <div class="actions">
-      <button type="button" class="btn" onclick={() => (open = false)}
-        >Cancel</button
-      >
+      <button type="button" class="btn" onclick={() => (open = false)}>
+        Cancel
+      </button>
       <button type="submit" class="btn primary" disabled={busy}>Save</button>
     </div>
   </form>

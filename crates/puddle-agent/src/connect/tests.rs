@@ -48,12 +48,14 @@ async fn keep_open_flushes_on_shutdown_and_leaves_the_writer_open() {
 
 #[test]
 fn a_connect_from_a_container_carries_the_origin_header_and_one_from_the_guest_does_not() {
-    let plain = String::from_utf8(connect_request("a.example:443", b"\x16\x03", false)).unwrap();
+    let plain =
+        String::from_utf8(connect_request("a.example:443", b"\x16\x03", false, None)).unwrap();
     assert_eq!(
         plain,
         "CONNECT a.example:443 HTTP/1.1\r\nHost: a.example:443\r\n\r\n\x16\x03"
     );
-    let marked = String::from_utf8(connect_request("a.example:443", b"\x16\x03", true)).unwrap();
+    let marked =
+        String::from_utf8(connect_request("a.example:443", b"\x16\x03", true, None)).unwrap();
     assert_eq!(
         marked,
         "CONNECT a.example:443 HTTP/1.1\r\nHost: a.example:443\r\nx-puddle-origin: container\r\n\r\n\x16\x03"
@@ -95,7 +97,7 @@ fn anything_else_is_a_usage_error() {
         vec!["[::1]x", "22"],
         vec![long.as_str(), "22"],
     ] {
-        let err = Request::parse(&args).unwrap_err();
+        let err = Request::parse(&args).unwrap_err().to_string();
         assert!(err.contains(USAGE), "{args:?}: {err}");
     }
 }
@@ -550,7 +552,9 @@ fn networks_are_checked_when_parsed() {
         "172.17.0.0/x",
         "::1/64",
     ] {
-        let err = Request::parse(&["--local-net", bad, "h", "22"]).unwrap_err();
+        let err = Request::parse(&["--local-net", bad, "h", "22"])
+            .unwrap_err()
+            .to_string();
         assert!(
             err.contains("bad network") && err.contains(USAGE),
             "{bad}: {err}"
@@ -733,4 +737,15 @@ async fn a_resolver_that_never_answers_gives_up_at_the_limit_and_the_name_is_not
     };
     let request = bridge_request("slow.test", 22);
     assert!(inside_the_workspace(&hanging, &request).await.is_none());
+}
+
+#[test]
+fn a_connect_names_the_program_when_it_is_known() {
+    let program = Program::sanitise("pip").unwrap();
+    let head =
+        String::from_utf8(connect_request("a.example:443", b"", false, Some(&program))).unwrap();
+    assert_eq!(
+        head,
+        "CONNECT a.example:443 HTTP/1.1\r\nHost: a.example:443\r\nx-puddle-program: pip\r\n\r\n"
+    );
 }

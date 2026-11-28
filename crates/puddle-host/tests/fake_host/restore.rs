@@ -196,6 +196,27 @@ async fn a_restore_asks_for_an_address_when_the_disk_has_none_and_the_last_one_e
     host.shutdown().await;
 }
 
+/// A workspace's JSON once two reads in a row agree: the create's last event can come before the
+/// entry stops changing when the host is starved.
+async fn settled_workspace(api: &Api, id: &str) -> serde_json::Value {
+    let last = std::cell::RefCell::new(None);
+    puddle_test_kit::eventually_async(
+        "the workspace entry settles",
+        Duration::from_secs(10),
+        || async {
+            let now = api.get(&format!("/api/workspaces/{id}")).await.json();
+            let steady = last.borrow().as_ref() == Some(&now);
+            *last.borrow_mut() = Some(now.clone());
+            if steady {
+                Ok(now)
+            } else {
+                Err(now.to_string())
+            }
+        },
+    )
+    .await
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_restore_never_overwrites_a_list_entry_or_takes_a_disk_a_sandbox_holds() {
     let rig = Rig::named_ids();
@@ -203,7 +224,7 @@ async fn a_restore_never_overwrites_a_list_entry_or_takes_a_disk_a_sandbox_holds
     let api1 = api(&host);
     let mut events = api1.events().await;
     create(&api1, &mut events, "acme").await;
-    let before = api1.get("/api/workspaces/acme").await.json();
+    let before = settled_workspace(&api1, "acme").await;
 
     // A listed workspace's disk is not unclaimed, and asking to restore it changes nothing.
     assert!(orphan_ids(&api1).await.is_empty());
@@ -219,7 +240,11 @@ async fn a_restore_never_overwrites_a_list_entry_or_takes_a_disk_a_sandbox_holds
         "{}",
         clash.body
     );
-    assert_eq!(api1.get("/api/workspaces/acme").await.json(), before);
+    let after = api1.get("/api/workspaces/acme").await.json();
+    assert_eq!(
+        after, before,
+        "the refused restore changed the entry: after (left) vs before (right)"
+    );
 
     // Two restores of one disk at once: one wins, the other is refused, one entry results.
     add_unclaimed_volume(&rig, "twice").await;

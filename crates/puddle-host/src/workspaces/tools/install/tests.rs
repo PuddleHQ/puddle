@@ -192,3 +192,13 @@ fn an_install_reason_and_the_logged_output_have_no_control_characters_and_are_cu
     );
     assert!(said.chars().count() < 1100, "{}", said.chars().count());
 }
+
+#[test]
+fn a_cut_report_is_refused_even_when_what_is_left_parses() {
+    let mut out = ExecOutput::new(0, "installed node@22.11.0\nend\n", "");
+    assert_eq!(read_install(Ok(out.clone())).1, None);
+    out.stdout_truncated = true;
+    let (report, reason) = read_install(Ok(out));
+    assert_eq!(report, Report::default());
+    assert!(reason.is_some_and(|r| r.contains("cut")));
+}

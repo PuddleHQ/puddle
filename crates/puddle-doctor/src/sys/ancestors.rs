@@ -84,7 +84,7 @@ fn walk_ancestors(top: &Path, dir: &Path, euid: u32, grants: GrantReader<'_>) ->
     let existing = absolute
         .ancestors()
         .find(|p| p.exists())
-        .unwrap_or(Path::new("/"));
+        .unwrap_or_else(|| Path::new("/"));
     let resolved = std::fs::canonicalize(existing)?;
     let mut chain: Vec<&Path> = resolved
         .ancestors()

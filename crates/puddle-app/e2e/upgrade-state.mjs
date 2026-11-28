@@ -5,13 +5,14 @@
 //
 //   node upgrade-state.mjs before <dir> <workspace>   on the older build, with the workspace running: makes a global
 //       allow rule, a workspace deny rule, a pending request (a guest `curl` to a host nobody allowed), an
-//       environment variable and a secret, three settings, an identity and a file in /home/agent, then dumps every
+//       environment variable and a secret, three settings, an identity and a file in the workspace folder, then dumps every
 //       GET the playbook names (upgrade-compare.mjs DUMPED) into <dir>.
 //   node upgrade-state.mjs plant <breakage>            between the two, with the program quit: damages the database the way a
-//       broken migration would (drop-table, empty-env, empty-pending), so a run can show the check fails.
+//       broken migration would (drop-table, empty-env, empty-pending), so a run can show the check fails. route-throws damages nothing
+//       here: msi.yml builds the newer build's UI with the Activity screen throwing, for the screen check to catch.
 //   node upgrade-state.mjs after <dir> <workspace>    on the newer build, after the workspace started: every dump
-//       equal (ids, names, counts, values), the build not older, the guest sees the variable, the secret's stand-in and the
-//       home file, approving the kept pending request lets the guest's retry through (200), the browser editor's server
+//       equal (ids, names, counts, values), the build strictly newer (health.version), api_version not older, the guest sees the variable, the secret's stand-in and the
+//       kept file in /workspace, approving the kept pending request lets the guest's retry through (200), the browser editor's server
 //       answers, and each main screen of the window loads with no error alert (UI Automation; needs PUDDLE_APP_PID).
 //
 // Environment: PUDDLE_INSTALL_DIR (default %LOCALAPPDATA%\Programs\Puddle). Plain Node 24, no packages. Exit 0 when
@@ -21,7 +22,7 @@ import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { Uia, until } from "./uia.mjs";
-import { DUMPED, ERROR_TEXT, buildIsNotOlder, compareDump, compareVersions } from "./upgrade-compare.mjs";
+import { DUMPED, ERROR_TEXT, buildIsNewer, buildIsNotOlder, compareDump, compareVersions } from "./upgrade-compare.mjs";
 
 const local = process.env.LOCALAPPDATA;
 if (!local) throw new Error("LOCALAPPDATA is not set: this runs on Windows");
@@ -43,7 +44,10 @@ const PENDING_HOST = "example.com";
 const VARIABLE = "QA_MARK";
 const VARIABLE_VALUE = "old-build";
 const SECRET = "QA_SECRET";
-const HOME_FILE = "/home/agent/kept-home-file.txt";
+// A file in the workspace folder lives on the workspace's volume, so it survives the sandbox being made again. The
+// older build's folder is /workspaces/<id> (builds before the single folder) or /workspace; the newer build's is /workspace.
+const KEPT_NAME = "kept-file.txt";
+const NEW_FOLDER = "/workspace";
 const IDENTITY = "Kept identity";
 const ROUTES = ["Workspaces", "Inbox", "Rules", "Identities", "Activity", "Settings"];
 
@@ -185,8 +189,8 @@ async function before(dir, workspace) {
   check("an identity exists", Boolean(identity?.id), `identity ${identity?.id}`);
 
   const token = crypto.randomUUID();
-  const wrote = await guest(workspace, `printf '%s\\n' '${token}' > ${HOME_FILE} && sync && cat ${HOME_FILE}`);
-  check("a file in /home/agent is written", wrote.text === token, wrote.text.slice(0, 200));
+  const wrote = await guest(workspace, `d=${NEW_FOLDER}; [ -d "$d" ] || d=/workspaces/${workspace}; printf '%s\\n' '${token}' > "$d/${KEPT_NAME}" && sync && cat "$d/${KEPT_NAME}"`);
+  check("a file in the workspace folder is written", wrote.text === token, wrote.text.slice(0, 200));
 
   // The guest asks for a host nobody allowed: refused at once, and the request waits in the inbox.
   const asked = await curlInGuest(workspace, PENDING_HOST);
@@ -220,6 +224,10 @@ function findStore(dir, depth = 0) {
 }
 
 async function plant(breakage) {
+  if (breakage === "route-throws") {
+    console.log("route-throws is built into the newer build's UI (msi.yml), nothing to damage here");
+    return;
+  }
   const { DatabaseSync } = await import("node:sqlite");
   const file = findStore(dataDir);
   if (!file) throw new Error(`no puddle.db under ${dataDir}`);
@@ -227,9 +235,9 @@ async function plant(breakage) {
   const sql = {
     "drop-table": "DROP TABLE rules",
     "empty-env": "DELETE FROM env_vars",
-    "empty-pending": "DELETE FROM pending",
+    "empty-pending": "UPDATE pending SET state = 'expired'",
   }[breakage];
-  if (!sql) throw new Error(`unknown breakage ${breakage}: drop-table, empty-env or empty-pending`);
+  if (!sql) throw new Error(`unknown breakage ${breakage}: drop-table, empty-env, empty-pending or route-throws`);
   db.exec("PRAGMA foreign_keys = OFF");
   db.exec(sql);
   db.close();
@@ -267,6 +275,8 @@ async function after(dir, workspace, appPid) {
   note(`newer build: version ${health.version}, api ${health.api_version}, ui build ${health.ui_build_id} (was ${state.health.ui_build_id})`);
   const back = buildIsNotOlder(state.health, health);
   check("the build is not older (/api/health version and api_version)", back.length === 0, back.join("; "));
+  const newer = buildIsNewer(state.health, health);
+  check("the build is strictly newer (/api/health version)", newer.length === 0, newer.join("; "));
   check("the version is a version", !Number.isNaN(compareVersions(health.version, health.version)), health.version);
 
   // S3.4a, S3.5: the workspace starts, and the guest has what the older build gave it.
@@ -276,8 +286,8 @@ async function after(dir, workspace, appPid) {
   check(`the guest sees ${VARIABLE}`, mark === VARIABLE_VALUE, JSON.stringify(mark));
   const stand = await variableInGuest(workspace, SECRET);
   check(`the guest sees a stand-in for ${SECRET}, never its value`, stand.length > 0 && stand !== state.secretValue && !stand.includes(state.secretValue), stand.length > 0 ? "a stand-in is set" : "empty");
-  const home = await guest(workspace, `cat ${HOME_FILE}`);
-  check("the file in /home/agent is there", home.text === state.token, home.text.slice(0, 200));
+  const home = await guest(workspace, `cat ${NEW_FOLDER}/${KEPT_NAME}`);
+  check("the file in the workspace folder (/workspace) is there", home.text === state.token, home.text.slice(0, 200));
 
   // S3.6: the kept pending request, approved, lets the retry through.
   const pending = (await must("pending", "GET", "/api/pending")).json.requests.find((r) => r.id === state.pendingId);

@@ -2,7 +2,7 @@
 //! Rule and pending rows: their SQL and the decoding of what the database stores.
 
 use puddle_types::{
-    Event, Host, PendingEnd, PendingId, PendingSummary, RuleId, SuffixAllows, WorkspaceId,
+    Event, Host, PendingEnd, PendingId, PendingSummary, Program, RuleId, SuffixAllows, WorkspaceId,
 };
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 
@@ -179,43 +179,53 @@ pub(super) fn delete_rule_row(
     Ok(rule)
 }
 
-/// The rows `rule` closed with an allow or a deny, each with its `exact_only` flag, oldest id first.
+/// The rows `rule` closed with an allow or a deny, oldest id first.
 pub(super) fn closed_by_rule(
     tx: &Transaction<'_>,
     rule: RuleId,
-) -> Result<Vec<(PendingRow, bool)>, StoreError> {
+) -> Result<Vec<PendingRow>, StoreError> {
     let mut stmt = tx.prepare(&format!(
-        "SELECT {PENDING_COLUMNS}, exact_only FROM pending
+        "SELECT {PENDING_COLUMNS} FROM pending
          WHERE rule_id = ?1 AND state IN ('allowed', 'denied') ORDER BY id"
     ))?;
-    stmt.query_map([rule.0], |row| {
-        Ok((raw_pending(row)?, row.get::<_, bool>(PENDING_COLUMN_COUNT)?))
-    })?
-    .map(|found| {
-        let (raw, exact_only) = found?;
-        Ok((pending_from_raw(&raw)?, exact_only))
-    })
-    .collect()
+    stmt.query_map([rule.0], raw_pending)?
+        .map(|found| pending_from_raw(&found?))
+        .collect()
 }
 
 /// Opens a new row for each of `closed` that keeps its workspace, host, port, times and attempt
-/// count, so it sorts where it did. A key that already has an open row is skipped.
+/// count, so it sorts where it did. A key that already has an open row is skipped, and so is a
+/// request that another rule decides now, which would wait in the inbox for nothing. A row of a
+/// deleted workspace is not among `closed`: deleting the workspace detached it from its rule.
 pub(super) fn reopen_rows(
     tx: &Transaction<'_>,
-    closed: Vec<(PendingRow, bool)>,
+    closed: Vec<PendingRow>,
     now: u64,
     fx: &mut Vec<Event>,
 ) -> Result<Vec<PendingRow>, StoreError> {
     let mut reopened = Vec::new();
-    for (old, exact_only) in closed {
+    let set = super::sets::load_index(tx)?;
+    for old in closed {
+        let suffix_allows = if old.exact_only {
+            SuffixAllows::Ignore
+        } else {
+            SuffixAllows::Count
+        };
+        if set
+            .decide(&old.workspace, &old.host, now, suffix_allows)
+            .is_some()
+        {
+            continue;
+        }
         let key = params![old.workspace.as_str(), old.host.to_string(), old.port];
         let taken: i64 = tx.query_row(OPEN_ROW_COUNT, key, |row| row.get(0))?;
         if taken > 0 {
             continue;
         }
         tx.execute(
-            "INSERT INTO pending (workspace_id, host, port, first_seen, last_seen, attempts, exact_only)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO pending (workspace_id, host, port, first_seen, last_seen, attempts, exact_only,
+                                  program)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 old.workspace.as_str(),
                 old.host.to_string(),
@@ -223,7 +233,8 @@ pub(super) fn reopen_rows(
                 sql_ts(old.first_seen),
                 sql_ts(old.last_seen),
                 sql_ts(old.attempts),
-                exact_only
+                old.exact_only,
+                old.program.as_ref().map(Program::as_str)
             ],
         )?;
         let row = load_pending(tx, PendingId(tx.last_insert_rowid()))?;
@@ -257,22 +268,19 @@ pub(super) fn open_rows(
     workspace: Option<&WorkspaceId>,
 ) -> Result<Vec<(PendingRow, SuffixAllows)>, StoreError> {
     let mut stmt = tx.prepare(&format!(
-        "SELECT {PENDING_COLUMNS}, exact_only FROM pending
+        "SELECT {PENDING_COLUMNS} FROM pending
          WHERE state = 'requested' AND (?1 IS NULL OR workspace_id = ?1) ORDER BY id"
     ))?;
     let open = stmt
-        .query_map([workspace.map(WorkspaceId::as_str)], |row| {
-            let exact_only: bool = row.get(PENDING_COLUMN_COUNT)?;
-            Ok((raw_pending(row)?, exact_only))
-        })?
+        .query_map([workspace.map(WorkspaceId::as_str)], raw_pending)?
         .map(|found| {
-            let (raw, exact_only) = found?;
-            let suffix_allows = if exact_only {
+            let row = pending_from_raw(&found?)?;
+            let suffix_allows = if row.exact_only {
                 SuffixAllows::Ignore
             } else {
                 SuffixAllows::Count
             };
-            Ok((pending_from_raw(&raw)?, suffix_allows))
+            Ok((row, suffix_allows))
         })
         .collect::<Result<Vec<_>, StoreError>>()?;
     Ok(open)
@@ -432,9 +440,7 @@ pub(super) fn load_rule(conn: &Connection, id: RuleId) -> Result<Rule, StoreErro
 }
 
 pub(super) const PENDING_COLUMNS: &str = "id, workspace_id, host, port, first_seen, last_seen, attempts, \
-                               state, decided_at, decided_by, rule_id, rule_set";
-/// How many columns [`PENDING_COLUMNS`] names.
-const PENDING_COLUMN_COUNT: usize = 12;
+                               state, decided_at, decided_by, rule_id, rule_set, program, exact_only";
 
 /// A `pending` row as SQLite holds it, before validation.
 pub(super) struct RawPending {
@@ -450,6 +456,8 @@ pub(super) struct RawPending {
     pub(super) decided_by: Option<String>,
     pub(super) rule_id: Option<i64>,
     pub(super) rule_set: Option<String>,
+    pub(super) program: Option<String>,
+    pub(super) exact_only: bool,
 }
 
 pub(super) fn raw_pending(row: &Row<'_>) -> rusqlite::Result<RawPending> {
@@ -466,6 +474,8 @@ pub(super) fn raw_pending(row: &Row<'_>) -> rusqlite::Result<RawPending> {
         decided_by: row.get(9)?,
         rule_id: row.get(10)?,
         rule_set: row.get(11)?,
+        program: row.get(12)?,
+        exact_only: row.get(13)?,
     })
 }
 
@@ -489,6 +499,12 @@ pub(super) fn pending_from_raw(raw: &RawPending) -> Result<PendingRow, StoreErro
             .transpose()?,
         rule_id: raw.rule_id.map(RuleId),
         rule_set: raw.rule_set.clone(),
+        program: raw
+            .program
+            .as_deref()
+            .map(|p| Program::sanitise(p).ok_or_else(|| bad("program")))
+            .transpose()?,
+        exact_only: raw.exact_only,
     })
 }
 

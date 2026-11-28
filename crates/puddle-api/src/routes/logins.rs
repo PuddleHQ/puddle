@@ -10,12 +10,13 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 
-use crate::ApiErrorBody;
-use crate::error::ApiError;
+use crate::authz::Principal;
 use crate::extract::Path;
 use crate::routes::AppState;
-use crate::routes::workspaces::workspace_id;
-use crate::wire::{KeptLoginList, KeptLoginView};
+use crate::routes::workspaces::owned;
+use puddle_services::error::ApiError;
+use puddle_services::error::ApiErrorBody;
+use puddle_services::wire::{KeptLoginList, KeptLoginView};
 
 /// The services Puddle keeps a login for in a workspace, with when each was first noted. No token
 /// or other secret is in the answer. It comes from Puddle's own record of what is kept, so a
@@ -34,10 +35,11 @@ use crate::wire::{KeptLoginList, KeptLoginView};
 )]
 pub(crate) async fn list_logins(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
 ) -> Result<Json<KeptLoginList>, ApiError> {
-    let id = workspace_id(&id)?;
-    let kept = state.workspaces.kept_logins(&id).await?;
+    let workspace = owned(&state, principal, &id).await?;
+    let kept = state.workspaces.kept_logins(&workspace).await?;
     Ok(Json(KeptLoginList {
         logins: kept
             .logins
@@ -72,9 +74,10 @@ pub(crate) async fn list_logins(
 )]
 pub(crate) async fn forget_login(
     State(state): State<AppState>,
+    principal: Principal,
     Path((id, service)): Path<(String, String)>,
 ) -> Result<StatusCode, ApiError> {
-    let id = workspace_id(&id)?;
-    state.workspaces.forget_login(&id, &service).await?;
+    let workspace = owned(&state, principal, &id).await?;
+    state.workspaces.forget_login(&workspace, &service).await?;
     Ok(StatusCode::NO_CONTENT)
 }

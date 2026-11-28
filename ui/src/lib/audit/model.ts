@@ -1,201 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// What the activity screen shows of an audit record, and how its filters turn into an API query
-// and a page address. Pure: nothing here touches the page or the network.
+// What the activity screen shows of an audit record. Pure: nothing here touches the page or the
+// network. The filters are in `filter.ts`.
 import type { components } from "#lib/api/schema.d.ts";
+import { COMPANY_SIGNAL_WORDS, typeLabel } from "#lib/audit/filter.ts";
 import { actorLabel } from "#lib/rules/model.ts";
 import { workspaces } from "#lib/stores/workspaces.svelte.ts";
 
 type Schemas = components["schemas"];
 export type AuditEntry = Schemas["AuditEntry"];
 export type AuditRecord = Schemas["AuditRecord"];
-export type AuditType = Schemas["AuditType"];
-export type AuditOutcome = Schemas["AuditOutcome"];
 type ForeignCredentialKind = Schemas["ForeignCredentialKind"];
 type UnknownTokenKind = Schemas["UnknownTokenKind"];
-type CompanySignal = Schemas["CompanySignal"];
 type ReasonCode = Schemas["ReasonCode"];
 type FailedRequestCode = Schemas["FailedRequestCode"];
 type LimitCode = Schemas["LimitCode"];
 type PassThroughCode = Schemas["PassThroughCode"];
 type LocalCategory = Schemas["LocalCategory"];
-
-/** The newest matching records come first and the log is read back from there. */
-export const PAGE_SIZE = 200;
-/** The API's cap per page, used when the whole filtered log is exported. */
-export const EXPORT_PAGE_SIZE = 500;
-
-export type RangeKey = "1h" | "24h" | "7d" | "all";
-
-export const RANGES: readonly { key: RangeKey; label: string; ms: number }[] = [
-  { key: "1h", label: "Last hour", ms: 3_600_000 },
-  { key: "24h", label: "Last 24 hours", ms: 86_400_000 },
-  { key: "7d", label: "Last 7 days", ms: 7 * 86_400_000 },
-  { key: "all", label: "Everything", ms: 0 },
-];
-
-export const DEFAULT_RANGE: RangeKey = "24h";
-
-export type AuditCategory = "company_network";
-
-export const CATEGORIES: readonly { value: AuditCategory; label: string }[] = [
-  { value: "company_network", label: "Company network" },
-];
-
-/** What put a destination on the company network, as a record's `signal` code reads in words. */
-const COMPANY_SIGNAL_WORDS: Record<CompanySignal, string> = {
-  pac_direct: "The company's proxy script sends it straight out.",
-  dns_suffix: "Its name ends in one of the company's DNS suffixes.",
-  private_access_cgnat: "A company private-access client's range.",
-  vpn_route: "Reached through a VPN connection.",
-};
-
-export interface Filter {
-  /** A workspace's id; empty for all. */
-  workspace: string;
-  type: AuditType | "";
-  outcome: AuditOutcome | "";
-  /** A destination category; empty for all. Only the company network exists. */
-  category: AuditCategory | "";
-  /** Text a record's host (or a rule's pattern), method, path or reason contains; empty for all. */
-  q: string;
-  range: RangeKey;
-}
-
-export const NO_FILTER: Filter = {
-  workspace: "",
-  type: "",
-  outcome: "",
-  category: "",
-  q: "",
-  range: DEFAULT_RANGE,
-};
-
-export const TYPES: readonly { value: AuditType; label: string }[] = [
-  { value: "connection", label: "Connection" },
-  { value: "pending_created", label: "Request opened" },
-  { value: "pending_decided", label: "Request decided" },
-  { value: "pending_expired", label: "Request closed" },
-  { value: "pending_suppressed", label: "Requests refused for volume" },
-  { value: "rule_created", label: "Rule added" },
-  { value: "rule_updated", label: "Rule changed" },
-  { value: "rule_switched", label: "Rule switched" },
-  { value: "rule_deleted", label: "Rule deleted" },
-  { value: "rule_expired", label: "Rule expired" },
-  { value: "request_rule_created", label: "Method and path rule added" },
-  { value: "request_rule_deleted", label: "Method and path rule deleted" },
-  { value: "rule_set_created", label: "Rule set added" },
-  { value: "rule_set_updated", label: "Rule set renamed" },
-  { value: "rule_set_deleted", label: "Rule set deleted" },
-  { value: "rule_set_switched", label: "Rule set switched" },
-  { value: "rule_set_changed", label: "Rule set updated by Puddle" },
-  { value: "system_managed_changed", label: "System managed changed" },
-  { value: "workspace_op", label: "Workspace operation" },
-  { value: "audit_trimmed", label: "Log trimmed" },
-];
-
-export const OUTCOMES: readonly { value: AuditOutcome; label: string }[] = [
-  { value: "allow", label: "Allowed" },
-  { value: "deny", label: "Denied" },
-  { value: "pending", label: "Waiting" },
-  { value: "blocked", label: "Blocked" },
-  { value: "expired", label: "Closed" },
-  { value: "succeeded", label: "Succeeded" },
-  { value: "failed", label: "Failed" },
-];
-
-const typeLabels = new Map(TYPES.map((t) => [t.value, t.label]));
-const outcomeLabels = new Map(OUTCOMES.map((o) => [o.value, o.label]));
-
-export function typeLabel(type: AuditType): string {
-  return typeLabels.get(type) ?? type;
-}
-
-export function outcomeLabel(outcome: AuditOutcome): string {
-  return outcomeLabels.get(outcome) ?? outcome;
-}
-
-/** True when any filter differs from the screen's defaults (the "Clear filters" button shows). */
-export function isFiltered(filter: Filter): boolean {
-  return (
-    filter.workspace !== "" ||
-    filter.type !== "" ||
-    filter.outcome !== "" ||
-    filter.category !== "" ||
-    filter.q.trim() !== "" ||
-    filter.range !== DEFAULT_RANGE
-  );
-}
-
-/** True when the filter leaves out part of the log (so "no records" may just mean "none match"). */
-export function isNarrowed(filter: Filter): boolean {
-  return (
-    filter.workspace !== "" ||
-    filter.type !== "" ||
-    filter.outcome !== "" ||
-    filter.category !== "" ||
-    filter.q.trim() !== "" ||
-    filter.range !== "all"
-  );
-}
-
-/** The server-side filters of `GET /api/audit`; `now` fixes a relative range. */
-export interface AuditQuery {
-  workspace?: string;
-  type?: AuditType;
-  outcome?: AuditOutcome;
-  category?: AuditCategory;
-  q?: string;
-  from?: number;
-}
-
-export function toQuery(filter: Filter, now: number): AuditQuery {
-  const query: AuditQuery = {};
-  if (filter.workspace !== "") query.workspace = filter.workspace;
-  if (filter.type !== "") query.type = filter.type;
-  if (filter.outcome !== "") query.outcome = filter.outcome;
-  if (filter.category !== "") query.category = filter.category;
-  const q = filter.q.trim();
-  if (q !== "") query.q = q;
-  const range = RANGES.find((r) => r.key === filter.range);
-  if (range && range.ms > 0) query.from = now - range.ms;
-  return query;
-}
-
-/** The page address's query string for a filter (`""` when it is the default view). */
-export function toSearch(filter: Filter): string {
-  const params = new URLSearchParams();
-  if (filter.workspace !== "") params.set("workspace", filter.workspace);
-  if (filter.type !== "") params.set("type", filter.type);
-  if (filter.outcome !== "") params.set("outcome", filter.outcome);
-  if (filter.category !== "") params.set("category", filter.category);
-  if (filter.q.trim() !== "") params.set("q", filter.q.trim());
-  if (filter.range !== DEFAULT_RANGE) params.set("range", filter.range);
-  const text = params.toString();
-  return text === "" ? "" : `?${text}`;
-}
-
-/** A filter from a page address; anything it does not recognise is left at the default. */
-export function fromSearch(search: string): Filter {
-  const params = new URLSearchParams(search);
-  const type = params.get("type");
-  const outcome = params.get("outcome");
-  const range = params.get("range");
-  const category = params.get("category");
-  return {
-    workspace: params.get("workspace") ?? "",
-    type: TYPES.some((t) => t.value === type) ? (type as AuditType) : "",
-    outcome: OUTCOMES.some((o) => o.value === outcome)
-      ? (outcome as AuditOutcome)
-      : "",
-    category: CATEGORIES.some((c) => c.value === category)
-      ? (category as AuditCategory)
-      : "",
-    q: params.get("q") ?? params.get("host") ?? "",
-    range: RANGES.some((r) => r.key === range)
-      ? (range as RangeKey)
-      : DEFAULT_RANGE,
-  };
-}
 
 export type Tone = "allow" | "deny" | "warn" | "neutral";
 
@@ -266,13 +86,15 @@ const REASON_WORDS: Record<ReasonCode, string> = {
     "the request sent a credential Puddle chose to another address than its sign-in endpoint",
   peek_refused: "the request body was not one Puddle reads",
   stream_limit: "the connection had too many requests open at once",
+  workspace_not_running:
+    "Puddle holds no running state for the workspace, so it refuses its connections",
   puddle_request: "Puddle's own request",
   pki_distribution_point:
     "a certificate check address named in your company's root certificates",
   push_denied:
-    'the push is not on the workspace\'s push list yet (click "Allow push" in the notice, or turn off "Only push to listed repos" on its Git tab)',
+    'the push is not in the workspace\'s allowed repositories (click "Allow push" in the notice, or tick Push for it on the Git tab)',
   pull_denied:
-    'the fetch is not on the workspace\'s pull list yet (click "Allow pull" in the notice, or turn off "Only pull from listed repos" on its Git tab)',
+    'the fetch is not in the workspace\'s allowed repositories (click "Allow pull" in the notice, or tick Pull for it on the Git tab)',
   bad_git_path:
     "the Git address is not one Puddle reads, or names the repository in more than one way (use owner/repository)",
   ssh_command_unsupported:
@@ -529,6 +351,14 @@ const WORKSPACE_OPS: Record<
     done: "SSH agent question answered",
     failed: "Answering the SSH agent question failed",
   },
+  audit_retention_changed: {
+    done: "Activity log retention changed",
+    failed: "Changing the activity log retention failed",
+  },
+  audit_pruned: {
+    done: "Activity log pruned by hand",
+    failed: "Pruning the activity log failed",
+  },
   git_repaired: {
     done: "Git repaired after a crash",
     failed: "Repairing git after a crash failed",
@@ -587,10 +417,10 @@ function pendingOutcome(state: string): RowView["outcome"] {
 }
 
 /**
- * What a record's method field holds when the connection was Git over SSH: the proxy writes the
- * command (`git-receive-pack`) there, where HTTP writes `POST`. A command Puddle did not serve
+ * How a record of `protocol: "ssh"` words its method field: the proxy writes the Git command
+ * (`git-receive-pack`) there, where HTTP writes `POST`. A command Puddle did not serve
  * (`ssh-command`) and a refused channel request (`ssh-channel`) are written the same way. The
- * record has no protocol field yet, and no HTTP method is spelled in lower case with a hyphen.
+ * record's `protocol` says it is SSH; these tables only word the command.
  */
 const SSH_COMMANDS: Record<string, string> = {
   "git-receive-pack": "push to",
@@ -603,17 +433,17 @@ const SSH_REFUSED_WORDS: Record<string, string> = {
   "ssh-channel": "session request",
 };
 
-/** "SSH: push to github.com/acme/app", or `null` when the record is not Git over SSH. */
+/** "SSH: push to github.com/acme/app" for a record whose `protocol` is `ssh`. A command from a
+ * newer Puddle is shown as it was written. */
 function sshLine(
   record: Extract<AuditRecord, { type: "connection" }>,
   method: string,
-): string | null {
+): string {
   const verb = SSH_COMMANDS[method];
   if (verb !== undefined) {
     return `SSH: ${verb} ${record.host ?? ""}${record.path ?? ""}`;
   }
-  const refused = SSH_REFUSED_WORDS[method];
-  return refused === undefined ? null : `SSH: ${refused}`;
+  return `SSH: ${SSH_REFUSED_WORDS[method] ?? `${method} ${record.path ?? ""}`.trim()}`;
 }
 
 function connectionDetail(
@@ -621,9 +451,13 @@ function connectionDetail(
 ): string {
   const parts: string[] = [];
   if (record.method !== null) {
+    const http = `${record.method} ${record.path ?? ""}`.trim();
     parts.push(
-      sshLine(record, record.method) ??
-        `${record.method} ${record.path ?? ""}`.trim(),
+      record.protocol === "ssh"
+        ? sshLine(record, record.method)
+        : record.git_operation
+          ? `Git ${record.git_operation}: ${http}`
+          : http,
     );
   }
   const failed = record.reason.startsWith(FAILED_PREFIX)
@@ -984,4 +818,30 @@ export function jsonLine(record: AuditRecord): string {
 /** `puddle-activity-2026-10-07T12-00-00.jsonl`. */
 export function exportName(now: number): string {
   return `puddle-activity-${new Date(now).toISOString().slice(0, 19).replaceAll(":", "-")}.jsonl`;
+}
+
+/** A row as one sentence: "Blocked: SSH to host:22 is not supported". The raw record sits behind it. */
+export function sentence(row: RowView): string {
+  const what = [row.destination, row.detail].filter(
+    (s): s is string => s !== null && s !== "",
+  );
+  const head = row.outcome?.label ?? row.type;
+  return what.length === 0 ? head : `${head}: ${what.join(", ")}`;
+}
+
+/** Where "Make a rule from this" goes: a refused connection to a host a rule could allow. */
+export function ruleLink(
+  record: AuditRecord,
+  workspaceName: string | null,
+): string | null {
+  if (
+    record.type !== "connection" ||
+    record.decision !== "deny" ||
+    record.host === null
+  ) {
+    return null;
+  }
+  const query = new URLSearchParams({ "new-rule": record.host });
+  if (workspaceName !== null) query.set("workspace", workspaceName);
+  return `/rules?${query}`;
 }

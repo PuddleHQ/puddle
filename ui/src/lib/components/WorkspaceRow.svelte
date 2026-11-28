@@ -13,15 +13,14 @@
   import { relativeTime } from "#lib/format/relative-time.ts";
   import type { OomEvent, Progress } from "#lib/stores/workspaces.svelte.ts";
   import {
-    canAttach,
-    canStart,
-    canStop,
+    allows,
     diskPercent,
     formatMib,
     isDown,
     type Workspace,
   } from "#lib/workspaces/model.ts";
   import { repoLabel } from "#lib/workspaces/repo-label.ts";
+  import { tabHref } from "#lib/workspaces/tabs.ts";
   import "#lib/theme/controls.css";
 
   let {
@@ -34,6 +33,8 @@
     onStart,
     onStop,
     onConnect,
+    onRename,
+    onDelete,
     onDismiss,
   }: {
     workspace: Workspace;
@@ -47,6 +48,8 @@
     onStart: (w: Workspace) => void;
     onStop: (w: Workspace) => void;
     onConnect: (w: Workspace) => void;
+    onRename: (w: Workspace) => void;
+    onDelete: (w: Workspace) => void;
     onDismiss: (w: Workspace) => void;
   } = $props();
 
@@ -66,9 +69,9 @@
 
 <article class="row" aria-labelledby={titleId}>
   <div class="line">
-    <span class="state"
-      ><StatusChip status={workspace.status} busy={workspace.busy} /></span
-    >
+    <span class="state">
+      <StatusChip status={workspace.status} busy={workspace.busy} />
+    </span>
     <h2 id={titleId} class="name">
       <a {href}>{workspace.name}</a>
       {#if workspace.direct_ssh}<TrustedBadge />{/if}
@@ -76,6 +79,7 @@
     <p class="repo" title={first?.url}>
       {#if first}
         {repoLabel(first.url)}
+        {#if first.branch}<span class="branch">{first.branch}</span>{/if}
         {#if workspace.repositories.length > 1}
           <span class="more">and {workspace.repositories.length - 1} more</span>
         {/if}
@@ -90,16 +94,20 @@
           class="count"
           href="{href}/network"
           aria-label="{waiting} waiting"
-          title="{waiting} waiting">{waiting}</a
+          title="{waiting} waiting"
         >
+          {waiting}
+        </a>
       {/if}
     </p>
     <div class="acts">
-      {#if down}
+      {#if workspace.busy === "creating"}
+        <!-- A workspace being created reads "created" but cannot be started yet. -->
+      {:else if down}
         <button
           type="button"
           class="btn primary"
-          disabled={!canStart(workspace)}
+          disabled={!allows(workspace, "start")}
           onclick={() => onStart(workspace)}
         >
           <Play aria-hidden="true" size={16} />Start
@@ -109,7 +117,7 @@
         <button
           type="button"
           class="btn primary"
-          disabled={!canAttach(workspace)}
+          disabled={!allows(workspace, "attach")}
           onclick={() => onConnect(workspace)}
         >
           <Plug aria-hidden="true" size={16} />Connect
@@ -118,9 +126,11 @@
       {/if}
       <DropdownMenu.Root>
         <DropdownMenu.Trigger class="btn more-trigger">
-          <Ellipsis aria-hidden="true" size={16} /><span class="visually-hidden"
-            >More about {workspace.name}</span
+          <Ellipsis aria-hidden="true" size={16} /><span
+            class="visually-hidden"
           >
+            More about {workspace.name}
+          </span>
         </DropdownMenu.Trigger>
         <DropdownMenu.Portal>
           <DropdownMenu.Content class="row-menu" align="end" sideOffset={4}>
@@ -130,15 +140,33 @@
             >
               Open details
             </DropdownMenu.Item>
+            <DropdownMenu.Item
+              class="row-menu-item"
+              onSelect={() => goto(tabHref(workspace.id, "terminal"))}
+            >
+              Terminal <span class="visually-hidden">of {workspace.name}</span>
+            </DropdownMenu.Item>
+            <DropdownMenu.Item
+              class="row-menu-item"
+              onSelect={() => onRename(workspace)}
+            >
+              Rename <span class="visually-hidden">{workspace.name}</span>
+            </DropdownMenu.Item>
             {#if !down}
               <DropdownMenu.Item
                 class="row-menu-item"
-                disabled={!canStop(workspace)}
+                disabled={!allows(workspace, "stop")}
                 onSelect={() => onStop(workspace)}
               >
                 Stop <span class="visually-hidden">{workspace.name}</span>
               </DropdownMenu.Item>
             {/if}
+            <DropdownMenu.Item
+              class="row-menu-item"
+              onSelect={() => onDelete(workspace)}
+            >
+              Delete <span class="visually-hidden">{workspace.name}</span>
+            </DropdownMenu.Item>
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
@@ -149,15 +177,15 @@
       {#if workspace.disk_warnings.length > 0 || oom}
         <p class="flags">
           {#each workspace.disk_warnings as kind (kind)}
-            <span class="flag warn"
-              >{kind === "root" ? "Root disk" : "Volume"}
-              {diskPercent(workspace, kind)} % full</span
-            >
+            <span class="flag warn">
+              {kind === "root" ? "Root disk" : "Volume"}
+              {diskPercent(workspace, kind)} % full
+            </span>
           {/each}
           {#if oom}
-            <span class="flag warn"
-              >Out of memory {relativeTime(oom.at, now)}</span
-            >
+            <span class="flag warn">
+              Out of memory {relativeTime(oom.at, now)}
+            </span>
           {/if}
         </p>
       {/if}
@@ -181,9 +209,9 @@
           {:else}
             failed to install <span class="what">{tools.tools.join(", ")}</span>
             {#if tools.waiting_on.length > 0}
-              <a class="flag" href="{href}/network"
-                >Waiting for you to allow {tools.waiting_on.join(", ")}</a
-              >
+              <a class="flag" href="{href}/network">
+                Waiting for you to allow {tools.waiting_on.join(", ")}
+              </a>
             {/if}
           {/if}
         </p>
@@ -245,6 +273,10 @@
   }
   .more {
     font-family: var(--font-sans);
+  }
+  .branch::before {
+    content: "·";
+    margin: 0 var(--space-1);
   }
   .full {
     color: var(--color-warning);

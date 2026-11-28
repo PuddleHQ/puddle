@@ -12,7 +12,7 @@
   import { editorProblems } from "#lib/stores/editor-problems.svelte.ts";
   import { WorkspacePortsStore } from "#lib/stores/workspace-ports.svelte.ts";
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
-  import { canStart, diskPercent } from "#lib/workspaces/model.ts";
+  import { allows, diskPercent } from "#lib/workspaces/model.ts";
   import { forwardText } from "#lib/workspaces/ports.ts";
   import { tabHref } from "#lib/workspaces/tabs.ts";
   import "#lib/theme/controls.css";
@@ -96,8 +96,10 @@
         class="btn"
         onclick={() => {
           dismissedOom = oom.at;
-        }}>Dismiss</button
+        }}
       >
+        Dismiss
+      </button>
     </div>
   {/if}
 
@@ -109,19 +111,20 @@
         <time
           datetime={new Date(workspace.created_at).toISOString()}
           title={absoluteTime(workspace.created_at)}
-          >{relativeTime(workspace.created_at, now)}</time
-        >.
+        >
+          {relativeTime(workspace.created_at, now)}
+        </time>.
         {#if workspace.status === "running"}
           Open a terminal here, or use Connect for the editor and SSH.
-        {:else if canStart(workspace)}
+        {:else if allows(workspace, "start")}
           Start it to open a terminal or the editor.
         {/if}
       </p>
       {#if workspace.status === "running"}
         <p>
-          <a class="btn primary" href={tabHref(workspace.id, "terminal")}
-            >Open a terminal</a
-          >
+          <a class="btn primary" href={tabHref(workspace.id, "terminal")}>
+            Open a terminal
+          </a>
         </p>
       {/if}
       {#if workspace.status === "volume_missing" && workspace.busy === null}
@@ -163,9 +166,9 @@
           {/each}
         </ul>
         <p>
-          <a class="link-block" href={tabHref(workspace.id, "ports")}
-            >Forward a port</a
-          >
+          <a class="link-block" href={tabHref(workspace.id, "ports")}>
+            Forward a port
+          </a>
         </p>
       </section>
     {/if}
@@ -174,9 +177,9 @@
 
 <style>
   .stack {
+    max-width: var(--page-reading-width);
     display: grid;
     gap: var(--space-4);
-    max-width: 60rem;
   }
   .card {
     display: grid;

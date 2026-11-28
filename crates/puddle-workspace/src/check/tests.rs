@@ -58,7 +58,7 @@ fn malformed_or_unfinished_output_is_refused() {
         ("R\ta\nM\tU\tmany\nD\n", "bad count line"),
         ("D\nO\tlate\n", "after the end marker"),
     ] {
-        let err = parse(out).unwrap_err();
+        let err = parse(out).unwrap_err().to_string();
         assert!(err.contains(want), "{out:?}: {err}");
     }
 }
@@ -84,6 +84,7 @@ fn hostile_output_stays_bounded() {
     assert!(
         parse(&format!("{repos}D\n"))
             .unwrap_err()
+            .to_string()
             .contains("checkouts")
     );
 
@@ -99,17 +100,12 @@ fn hostile_output_stays_bounded() {
 
 #[test]
 fn the_request_runs_the_script_as_root_on_the_mount_point() {
-    let l = Layout::new(&WorkspaceId::new("a").unwrap()).unwrap();
+    let l = Layout::new().unwrap();
     let r = request(&l);
     assert_eq!(r.program, "sh");
     assert_eq!(
         r.args,
-        [
-            "-c",
-            DELETE_CHECK_SH,
-            "puddle-delete-check",
-            "/workspaces/a"
-        ]
+        ["-c", DELETE_CHECK_SH, "puddle-delete-check", "/workspace"]
     );
     assert_eq!(r.user.as_deref(), Some("root"));
 }

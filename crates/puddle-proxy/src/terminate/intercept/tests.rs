@@ -174,3 +174,53 @@ fn a_curated_host_is_passed_through_after_the_never_decrypt_names_and_before_lea
     assert!(on.is_learning());
     assert!(!on.learn_from_rejections(false).is_learning());
 }
+
+/// The list keeps a host while its age is under the time, so a host as old as the time is gone:
+/// on the paused clock an age can be made exactly the time.
+#[tokio::test(start_paused = true)]
+async fn a_host_as_old_as_its_time_is_gone_in_every_way_to_ask() {
+    let ttl = Duration::from_secs(60);
+    let list = PassThrough::with_limits(ttl, 8);
+    let h = host("edge.example");
+    assert!(list.learn(&h));
+    tokio::time::advance(Duration::new(59, 999_999_999)).await;
+    assert!(list.contains(&h), "a nanosecond left");
+    tokio::time::advance(Duration::from_nanos(1)).await;
+    assert!(!list.contains(&h), "contains: the time is up");
+    assert_eq!(list.list(), [], "list: the time is up");
+    assert!(!list.forget(&h), "forget: the time is up");
+    assert!(list.learn(&h), "learn: new again once the time is up");
+
+    tokio::time::advance(ttl).await;
+    assert_eq!(list.clear(), 0, "clear: the time is up");
+
+    assert!(list.learn(&h));
+    tokio::time::advance(ttl).await;
+    assert!(
+        list.learn(&h),
+        "learn drops an expired host before it looks"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn new_limits_drop_a_host_as_old_as_the_new_time() {
+    let list = PassThrough::with_limits(Duration::from_secs(3600), 8);
+    let h = host("edge.example");
+    list.learn(&h);
+    tokio::time::advance(Duration::from_secs(30)).await;
+    list.set_limits(Duration::from_secs(30), 8);
+    assert_eq!(list.list(), [], "a host as old as the new time is dropped");
+}
+
+/// `list`, `contains` and `learn` all hide or drop an expired host themselves, so only the stored
+/// entries show whether `set_limits` itself dropped the host that is exactly as old as the new time.
+#[tokio::test(start_paused = true)]
+async fn new_limits_forget_a_host_as_old_as_the_new_time() {
+    let list = PassThrough::with_limits(Duration::from_secs(3600), 8);
+    list.learn(&host("edge.example"));
+    tokio::time::advance(Duration::from_secs(30)).await;
+    list.learn(&host("fresh.example"));
+    list.set_limits(Duration::from_secs(30), 8);
+    let stored: Vec<String> = list.inner().seen.keys().cloned().collect();
+    assert_eq!(stored, ["fresh.example"]);
+}

@@ -4,7 +4,10 @@
   import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
   import type { Progress } from "#lib/stores/workspaces.svelte.ts";
   import {
+    byteCountText,
+    elapsedText,
     operationLabel,
+    STEP_HINTS,
     stepLabel,
     stepPosition,
     type Operation,
@@ -25,6 +28,30 @@
     onDismiss?: () => void;
   } = $props();
 
+  /** When the step now shown began, and the clock that moves the seconds on. */
+  let stepSince = $state(Date.now());
+  let now = $state(Date.now());
+  let lastStep: string | null = null;
+  $effect(() => {
+    const step = progress && !progress.failed ? progress.step : null;
+    if (step !== lastStep) {
+      lastStep = step;
+      stepSince = Date.now();
+      now = stepSince;
+    }
+    if (step === null) return;
+    const timer = setInterval(() => {
+      now = Date.now();
+    }, 1000);
+    return () => clearInterval(timer);
+  });
+  /** Seconds on this step, once it has run long enough that a still screen would look stuck. */
+  const elapsed = $derived(
+    progress && !progress.failed && now - stepSince >= 3000
+      ? elapsedText((now - stepSince) / 1000)
+      : null,
+  );
+
   const operation = $derived(busy ?? progress?.operation ?? null);
   /** "Cloning api, 2 of 3": which checkout a cloning step is on, and where it is in the list. */
   const clone = $derived.by(() => {
@@ -36,6 +63,18 @@
       ? `Cloning ${dir}, ${at + 1} of ${total}`
       : `Cloning ${dir}`;
   });
+  const count = $derived(
+    progress ? byteCountText(progress.bytes ?? null) : null,
+  );
+  /** The share of the image done, for the bar; `null` when the total is not known. */
+  const share = $derived(
+    progress?.bytes && progress.bytes.total && progress.bytes.total > 0
+      ? Math.min(100, (progress.bytes.done / progress.bytes.total) * 100)
+      : null,
+  );
+  const hint = $derived(
+    progress && !progress.detail ? (STEP_HINTS[progress.step] ?? null) : null,
+  );
   const position = $derived(
     operation && progress && !progress.failed
       ? stepPosition(operation, progress.step)
@@ -47,8 +86,9 @@
   <div class="line failed" role="alert">
     <TriangleAlert aria-hidden="true" size={16} />
     <span class="text">
-      <b>{operation ? `${operationLabel(operation)} failed` : "That failed"}.</b
-      >
+      <b>
+        {operation ? `${operationLabel(operation)} failed` : "That failed"}.
+      </b>
       {#if progress.detail}<span class="detail">{progress.detail}</span>{/if}
     </span>
     {#if onDismiss}
@@ -59,17 +99,26 @@
   <p class="line" role="status">
     <LoaderCircle class="spin" aria-hidden="true" size={16} />
     <span class="text">
-      <b
-        >{progress
+      <b>
+        {progress
           ? (clone ?? stepLabel(progress.step))
           : busy
             ? operationLabel(busy)
-            : ""}</b
-      >
-      {#if position}<span class="muted"
-          >step {position.index} of {position.of}</span
-        >{/if}
+            : ""}
+      </b>
+      {#if position}<span class="muted">
+          step {position.index} of {position.of}
+        </span>{/if}
+      {#if count}<span class="muted">{count}</span>{/if}
+      {#if elapsed}<span class="muted">{elapsed}</span>{/if}
+      {#if share !== null}<progress
+          class="bar"
+          max="100"
+          value={share}
+          aria-label={progress ? stepLabel(progress.step) : ""}
+        ></progress>{/if}
       {#if progress?.detail}<span class="detail">{progress.detail}</span>{/if}
+      {#if hint}<span class="muted hint">{hint}</span>{/if}
     </span>
   </p>
 {/if}
@@ -89,6 +138,15 @@
   }
   .muted {
     color: var(--color-text-muted);
+  }
+  .hint {
+    display: block;
+  }
+  .bar {
+    display: block;
+    width: min(20rem, 100%);
+    height: 0.4rem;
+    margin-top: var(--space-1);
   }
   .detail {
     display: block;

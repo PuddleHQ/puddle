@@ -20,8 +20,10 @@
 <span
   class="chip {tone}"
   data-check={check.state}
-  title={seenText(check, now) || undefined}>{statusWord(check)}</span
+  title={seenText(check, now) || undefined}
 >
+  {statusWord(check)}
+</span>
 
 <style>
   .chip {

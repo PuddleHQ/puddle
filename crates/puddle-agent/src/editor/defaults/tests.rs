@@ -474,3 +474,226 @@ fn a_removal_alone_edits_the_file_without_a_merge() {
     assert!(!text.contains("\"a\""), "{text}");
     assert!(text.contains("\"b\": 2"), "{text}");
 }
+
+#[test]
+fn a_refused_settings_merge_is_not_remembered_and_the_defaults_come_back_once_the_file_is_fixed() {
+    let rig = Rig::new();
+    let twice = r#"{"window.autoDetectColorScheme": false, "window.autoDetectColorScheme": true}"#;
+    std::fs::write(rig.user("settings.json"), twice).unwrap();
+    rig.plan(&dark(None));
+    apply(&rig.server);
+    assert_eq!(read_applied(&state_path(&rig.server)), Applied::default());
+    std::fs::write(rig.user("settings.json"), "{}").unwrap();
+    apply(&rig.server);
+    let settings = rig.settings();
+    assert_eq!(settings["workbench.colorTheme"], "Solarized Dark");
+    assert_eq!(settings["window.autoDetectColorScheme"], false);
+}
+
+#[test]
+#[cfg(unix)]
+fn a_settings_write_that_fails_is_not_remembered_and_is_tried_again() {
+    use std::os::unix::fs::PermissionsExt;
+    let rig = Rig::new();
+    rig.plan(&dark(Some(14)));
+    let folder = rig.user("");
+    let open = std::fs::metadata(&folder).unwrap().permissions();
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o500)).unwrap();
+    assert!(
+        std::fs::write(rig.user("probe"), "").is_err(),
+        "the folder must refuse writes for this test"
+    );
+    apply(&rig.server);
+    assert_eq!(read_applied(&state_path(&rig.server)), Applied::default());
+    std::fs::set_permissions(&folder, open).unwrap();
+    apply(&rig.server);
+    let settings = rig.settings();
+    assert_eq!(settings["workbench.colorTheme"], "Solarized Dark");
+    assert_eq!(settings["editor.fontSize"], 14);
+}
+
+#[test]
+#[cfg(unix)]
+fn a_key_bindings_write_that_fails_is_not_remembered_and_is_tried_again() {
+    use std::os::unix::fs::PermissionsExt;
+    let rig = Rig::new();
+    rig.plan(&EditorDefaults {
+        keybindings: Some(bindings(&[("ctrl+k", "b")])),
+        ..EditorDefaults::default()
+    });
+    let folder = rig.user("");
+    let open = std::fs::metadata(&folder).unwrap().permissions();
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o500)).unwrap();
+    assert!(
+        std::fs::write(rig.user("probe"), "").is_err(),
+        "the folder must refuse writes for this test"
+    );
+    apply(&rig.server);
+    assert_eq!(
+        read_applied(&state_path(&rig.server)).keybindings,
+        Vec::<Value>::new()
+    );
+    std::fs::set_permissions(&folder, open).unwrap();
+    apply(&rig.server);
+    let list: Value =
+        serde_json::from_slice(&std::fs::read(rig.user("keybindings.json")).unwrap()).unwrap();
+    assert_eq!(list.as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn an_extension_whose_id_starts_another_installed_one_is_still_installed() {
+    let rig = Rig::new();
+    rig.plan(&EditorDefaults {
+        extensions: vec!["acme.tool".to_owned(), "acme.other".to_owned()],
+        ..EditorDefaults::default()
+    });
+    let extensions = rig.dir.path().join("data/extensions");
+    std::fs::create_dir(extensions.join("acme.tool-extra-1.0.0")).unwrap();
+    std::fs::create_dir(extensions.join("acme.other-2.1.0-linux-x64")).unwrap();
+    let outcome = apply(&rig.server);
+    assert_eq!(outcome.install, vec!["acme.tool".to_owned()]);
+}
+
+#[test]
+fn a_folder_names_an_extension_only_as_id_dash_version() {
+    assert!(is_folder_of("acme.tool-1.0.0", "acme.tool"));
+    assert!(!is_folder_of("acme.tool-extra-1.0.0", "acme.tool"));
+    assert!(!is_folder_of("acme.tool", "acme.tool"));
+    assert!(!is_folder_of("acme.tool-", "acme.tool"));
+    assert!(!is_folder_of("acme.tool1.0.0", "acme.tool"));
+    assert!(!is_folder_of("other.acme.tool-1.0.0", "acme.tool"));
+}
+
+fn custom(text: &str) -> EditorDefaults {
+    EditorDefaults {
+        settings: Some(text.to_owned()),
+        ..EditorDefaults::default()
+    }
+}
+
+#[test]
+fn custom_settings_are_merged_and_a_key_the_user_changed_stays_theirs() {
+    let rig = Rig::new();
+    std::fs::write(rig.user("settings.json"), "{\n  // mine\n  \"a.b\": 5\n}\n").unwrap();
+    rig.plan(&custom(r#"{"a.b": 1, "c.d": "x"}"#));
+    apply(&rig.server);
+    let s = rig.settings();
+    assert_eq!(s["c.d"], json!("x"));
+    // `a.b` was never written by Puddle and the user has a value: it stays.
+    assert_eq!(s["a.b"], json!(5));
+    // A default that changes is followed while the user left the key alone.
+    rig.plan(&custom(r#"{"a.b": 1, "c.d": "y"}"#));
+    apply(&rig.server);
+    assert_eq!(rig.settings()["c.d"], json!("y"));
+    // The user edits `c.d`: the next change leaves it.
+    let edited = std::fs::read_to_string(rig.user("settings.json"))
+        .unwrap()
+        .replace("\"y\"", "\"mine\"");
+    std::fs::write(rig.user("settings.json"), edited).unwrap();
+    rig.plan(&custom(r#"{"a.b": 1, "c.d": "z"}"#));
+    apply(&rig.server);
+    assert_eq!(rig.settings()["c.d"], json!("mine"));
+}
+
+#[test]
+fn a_custom_key_that_is_no_longer_planned_is_handed_back_unless_changed() {
+    let rig = Rig::new();
+    rig.plan(&custom(r#"{"c.d": 1, "e.f": 2}"#));
+    apply(&rig.server);
+    let edited = std::fs::read_to_string(rig.user("settings.json"))
+        .unwrap()
+        .replace("\"e.f\": 2", "\"e.f\": 3");
+    std::fs::write(rig.user("settings.json"), edited).unwrap();
+    rig.plan(&custom("{}"));
+    apply(&rig.server);
+    let s = rig.settings();
+    assert!(s.get("c.d").is_none());
+    assert_eq!(s["e.f"], json!(3));
+}
+
+#[test]
+fn a_custom_entry_for_an_owned_key_is_ignored() {
+    let rig = Rig::new();
+    rig.plan(&custom(r#"{"editor.fontSize": 30}"#));
+    apply(&rig.server);
+    assert!(!rig.user("settings.json").exists() || rig.settings().get("editor.fontSize").is_none());
+}
+
+#[test]
+fn the_system_scheme_comes_back_only_in_the_run_that_hands_the_theme_back() {
+    let rig = Rig::new();
+    rig.plan(&dark(None));
+    apply(&rig.server);
+    let mut settings = rig.settings();
+    settings["workbench.colorTheme"] = json!("Mine");
+    std::fs::write(rig.user("settings.json"), settings.to_string()).unwrap();
+    rig.plan(&EditorDefaults::default());
+    apply(&rig.server);
+    apply(&rig.server);
+    let settings = rig.settings();
+    assert_eq!(settings["workbench.colorTheme"], "Mine");
+    assert_eq!(
+        settings["window.autoDetectColorScheme"], false,
+        "the user's own theme keeps the scheme switch it came with"
+    );
+}
+
+fn plan_bindings(rig: &Rig, list: &Value) {
+    rig.plan(&EditorDefaults {
+        keybindings: Some(list.to_string()),
+        ..EditorDefaults::default()
+    });
+}
+
+fn file_bindings(rig: &Rig) -> Value {
+    serde_json::from_slice(&std::fs::read(rig.user("keybindings.json")).unwrap()).unwrap()
+}
+
+#[test]
+fn a_key_binding_is_the_same_only_when_every_field_is_the_same() {
+    let rig = Rig::new();
+    plan_bindings(&rig, &json!([{"key": "ctrl+k", "command": "b", "args": 1}]));
+    apply(&rig.server);
+    // The user edits the arguments of Puddle's entry; the plan drops it.
+    std::fs::write(
+        rig.user("keybindings.json"),
+        json!([{"key": "ctrl+k", "command": "b", "args": 2}]).to_string(),
+    )
+    .unwrap();
+    rig.unplan();
+    apply(&rig.server);
+    assert_eq!(
+        file_bindings(&rig),
+        json!([{"key": "ctrl+k", "command": "b", "args": 2}]),
+        "the user's edited copy stays"
+    );
+    // A user entry with other arguments does not hide a planned one.
+    let rig = Rig::new();
+    std::fs::write(
+        rig.user("keybindings.json"),
+        json!([{"key": "ctrl+k", "command": "b", "args": 2}]).to_string(),
+    )
+    .unwrap();
+    plan_bindings(&rig, &json!([{"key": "ctrl+k", "command": "b", "args": 1}]));
+    apply(&rig.server);
+    assert_eq!(file_bindings(&rig).as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn a_planned_key_binding_without_a_key_or_a_command_is_refused() {
+    let rig = Rig::new();
+    std::fs::write(
+        rig.user("keybindings.json"),
+        json!([{"key": "ctrl+q", "command": "x"}]).to_string(),
+    )
+    .unwrap();
+    plan_bindings(
+        &rig,
+        &json!([{"command": "y"}, {"key": "ctrl+w"}, {"key": "ctrl+e", "command": "z"}]),
+    );
+    apply(&rig.server);
+    assert_eq!(
+        file_bindings(&rig),
+        json!([{"key": "ctrl+q", "command": "x"}, {"key": "ctrl+e", "command": "z"}])
+    );
+}

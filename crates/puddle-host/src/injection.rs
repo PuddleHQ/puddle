@@ -695,23 +695,18 @@ impl Injection {
         Ok(crate::ssh_agent::allowed_hosts(rows))
     }
 
-    /// The rules on method and path that apply to `workspace`, global and its own. A row the
-    /// proxy cannot take (a host that is no longer valid) is left out and logged.
+    /// The rules on method and path that apply to `workspace`, global and its own. A stored
+    /// host that is not a valid pattern is an error of the read, not a rule that checks nothing.
     fn request_rules(&self, workspace: &WorkspaceId) -> Result<RequestRules, InjectionError> {
         let rows = self
             .inputs
             .store
             .request_rules_for(workspace)
             .map_err(InjectionError::settings("the rules on method and path"))?;
-        let mut rules = Vec::with_capacity(rows.len());
-        for row in rows {
-            match RequestRule::new(RuleId(row.id), &row.host, row.methods, row.path) {
-                Ok(rule) => rules.push(rule),
-                Err(e) => {
-                    tracing::warn!(id = row.id, host = %row.host, error = %e, "a rule on method and path is not valid");
-                }
-            }
-        }
+        let rules = rows
+            .into_iter()
+            .map(|row| RequestRule::for_pattern(RuleId(row.id), &row.host, row.methods, row.path))
+            .collect();
         Ok(RequestRules::new(rules))
     }
 
@@ -727,6 +722,23 @@ impl Injection {
         }
     }
 
+    /// The [`Logins`] to forget from or list, with the environment lock a start holds until the
+    /// workspace is registered. A forget that arrives during a start waits for it and then finds
+    /// the workspace running, instead of deleting entries the start has read and then has kept.
+    /// The guard stays held for the call.
+    async fn logins_of(
+        &self,
+        workspace: &WorkspaceId,
+    ) -> (Logins, tokio::sync::OwnedMutexGuard<()>) {
+        let guard = self.environment_lock(workspace).lock_owned().await;
+        let running = self.running().get(workspace).map(|r| r.logins.clone());
+        let logins = running.unwrap_or_else(|| {
+            self.login_keeper
+                .logins(workspace, false, Arc::new(StandIns::new()))
+        });
+        (logins, guard)
+    }
+
     /// Forgets the login of `service` (its short name or the name the user sees) kept for
     /// `workspace`: its tokens leave the credential store and, in a running workspace, its
     /// stand-ins stop being swapped. `Ok(false)` for a service Puddle has no login profile for.
@@ -737,23 +749,15 @@ impl Injection {
         workspace: &WorkspaceId,
         service: &str,
     ) -> Result<bool, puddle_logins::ForgetError> {
-        let running = self.running().get(workspace).map(|r| r.logins.clone());
-        let logins = running.unwrap_or_else(|| {
-            self.login_keeper
-                .logins(workspace, false, Arc::new(StandIns::new()))
-        });
-        logins.forget(service).await
+        let logins = self.logins_of(workspace).await;
+        logins.0.forget(service).await
     }
 
     /// The logins kept for `workspace`, for the user to look at. A workspace that is not running
     /// gets a throwaway [`Logins`] over the same store and marker, as [`Self::forget_login`] does.
     pub(crate) async fn kept_logins(&self, workspace: &WorkspaceId) -> puddle_logins::KeptList {
-        let running = self.running().get(workspace).map(|r| r.logins.clone());
-        let logins = running.unwrap_or_else(|| {
-            self.login_keeper
-                .logins(workspace, false, Arc::new(StandIns::new()))
-        });
-        logins.kept_list().await
+        let logins = self.logins_of(workspace).await;
+        logins.0.kept_list().await
     }
 
     /// What `workspace` decrypts and the CA that certifies it, while it runs.

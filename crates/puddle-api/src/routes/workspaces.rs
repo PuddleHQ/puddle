@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Workspaces: list, create, detail, start, stop, reclaim space, the delete check, delete and
-//! attach. The routes only translate; [`crate::WorkspaceService`] does the work. Long
+//! attach. The routes only translate; [`puddle_services::workspaces::WorkspaceService`] does the work. Long
 //! operations answer 202 with the workspace marked busy and report through `status_changed` and
 //! `workspace_progress` events.
 
@@ -15,27 +15,55 @@ use puddle_settings::{DiskWarningPercent, resolve};
 use puddle_store::{IdentityId, RepoGitRequest, RepoRef, Role, Store, UserId};
 use puddle_types::WorkspaceId;
 
-use crate::ApiErrorBody;
-use crate::WorkspaceRecord;
 use crate::authz::{self, Principal};
-use crate::error::{ApiError, ErrorCode, ErrorField, blocking};
 use crate::extract::Path;
 use crate::routes::{AppState, repository_hosts};
-use crate::wire::{
+use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, ErrorCode, ErrorField, blocking};
+use puddle_services::owned::OwnedWorkspace;
+use puddle_services::wire::{
     AllowedHost, AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest,
     GrowRootDiskRequest, NewWorkspaceIdentity, NewWorkspaceRequest, RenameWorkspaceRequest,
     SessionUserRequest, Workspace, WorkspaceList, WorkspaceLookupConflict, WorkspaceMatch,
 };
-use crate::workspaces::{GitSetup, LocalCheckoutError, LocalSource, NewRepository, WorkspaceError};
+use puddle_services::workspaces::WorkspaceRecord;
+use puddle_services::workspaces::{
+    GitSetup, LocalCheckoutError, LocalSource, NewRepository, WorkspaceError,
+};
 
 /// The id in a path. A string that can't be an id names no workspace.
 pub(super) fn workspace_id(raw: &str) -> Result<WorkspaceId, ApiError> {
     WorkspaceId::new(raw).map_err(|_| ApiError::not_found(format!("no workspace {raw:?}")))
 }
 
+/// The handle for the workspace `raw` names, if it is the principal's: the argument a
+/// user-scoped service method takes. Another user's workspace answers as an unknown one.
+pub(super) async fn owned(
+    state: &AppState,
+    principal: Principal,
+    raw: &str,
+) -> Result<OwnedWorkspace, ApiError> {
+    let id = workspace_id(raw)?;
+    let store = state.store.clone();
+    blocking(move || {
+        Ok(OwnedWorkspace::resolve(&*store, principal.user, &id).map_err(WorkspaceError::from)?)
+    })
+    .await
+}
+
 /// The workspace a path names, as the id the store keys it by; 404 for none.
 pub(super) async fn named(state: &AppState, raw: &str) -> Result<WorkspaceId, ApiError> {
-    Ok(state.workspaces.get(&workspace_id(raw)?).await?.id)
+    let id = workspace_id(raw)?;
+    if state
+        .workspaces
+        .names()
+        .iter()
+        .any(|(known, _)| *known == id)
+    {
+        Ok(id)
+    } else {
+        Err(WorkspaceError::NotFound(format!("no workspace {raw:?}")).into())
+    }
 }
 
 /// Whether direct SSH is on for a workspace, and why that is only a guess when the settings
@@ -119,19 +147,28 @@ async fn direct_ssh_on(state: &AppState, record: WorkspaceRecord) -> Result<bool
 }
 
 /// The workspaces as the API shows them.
-async fn views(state: &AppState, records: Vec<WorkspaceRecord>) -> Vec<Workspace> {
+async fn views(state: &AppState, owned: Vec<(OwnedWorkspace, WorkspaceRecord)>) -> Vec<Workspace> {
+    let (handles, records): (Vec<_>, Vec<_>) = owned.into_iter().unzip();
     let direct = direct_ssh_of(state, &records).await;
     records
         .into_iter()
-        .zip(direct)
-        .map(|(record, d)| present(record, d))
+        .zip(handles.iter().zip(direct))
+        .map(|(record, (workspace, d))| {
+            let branches = state.workspaces.known_branches(workspace);
+            present(record, d).with_branches(&branches)
+        })
         .collect()
 }
 
 /// One workspace as the API shows it.
-pub(super) async fn view(state: &AppState, record: WorkspaceRecord) -> Workspace {
+pub(super) async fn view(
+    state: &AppState,
+    workspace: &OwnedWorkspace,
+    record: WorkspaceRecord,
+) -> Workspace {
     let d = direct_ssh_of_one(state, &record).await;
-    present(record, d)
+    let branches = state.workspaces.known_branches(workspace);
+    present(record, d).with_branches(&branches)
 }
 
 fn present(record: WorkspaceRecord, d: DirectSsh) -> Workspace {
@@ -158,15 +195,38 @@ pub(crate) async fn list_workspaces(
     }))
 }
 
-/// The workspaces of `records` that are `principal`'s.
+/// The image a create boots when the form names none, with a line from the image's own labels
+/// that says what is in it. The line is `null` until the host has read the labels.
+#[utoipa::path(
+    get,
+    path = "/api/workspaces/default-image",
+    tag = "workspaces",
+    responses((status = OK, description = "the default image", body = puddle_services::wire::DefaultImage))
+)]
+pub(crate) async fn default_image(
+    State(state): State<AppState>,
+) -> Json<puddle_services::wire::DefaultImage> {
+    Json(puddle_services::wire::DefaultImage {
+        image: puddle_services::workspaces::DEFAULT_IMAGE.to_owned(),
+        description: state.workspaces.default_image_description(),
+    })
+}
+
+/// The workspaces of `records` that are `principal`'s, each with its handle.
 async fn own(
     state: &AppState,
     principal: Principal,
-    mut records: Vec<WorkspaceRecord>,
-) -> Result<Vec<WorkspaceRecord>, ApiError> {
+    records: Vec<WorkspaceRecord>,
+) -> Result<Vec<(OwnedWorkspace, WorkspaceRecord)>, ApiError> {
     let owners = authz::owners(state).await?;
-    records.retain(|r| owners.is(&r.id, principal.user));
-    Ok(records)
+    Ok(records
+        .into_iter()
+        .filter_map(|r| {
+            OwnedWorkspace::resolve(&owners, principal.user, &r.id)
+                .ok()
+                .map(|handle| (handle, r))
+        })
+        .collect())
 }
 
 /// What `GET /api/workspaces/lookup` takes.
@@ -199,8 +259,12 @@ pub(crate) async fn lookup_workspace(
     if query.q.trim().is_empty() {
         return Err(ApiError::invalid("q must not be empty"));
     }
-    let records = own(&state, principal, state.workspaces.list().await?).await?;
-    let found = crate::workspaces::lookup(&records, &query.q);
+    let records: Vec<_> = own(&state, principal, state.workspaces.list().await?)
+        .await?
+        .into_iter()
+        .map(|(_, record)| record)
+        .collect();
+    let found = puddle_services::workspaces::lookup(&records, &query.q);
     let matches: Vec<WorkspaceMatch> = found
         .iter()
         .map(|r| WorkspaceMatch {
@@ -239,6 +303,7 @@ pub(super) fn git_request(repository: &NewRepository) -> Option<RepoGitRequest> 
         identity: repository.identity,
         pull: repository.pull,
         push: repository.push,
+        push_block: repository.push_block,
     })
 }
 
@@ -422,7 +487,7 @@ pub(crate) async fn create_workspace(
     let known: BTreeSet<IdentityId> =
         blocking(move || Ok(store.identities(user)?.into_iter().map(|i| i.id).collect())).await?;
     // Looked at only for a list the create can take: each look reads the disk.
-    if body.repositories.len() > crate::workspaces::MAX_REPOSITORIES {
+    if body.repositories.len() > puddle_services::workspaces::MAX_REPOSITORIES {
         paths.clear();
     }
     paths.sort();
@@ -453,12 +518,13 @@ pub(crate) async fn create_workspace(
     repository_hosts::refuse_blocked(&state.store, user, None, hosts).await?;
     let git = StoreGitSetup::allowing_hosts(state.store.clone());
     let record = state.workspaces.create(new, &git).await?;
+    let workspace = owned(&state, principal, record.id.as_str()).await?;
     // A new workspace may start with direct SSH on (the global default).
     crate::system_managed::refresh(&state).await;
     Ok((
         StatusCode::ACCEPTED,
         Json(
-            view(&state, record)
+            view(&state, &workspace, record)
                 .await
                 .with_identities(git.take())
                 .with_allowed_hosts(git.take_allowed()),
@@ -479,10 +545,12 @@ pub(crate) async fn create_workspace(
 )]
 pub(crate) async fn get_workspace(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
 ) -> Result<Json<Workspace>, ApiError> {
-    let record = state.workspaces.get(&workspace_id(&id)?).await?;
-    Ok(Json(view(&state, record).await))
+    let workspace = owned(&state, principal, &id).await?;
+    let record = state.workspaces.get(&workspace).await?;
+    Ok(Json(view(&state, &workspace, record).await))
 }
 
 /// Renames a workspace: sets the name the UI shows. Only the name changes (the id, the volume
@@ -504,12 +572,16 @@ pub(crate) async fn get_workspace(
 )]
 pub(crate) async fn rename_workspace(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
     crate::extract::Json(body): crate::extract::Json<RenameWorkspaceRequest>,
 ) -> Result<Json<Workspace>, ApiError> {
-    let id = workspace_id(&id)?;
-    let record = state.workspaces.rename(&id, body.into_name()?).await?;
-    Ok(Json(view(&state, record).await))
+    let workspace = owned(&state, principal, &id).await?;
+    let record = state
+        .workspaces
+        .rename(&workspace, body.into_name()?)
+        .await?;
+    Ok(Json(view(&state, &workspace, record).await))
 }
 
 /// Sets the guest user the workspace's sessions, browser editor and clones run as: `agent`
@@ -530,15 +602,16 @@ pub(crate) async fn rename_workspace(
 )]
 pub(crate) async fn put_session_user(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
     crate::extract::Json(body): crate::extract::Json<SessionUserRequest>,
 ) -> Result<Json<Workspace>, ApiError> {
-    let id = workspace_id(&id)?;
+    let workspace = owned(&state, principal, &id).await?;
     let record = state
         .workspaces
-        .set_session_user(&id, body.session_user)
+        .set_session_user(&workspace, body.session_user)
         .await?;
-    Ok(Json(view(&state, record).await))
+    Ok(Json(view(&state, &workspace, record).await))
 }
 
 /// Starts a workspace that is down. Answers 202.
@@ -555,10 +628,15 @@ pub(crate) async fn put_session_user(
 )]
 pub(crate) async fn start_workspace(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<Workspace>), ApiError> {
-    let record = state.workspaces.start(&workspace_id(&id)?).await?;
-    Ok((StatusCode::ACCEPTED, Json(view(&state, record).await)))
+    let workspace = owned(&state, principal, &id).await?;
+    let record = state.workspaces.start(&workspace).await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(view(&state, &workspace, record).await),
+    ))
 }
 
 /// Stops a running workspace. Answers 202.
@@ -575,10 +653,15 @@ pub(crate) async fn start_workspace(
 )]
 pub(crate) async fn stop_workspace(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<Workspace>), ApiError> {
-    let record = state.workspaces.stop(&workspace_id(&id)?).await?;
-    Ok((StatusCode::ACCEPTED, Json(view(&state, record).await)))
+    let workspace = owned(&state, principal, &id).await?;
+    let record = state.workspaces.stop(&workspace).await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(view(&state, &workspace, record).await),
+    ))
 }
 
 /// Gives the disk space the workspace freed back to the host. Answers 202.
@@ -595,10 +678,15 @@ pub(crate) async fn stop_workspace(
 )]
 pub(crate) async fn reclaim_workspace(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<Workspace>), ApiError> {
-    let record = state.workspaces.reclaim(&workspace_id(&id)?).await?;
-    Ok((StatusCode::ACCEPTED, Json(view(&state, record).await)))
+    let workspace = owned(&state, principal, &id).await?;
+    let record = state.workspaces.reclaim(&workspace).await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(view(&state, &workspace, record).await),
+    ))
 }
 
 /// Removes the stopped workspace's sandbox and with it the root disk, so the next start makes a
@@ -617,13 +705,15 @@ pub(crate) async fn reclaim_workspace(
 )]
 pub(crate) async fn reset_root_disk(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<Workspace>), ApiError> {
-    let record = state
-        .workspaces
-        .reset_root_disk(&workspace_id(&id)?)
-        .await?;
-    Ok((StatusCode::ACCEPTED, Json(view(&state, record).await)))
+    let workspace = owned(&state, principal, &id).await?;
+    let record = state.workspaces.reset_root_disk(&workspace).await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(view(&state, &workspace, record).await),
+    ))
 }
 
 /// Makes the workspace's root disk bigger. The root disk holds the home directory, tool caches
@@ -647,14 +737,19 @@ pub(crate) async fn reset_root_disk(
 )]
 pub(crate) async fn grow_root_disk(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
     crate::extract::Json(body): crate::extract::Json<GrowRootDiskRequest>,
 ) -> Result<(StatusCode, Json<Workspace>), ApiError> {
+    let workspace = owned(&state, principal, &id).await?;
     let record = state
         .workspaces
-        .grow_root_disk(&workspace_id(&id)?, body.size_mib)
+        .grow_root_disk(&workspace, body.size_mib)
         .await?;
-    Ok((StatusCode::ACCEPTED, Json(view(&state, record).await)))
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(view(&state, &workspace, record).await),
+    ))
 }
 
 /// What deleting the workspace would lose: uncommitted changes, unpushed commits, stashes and
@@ -671,14 +766,12 @@ pub(crate) async fn grow_root_disk(
 )]
 pub(crate) async fn delete_check(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
 ) -> Result<Json<DeleteCheck>, ApiError> {
+    let workspace = owned(&state, principal, &id).await?;
     Ok(Json(
-        state
-            .workspaces
-            .delete_check(&workspace_id(&id)?)
-            .await?
-            .into(),
+        state.workspaces.delete_check(&workspace).await?.into(),
     ))
 }
 
@@ -700,10 +793,11 @@ pub(crate) async fn delete_check(
 )]
 pub(crate) async fn delete_workspace(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
     crate::extract::Json(body): crate::extract::Json<DeleteWorkspaceRequest>,
 ) -> Result<(StatusCode, Json<Workspace>), ApiError> {
-    let id = workspace_id(&id)?;
+    let workspace = owned(&state, principal, &id).await?;
     if !body.confirm {
         return Err(ApiError::invalid(
             "deleting a workspace needs `confirm: true`",
@@ -711,9 +805,12 @@ pub(crate) async fn delete_workspace(
     }
     let record = state
         .workspaces
-        .delete(&id, body.fingerprint.as_deref())
+        .delete(&workspace, body.fingerprint.as_deref())
         .await?;
-    Ok((StatusCode::ACCEPTED, Json(view(&state, record).await)))
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(view(&state, &workspace, record).await),
+    ))
 }
 
 /// Opens a running workspace in VS Code: on the desktop (Puddle opens it) or in the browser
@@ -737,12 +834,12 @@ pub(crate) async fn attach_workspace(
     Path(id): Path<String>,
     crate::extract::Json(body): crate::extract::Json<AttachRequest>,
 ) -> Result<Json<AttachResponse>, ApiError> {
-    let id = workspace_id(&id)?;
+    let workspace = owned(&state, principal, &id).await?;
     if let authz::Via::Device(_) = principal.via {
         // A signed-in browser is on another computer. An editor opened here would be on the
         // host's screen, connected to the workspace, for whoever sits there; a desktop one would
         // also let the workspace run commands on the host. So nothing opens and no link is sent.
-        state.workspaces.get(&id).await?;
+        state.workspaces.get(&workspace).await?;
         return Ok(Json(AttachResponse {
             opened: false,
             message: Some(
@@ -753,11 +850,11 @@ pub(crate) async fn attach_workspace(
             open_uri: None,
         }));
     }
-    let mode = crate::AttachMode::from(body.mode);
-    if mode == crate::AttachMode::Desktop {
+    let mode = puddle_services::workspaces::AttachMode::from(body.mode);
+    if mode == puddle_services::workspaces::AttachMode::Desktop {
         // Desktop editors connect over SSH, which Puddle only opens when the user allowed it.
         // A workspace that is not up gets the service's own "start it first" answer.
-        let record = state.workspaces.get(&id).await?;
+        let record = state.workspaces.get(&workspace).await?;
         let up = record.busy.is_none() && record.status == puddle_types::WorkspaceStatus::Running;
         if up {
             match direct_ssh_on(&state, record).await {
@@ -772,7 +869,7 @@ pub(crate) async fn attach_workspace(
             }
         }
     }
-    let attached = state.workspaces.attach(&id, mode).await?;
+    let attached = state.workspaces.attach(&workspace, mode).await?;
     Ok(Json(attached.into()))
 }
 

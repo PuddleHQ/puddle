@@ -6,14 +6,14 @@
 //! adds a list entry and writes nothing to the disk. What it reads from the disk (a checkout's
 //! remote address) is guest input: it is parsed as an address and used only as one.
 
-use puddle_api::{NewRepository, RepoUrl};
+use puddle_services::{workspaces::NewRepository, workspaces::RepoUrl};
 use puddle_store::UserId;
 use puddle_types::VolumeName;
 use puddle_workspace::{CheckoutList, FoundCheckout};
 
 use super::{
-    CheckoutDir, DisplayName, EntryId, GitSetup, HostWorkspaces, Leftovers, Problem, Repository,
-    Runtime, SAVE_HINT, Slot, State, WorkspaceError, WorkspaceId, WorkspaceRecord, WorkspaceStatus,
+    CheckoutDir, EntryId, GitSetup, HostWorkspaces, Leftovers, Problem, Repository, Runtime,
+    SAVE_HINT, Slot, State, WorkspaceError, WorkspaceId, WorkspaceRecord, WorkspaceStatus,
 };
 
 /// The key of the problem that names the unclaimed disks.
@@ -101,7 +101,7 @@ fn entries_for(
 
 /// A new entry id that none of `found` has.
 fn fresh_entry(found: &[Repository]) -> Result<EntryId, WorkspaceError> {
-    puddle_api::new_entry_id(|e| found.iter().any(|f| f.entry == *e))
+    puddle_services::workspaces::new_entry_id(|e| found.iter().any(|f| f.entry == *e))
         .map_err(WorkspaceError::unavailable)
 }
 
@@ -114,40 +114,6 @@ fn readable(checkout: &FoundCheckout) -> Option<(RepoUrl, CheckoutDir)> {
         RepoUrl::parse(checkout.remote_url.as_deref()?).ok()?,
         CheckoutDir::new(&checkout.dir).ok()?,
     ))
-}
-
-/// The name a restored disk's entry gets: `base` (its first checkout's folder, else its id), or
-/// with ` (2)`, ` (3)` and so on when a listed workspace has that name, cut to fit the longest
-/// name.
-fn free_name(state: &State, owner: UserId, base: &str) -> DisplayName {
-    let taken = |name: &DisplayName| {
-        puddle_api::label_taken(
-            state.slots.values().map(|s| &s.record),
-            owner,
-            name.as_str(),
-            None,
-        )
-        .is_some()
-    };
-    let mut n = 1_usize;
-    loop {
-        let suffix = if n == 1 {
-            String::new()
-        } else {
-            format!(" ({n})")
-        };
-        let stem: String = base
-            .chars()
-            .take(DisplayName::MAX_CHARS - suffix.chars().count())
-            .collect();
-        // `base` is a folder name or an id: never empty, never a control character.
-        if let Ok(name) = DisplayName::parse(&format!("{}{suffix}", stem.trim_end()))
-            && !taken(&name)
-        {
-            return name;
-        }
-        n += 1;
-    }
 }
 
 impl<R: Runtime + Clone> HostWorkspaces<R> {
@@ -265,7 +231,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             // have taken it meanwhile, and an entry is never replaced.
             Self::claimed(&state, id)?;
             Self::not_retired(&state, id)?;
-            let name = free_name(&state, owner, &named_after);
+            let name = puddle_services::workspaces::free_label(
+                state.slots.values().map(|s| &s.record),
+                owner,
+                &named_after,
+            );
             let mut record = WorkspaceRecord::new(id.clone(), owner, name, repositories.clone());
             record.status = WorkspaceStatus::Stopped;
             record.memory = memory;
@@ -299,6 +269,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 identity: None,
                 pull: true,
                 push: true,
+                push_block: None,
                 local: None,
             })
             .collect();

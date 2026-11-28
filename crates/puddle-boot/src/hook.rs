@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Running the hook: after every create, start and re-adoption, behind the gate.
 
+use std::future::Future;
 use std::time::{Duration, Instant};
 
 use puddle_compute::{ComputeError, ExecOutput, Runtime, Sandbox, SandboxSpec};
@@ -169,6 +170,56 @@ pub enum BootError {
         /// Set when stopping it failed too.
         stop_error: Option<Box<ComputeError>>,
     },
+    /// The [`Keeper`] did not take the sandbox over (Puddle is shutting down); Puddle stopped it
+    /// before the hook ran.
+    #[error("workspace {sandbox:?} was not taken over and {}: {reason}", stop_text(.stop_error.as_deref()))]
+    NotKept {
+        /// The sandbox.
+        sandbox: String,
+        /// What the keeper said.
+        reason: String,
+        /// Set when stopping it failed too.
+        stop_error: Option<Box<ComputeError>>,
+    },
+}
+
+impl BootError {
+    /// Whether the sandbox may still run after the failure: the hook or the keeper failed and
+    /// stopping it failed too. Its owner should keep the handle so a later stop reaches it.
+    #[must_use]
+    pub fn left_running(&self) -> bool {
+        matches!(
+            self,
+            Self::Hook {
+                stop_error: Some(_),
+                ..
+            } | Self::NotKept {
+                stop_error: Some(_),
+                ..
+            }
+        )
+    }
+}
+
+/// Who owns a sandbox from the moment the runtime has made or started it, before the boot hook
+/// runs in it: Puddle's lifecycle, which trims and stops it at shutdown. The boot goes on with a
+/// handle that does not own the VM, so a boot that is ended half-way (a shutdown that ends the
+/// operations still running) does not end the VM by dropping the owning handle.
+pub trait Keeper<S>: Sync {
+    /// Takes over `sandbox`, the handle [`Runtime::create`] or [`Runtime::start`] gave, and
+    /// returns the handle the boot goes on with. An error (shutting down) gives `sandbox` back
+    /// with the reason; the boot stops it and fails with [`BootError::NotKept`].
+    fn keep(&self, sandbox: S) -> impl Future<Output = Result<S, (S, String)>> + Send;
+}
+
+/// The [`Keeper`] of a caller that owns the sandbox through the handle it gets back.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CallerKeeps;
+
+impl<S: Send> Keeper<S> for CallerKeeps {
+    fn keep(&self, sandbox: S) -> impl Future<Output = Result<S, (S, String)>> + Send {
+        std::future::ready(Ok(sandbox))
+    }
 }
 
 /// What [`BootError::Hook`] says became of the sandbox: stopped, or still up because the stop
@@ -222,12 +273,24 @@ impl BootHook {
         self
     }
 
-    /// Runs the hook once in `sandbox`, as root, with `plan` on stdin. Doesn't touch any gate.
+    /// Runs the hook once in `sandbox`, as root, with `plan` on stdin, after any boot of it in
+    /// flight has ended (the guest's scratch files are fixed names, so two runs must not
+    /// overlap). Doesn't change the gate's state.
     ///
     /// # Errors
     ///
     /// The [`BootFailure`] when it doesn't return 0.
     pub async fn run<S: Sandbox>(
+        &self,
+        sandbox: &GatedSandbox<S>,
+        plan: &BootPlan,
+    ) -> Result<BootReport, BootFailure> {
+        let _boot = sandbox.gate().lock_boot().await;
+        self.exec_hook(sandbox.ungated(), plan).await
+    }
+
+    /// One hook run; the caller holds the boot lock.
+    async fn exec_hook<S: Sandbox>(
         &self,
         sandbox: &S,
         plan: &BootPlan,
@@ -255,6 +318,23 @@ impl BootHook {
         plan: &BootPlan,
         gate: &Gate,
     ) -> Result<GatedSandbox<R::Sandbox>, BootError> {
+        self.create_kept(runtime, spec, plan, gate, &CallerKeeps)
+            .await
+    }
+
+    /// [`BootHook::create`], with `keeper` taking the sandbox over as soon as it exists.
+    ///
+    /// # Errors
+    ///
+    /// As [`BootHook::create`], and [`BootError::NotKept`].
+    pub async fn create_kept<R: Runtime>(
+        &self,
+        runtime: &R,
+        spec: SandboxSpec,
+        plan: &BootPlan,
+        gate: &Gate,
+        keeper: &impl Keeper<R::Sandbox>,
+    ) -> Result<GatedSandbox<R::Sandbox>, BootError> {
         let merge_tool = plan.merge_tool();
         let mut needed = vec![BOOT_SH_GUEST, AGENT_SUPERVISE_GUEST];
         if let Some(agent) = plan.agent() {
@@ -271,8 +351,10 @@ impl BootHook {
             }
         }
         let _boot = gate.lock_boot().await;
-        let booting = Booting::open(gate);
+        let mut booting = Booting::open(gate);
         let sandbox = runtime.create(spec).await?;
+        booting.mark_vm_running();
+        let sandbox = kept(sandbox, keeper).await?;
         self.finish(sandbox, plan, booting).await
     }
 
@@ -289,14 +371,35 @@ impl BootHook {
         plan: &BootPlan,
         gate: &Gate,
     ) -> Result<GatedSandbox<R::Sandbox>, BootError> {
+        self.start_kept(runtime, name, plan, gate, &CallerKeeps)
+            .await
+    }
+
+    /// [`BootHook::start`], with `keeper` taking the sandbox over as soon as it runs.
+    ///
+    /// # Errors
+    ///
+    /// As [`BootHook::start`], and [`BootError::NotKept`].
+    pub async fn start_kept<R: Runtime>(
+        &self,
+        runtime: &R,
+        name: &SandboxName,
+        plan: &BootPlan,
+        gate: &Gate,
+        keeper: &impl Keeper<R::Sandbox>,
+    ) -> Result<GatedSandbox<R::Sandbox>, BootError> {
         let _boot = gate.lock_boot().await;
-        let booting = Booting::open(gate);
+        let mut booting = Booting::open(gate);
         let sandbox = runtime.start(name).await?;
+        booting.mark_vm_running();
+        let sandbox = kept(sandbox, keeper).await?;
         self.finish(sandbox, plan, booting).await
     }
 
     /// Re-adopts a running sandbox a previous Puddle left behind and runs the hook again
     /// (idempotent: it converges and starts nothing twice).
+    /// The host has no caller for this: it re-runs the hook on a sandbox it kept with
+    /// [`BootHook::run`]. The gate tests are the only callers.
     ///
     /// # Errors
     ///
@@ -309,8 +412,9 @@ impl BootHook {
         gate: &Gate,
     ) -> Result<GatedSandbox<R::Sandbox>, BootError> {
         let _boot = gate.lock_boot().await;
-        let booting = Booting::open(gate);
+        let mut booting = Booting::open(gate);
         let sandbox = runtime.get(name).await?;
+        booting.mark_vm_running();
         self.finish(sandbox, plan, booting).await
     }
 
@@ -321,7 +425,7 @@ impl BootHook {
         booting: Booting<'_>,
     ) -> Result<GatedSandbox<S>, BootError> {
         let gate = booting.gate;
-        match self.run(&sandbox, plan).await {
+        match self.exec_hook(&sandbox, plan).await {
             Ok(report) => {
                 booting.settle(GateState::Ready);
                 Ok(GatedSandbox::new(
@@ -346,11 +450,13 @@ impl BootHook {
 
 /// One boot's hold on the gate: `Booting` from [`Booting::open`] until [`Booting::settle`]. A boot
 /// that ends another way (a runtime error, or the caller dropping the future at an await) puts
-/// back the state from before, so the gate never stays `Booting` with nobody booting. Neither
+/// the gate back, so it never stays `Booting` with nobody booting: to the state from before while
+/// the runtime call has not answered, to `Down` once it has ([`Booting::mark_vm_running`]). Neither
 /// overwrites a stop that closed the gate meanwhile.
 struct Booting<'g> {
     gate: &'g Gate,
-    previous: Option<GateState>,
+    /// What a boot that ends without a verdict leaves; `None` once settled.
+    on_drop: Option<GateState>,
 }
 
 impl<'g> Booting<'g> {
@@ -359,22 +465,43 @@ impl<'g> Booting<'g> {
         gate.set(GateState::Booting);
         Self {
             gate,
-            previous: Some(previous),
+            on_drop: Some(previous),
         }
+    }
+
+    /// The runtime has made, started or found the VM, and the hook has not returned 0: the state
+    /// from before no longer describes it (a gate left `Ready` by a VM that died unstopped would
+    /// let exec in on an unhooked VM), so a boot that ends from here without a verdict leaves
+    /// the gate `Down`.
+    fn mark_vm_running(&mut self) {
+        self.on_drop = Some(GateState::Down);
     }
 
     /// The boot ended with `state`.
     fn settle(mut self, state: GateState) {
-        self.previous = None;
+        self.on_drop = None;
         self.gate.settle(state);
     }
 }
 
 impl Drop for Booting<'_> {
     fn drop(&mut self) {
-        if let Some(previous) = self.previous.take() {
-            self.gate.settle(previous);
+        if let Some(state) = self.on_drop.take() {
+            self.gate.settle(state);
         }
+    }
+}
+
+/// Hands `sandbox` to `keeper` before anything runs in it; when the keeper refuses, stops it and
+/// fails.
+async fn kept<S: Sandbox>(sandbox: S, keeper: &impl Keeper<S>) -> Result<S, BootError> {
+    match keeper.keep(sandbox).await {
+        Ok(sandbox) => Ok(sandbox),
+        Err((sandbox, reason)) => Err(BootError::NotKept {
+            sandbox: sandbox.name().to_string(),
+            reason,
+            stop_error: sandbox.stop().await.err().map(Box::new),
+        }),
     }
 }
 
@@ -383,7 +510,10 @@ fn classify(result: Result<ExecOutput, ComputeError>) -> Result<String, BootFail
     match result {
         Ok(out) if out.status.success() => Ok(out.stdout_text().into_owned()),
         Ok(out) => {
-            let stderr = tail(out.stderr_text().trim_end());
+            let mut stderr = tail(out.stderr_text().trim_end());
+            if out.stderr_truncated {
+                stderr.push_str("\n(the rest of the output was cut)");
+            }
             // `sh` itself missing: 127 with no word from the hook and no mention of the script
             // (a missing script mount also gives 127 under bash, but names the script).
             if out.status.code == 127

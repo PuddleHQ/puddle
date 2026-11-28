@@ -164,6 +164,14 @@ fn as_timeout(error: AgentError, limit: Duration) -> AgentError {
     }
 }
 
+/// `SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION`: the pipe server learns who connected but cannot
+/// impersonate the caller, so a process that squats the agent's pipe name cannot act as the user.
+/// Values from `winbase.h`/`winnt.h` (`0x0010_0000` and `0x0001_0000`), written as one literal: the
+/// two bits do not overlap, so an operator between them could be swapped without changing the value.
+/// The crate has no `windows-sys` dependency.
+#[cfg(any(windows, test))]
+const PIPE_SECURITY_QOS_FLAGS: u32 = 0x0011_0000;
+
 #[cfg(windows)]
 fn ask_pipe<T>(
     endpoint: &AgentEndpoint,
@@ -173,9 +181,11 @@ fn ask_pipe<T>(
 ) -> Result<T, AgentError> {
     // A named pipe opens like a file. A pipe whose instances are all busy fails here at once
     // (`ERROR_PIPE_BUSY`), which reads as unreachable.
+    use std::os::windows::fs::OpenOptionsExt;
     let mut pipe = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
+        .security_qos_flags(PIPE_SECURITY_QOS_FLAGS)
         .open(endpoint.path())
         .map_err(AgentError::Unreachable)?;
     exchange(&mut pipe)

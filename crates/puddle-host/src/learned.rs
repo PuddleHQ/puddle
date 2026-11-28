@@ -8,9 +8,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use puddle_api::LearnedService;
-use puddle_api::wire::LearnedHost;
 use puddle_proxy::{PassThrough, TerminationSource, Terminations};
+use puddle_services::learned::LearnedService;
+use puddle_services::owned::OwnedWorkspace;
+use puddle_services::wire::LearnedHost;
 use puddle_store::Store;
 use puddle_types::{Host, WorkspaceId};
 
@@ -41,7 +42,8 @@ fn whole_secs(left: std::time::Duration) -> u64 {
 }
 
 impl LearnedService for HostLearned {
-    fn list(&self, workspace: &WorkspaceId) -> Vec<LearnedHost> {
+    fn list(&self, owned: &OwnedWorkspace) -> Vec<LearnedHost> {
+        let workspace = owned.id();
         let mut passing: HashMap<String, u64> = self
             .list_of(workspace)
             .map(|list| {
@@ -85,7 +87,8 @@ impl LearnedService for HostLearned {
         hosts
     }
 
-    fn forget(&self, workspace: &WorkspaceId, host: &str) -> bool {
+    fn forget(&self, owned: &OwnedWorkspace, host: &str) -> bool {
+        let workspace = owned.id();
         let Ok(host) = Host::parse_normalised(host) else {
             return false;
         };
@@ -93,11 +96,13 @@ impl LearnedService for HostLearned {
             .is_some_and(|list| list.forget(&host))
     }
 
-    fn clear(&self, workspace: &WorkspaceId) -> usize {
+    fn clear(&self, owned: &OwnedWorkspace) -> usize {
+        let workspace = owned.id();
         self.list_of(workspace).map_or(0, |list| list.clear())
     }
 
-    fn discard(&self, workspace: &WorkspaceId, host: &str) -> bool {
+    fn discard(&self, owned: &OwnedWorkspace, host: &str) -> bool {
+        let workspace = owned.id();
         let Ok(name) = Host::parse_normalised(host) else {
             return false;
         };

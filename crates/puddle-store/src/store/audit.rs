@@ -3,22 +3,20 @@
 
 use std::collections::HashMap;
 
-use puddle_types::{ConnectionEvent, ConnectionLog, ConnectionOrigin, Event, WorkspaceId};
+use puddle_types::{
+    ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionOrigin, ConnectionReason, Event,
+    WorkspaceId,
+};
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::audit::{
-    AuditOutcome, AuditRecord, ConnectionRecord, PendingExpiryReason, RuleDeleteReason, RuleWire,
-    actor_str,
-};
+use crate::audit::{AuditOutcome, AuditRecord, ConnectionRecord, RuleWire, actor_str};
 use crate::error::StoreError;
-use crate::rule::Actor;
 use crate::store::AllUsers;
 use crate::users::UserId;
 
-use super::rows::{RULE_COLUMNS, corrupt, expire_rows, raw_rule, rule_from_raw, stored_ts};
+use super::rows::{RULE_COLUMNS, corrupt, raw_rule, rule_from_raw, stored_ts};
 use super::{
-    AuditCursor, AuditFilter, Flushed, NewWorkspaceOp, Store, SweepReport, WorkspaceDeletion, lock,
-    sql_ts, write_tx,
+    AuditCursor, AuditFilter, Flushed, NewWorkspaceOp, Store, SweepReport, lock, sql_ts, write_tx,
 };
 
 impl Store {
@@ -28,14 +26,22 @@ impl Store {
     /// A database or audit error.
     pub fn record_connection(&self, event: &ConnectionEvent) -> Result<(), StoreError> {
         let now = self.clock.now_ms();
+        let monotonic = self.clock.monotonic_ms();
         let limit = self.limits.connection_records_per_second;
         let (admitted, summary) = match &event.workspace {
-            Some(workspace) => lock(&self.workspaces)
-                .entry(workspace.clone())
-                .or_default()
-                .connections
-                .admit(now, limit),
-            None => lock(&self.puddle_connections).admit(now, limit),
+            Some(workspace) => {
+                let mut workspaces = lock(&self.workspaces);
+                let state = workspaces.entry(workspace.clone()).or_default();
+                // Counted before the record limit, so a flood is still counted in full. Puddle's
+                // own requests and certificate fetches have another reason and are not counted.
+                if matches!(event.decision, ConnectionDecision::Allow)
+                    && matches!(event.reason, ConnectionReason::Rule)
+                {
+                    state.allowed.bump(now);
+                }
+                state.connections.admit(now, monotonic, limit)
+            }
+            None => lock(&self.puddle_connections).admit(now, monotonic, limit),
         };
         if !admitted && summary.is_none() {
             return Ok(());
@@ -59,6 +65,19 @@ impl Store {
             self.put_back(vec![Flushed(event.workspace.clone(), ts, count)]);
         }
         written
+    }
+
+    /// How many connections of `user`'s workspaces a rule allowed since the start of the UTC day,
+    /// and that start (epoch ms). Counted in memory, so a restart starts again at zero.
+    pub fn allowed_today(&self, user: UserId) -> (u64, u64) {
+        let now = self.clock.now_ms();
+        let index = self.snapshot();
+        let count = lock(&self.workspaces)
+            .iter()
+            .filter(|(workspace, _)| index.owner_of(workspace) == Some(user))
+            .map(|(_, state)| state.allowed.on(now))
+            .sum();
+        (count, now / super::DAY_MS * super::DAY_MS)
     }
 
     /// Writes a `workspace_op` record: a workspace operation or a change to the identities and
@@ -97,88 +116,12 @@ impl Store {
         }
     }
 
-    /// Removes a deleted workspace's rules and environment and expires its open rows, in one
-    /// transaction (R-21).
-    /// Call it from the transaction-equivalent step of workspace deletion, not on stop.
+    /// Whether the audit's lines are over [`super::Limits::audit_warn_bytes`].
     ///
     /// # Errors
-    /// A database or audit error; nothing changes then.
-    pub fn delete_workspace(
-        &self,
-        workspace: &WorkspaceId,
-    ) -> Result<WorkspaceDeletion, StoreError> {
-        let deletion = self.change(|tx, now, fx| {
-            let mut stmt = tx.prepare(&format!(
-                "SELECT {RULE_COLUMNS} FROM rules WHERE workspace_id = ?1 ORDER BY id"
-            ))?;
-            let rules = stmt
-                .query_map([workspace.as_str()], raw_rule)?
-                .map(|raw| rule_from_raw(&raw?))
-                .collect::<Result<Vec<_>, _>>()?;
-            drop(stmt);
-            tx.execute(
-                "DELETE FROM rules WHERE workspace_id = ?1",
-                [workspace.as_str()],
-            )?;
-            for rule in &rules {
-                append(
-                    tx,
-                    &AuditRecord::RuleDeleted {
-                        ts: now,
-                        rule: RuleWire::from(rule),
-                        reason: RuleDeleteReason::WorkspaceDeleted,
-                        actor: actor_str(Actor::System),
-                    },
-                )?;
-            }
-            let switched = tx.execute(
-                "DELETE FROM rule_set_switches WHERE workspace_id = ?1",
-                [workspace.as_str()],
-            )? + tx.execute(
-                "DELETE FROM system_reasons WHERE workspace_id = ?1",
-                [workspace.as_str()],
-            )?;
-            let expired = expire_rows(
-                tx,
-                "workspace_id = ?2",
-                &workspace.as_str(),
-                now,
-                PendingExpiryReason::WorkspaceDeleted,
-                fx,
-            )?;
-            if !rules.is_empty() || switched > 0 {
-                fx.push(Event::RulesChanged {});
-            }
-            // Its identities and repository table go with it; the identities stay.
-            if super::identities::delete_workspace_rows(tx, workspace)? {
-                fx.push(Event::WorkspaceGitChanged {
-                    workspace: workspace.clone(),
-                });
-            }
-            // Its variables and stand-ins go with it; the global ones stay.
-            let (secrets, had_env) = super::environment::delete_workspace_rows(tx, workspace)?;
-            if had_env {
-                fx.push(Event::WorkspaceEnvChanged {
-                    workspace: workspace.clone(),
-                });
-            }
-            super::shell_init::delete_workspace_rows(tx, workspace)?;
-            // Its pinned forwards go with it.
-            super::ports::delete_workspace_rows(tx, workspace)?;
-            super::interception::delete_workspace_rows(tx, workspace)?;
-            super::learned::delete_workspace_rows(tx, workspace)?;
-            super::request_rules::delete_workspace_rows(tx, workspace, now, fx)?;
-            super::ssh_agent::delete_workspace_rows(tx, workspace)?;
-            super::ssh_agent_asks::delete_workspace_rows(tx, workspace)?;
-            Ok(WorkspaceDeletion {
-                rules_deleted: rules.len() as u64,
-                pending_expired: expired,
-                secrets,
-            })
-        })?;
-        lock(&self.workspaces).remove(workspace);
-        tracing::info!(workspace = %workspace, rules = deletion.rules_deleted, "workspace rules removed");
-        Ok(deletion)
+    /// A database error.
+    pub fn audit_over_warn_size(&self) -> Result<bool, StoreError> {
+        Ok(self.audit_bytes()? > self.limits.audit_warn_bytes)
     }
 
     /// One sweeper pass (R-19, R-22), each step its own short transaction.
@@ -211,22 +154,35 @@ impl Store {
                 fx.push(Event::RulesChanged {});
             }
             Ok(rules.len() as u64)
-        })?;
-        self.flush_limits()?;
-        let waiting_records_merged = self.merge_waiting_connections()?;
-        let audit_records_pruned = self.prune_audit_if_due()?;
+        });
+        // Each step runs whatever an earlier one did, so a step that fails every pass cannot
+        // starve the prune, the size warning or the shrink behind it (RS-12); the first error
+        // is the one returned.
+        let mut first_error = None;
+        let rules_expired = settle(rules_expired, &mut first_error);
+        settle(self.flush_limits(), &mut first_error);
+        let waiting_records_merged = settle(self.merge_waiting_connections(), &mut first_error);
+        let devices_removed = settle(self.prune_stopped_devices(), &mut first_error);
+        let audit_records_pruned = settle(self.prune_audit_if_due(), &mut first_error);
         // Before the shrink, so that a shrink that fails (a full disk) never hides the warning.
-        let audit_over_warn_size = self.audit_bytes()? > self.limits.audit_warn_bytes;
+        let audit_over_warn_size = settle(self.audit_over_warn_size(), &mut first_error);
         let audit_file_shrunk_bytes = self.shrink_audit_file().unwrap_or_else(|err| {
             tracing::warn!(%err, "the audit file's free space could not be given back; the next sweep tries again");
             0
         });
+        if let Err(err) = self.checkpoint_wal() {
+            tracing::warn!(%err, "the write-ahead log could not be truncated; the next sweep tries again");
+        }
+        if let Some(err) = first_error {
+            return Err(err);
+        }
         Ok(SweepReport {
             rules_expired,
             audit_records_pruned,
             audit_file_shrunk_bytes,
             audit_over_warn_size,
             waiting_records_merged,
+            devices_removed,
         })
     }
 
@@ -286,17 +242,17 @@ impl Store {
     /// Writes the summaries of `connection` records over the limit that are due. They are taken
     /// out of memory first; when the write fails they are put back, so the next sweep writes them.
     fn flush_limits(&self) -> Result<(), StoreError> {
-        let now = self.clock.now_ms();
+        let monotonic = self.clock.monotonic_ms();
         let mut records = Vec::new();
         let mut taken = Vec::new();
         for (workspace, state) in lock(&self.workspaces).iter_mut() {
-            if let Some((ts, count)) = state.connections.roll(now) {
+            if let Some((ts, count)) = state.connections.roll(monotonic) {
                 let record = ConnectionRecord::suppressed_summary(ts, Some(workspace), count);
                 records.push(AuditRecord::connection(record));
                 taken.push(Flushed(Some(workspace.clone()), ts, count));
             }
         }
-        let rolled = lock(&self.puddle_connections).roll(now);
+        let rolled = lock(&self.puddle_connections).roll(monotonic);
         if let Some((ts, count)) = rolled {
             let record = ConnectionRecord::suppressed_summary(ts, None, count);
             records.push(AuditRecord::connection(record));
@@ -345,10 +301,12 @@ impl Store {
         audit_bytes(&lock(&self.conn))
     }
 
-    /// Audit records after id `after`, oldest first, as `(id, JSONL line)`.
+    /// Audit records of every user after id `after`, oldest first, as `(id, JSONL line)`, for a
+    /// test.
     ///
     /// # Errors
     /// A database error.
+    #[cfg(any(test, feature = "testing"))]
     pub fn audit_lines(&self, after: i64, limit: u32) -> Result<Vec<(i64, String)>, StoreError> {
         let conn = lock(&self.conn);
         let mut stmt =
@@ -410,53 +368,27 @@ impl Store {
         self.audit_query_where(&filter, cursor, limit)
     }
 
-    /// Remembers `name` as the current name of `workspace`; audit records written from now on
-    /// carry it as `workspace_name`. Call it when a workspace is created or renamed, and for
-    /// every workspace at start.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the database can't be written.
-    pub fn set_workspace_name(
-        &self,
-        workspace: &WorkspaceId,
-        name: &str,
-    ) -> Result<(), StoreError> {
-        let conn = lock(&self.conn);
-        conn.execute(
-            "INSERT INTO workspace_names (workspace_id, name) VALUES (?1, ?2)
-             ON CONFLICT (workspace_id) DO UPDATE SET name = excluded.name",
-            params![workspace.as_str(), name],
-        )?;
-        Ok(())
-    }
-
-    /// [`Store::set_workspace_name`] for a caller that cannot act on a failure: it is logged and
-    /// dropped, and the records written meanwhile carry no name (a reader shows the id). Returns
-    /// whether the name was written.
-    pub fn note_workspace_name(&self, workspace: &WorkspaceId, name: &str) -> bool {
-        let written = self.set_workspace_name(workspace, name);
-        if let Err(err) = &written {
-            tracing::warn!(%workspace, error = %err, "the workspace's name was not written to the store");
-        }
-        written.is_ok()
-    }
-
-    /// The `workspace_name` each of the audit records `ids` was written with; a record written
-    /// before the column existed, or with no workspace, has none and is left out.
+    /// The `workspace_name` each of `user`'s audit records `ids` was written with; a record of
+    /// another user, written before the column existed, or with no workspace, has none and is
+    /// left out.
     ///
     /// # Errors
     ///
     /// Fails if the database can't be read.
-    pub fn audit_workspace_names(&self, ids: &[i64]) -> Result<HashMap<i64, String>, StoreError> {
+    pub fn audit_workspace_names(
+        &self,
+        user: UserId,
+        ids: &[i64],
+    ) -> Result<HashMap<i64, String>, StoreError> {
         let conn = self.audit_read();
         let mut stmt = conn.prepare_cached(
-            "SELECT workspace_name FROM audit WHERE id = ?1 AND workspace_name IS NOT NULL",
+            "SELECT workspace_name FROM audit
+              WHERE id = ?1 AND user_id = ?2 AND workspace_name IS NOT NULL",
         )?;
         let mut names = HashMap::new();
         for id in ids {
             if let Some(name) = stmt
-                .query_row([id], |row| row.get::<_, String>(0))
+                .query_row(params![id, user.get()], |row| row.get::<_, String>(0))
                 .optional()?
             {
                 names.insert(*id, name);
@@ -561,7 +493,7 @@ pub(super) fn audit_query_sql(
     if let Some(needle) = &filter.host_contains {
         clause(
             "instr(host, ?) > 0",
-            Some(Value::Text(needle.to_lowercase())),
+            Some(Value::Text(needle.to_ascii_lowercase())),
         );
     }
     if let Some(needle) = &filter.q {
@@ -571,11 +503,7 @@ pub(super) fn audit_query_sql(
         );
     }
     if let Some(category) = filter.category {
-        // The category is one whole line of the search text, never a part of another.
-        clause(
-            "instr(char(10) || search || char(10), char(10) || ? || char(10)) > 0",
-            Some(Value::Text(category.to_owned())),
-        );
+        clause("category = ?", Some(Value::Text(category.to_owned())));
     }
     sql.push_str(match cursor {
         AuditCursor::After(_) => " ORDER BY id LIMIT ?",
@@ -630,9 +558,9 @@ pub(super) fn append_by(
 ) -> Result<(), StoreError> {
     let line = record.to_line()?;
     conn.execute(
-        "INSERT INTO audit (ts, type, workspace_id, host, outcome, line, search, workspace_name,
-                            user_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,
+        "INSERT INTO audit (ts, type, workspace_id, host, outcome, line, search, category,
+                            workspace_name, user_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?10,
                  (SELECT name FROM workspace_names WHERE workspace_id = ?3),
                  coalesce((SELECT user_id FROM workspace_owners WHERE workspace_id = ?3),
                           CASE WHEN ?3 IS NULL THEN coalesce(?8, 1) ELSE ?9 END))",
@@ -645,7 +573,8 @@ pub(super) fn append_by(
             line,
             record.search_text(),
             user.map(UserId::get),
-            NOBODY
+            NOBODY,
+            record.category()
         ],
     )?;
     Ok(())
@@ -673,4 +602,13 @@ pub(super) fn audit_head(conn: &Connection) -> Result<i64, StoreError> {
             row.get(0)
         })?,
     )
+}
+
+/// A sweep step's value, or its default after it failed; the first failure is kept in `first`.
+fn settle<T: Default>(step: Result<T, StoreError>, first: &mut Option<StoreError>) -> T {
+    step.unwrap_or_else(|err| {
+        tracing::warn!(%err, "a sweep step failed; the next sweep tries again");
+        first.get_or_insert(err);
+        T::default()
+    })
 }

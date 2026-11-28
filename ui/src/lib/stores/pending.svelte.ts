@@ -120,12 +120,26 @@ export class PendingStore {
   rows = $state.raw<Row[]>([]);
   /** The most open requests the service lists per workspace (R-45); a workspace at it has a full list. */
   openLimit = $state(Number.POSITIVE_INFINITY);
+  /** Connections a rule allowed since the start of the UTC day; the service counts in memory, so a restart resets it. */
+  allowedToday = $state(0);
   decided = $state.raw<Decided[]>([]);
   status = $state<Status>("loading");
   /** Why the last read of the inbox failed; `null` once a read works. */
   loadError = $state<string | null>(null);
 
-  readonly groups = $derived(groupRows(this.rows));
+  /**
+   * The ids the page may draw. A request that arrives while the page is open is held back until
+   * the user asks for it (`showHeld`): the guest picks the moment it arrives, so a row must never
+   * move under a pointer that is about to click Allow.
+   */
+  #shown = $state.raw<ReadonlySet<number>>(new Set());
+  /** The rows the user has been shown: the ones the page draws. */
+  readonly visible = $derived(
+    this.rows.filter((r) => this.#shown.has(r.request.id)),
+  );
+  /** How many open requests arrived since and wait behind the "new requests" line. */
+  readonly held = $derived(this.rows.length - this.visible.length);
+  readonly groups = $derived(groupRows(this.visible));
   readonly count = $derived(this.rows.length);
   /** The workspaces whose list is full: a new host they ask about is not listed until some are answered. */
   readonly full = $derived.by(() => {
@@ -160,6 +174,17 @@ export class PendingStore {
     this.#pollMs = deps.pollMs ?? 5000;
     this.#slowPollMs = deps.slowPollMs ?? 60_000;
     this.#onCount = deps.onCount;
+  }
+
+  /** Draws the requests held back since the user last looked. */
+  showHeld(): void {
+    this.#setRows(this.rows, "all");
+  }
+
+  /** Draws one request the user asked for by name (a notification's address), held or not. */
+  show(id: number): void {
+    if (this.rows.some((r) => r.request.id === id))
+      this.#setRows(this.rows, [id]);
   }
 
   /** The workspaces that have an open request. */
@@ -203,13 +228,15 @@ export class PendingStore {
       }
       this.loadError = null;
       this.openLimit = data.open_limit;
+      this.allowedToday = data.allowed_today;
       const rows: Row[] = data.groups.flatMap((g) =>
         g.requests
           .filter((request) => !this.#decidedMeanwhile.includes(request.id))
           .map((request) => ({ request, domain: g.registrable_domain })),
       );
-      if (this.status !== "ready") markOnce("puddle:inbox-data");
-      this.#setRows(rows);
+      const first = this.status !== "ready";
+      if (first) markOnce("puddle:inbox-data");
+      this.#setRows(rows, first ? "all" : []);
       this.status = "ready";
     } catch {
       this.loadError = SERVICE_DOWN;
@@ -217,7 +244,17 @@ export class PendingStore {
     }
   }
 
-  #setRows(rows: Row[]): void {
+  /**
+   * Replaces the rows. Rows the user has not been shown stay held unless named in `reveal` (or
+   * `"all"`); with nothing drawn there is nothing to move, so everything is drawn.
+   */
+  #setRows(rows: Row[], reveal: readonly number[] | "all" = []): void {
+    const drawn = rows.filter((r) => this.#shown.has(r.request.id));
+    const ids =
+      reveal === "all" || drawn.length === 0
+        ? rows
+        : [...drawn, ...rows.filter((r) => reveal.includes(r.request.id))];
+    this.#shown = new Set(ids.map((r) => r.request.id));
     this.rows = rows;
     this.#onCount?.(rows.length);
   }
@@ -375,22 +412,50 @@ export class PendingStore {
       closed.map((c) => [`${c.workspace}\0${c.host}\0${c.port}`, c.domain]),
     );
     const back: Row[] = [];
+    // The stream's event can beat this answer: the row is there, held; the user asked for it back.
+    const already: number[] = [];
     let unknown = false;
     for (const request of reopened) {
-      if (this.rows.some((r) => r.request.id === request.id)) continue;
+      if (this.rows.some((r) => r.request.id === request.id)) {
+        already.push(request.id);
+        continue;
+      }
       const domain = domains.get(
         `${request.workspace}\0${request.host}\0${request.port}`,
       );
       if (domain === undefined) unknown = true;
       else back.push({ request, domain });
     }
-    if (back.length > 0) this.#setRows([...back, ...this.rows]);
+    if (back.length > 0 || already.length > 0) {
+      this.#setRows(
+        [...back, ...this.rows],
+        [...already, ...back.map((r) => r.request.id)],
+      );
+    }
     // The service names the group; ask it when a request came back that this page did not decide.
     if (unknown) void this.refresh();
   }
 
-  /** Starts listening and polling; returns the function that stops both. */
+  /**
+   * Starts listening and polling; returns the function that stops both. The shell's strip and the
+   * Inbox both start it: one listener and one poll run while any caller holds it.
+   */
   start(): () => void {
+    this.#holders += 1;
+    if (this.#holders === 1) this.#stopRun = this.#run();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.#holders -= 1;
+      if (this.#holders === 0) this.#stopRun?.();
+    };
+  }
+
+  #holders = 0;
+  #stopRun: (() => void) | undefined;
+
+  #run(): () => void {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const unsubscribe = this.#source?.subscribe({

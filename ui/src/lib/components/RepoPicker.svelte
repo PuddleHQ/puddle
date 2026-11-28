@@ -2,12 +2,7 @@
 <script lang="ts">
   import RepoSourceStatus from "./RepoSourceStatus.svelte";
   import type { Identity } from "#lib/identities/model.ts";
-  import {
-    roleWord,
-    tableCannotHold,
-    traits,
-    type RepoView,
-  } from "#lib/repos/model.ts";
+  import { roleWord, traits, type RepoView } from "#lib/repos/model.ts";
   import { RepoLists } from "#lib/stores/repos.svelte.ts";
   import "#lib/theme/controls.css";
 
@@ -24,6 +19,10 @@
     store?: RepoLists;
   } = $props();
 
+  // The host already holds every list it read from the Git host (100 a page), so asking for a
+  // long page costs a local read, not a request to GitHub: show all, up to what the API allows.
+  const PICKER_LIMIT = 500;
+
   // Several pickers can be open at once (one per row of the create form).
   const uid = $props.id();
   let opened = $state(false);
@@ -32,7 +31,8 @@
 
   function toggled(event: Event) {
     opened = (event.currentTarget as HTMLDetailsElement).open;
-    if (opened && store.status === "idle") void store.load({ limit: 20 });
+    if (opened && store.status === "idle")
+      void store.load({ limit: PICKER_LIMIT });
     if (!opened) {
       clearTimeout(typing);
       store.stop();
@@ -42,7 +42,7 @@
   function onSearch() {
     clearTimeout(typing);
     typing = setTimeout(() => {
-      void store.load({ query: search.trim(), limit: 20 }, true);
+      void store.load({ query: search.trim(), limit: PICKER_LIMIT }, true);
     }, 150);
   }
 
@@ -79,7 +79,7 @@
   );
 </script>
 
-<details class="picker" ontoggle={toggled}>
+<details class="picker" open={opened} ontoggle={toggled}>
   <summary>Choose from your repositories</summary>
   {#if opened}
     <div class="body">
@@ -109,7 +109,7 @@
                 onclick={() => onPick(repo, repo.identities[0] ?? null)}
               >
                 <span class="name mono">{repo.full_name}</span>
-                <span class="meta">
+                <span class="meta wrap">
                   {[
                     ...traits(repo),
                     roleWord(repo.role),
@@ -118,12 +118,6 @@
                     .filter((word) => word !== "")
                     .join(" · ")}
                 </span>
-                {#if tableCannotHold(repo.url)}
-                  <span class="meta warn"
-                    >Its project name has a space: you can still make a
-                    workspace, but its repository table can't hold it.</span
-                  >
-                {/if}
               </button>
             </li>
           {/each}
@@ -202,8 +196,5 @@
   .meta {
     font-size: var(--text-sm);
     color: var(--color-text-muted);
-  }
-  .warn {
-    color: var(--color-warning);
   }
 </style>

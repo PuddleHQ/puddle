@@ -275,6 +275,7 @@ async fn r27_an_ip_deny_wins_over_exact_wildcard_and_approved_name_allows() {
         .unwrap()[0]
         .id;
     rig.store
+        .as_user(puddle_store::UserId::OWNER)
         .resolve_pending(row, &Resolution::allow(), Actor::Cli)
         .unwrap();
     assert_denied_by(&rig, "new.test", port, &deny).await;
@@ -306,6 +307,31 @@ async fn r27_an_ip_deny_wins_over_exact_wildcard_and_approved_name_allows() {
     assert_eq!(
         (&mixed["decision"], &mixed["resolved_ip"]),
         (&Value::from("allow"), &Value::from("127.0.0.1"))
+    );
+}
+
+/// A deny of `127.0.0.2` holds for every spelling a guest can dial: the literal, the IPv4-mapped
+/// IPv6 form (denied by the rule), and the decimal and short forms (refused as non-canonical).
+/// None reaches the server on the denied address.
+#[tokio::test]
+async fn r27_an_ip_deny_holds_for_the_mapped_decimal_and_short_spellings() {
+    let rig = rig().await;
+    let (port, reached) = servers().await;
+    let deny = rule(&rig.store, Scope::Global, "127.0.0.2", Effect::Deny, None);
+
+    assert_denied_by(&rig, "127.0.0.2", port, &deny).await;
+    assert_denied_by(&rig, "[::ffff:127.0.0.2]", port, &deny).await;
+    assert_denied_by(&rig, "[::ffff:7f00:2]", port, &deny).await;
+    for spelling in ["2130706434", "127.2", "0x7f000002", "0177.0.0.2"] {
+        let (code, headers, _) = connect_via(rig.agent.local_addr(), &format!("{spelling}:{port}"))
+            .await
+            .unwrap();
+        assert_ne!(code, 200, "{spelling}: {headers:?}");
+    }
+    assert_eq!(
+        reached.load(Ordering::SeqCst),
+        0,
+        "a denied address was reached"
     );
 }
 

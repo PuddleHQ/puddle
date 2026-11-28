@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-use puddle_api::OpenTarget;
+use puddle_services::workspaces::OpenTarget;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
@@ -9,7 +9,7 @@ use http::{Request, Response};
 use http_body_util::{BodyExt, Full};
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
-use puddle_api::EditorLogin;
+use puddle_services::workspaces::EditorLogin;
 use puddle_types::WorkspaceId;
 use puddle_types::fixture::password;
 use tauri::Manager;
@@ -70,7 +70,7 @@ fn record(name: &str) -> WorkspaceRecord {
     WorkspaceRecord::new(
         WorkspaceId::new(name).unwrap(),
         UserId::OWNER,
-        puddle_api::DisplayName::parse(name).unwrap(),
+        puddle_services::workspaces::DisplayName::parse(name).unwrap(),
         Vec::new(),
     )
 }
@@ -141,17 +141,17 @@ async fn a_browser_attach_opens_the_multi_root_file_or_the_start_folder_the_targ
     let cases = [
         (
             OpenTarget {
-                path: "/workspaces/w/.puddle/editor/w.code-workspace".into(),
+                path: "/workspace/.puddle/editor/w.code-workspace".into(),
                 is_workspace_file: true,
             },
-            "/?workspace=%2Fworkspaces%2Fw%2F.puddle%2Feditor%2Fw.code-workspace",
+            "/?workspace=%2Fworkspace%2F.puddle%2Feditor%2Fw.code-workspace",
         ),
         (
             OpenTarget {
-                path: "/workspaces/w/api".into(),
+                path: "/workspace/api".into(),
                 is_workspace_file: false,
             },
-            "/?folder=%2Fworkspaces%2Fw%2Fapi",
+            "/?folder=%2Fworkspace%2Fapi",
         ),
     ];
     for (open, expected) in cases {
@@ -185,7 +185,7 @@ async fn a_signed_in_browser_attach_navigates_to_the_place_after_the_cookie() {
     let (addr, _logins) = front(&secret).await;
     let mut target = target(addr, Some(EditorSignIn::Form(Arc::new(Password(secret)))));
     target.open = Some(OpenTarget {
-        path: "/workspaces/w/.puddle/editor/w.code-workspace".into(),
+        path: "/workspace/.puddle/editor/w.code-workspace".into(),
         is_workspace_file: true,
     });
 

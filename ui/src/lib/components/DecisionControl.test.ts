@@ -70,7 +70,7 @@ describe("the one-click buttons", () => {
     expect(more).not.toHaveClass("allow");
     expect(more).not.toHaveClass("deny");
     const allow = screen.getByRole("button", { name: /^Allow/ });
-    expect(allow.parentElement).toBe(more.parentElement);
+    expect(allow.closest(".control")).toBe(more.parentElement);
   });
 
   it("offers only Deny when the request can't be approved yet", () => {

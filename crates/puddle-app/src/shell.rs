@@ -7,12 +7,11 @@ use std::sync::{Arc, Mutex, PoisonError};
 use puddle_host::{
     HostError, HostOptions, HostShutdown, MsbFactory, RuntimeFactory, SystemPlatform,
 };
-use puddle_lifecycle::LifecycleError;
-use puddle_log::{ScopedFilter, init_stderr};
+use puddle_lifecycle::{LifecycleError, ShutdownSignals};
+use puddle_log::ScopedFilter;
 use puddle_types::Problems;
 use tauri::{AppHandle, Manager, RunEvent, Runtime};
 use tauri_plugin_opener::OpenerExt;
-use tracing_subscriber::filter::{LevelFilter, Targets};
 use url::Url;
 
 use crate::autostart::{self, LoginEntry};
@@ -22,6 +21,7 @@ use puddle_settings::ClipboardRead;
 use puddle_types::WorkspaceId;
 
 use crate::sandbox_window::{self, Hooks, NewWindowReport, SandboxWindows, Target, WindowSettings};
+use crate::signals::quit_on_signals;
 use crate::window::{MAIN_LABEL, OpenExternal, Refused, open_main};
 use crate::{crash, desktop, links};
 
@@ -90,8 +90,8 @@ impl SandboxProbe {
         clipboard: Option<&str>,
     ) -> Option<Self> {
         let clipboard_read = match clipboard {
-            None | Some("ask") => ClipboardRead::Ask,
-            Some("allow") => ClipboardRead::Allow,
+            None | Some("allow") => ClipboardRead::Allow,
+            Some("ask") => ClipboardRead::Ask,
             Some("deny") => ClipboardRead::Deny,
             // A typo must not quietly test the default.
             Some(_) => return None,
@@ -193,8 +193,11 @@ fn data_folder(options: &Options) -> Option<PathBuf> {
 #[must_use]
 pub fn report_startup_failure(options: &Options, err: &ShellError) -> String {
     let reason = startup_reason(err);
-    let file =
-        data_folder(options).and_then(|folder| crash::write_startup_error(&folder, &reason).ok());
+    let file = crash::write_startup_error_or_fallback(
+        data_folder(options).as_deref(),
+        &crash::fallback_dir(),
+        &reason,
+    );
     crash::startup_message(&reason, file.as_deref())
 }
 
@@ -211,6 +214,14 @@ fn startup_reason(err: &ShellError) -> String {
         ),
         other => other.to_string(),
     }
+}
+
+/// What `run` returns once the event loop ended: the error the setup hook stored, if any. The hook
+/// ends the loop instead of returning the error because Tauri panics on a setup error inside
+/// `run`, where nothing could report it.
+fn setup_outcome(stored: &Mutex<Option<ShellError>>) -> Result<(), ShellError> {
+    let failure = stored.lock().unwrap_or_else(PoisonError::into_inner).take();
+    failure.map_or(Ok(()), Err)
 }
 
 /// What `run` returns when Tauri's `build` failed: the shell's own error when the setup hook
@@ -326,6 +337,24 @@ where
     let mut host = HostOptions::system();
     if let Some(launcher) = &launcher {
         host.launcher = launcher.clone();
+    }
+    // Before the host starts: a signal during the start would end the process the default way.
+    let signals = tauri::async_runtime::block_on(async { ShutdownSignals::install() });
+    match signals {
+        Err(err) => tracing::warn!(%err, "a shutdown signal will not stop the VMs"),
+        Ok(signals) => {
+            let quitting = app.clone();
+            #[expect(
+                clippy::exit,
+                reason = "a second signal means the stop hangs; the next start reconciles the VMs"
+            )]
+            let give_up = || std::process::exit(1);
+            tauri::async_runtime::spawn(quit_on_signals(
+                signals,
+                move || quitting.exit(0),
+                give_up,
+            ));
+        }
     }
     let backend = tauri::async_runtime::block_on(source.start_with(options, factory, host))?;
     if let Some(launcher) = launcher {
@@ -620,9 +649,16 @@ fn quit_warnings(shutdown: &HostShutdown) -> Vec<String> {
     lines
 }
 
-/// What a second start of the program does in the running one: bring the window forward, unless
-/// the sign-in entry made that start (a copy is already running), which shows nothing.
+/// What a second start of the program does in the running one: quit when it carries
+/// [`autostart::QUIT_FLAG`] (the exit hook, [`stop`], then stops the workspaces), otherwise bring
+/// the window forward, unless the sign-in entry made that start (a copy is already running),
+/// which shows nothing.
 fn on_second_start<R: Runtime>(app: &AppHandle<R>, args: &[String]) {
+    if autostart::asks_to_quit(args) {
+        tracing::info!("another start asked this running app to quit");
+        app.exit(0);
+        return;
+    }
     bring_forward_unless_sign_in(args, || focus_main(app));
 }
 
@@ -640,45 +676,33 @@ fn bring_forward_unless_sign_in(args: &[String], bring_forward: impl FnOnce()) {
 /// The variable that sets the log level of Puddle's crates (`puddle_log` has the syntax).
 const PUDDLE_LOG_VAR: &str = "PUDDLE_LOG";
 
-/// The standard filter variable, read when `PUDDLE_LOG` is not set: `debug`, or
-/// `warn,puddle_host=trace` for one crate. It applies to every crate alike.
+/// The standard filter variable, read when `PUDDLE_LOG` is not set, in the same syntax: `debug`, or
+/// `warn,puddle_host=trace` for one crate. Dependencies stay at the `info` ceiling unless named.
 const RUST_LOG_VAR: &str = "RUST_LOG";
-
-/// The filter `RUST_LOG` asks for, `info` when it is unset. A value that does not parse gives
-/// `info` and comes back as the second item, so `run` can say so once logging is on.
-fn log_targets(value: Option<&str>) -> (Targets, Option<String>) {
-    let info = || Targets::new().with_default(LevelFilter::INFO);
-    match value {
-        None => (info(), None),
-        Some(text) => text
-            .parse()
-            .map_or_else(|_| (info(), Some(text.to_owned())), |t| (t, None)),
-    }
-}
 
 /// The filter the two variables ask for: `PUDDLE_LOG` when set, else `RUST_LOG`, else `info`. A
 /// value that is not a filter gives `info` and a sentence for `run` to log once logging is on.
 fn log_filter(puddle_log: Option<&str>, rust_log: Option<&str>) -> (ScopedFilter, Option<String>) {
-    if let Some(text) = puddle_log {
-        return ScopedFilter::parse(text).map_or_else(
-            |_| {
-                let said =
-                    format!("{PUDDLE_LOG_VAR}={text:?} is not a log filter; logging at info");
-                (ScopedFilter::default(), Some(said))
-            },
-            |filter| (filter, None),
-        );
-    }
-    let (targets, bad) = log_targets(rust_log);
-    let said = bad.map(|v| format!("{RUST_LOG_VAR}={v:?} is not a log filter; logging at info"));
-    (ScopedFilter::uniform(targets), said)
+    let (var, text) = match (puddle_log, rust_log) {
+        (Some(text), _) => (PUDDLE_LOG_VAR, text),
+        (None, Some(text)) => (RUST_LOG_VAR, text),
+        (None, None) => return (ScopedFilter::default(), None),
+    };
+    ScopedFilter::parse(text).map_or_else(
+        |_| {
+            let said = format!("{var}={text:?} is not a log filter; logging at info");
+            (ScopedFilter::default(), Some(said))
+        },
+        |filter| (filter, None),
+    )
 }
 
 /// Starts logging to stderr as the variables (`puddle_log`, `rust_log`) ask. The first subscriber
 /// wins; a second call in one process (tests) keeps the first.
 fn init_logging(puddle_log: Option<&str>, rust_log: Option<&str>) {
     let (filter, bad_filter) = log_filter(puddle_log, rust_log);
-    init_stderr(filter, false);
+    // A level from the environment is final; without one the Settings screen sets it.
+    puddle_log::init_logging(filter, false, puddle_log.is_some() || rust_log.is_some());
     if let Some(said) = bad_filter {
         tracing::warn!("{said}");
     }
@@ -694,6 +718,14 @@ fn init_logging_from(var: impl Fn(&str) -> Option<String>) {
     init_logging(var(PUDDLE_LOG_VAR).as_deref(), var(RUST_LOG_VAR).as_deref());
 }
 
+/// Starts keeping the log in a file in the data folder, which the log bundle collects. A folder
+/// that cannot be written costs the file and nothing else.
+fn attach_log_file(data: &std::path::Path) {
+    if let Err(err) = puddle_log::attach_log_file(&puddle_log::log_folder(data)) {
+        tracing::warn!(%err, "the log is not kept in a file");
+    }
+}
+
 /// Runs the app until it quits. The close button hides the window to the tray or quits, as Settings
 /// say ([`desktop`]).
 ///
@@ -706,6 +738,7 @@ pub fn run(options: &Options) -> Result<(), ShellError> {
     puddle_no_dump::harden_from_env().log();
     // Every panic after this writes a crash file into the data folder (nothing is sent).
     if let Some(folder) = data_folder(options) {
+        attach_log_file(&folder);
         crash::install(folder.join(crash::FOLDER));
     }
     // Before the runtime starts any machine: if the shell dies, Windows ends them with it.
@@ -723,10 +756,19 @@ pub fn run(options: &Options) -> Result<(), ShellError> {
         }));
     let app = with_plugins(builder)
         .setup(move |app| {
+            // Only the first start gets here (a second one ended inside the single-instance
+            // plugin). A quit request with nothing running has nothing to quit: it must not start
+            // Puddle.
+            if autostart::asks_to_quit(std::env::args_os()) {
+                app.handle().exit(0);
+                return Ok(());
+            }
             if let Err(err) = start(app.handle(), &options, source) {
-                let text = err.to_string();
                 *kept.lock().unwrap_or_else(PoisonError::into_inner) = Some(err);
-                return Err(text.into());
+                // Returning the error would make Tauri panic inside `run`; end the loop and let
+                // `run` return it to `main`, which shows it.
+                app.handle().exit(1);
+                return Ok(());
             }
             if let Err(err) = desktop::install_quit_shortcut(app.handle()) {
                 tracing::warn!(%err, "Ctrl+Q will not quit");
@@ -735,13 +777,13 @@ pub fn run(options: &Options) -> Result<(), ShellError> {
         })
         .build(context())
         .map_err(|err| build_failure(&setup_failure, err))?;
-    app.run(|handle, event| {
+    app.run_return(|handle, event| {
         if matches!(event, RunEvent::Exit) {
             // the process is exiting; there is no one left to report a failed stop to
             let _ = stop(handle);
         }
     });
-    Ok(())
+    setup_outcome(&setup_failure)
 }
 
 #[cfg(test)]

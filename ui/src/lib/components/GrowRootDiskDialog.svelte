@@ -68,11 +68,9 @@
 >
   <form onsubmit={submit} novalidate>
     <div class="field">
-      <label for="{id}-size"
-        >New size in GiB (now {formatMib(
-          workspace.root_disk_size_mib ?? 0,
-        )})</label
-      >
+      <label for="{id}-size">
+        New size in GiB (now {formatMib(workspace.root_disk_size_mib ?? 0)})
+      </label>
       <input
         id="{id}-size"
         type="text"
@@ -97,12 +95,12 @@
       {/if}
     </div>
     <div class="actions">
-      <button type="button" class="btn" onclick={() => (open = false)}
-        >Cancel</button
-      >
-      <button type="submit" class="btn primary" disabled={busy}
-        >Make bigger</button
-      >
+      <button type="button" class="btn" onclick={() => (open = false)}>
+        Cancel
+      </button>
+      <button type="submit" class="btn primary" disabled={busy}>
+        Make bigger
+      </button>
     </div>
   </form>
 </FormDialog>

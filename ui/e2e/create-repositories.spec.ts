@@ -61,7 +61,7 @@ async function openList(page: Page, backend: Backend) {
 const card = (page: Page, name: string): Locator =>
   page.getByRole("article", { name, exact: true });
 const dialogOf = (page: Page): Locator =>
-  page.getByRole("dialog", { name: "New workspace" });
+  page.getByRole("region", { name: "New workspace" });
 const rowOf = (page: Page, n: number): Locator =>
   dialogOf(page).getByRole("group", { name: `Repository ${n}` });
 const addrOf = (page: Page, n: number): Locator =>
@@ -150,7 +150,8 @@ test.describe("the list of repositories", () => {
       );
     }
     await backend.control.step({ do: "release_workspaces" });
-    await expect(created).toContainText("Not started");
+    // The service ends a create running, like the real one.
+    await expect(created).toContainText("Running");
     const made = await workspace(request, backend, "api");
     expect(listed(made)).toEqual([
       { url: API, directory: "api" },
@@ -338,7 +339,6 @@ test.describe("the list of repositories", () => {
       "This is the same repository as repository 1. List it once.",
     );
     await dialog.getByRole("button", { name: "Remove repository 2" }).click();
-    await dialog.getByText("Start folder, image, memory and CPUs").click();
     await dialog.getByLabel("Start folder").fill("../outside");
     await expect(dialog.getByLabel("Start folder")).toHaveAttribute(
       "aria-invalid",
@@ -367,7 +367,6 @@ test.describe("the list of repositories", () => {
       rowOf(page, 2).getByLabel("Git identity").locator("option:checked"),
     ).toHaveText("Personal");
     await rowOf(page, 2).getByRole("checkbox", { name: "Push" }).uncheck();
-    await dialog.getByText("Start folder, image, memory and CPUs").click();
     await dialog.getByLabel("Start folder").fill("ledger");
     await dialog.getByRole("button", { name: "Create workspace" }).click();
     await expect(dialog).toHaveCount(0);
@@ -403,7 +402,6 @@ test.describe("the list of repositories", () => {
       rowOf(page, 2).getByLabel("Directory"),
       rowOf(page, 2).getByLabel("Git repository (HTTPS)"),
       // A checkbox is small by itself; its label is the target.
-      rowOf(page, 2).locator("label.choice", { hasText: "Pull" }),
       rowOf(page, 2).locator("label.choice", { hasText: "Push" }),
     ];
     for (const control of controls) {
@@ -428,7 +426,7 @@ test.describe("a clone that fails", () => {
     await dialog.getByRole("button", { name: "Create workspace" }).click();
     await expect(dialog).toHaveCount(0);
     // Both clones ran in the fake; the host would have raised this for the one that failed.
-    await expect(card(page, "api")).toContainText("Not started");
+    await expect(card(page, "api")).toContainText("Running");
     await backend.control.step({
       do: "problem",
       key: "clone:api:web",
@@ -457,45 +455,52 @@ test.describe("the host note", () => {
     page,
     backend,
   }) => {
-    // A short window and three rows keep the dialog scrolled, as it is on a small screen; the note's
-    // answer (a line fewer once a host is gone) comes 300 ms after the change, while the press
-    // that removes a row is still under way.
+    // A short window and three rows keep the screen scrolled, as it is on a small screen; the note's
+    // answer (it goes once the last host is gone) comes 300 ms after the change, while the press
+    // that removes a row is still under way. Row 1 stays empty: a typed address, a shorthand
+    // like acme/api included (it is github.com), always has a host to check, so only an empty row
+    // 1 lets the note go when row 2 does, whatever the screen's width: a host dropped from a list
+    // that stays wrapped in as many lines would move nothing, and prove nothing.
     await page.setViewportSize({ width: 1280, height: 640 });
     await openList(page, backend);
     const dialog = await openCreate(page);
-    await addrOf(page, 1).fill(API);
     await addButton(page).click();
     await addrOf(page, 2).fill(DOCS);
     await addButton(page).click();
     await addrOf(page, 3).fill("https://codeberg.org/acme/tools.git");
-    await expect(dialog.getByTestId("hosts-new")).toContainText("gitlab.com");
+    await expect(dialog.getByTestId("hosts-new")).toContainText("codeberg.org");
     const remove = (n: number) =>
       rowOf(page, n).getByRole("button", { name: `Remove repository ${n}` });
+    // The form is a screen now, so the page scrolls, not the form: scroll whatever holds it.
     const toEnd = () =>
       dialog.evaluate((el) => {
-        el.scrollTop = el.scrollHeight;
+        el.lastElementChild?.scrollIntoView({ block: "end" });
       });
     const scrolls = () =>
-      dialog.evaluate((el) => el.scrollHeight > el.clientHeight);
+      dialog.evaluate((el) => {
+        for (let n = el.parentElement; n; n = n.parentElement) {
+          if (n.scrollTop > 0) return true;
+        }
+        return false;
+      });
     await toEnd();
     await expect.poll(scrolls).toBe(true);
 
     await remove(3).click();
     await expect(rowOf(page, 3)).toHaveCount(0);
+    await expect(dialog.getByTestId("hosts-new")).not.toContainText(
+      "codeberg.org",
+    );
+    await expect(dialog.getByTestId("hosts-new")).toContainText("gitlab.com");
     await toEnd();
     await expect.poll(() => remove(1).boundingBox()).not.toBeNull();
-    const noteBefore = await dialog.getByTestId("hosts-new").boundingBox();
     await remove(2).click();
     await expect(rowOf(page, 2)).toHaveCount(0);
     await toEnd();
     await expect.poll(() => remove(1).boundingBox()).not.toBeNull();
     const before = await remove(1).boundingBox();
-    // The answer for the shorter list arrives: the note drops gitlab.com.
-    await expect(dialog.getByTestId("hosts-new")).not.toContainText(
-      "gitlab.com",
-    );
-    const noteAfter = await dialog.getByTestId("hosts-new").boundingBox();
-    expect(noteAfter?.height).toBeLessThan(noteBefore?.height ?? 0);
+    // The answer for the shorter list arrives: the note is gone.
+    await expect(dialog.getByTestId("hosts-new")).toHaveCount(0);
     await expect.poll(() => remove(1).boundingBox()).toEqual(before);
   });
 });

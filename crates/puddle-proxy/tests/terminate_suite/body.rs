@@ -435,48 +435,57 @@ async fn over_http2_a_stream_cut_short_or_longer_than_it_said_never_reaches_the_
         .injector(peek.clone())
         .build();
     let mut guest = rig.guest();
-    let client = guest
-        .tls_with("bound.test:443", None, &[b"h2"], true)
-        .await
-        .unwrap();
-    let (mut send, connection) = h2::client::handshake(client.stream.into_inner())
-        .await
-        .unwrap();
-    tokio::spawn(connection);
-    let post = |length: Option<&str>| {
-        let mut request = http::Request::builder()
-            .method("POST")
-            .uri("https://bound.test/peek");
-        if let Some(length) = length {
-            request = request.header("content-length", length);
-        }
-        request.body(()).unwrap()
-    };
-    // Ended cleanly short of its Content-Length: refused (the guest has already gone, so it never
-    // reads the answer).
-    let (_response, mut body) = send.send_request(post(Some("50")), false).unwrap();
-    body.send_data(Bytes::from_static(b"0123456789"), false)
-        .unwrap();
-    body.send_reset(h2::Reason::NO_ERROR);
-    // More than the limit with no length given: 413.
-    let (response, mut body) = send.send_request(post(None), false).unwrap();
-    body.send_data(Bytes::from("x".repeat(LIMIT + 1)), true)
-        .unwrap();
-    assert_eq!(response.await.unwrap().status(), 413);
-    // Cancelled mid-body: nothing goes upstream and the connection goes on.
-    let (_response, mut body) = send.send_request(post(Some("50")), false).unwrap();
-    body.send_data(Bytes::from_static(b"0123456789"), false)
-        .unwrap();
-    body.send_reset(h2::Reason::CANCEL);
-    // Ordering with no signal: the proxy handles the reset before the next request starts.
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    // A request that ends with trailers: the injector gets the data, the trailers are dropped.
-    let (response, mut body) = send.send_request(post(Some("2")), false).unwrap();
-    body.send_data(Bytes::from_static(b"ok"), false).unwrap();
-    let mut trailers = http::HeaderMap::new();
-    trailers.insert("x-trailer", http::HeaderValue::from_static("1"));
-    body.send_trailers(trailers).unwrap();
-    assert_eq!(response.await.unwrap().status(), 200);
+    {
+        let client = guest
+            .tls_with("bound.test:443", None, &[b"h2"], true)
+            .await
+            .unwrap();
+        let (mut send, connection) = h2::client::handshake(client.stream.into_inner())
+            .await
+            .unwrap();
+        tokio::spawn(connection);
+        let post = |length: Option<&str>| {
+            let mut request = http::Request::builder()
+                .method("POST")
+                .uri("https://bound.test/peek");
+            if let Some(length) = length {
+                request = request.header("content-length", length);
+            }
+            request.body(()).unwrap()
+        };
+        // Ended cleanly short of its Content-Length: refused (the guest has already gone, so it never
+        // reads the answer).
+        let (_response, mut body) = send.send_request(post(Some("50")), false).unwrap();
+        body.send_data(Bytes::from_static(b"0123456789"), false)
+            .unwrap();
+        body.send_reset(h2::Reason::NO_ERROR);
+        // More than the limit with no length given: 413.
+        let (response, mut body) = send.send_request(post(None), false).unwrap();
+        body.send_data(Bytes::from("x".repeat(LIMIT + 1)), true)
+            .unwrap();
+        assert_eq!(response.await.unwrap().status(), 413);
+        // Cancelled mid-body: nothing goes upstream and the connection goes on.
+        let (_response, mut body) = send.send_request(post(Some("50")), false).unwrap();
+        body.send_data(Bytes::from_static(b"0123456789"), false)
+            .unwrap();
+        body.send_reset(h2::Reason::CANCEL);
+        // A request that ends with trailers: the injector gets the data, the trailers are dropped.
+        let (response, mut body) = send.send_request(post(Some("2")), false).unwrap();
+        body.send_data(Bytes::from_static(b"ok"), false).unwrap();
+        let mut trailers = http::HeaderMap::new();
+        trailers.insert("x-trailer", http::HeaderValue::from_static("1"));
+        body.send_trailers(trailers).unwrap();
+        assert_eq!(response.await.unwrap().status(), 200);
+    }
+    // Barrier: the guest connection ends and the proxy has no stream left, so the cancelled
+    // request has been fully handled before the absence is read.
+    drop(guest);
+    puddle_test_kit::eventually(
+        "the proxy handled every stream of the connection",
+        Duration::from_secs(10),
+        || rig.open_guest_streams() == 0,
+    )
+    .await;
     assert_eq!(bodies(&peek), [Some(b"ok".to_vec())]);
     assert_eq!(server.recorded().len(), 1);
 }

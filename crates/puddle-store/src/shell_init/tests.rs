@@ -2,12 +2,17 @@
 use super::*;
 
 #[test]
-fn line_ends_become_lf_and_the_text_ends_in_one_newline() {
+fn line_ends_become_lf_and_the_text_ends_in_a_newline() {
     assert_eq!(
         ShellInitText::new("a\r\nb\rc").unwrap().as_str(),
         "a\nb\nc\n"
     );
     assert_eq!(ShellInitText::new("a\n").unwrap().as_str(), "a\n");
+    assert_eq!(
+        ShellInitText::new("a\n\n\n").unwrap().as_str(),
+        "a\n\n\n",
+        "a text that ends in several newlines keeps them"
+    );
 }
 
 #[test]

@@ -109,8 +109,46 @@ async fn a_log_over_its_warning_size_is_a_problem_that_deletes_nothing_until_it_
     // Once the records are past their days they go, and the problem goes with them.
     clock.advance(91 * 24 * 60 * 60 * 1000);
     store.set_audit_retention_days(90).unwrap();
+    // A pass that would delete every record waits for the next one an hour later.
     eventually("the problem to end", Duration::from_secs(5), || {
+        clock.advance(2 * 60 * 60 * 1000);
         problems.list().is_empty()
+    })
+    .await;
+    sweeper.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_failed_sweep_still_raises_the_size_warning() {
+    let clock = Arc::new(ManualClock::new(1_000_000));
+    let store = Arc::new(
+        Store::open_in_memory(
+            clock.clone(),
+            Limits {
+                audit_warn_bytes: 1,
+                ..Limits::default()
+            },
+        )
+        .unwrap(),
+    );
+    store
+        .as_user(UserId::OWNER)
+        .add_rule(&NewRule {
+            scope: Scope::Global,
+            pattern: Pattern::parse("old.example").unwrap(),
+            effect: Effect::Allow,
+            expires_at: Some(1_000_100),
+            created_by: Actor::Cli,
+        })
+        .unwrap();
+    clock.advance(1_000);
+    store.fail_audit_writes("rule_expired");
+    let problems = Arc::new(Problems::new(Arc::new(NullSink)));
+    let sweeper =
+        Sweeper::spawn_reporting(store.clone(), Duration::from_millis(20), problems.clone());
+    eventually("both problems", Duration::from_secs(5), || {
+        let keys: Vec<_> = problems.list().into_iter().map(|p| p.key).collect();
+        keys.contains(&SWEEP_PROBLEM.to_owned()) && keys.contains(&AUDIT_SIZE_PROBLEM.to_owned())
     })
     .await;
     sweeper.shutdown().await;

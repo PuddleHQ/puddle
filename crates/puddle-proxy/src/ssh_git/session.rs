@@ -330,13 +330,11 @@ async fn watch_connection<S>(
     }
 }
 
-/// A session channel the client opened and has not used yet.
+/// A session channel the client opened and has not used yet; a command or a shell takes it out.
 struct Slot {
-    channel: Option<Channel<Msg>>,
+    channel: Channel<Msg>,
     /// The `GIT_PROTOCOL` versions the guest named, in order.
     versions: Vec<u8>,
-    /// A command or a shell was started on it.
-    started: bool,
 }
 
 /// The SSH server's handler for one connection.
@@ -344,7 +342,8 @@ struct Conn {
     ctx: Arc<Ctx>,
     libssh2: bool,
     slots: HashMap<ChannelId, Slot>,
-    /// The channels' tasks; dropped with the connection, which ends them.
+    /// The channels' tasks; dropped with the connection, which ends them, and joined when they
+    /// finish, at the next spawn.
     tasks: JoinSet<()>,
     limits: GitSshLimits,
 }
@@ -354,7 +353,7 @@ impl Conn {
         tracing::debug!(what, "ssh channel request refused");
         self.ctx
             .summary()
-            .refusal(HttpRequestLine::new("ssh-channel", "/"), CHANNEL_REFUSED);
+            .refusal(HttpRequestLine::ssh("ssh-channel", "/"), CHANNEL_REFUSED);
     }
 }
 
@@ -403,6 +402,7 @@ impl russh::server::Handler for Conn {
     }
 
     async fn auth_succeeded(&mut self, _: &mut Session) -> Result<(), Self::Error> {
+        tracing::debug!(workspace = %self.ctx.workspace, "ssh session authenticated");
         self.ctx.open.authenticated();
         Ok(())
     }
@@ -423,9 +423,8 @@ impl russh::server::Handler for Conn {
         self.slots.insert(
             id,
             Slot {
-                channel: Some(channel),
+                channel,
                 versions: Vec::new(),
-                started: false,
             },
         );
         reply.accept().await;
@@ -510,11 +509,12 @@ impl russh::server::Handler for Conn {
         session: &mut Session,
     ) -> Result<(), Self::Error> {
         let accepted = match self.slots.get_mut(&channel) {
-            Some(slot) if !slot.started && name == "GIT_PROTOCOL" => protocol_versions(value)
-                .is_some_and(|versions| {
+            Some(slot) if name == "GIT_PROTOCOL" => {
+                protocol_versions(value).is_some_and(|versions| {
                     slot.versions = versions;
                     true
-                }),
+                })
+            }
             _ => false,
         };
         if accepted {
@@ -539,7 +539,8 @@ impl russh::server::Handler for Conn {
         session.channel_success(channel)?;
         let ctx = Arc::clone(&self.ctx);
         let command = std::str::from_utf8(command).map(str::to_owned).ok();
-        self.tasks.spawn(async move {
+        tracing::debug!(workspace = %self.ctx.workspace, command = command.as_deref().unwrap_or("(not text)"), "ssh exec request");
+        self.spawn(async move {
             run_exec(&ctx, taken.channel, command, taken.versions).await;
             ctx.open.remove(channel);
         });
@@ -558,7 +559,7 @@ impl russh::server::Handler for Conn {
         };
         session.channel_success(channel)?;
         let ctx = Arc::clone(&self.ctx);
-        self.tasks.spawn(async move {
+        self.spawn(async move {
             run_shell(&ctx, taken.channel).await;
             ctx.open.remove(channel);
         });
@@ -614,17 +615,21 @@ struct Taken {
 }
 
 impl Conn {
-    /// The channel of `id` if nothing was started on it yet; marks it started.
+    /// The channel of `id` if nothing was started on it yet; its slot is gone after, so a second
+    /// request finds none.
     fn take(&mut self, id: ChannelId) -> Option<Taken> {
-        let slot = self.slots.get_mut(&id)?;
-        if slot.started {
-            return None;
-        }
-        slot.started = true;
+        let slot = self.slots.remove(&id)?;
         Some(Taken {
-            channel: slot.channel.take()?,
-            versions: std::mem::take(&mut slot.versions),
+            channel: slot.channel,
+            versions: slot.versions,
         })
+    }
+
+    /// Runs `work` as one of the connection's tasks, after joining the ones that finished: a
+    /// connection that runs commands for ever keeps nothing for the ones that ended.
+    fn spawn(&mut self, work: impl Future<Output = ()> + Send + 'static) {
+        while self.tasks.try_join_next().is_some() {}
+        self.tasks.spawn(work);
     }
 }
 
@@ -691,7 +696,7 @@ async fn run_exec(
     let finish = match command.as_deref().map(|c| grammar::parse(c, &ctx.host)) {
         None | Some(Err(Refused::Unsupported)) => {
             ctx.summary()
-                .refusal(HttpRequestLine::new("ssh-command", "/"), UNSUPPORTED);
+                .refusal(HttpRequestLine::ssh("ssh-command", "/"), UNSUPPORTED);
             Finish::says(
                 1,
                 "this command is not supported over SSH; Puddle serves git-upload-pack and git-receive-pack (ssh_command_unsupported)",
@@ -699,7 +704,7 @@ async fn run_exec(
         }
         Some(Err(Refused::BadPath)) => {
             ctx.summary()
-                .refusal(HttpRequestLine::new("ssh-command", "/"), BAD_PATH);
+                .refusal(HttpRequestLine::ssh("ssh-command", "/"), BAD_PATH);
             Finish::says(
                 1,
                 "this repository path is not one Puddle reads; use owner/repository (bad_git_path)",
@@ -740,7 +745,7 @@ async fn lfs_authenticate(
         "git-lfs-download"
     };
     ctx.summary()
-        .command(HttpRequestLine::new(name, &repository.audit_path()));
+        .command(HttpRequestLine::ssh(name, &repository.audit_path()));
     match table(ctx, repository, service).await {
         Err(refusal) => refused(ctx, name, repository, &refusal),
         Ok(binding) => {
@@ -763,7 +768,7 @@ async fn git_command(
     repository: &Repository,
     versions: &[u8],
 ) -> Finish {
-    let line = HttpRequestLine::new(service.command(), &repository.audit_path());
+    let line = HttpRequestLine::ssh(service.command(), &repository.audit_path());
     ctx.summary().command(line);
     let binding = match table(ctx, repository, service).await {
         Ok(binding) => binding,
@@ -837,7 +842,7 @@ fn server_config(keys: Vec<super::GitSshHostKey>) -> russh::server::Config {
 /// Records the refusal in the connection's record and words it for the guest.
 fn refused(ctx: &Ctx, service: &str, repository: &Repository, refusal: &InjectRefusal) -> Finish {
     ctx.summary().refusal(
-        HttpRequestLine::new(service, &repository.audit_path()),
+        HttpRequestLine::ssh(service, &repository.audit_path()),
         refusal.code(),
     );
     Finish::says(1, refusal.message())

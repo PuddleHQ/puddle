@@ -14,7 +14,7 @@ import {
 } from "#lib/identities/events.ts";
 import { isStoredLine } from "#lib/identities/model.ts";
 import { repoName } from "#lib/identities/repo.ts";
-import { sentence } from "#lib/rules/model.ts";
+import { sentence } from "#lib/format/sentence.ts";
 import type { Notifier } from "./notifier.ts";
 
 /** What the sign-in notice needs to know of the identities. */
@@ -111,7 +111,7 @@ export class CredentialNotices {
       key: deniedKey(event),
       tone: "warning",
       title: `${workspaces.labelOf(event.workspace)}: ${refused} ${name} was refused.`,
-      detail: `${failure ? `${failure} ` : ""}It is not on the workspace's ${event.access} list yet, as with a repository the workspace just created or forked. Click the button to allow ${event.access} for it (it works at once, no restart), or turn the list off on the workspace's Git tab.`,
+      detail: `${failure ? `${failure} ` : ""}It is not in the workspace's allowed repositories for ${event.access}. Click the button to allow it, or open the workspace's Git tab > Repositories and tick ${event.access === "push" ? "Push" : "Pull"} for it.`,
       action: {
         label: `Allow ${event.access} for ${event.repo}`,
         run: () => this.#allow(event),

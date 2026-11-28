@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! A workspace's shell init over real HTTP, against a real store.
 
-use puddle_api::ShellInitCheck;
+use puddle_services::workspaces::ShellInitCheck;
 use serde_json::{Value, json};
 
 use crate::common::{Api, start};
@@ -17,6 +17,12 @@ async fn stopped(api: &Api, name: &str) {
             "/api/workspaces",
             Some(&json!({"name": name, "repositories": [{"url": REPO}]})),
         )
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    api.workspaces.idle().await;
+    // A create ends running; this one is to be stopped.
+    let reply = api
+        .send("POST", &format!("/api/workspaces/{name}/stop"), None)
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
     api.workspaces.idle().await;

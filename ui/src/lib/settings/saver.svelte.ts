@@ -95,7 +95,7 @@ export class SettingsSaver {
           ok: false,
           message: "Settings aren't loaded.",
         });
-      return this.#store.save(savePatch(view, edits(part)));
+      return this.#store.save(savePatch(edits(part)));
     };
     const sent = edits(change);
     return this.track(id, () => send(change), {

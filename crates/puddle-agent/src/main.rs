@@ -37,8 +37,8 @@ fn main() -> ExitCode {
         Command::MiseFetch(request) => mise_fetch(&request),
         Command::MiseInstall(request) => mise_install(&request),
         Command::MiseTools(request) => mise_tools(&request),
-        Command::Usage(msg) => {
-            eprintln!("{msg}");
+        Command::Usage(err) => {
+            eprintln!("{err}");
             ExitCode::from(2)
         }
         Command::Run => {
@@ -51,7 +51,8 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
             };
-            puddle_log::init_stderr(puddle_log::ScopedFilter::at(config.log.into()), false);
+            // Another subscriber already installed is fine: the agent then logs through it.
+            let _ = puddle_log::init_stderr(puddle_log::ScopedFilter::at(config.log.into()), false);
             fd_limit.log(FDS_NEEDED);
             match run(config) {
                 Ok(()) => ExitCode::SUCCESS,

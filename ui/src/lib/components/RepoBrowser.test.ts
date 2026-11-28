@@ -108,8 +108,18 @@ describe("RepoBrowser", () => {
   it("says an identity without a credential has nothing to list", async () => {
     api.repos = [];
     api.sources = [];
-    await show();
+    await show({
+      identity: identity(2, { label: "Commits", credentials: [] }),
+    });
     expect(await screen.findByTestId("repo-no-credentials")).toBeVisible();
+  });
+
+  it("does not say an identity has no credential when it has some but no list was read", async () => {
+    api.repos = [];
+    api.sources = [];
+    await show();
+    expect(await screen.findByTestId("repo-no-lists")).toBeVisible();
+    expect(screen.queryByTestId("repo-no-credentials")).toBeNull();
   });
 
   it("shows a list's problem and notes beside it and keeps the others usable", async () => {
@@ -145,7 +155,7 @@ describe("RepoBrowser", () => {
     expect(onSignIn).toHaveBeenCalledWith(1);
   });
 
-  it("warns on an Azure DevOps project with a space and still offers the button", async () => {
+  it("offers the button for an Azure DevOps project with a space", async () => {
     api.repos = [
       repoView("contoso", "scanner", {
         host: "dev.azure.com",
@@ -155,11 +165,9 @@ describe("RepoBrowser", () => {
       }),
     ];
     await show();
-    expect(await screen.findByTestId("repo-table-warning")).toHaveTextContent(
-      "can't hold",
-    );
+    expect(screen.queryByTestId("repo-table-warning")).toBeNull();
     expect(
-      screen.getByRole("button", {
+      await screen.findByRole("button", {
         name: "Create a workspace for this: contoso/Shop Floor/scanner",
       }),
     ).toBeEnabled();

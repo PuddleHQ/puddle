@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Environment variables and secrets, global and per workspace (credentials spec §9).
+//! Environment variables and secrets, global and per workspace.
 //!
 //! A plain variable is kept in the database. A secret's value goes to the operating system's
 //! credential store and nowhere else: the database keeps only the id it is filed under, and no
@@ -17,13 +17,13 @@ use puddle_store::{
     EnvDraft, EnvEntry, EnvName, EnvScope, EnvValue, SecretHost, Store, UserId, check_secret_value,
 };
 
-use crate::ApiErrorBody;
 use crate::authz::Principal;
-use crate::error::{ApiError, ErrorCode, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
 use crate::routes::workspaces::named;
-use crate::wire::{EnvList, EnvSetRequest, EnvVariable, SecretPlace, WorkspaceEnv};
+use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, ErrorCode, blocking};
+use puddle_services::wire::{EnvList, EnvSetRequest, EnvVariable, SecretPlace, WorkspaceEnv};
 
 fn unavailable() -> ApiError {
     ApiError::new(
@@ -35,7 +35,7 @@ fn unavailable() -> ApiError {
 
 /// A fresh id for a secret's value of `user`: `env-` and 128 random bits, with the user's mark.
 fn new_stored_id(user: UserId) -> Result<StoredId, ApiError> {
-    crate::stored_ids::fresh(user, "env").map_err(|err| ApiError::internal(&err))
+    puddle_services::stored_ids::fresh(user, "env").map_err(|err| ApiError::internal(&err))
 }
 
 /// Removes a secret's value that nothing refers to any more. The variable is already changed, so a

@@ -52,11 +52,12 @@ use super::token_body::TokenBody;
 
 mod answer;
 mod scan;
-mod target;
+mod shared;
+mod url_target;
 
 pub(crate) use answer::{
     ANSWER_WITHHELD, NotScrubbed, ScrubBody, ScrubNotes, answer_encoding_refusal,
-    answer_failed_refusal, limit_accept_encoding, scrub_answer,
+    answer_failed_refusal, limit_accept_encoding, scrub_answer, withhold_ranges,
 };
 #[cfg(feature = "fuzzing")]
 pub(crate) use scan::read_both_ways;
@@ -128,7 +129,8 @@ pub enum StandInError {
     /// A stand-in with no host is not allowed: it would be worth nothing anywhere.
     #[error("a stand-in needs at least one host")]
     NoHosts,
-    /// A `*.` pattern over a domain anyone can register a name under (`*.github.io`, `*.co.uk`):
+    /// A `*.` pattern over a domain anyone can register a name under (`*.github.io`, `*.co.uk`), or
+    /// over one with such a domain below it (`*.amazonaws.com` covers `x.s3.amazonaws.com`):
     /// the real value would go to whoever registers one.
     #[error("*.{0} covers names anyone can register; list the exact hosts instead")]
     SharedDomain(String),
@@ -159,9 +161,15 @@ pub struct StandIn {
     /// Finds `text` in a header value.
     finder: Finder<'static>,
     real: SecretValue,
+    /// Values `real` had before a refresh, the newest last (at most [`MAX_RETIRED`]). A request
+    /// sent before the refresh may carry one, so its answer is scrubbed for them too.
+    retired: Vec<SecretValue>,
     hosts: TerminationSet,
     placement: Placement,
 }
+
+/// How many old real values of a refreshed stand-in are still scrubbed from answers.
+const MAX_RETIRED: usize = 8;
 
 impl std::fmt::Debug for StandIn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -215,7 +223,7 @@ impl StandIn {
         }
         if let Some(base) = hosts
             .wildcard_bases()
-            .find(|base| psl::domain(base.as_bytes()).is_none())
+            .find(|base| shared::covers_public_suffix(base))
         {
             return Err(StandInError::SharedDomain(base.to_owned()));
         }
@@ -228,6 +236,7 @@ impl StandIn {
             text: stand_in.to_owned(),
             finder: Finder::new(stand_in).into_owned(),
             real,
+            retired: Vec::new(),
             hosts,
             placement: Placement::Header,
         })
@@ -283,16 +292,13 @@ pub fn secret_stand_in(name: &str) -> Result<String, StandInError> {
 }
 
 fn stand_in_with(name: &str, random: &[u8; RANDOM_BYTES]) -> Result<String, StandInError> {
-    use std::fmt::Write as _;
     if !is_name(name) {
         return Err(StandInError::Name(name.to_owned()));
     }
-    let mut text = format!("puddle-secret-{name}-");
-    for byte in random {
-        // writing into a `String` cannot fail
-        let _ = write!(text, "{byte:02x}");
-    }
-    Ok(text)
+    Ok(format!(
+        "puddle-secret-{name}-{}",
+        puddle_types::hex_lower(random)
+    ))
 }
 
 /// What a swap did to one request.
@@ -429,16 +435,36 @@ impl StandIns {
             return Ok(false);
         };
         let old = &**slot;
+        let mut retired = old.retired.clone();
+        retired.push(old.real.clone());
+        if retired.len() > MAX_RETIRED {
+            retired.remove(0);
+        }
         *slot = Arc::new(StandIn {
             origin: old.origin,
             name: old.name.clone(),
             text: old.text.clone(),
             finder: old.finder.clone(),
             real,
+            retired,
             hosts: old.hosts.clone(),
             placement: old.placement.clone(),
         });
         Ok(true)
+    }
+
+    /// The real value behind the stand-in `stand_in`, for tests of whoever fills the registry:
+    /// `set_real` is the only other way to touch it, so without this a test cannot tell a refresh
+    /// that set the new token from one that left the old one.
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn real_of(&self, stand_in: &str) -> Option<String> {
+        self.entries
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .find(|e| e.text == stand_in)
+            .map(|e| e.real.expose().to_owned())
     }
 
     /// How many stand-ins are registered.

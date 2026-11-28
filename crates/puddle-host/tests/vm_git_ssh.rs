@@ -12,8 +12,8 @@
     reason = "VM test: a failed step fails the test; measurements go to stderr"
 )]
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -350,7 +350,7 @@ async fn vm_git_ssh_clones_fetches_and_pushes_over_ssh_and_the_guest_holds_no_ke
     assert_eq!(code, 128, "{out}");
     assert!(
         out.contains(
-            "puddle: push to bound.invalid/acme/other is not on this workspace's push list"
+            "puddle: Blocked this push: bound.invalid/acme/other is not in this workspace's allowed repositories for push"
         ),
         "{out}"
     );

@@ -4,7 +4,7 @@
 
 use rusqlite::{OptionalExtension, Row, params};
 
-use super::{Store, corrupt, lock, sql_ts, stored_ts};
+use super::{Store, corrupt, lock, sql_ts, stored_ts, write_tx};
 use crate::error::StoreError;
 use crate::users::{Device, DeviceId, DeviceSession, SignInMethod, UserId, UserName, device_name};
 
@@ -44,7 +44,59 @@ pub(crate) fn insert_device(
     }))
 }
 
+/// Revokes every device of `user` except `keep` and drops their refresh digests (a revoked
+/// device can't refresh any more), the ids revoked. Runs on the caller's connection, so a flow
+/// that must revoke together with another write puts both in one transaction.
+pub(crate) fn revoke_devices_in(
+    conn: &rusqlite::Connection,
+    user: UserId,
+    keep: Option<DeviceId>,
+    now: u64,
+) -> Result<Vec<DeviceId>, StoreError> {
+    let revoked: Vec<DeviceId> = {
+        let mut stmt = conn.prepare(
+            "UPDATE devices SET revoked_at = ?2
+             WHERE user_id = ?1 AND revoked_at IS NULL AND id IS NOT ?3
+             RETURNING id",
+        )?;
+        stmt.query_map(
+            params![user.get(), sql_ts(now), keep.map(DeviceId::get)],
+            |row| row.get::<_, i64>(0),
+        )
+        .and_then(Iterator::collect::<Result<Vec<i64>, _>>)?
+        .into_iter()
+        .map(DeviceId::from_stored)
+        .collect()
+    };
+    for id in &revoked {
+        conn.execute(
+            "DELETE FROM account_sessions WHERE device_id = ?1",
+            [id.get()],
+        )?;
+    }
+    Ok(revoked)
+}
+
+/// How long a revoked or expired device stays after it stopped working (30 days), so the user
+/// list can still date the last sign-in.
+const STOPPED_DEVICE_KEPT_MS: u64 = 30 * 24 * 60 * 60 * 1000;
+
 impl Store {
+    /// Deletes the devices that stopped working (revoked or expired) more than
+    /// [`STOPPED_DEVICE_KEPT_MS`] ago, and with each one its refresh token digest. Returns how
+    /// many went. One step of [`Store::sweep`].
+    ///
+    /// # Errors
+    /// A database error.
+    pub(super) fn prune_stopped_devices(&self) -> Result<u64, StoreError> {
+        let before = sql_ts(self.clock.now_ms().saturating_sub(STOPPED_DEVICE_KEPT_MS));
+        let removed = lock(&self.conn).execute(
+            "DELETE FROM devices WHERE min(coalesce(revoked_at, expires_at), expires_at) <= ?1",
+            [before],
+        )?;
+        Ok(removed as u64)
+    }
+
     /// The user called `name` (ignoring ASCII case), if there is one.
     ///
     /// # Errors
@@ -63,11 +115,13 @@ impl Store {
     }
 
     /// A new device for `user`, valid until `expires_at` (epoch ms). A user whose deletion has
-    /// begun gets none.
+    /// begun gets none. For tests: it makes a device without a checked password; sign-in goes
+    /// through [`crate::AccountSecrets::add_device`].
     ///
     /// # Errors
     /// [`StoreError::DeviceName`], [`StoreError::UnknownUser`] (also for a user being deleted), or
     /// a database error.
+    #[cfg(test)]
     pub fn add_device(
         &self,
         user: UserId,
@@ -127,14 +181,16 @@ impl Store {
             .transpose()
     }
 
-    /// Records that `device` was used now and keeps it valid until `expires_at`.
+    /// Records that `device` was used now and keeps it valid until `expires_at`. A device that is
+    /// revoked or expired, or whose user is being deleted, stays as it is.
     ///
     /// # Errors
     /// A database error.
     pub fn touch_device(&self, device: DeviceId, expires_at: u64) -> Result<(), StoreError> {
         lock(&self.conn).execute(
             "UPDATE devices SET last_seen_at = ?2, expires_at = max(expires_at, ?3)
-             WHERE id = ?1 AND revoked_at IS NULL",
+             WHERE id = ?1 AND revoked_at IS NULL AND expires_at > ?2
+               AND user_id IN (SELECT id FROM users WHERE deleting_at IS NULL)",
             params![
                 device.get(),
                 sql_ts(self.clock.now_ms()),
@@ -171,29 +227,10 @@ impl Store {
         user: UserId,
         keep: Option<DeviceId>,
     ) -> Result<Vec<DeviceId>, StoreError> {
-        let revoked: Vec<DeviceId> = {
-            let conn = lock(&self.conn);
-            let mut stmt = conn.prepare(
-                "UPDATE devices SET revoked_at = ?2
-                 WHERE user_id = ?1 AND revoked_at IS NULL AND id IS NOT ?3
-                 RETURNING id",
-            )?;
-            stmt.query_map(
-                params![
-                    user.get(),
-                    sql_ts(self.clock.now_ms()),
-                    keep.map(DeviceId::get)
-                ],
-                |row| row.get::<_, i64>(0),
-            )
-            .and_then(Iterator::collect::<Result<Vec<i64>, _>>)?
-            .into_iter()
-            .map(DeviceId::from_stored)
-            .collect()
-        };
-        for id in &revoked {
-            self.forget_session(*id)?;
-        }
+        let mut conn = lock(&self.conn);
+        let tx = write_tx(&mut conn)?;
+        let revoked = revoke_devices_in(&tx, user, keep, self.clock.now_ms())?;
+        tx.commit()?;
         Ok(revoked)
     }
 

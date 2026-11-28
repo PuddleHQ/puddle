@@ -15,6 +15,8 @@ const api = await vi.hoisted(async () => {
 });
 vi.mock("#lib/api/client.ts", () => ({ api }));
 const location = vi.hoisted(() => ({ path: "/settings/notifications" }));
+const nav = vi.hoisted(() => ({ goto: vi.fn() }));
+vi.mock("$app/navigation", () => ({ goto: nav.goto }));
 vi.mock("$app/state", () => ({
   page: {
     get url() {
@@ -29,8 +31,11 @@ import { PAGES, SETTINGS } from "#lib/settings/pages.ts";
 import { globalSettings } from "#lib/stores/global-settings.svelte.ts";
 import SettingsHost from "#lib/testing/SettingsHost.svelte";
 import Appearance from "./appearance/+page.svelte";
+import Credentials from "./credentials/+page.svelte";
 import Editor from "./editor/+page.svelte";
-import EditorAndGit from "./editor-and-git/+page.svelte";
+import EditorServer from "./editor-server/+page.svelte";
+import Environment from "./environment/+page.svelte";
+import Git from "./git/+page.svelte";
 import Network from "./network/+page.svelte";
 import Notifications from "./notifications/+page.svelte";
 import ThisComputer from "./this-computer/+page.svelte";
@@ -39,11 +44,14 @@ import Workspaces from "./workspaces/+page.svelte";
 const BY_PAGE = {
   appearance: Appearance,
   notifications: Notifications,
-  workspaces: Workspaces,
-  network: Network,
-  editor: Editor,
-  "editor-and-git": EditorAndGit,
   "this-computer": ThisComputer,
+  workspaces: Workspaces,
+  editor: Editor,
+  network: Network,
+  credentials: Credentials,
+  environment: Environment,
+  "editor-server": EditorServer,
+  git: Git,
 } as const;
 
 beforeEach(() => {
@@ -63,18 +71,28 @@ const open = async (pages: (typeof BY_PAGE)[keyof typeof BY_PAGE][]) => {
 };
 
 describe("the list of pages", () => {
-  it("lists the seven pages and marks the one that is open", async () => {
+  it("lists the ten pages under three headings and marks the one that is open", async () => {
     await open([Notifications]);
     const nav = screen.getByRole("navigation", { name: "Settings pages" });
     const links = within(nav).getAllByRole("link");
     expect(links.map((l) => l.textContent)).toEqual([
       "Appearance",
       "Notifications",
-      "Workspaces",
-      "Network",
-      "Editor",
-      "Editor and Git",
       "This computer",
+      "Resources and access",
+      "Editor",
+      "Network",
+      "Logins and credentials",
+      "Limits and environment",
+      "Editor server",
+      "Git and SSH",
+    ]);
+    expect(
+      Array.from(nav.querySelectorAll(".heading")).map((h) => h.textContent),
+    ).toEqual([
+      "Puddle",
+      "Defaults for new workspaces",
+      "Rules for all workspaces",
     ]);
     expect(links.map((l) => l.getAttribute("href"))).toEqual(
       PAGES.map((p) => p.href),
@@ -99,6 +117,53 @@ describe("the list of pages", () => {
   });
 });
 
+describe("the kind of the open page", () => {
+  it("opens each page with one sentence naming who its settings reach", async () => {
+    location.path = "/settings/appearance";
+    await open([Appearance]);
+    expect(
+      screen.getByText(/About Puddle on this computer\. No workspace sees/),
+    ).toBeInTheDocument();
+    cleanup();
+    location.path = "/settings/editor";
+    await open([Editor]);
+    expect(
+      screen.getByText(/Starting values for workspaces you create/),
+    ).toBeInTheDocument();
+    cleanup();
+    location.path = "/settings/git";
+    await open([Git]);
+    expect(
+      screen.getByText(
+        /Apply to every workspace, including the ones that exist/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows no sentence on a path that is no page", async () => {
+    location.path = "/settings/nowhere";
+    await open([Appearance]);
+    expect(screen.queryByText(/About Puddle on this computer/)).toBeNull();
+  });
+});
+
+describe("old links to a setting that moved", () => {
+  it("follows the setting to its new page, replacing the old entry", async () => {
+    location.path = "/settings/editor#set-zoom";
+    await open([Editor]);
+    expect(nav.goto).toHaveBeenCalledWith("/settings/this-computer#set-zoom", {
+      replaceState: true,
+    });
+  });
+
+  it("stays where it is for a setting on the open page", async () => {
+    nav.goto.mockClear();
+    location.path = "/settings/editor#set-editor-theme";
+    await open([Editor]);
+    expect(nav.goto).not.toHaveBeenCalled();
+  });
+});
+
 describe("the search", () => {
   it("lists the settings that match, each opening its page at the setting", async () => {
     await open([Notifications]);
@@ -108,8 +173,8 @@ describe("the search", () => {
     );
     const results = screen.getByRole("region", { name: "Search results" });
     const link = within(results).getByRole("link", { name: /Zoom shortcuts/ });
-    expect(link).toHaveAttribute("href", "/settings/editor-and-git#set-zoom");
-    expect(link).toHaveTextContent("Editor and Git");
+    expect(link).toHaveAttribute("href", "/settings/this-computer#set-zoom");
+    expect(link).toHaveTextContent("Puddle: This computer");
     expect(
       screen.queryByRole("navigation", { name: "Settings pages" }),
     ).toBeNull();

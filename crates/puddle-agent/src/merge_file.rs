@@ -33,6 +33,8 @@ use std::path::{Path, PathBuf};
 use puddle_types::{MAX_MERGE_FILE, MergeFormat, MergeSpec, Merged, unmerge};
 use serde::{Deserialize, Serialize};
 
+use crate::cli::UsageError;
+
 /// What the hook asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -69,7 +71,7 @@ impl Request {
     /// # Errors
     ///
     /// A usage message.
-    pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<Self, String> {
+    pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<Self, UsageError> {
         let args: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
         let request = |action, state: &str, key: &str, file: &str| Self {
             action,
@@ -82,12 +84,16 @@ impl Request {
                 let mode = u32::from_str_radix(mode, 8)
                     .ok()
                     .filter(|m| m & !0o7777 == 0)
-                    .ok_or_else(|| format!("bad mode {mode:?}\n{USAGE}"))?;
+                    .ok_or_else(|| UsageError::BadValue {
+                        what: "mode",
+                        value: (*mode).to_owned(),
+                        usage: USAGE,
+                    })?;
                 Ok(request(Action::Apply { mode }, state, key, file))
             }
             ["remove", state, key, file] => Ok(request(Action::Remove, state, key, file)),
             ["forget", state, key] => Ok(request(Action::Forget, state, key, "")),
-            _ => Err(USAGE.to_owned()),
+            _ => Err(UsageError::Shape(USAGE)),
         }
     }
 }
@@ -646,10 +652,14 @@ mod tests {
         assert!(
             Request::parse(&["apply", "/s", "/g", "/f", "9"])
                 .unwrap_err()
+                .to_string()
                 .contains("bad mode")
         );
         assert!(Request::parse(&["apply", "/s", "/g", "/f", "17777"]).is_err());
-        assert_eq!(Request::parse(&["nope"]).unwrap_err(), USAGE);
+        assert_eq!(
+            Request::parse(&["nope"]).unwrap_err(),
+            UsageError::Shape(USAGE)
+        );
     }
 
     fn ssh_request(dir: &Dir) -> Request {
@@ -746,7 +756,9 @@ mod tests {
         assert_eq!(run(&r, second.as_slice()).unwrap(), Outcome::Changed);
         assert_eq!(
             fs::read_to_string(&r.file).unwrap(),
-            format!("{image}# puddle: begin\ngithub.com ssh-ed25519 AAAA2\n# puddle: end\n")
+            format!(
+                "{image}# puddle: begin\n# managed by Puddle; hand edits between these markers are overwritten\ngithub.com ssh-ed25519 AAAA2\n# puddle: end\n"
+            )
         );
         // The guest removed the end marker: the next run repairs the file.
         let damaged = fs::read_to_string(&r.file)
@@ -757,7 +769,7 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&r.file).unwrap(),
             format!(
-                "{image}github.com ssh-ed25519 AAAA2\n# puddle: begin\ngithub.com ssh-ed25519 AAAA2\n# puddle: end\n"
+                "{image}github.com ssh-ed25519 AAAA2\n# puddle: begin\n# managed by Puddle; hand edits between these markers are overwritten\ngithub.com ssh-ed25519 AAAA2\n# puddle: end\n"
             )
         );
     }

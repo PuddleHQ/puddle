@@ -27,7 +27,7 @@
 #     files are there byte for byte, read through the newer runtime;
 #   - the older build also holds what a user builds up (crates/puddle-app/e2e/upgrade-state.mjs): a global allow
 #     rule, a workspace deny rule, a pending request, an environment variable and a secret, three settings, an
-#     identity and a file in /home/agent, and every GET of the playbook is dumped; after the quit and the upgrade
+#     identity and a file in the workspace folder, and every GET of the playbook is dumped; after the quit and the upgrade
 #     every dump is equal, the build is not older, the guest sees the variable, the stand-in and the file, approving
 #     the kept request lets the guest's retry return 200, the editor's server answers, and each main screen loads
 #     with no error alert;
@@ -36,8 +36,19 @@
 #   - with -UpgradeMsi, an upgrade while the program runs, and again with a workspace running, is
 #     refused (the old install byte for byte as it was, nothing queued for a restart, the message
 #     in the log); once Puddle is quit the upgrade goes through.
-# Usage: pwsh ci/msi-install-test.ps1 -Msi <first.msi> [-UpgradeMsi <newer.msi>] [-LogDir <dir>]
-#        pwsh ci/msi-install-test.ps1 -BaselineMsi <older.msi> -UpgradeMsi <newer.msi> [-LogDir <dir>] [-PlantBreakage drop-table|empty-env|empty-pending]
+#   - the first install is made the way a person makes it, with the installer's own dialogs, driven
+#     through UI Automation: each dialog's text is logged (msi-install-dialogs.log), none has a raw
+#     "[1]" placeholder, and the whole install ends in under 60 s; the Start menu shortcut exists, targets
+#     puddle-app.exe and opens a window on "Welcome to Puddle"; an interactive upgrade while the program
+#     runs shows the refusal in a dialog that UI Automation reads; a launch with --at-login (the command
+#     of the sign-in entry) has a tray icon and no visible window; an uninstall with a stopped workspace
+#     that holds files keeps the data folder and the volume, and a reinstall lists the same workspace id
+#     with its files byte for byte.
+# Usage: pwsh ci/msi-install-test.ps1 -Msi <first.msi> [-UpgradeMsi <newer.msi>] [-LogDir <dir>] [-PlantFootprint <breakage>]
+# -PlantFootprint (no-shortcut, wrong-shortcut-target, visible-at-login, data-lost, slow-install, no-refusal, kill-skipped)
+# makes one of those footprint checks see the breakage it guards against; the run must then fail (the msi
+# workflow's dispatch input plant_footprint runs it so and expects the failure).
+#        pwsh ci/msi-install-test.ps1 -BaselineMsi <older.msi> -UpgradeMsi <newer.msi> [-LogDir <dir>] [-PlantBreakage drop-table|empty-env|empty-pending|route-throws]
 # -PlantBreakage damages the older build's data after its quit, as a broken migration would; the run must then
 # fail (the msi workflow's dispatch input plant_breakage runs it so and expects the failure).
 #        pwsh ci/msi-install-test.ps1 -SelfTest      (the helpers' own checks; needs no MSI)
@@ -53,7 +64,8 @@ param(
     [Parameter(Mandatory = $true, ParameterSetName = 'CrossVersion')][string]$UpgradeMsi = '',
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'CrossVersion')][string]$LogDir = $(if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }),
-    [Parameter(ParameterSetName = 'CrossVersion')][ValidateSet('', 'drop-table', 'empty-env', 'empty-pending')][string]$PlantBreakage = '',
+    [Parameter(ParameterSetName = 'CrossVersion')][ValidateSet('', 'drop-table', 'empty-env', 'empty-pending', 'route-throws')][string]$PlantBreakage = '',
+    [Parameter(ParameterSetName = 'Run')][ValidateSet('', 'no-shortcut', 'wrong-shortcut-target', 'visible-at-login', 'data-lost', 'slow-install', 'no-refusal', 'kill-skipped')][string]$PlantFootprint = '',
     [Parameter(Mandatory = $true, ParameterSetName = 'SelfTest')][switch]$SelfTest
 )
 $ErrorActionPreference = 'Stop'
@@ -141,7 +153,7 @@ function Find-PlaceholderRows($Rows) {
 # own plain text in the package (crates/puddle-app/wix/main.wxs), or Windows Installer shows its
 # built-in "Folder: [1]" style text for it.
 $ActionsWithText = @('InstallFiles', 'CreateFolders', 'RemoveFolders', 'RemoveFiles', 'CreateShortcuts', 'RemoveShortcuts',
-    'WriteRegistryValues', 'RemoveRegistryValues', 'RegisterProduct', 'PublishProduct', 'PublishFeatures', 'UnpublishFeatures',
+    'WriteRegistryValues', 'RemoveRegistryValues', 'RegisterUser', 'RegisterProduct', 'PublishProduct', 'PublishFeatures', 'UnpublishFeatures',
     'RemoveExistingProducts', 'ProcessComponents', 'FindRelatedProducts', 'AppSearch', 'MigrateFeatureStates', 'RollbackCleanup',
     'InstallAdminPackage')
 
@@ -303,6 +315,9 @@ function Get-PendingReplacements {
     @($queued | Where-Object { $_ -and $_.IndexOf($InstallDir, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
 }
 
+# The sentence the installer shows (and logs) when it refuses to run over a running Puddle (main.wxs, PuddleRunning).
+$RefusalText = 'Puddle is running. Quit Puddle from its tray icon (this stops your workspaces), then run this installer again.'
+
 # The refusal: the newer package changes nothing while the program or a workspace runs. $Why
 # names the situation for the messages. The caller keeps the program (and workspace) running.
 function Assert-UpgradeRefused([string]$UpgradeMsi, [string]$Why, [string]$LogName, [string]$FirstVersion) {
@@ -311,7 +326,7 @@ function Assert-UpgradeRefused([string]$UpgradeMsi, [string]$Why, [string]$LogNa
         $_.Path -and $_.Path.StartsWith($InstallDir, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object Id | Sort-Object)
     $refused = Invoke-MsiexecRefused @('/i', "`"$UpgradeMsi`"") $LogName
     Expect ($refused.Code -ne 0) "the upgrade went ahead $Why; it must refuse"
-    Expect ($refused.Log.Contains('Puddle is running. Quit Puddle from its tray icon (this stops your workspaces), then run this installer again.')) "the refusal $Why does not say to quit Puddle; see $(Join-Path $LogDir $LogName)"
+    Expect ($refused.Log.Contains($RefusalText)) "the refusal $Why does not say to quit Puddle; see $(Join-Path $LogDir $LogName)"
     $same = Get-TreeDigest
     Expect (($same -join "`n") -eq ($digest -join "`n")) "the refused upgrade $Why changed the install folder"
     $entries = @(Get-UninstallEntries)
@@ -348,10 +363,13 @@ function Stop-Installed {
 }
 
 # Starts the installed program, waits for its connection file, and returns the API's connection.
-function Start-Installed {
+function Start-Installed([string[]]$Arguments = @()) {
     $connectionFile = Join-Path $DataDir 'api.json'
     Remove-Item -LiteralPath $connectionFile -Force -ErrorAction SilentlyContinue
-    $app = Start-Process -FilePath (Join-Path $InstallDir 'puddle-app.exe') -PassThru
+    $start = @{ FilePath = (Join-Path $InstallDir 'puddle-app.exe'); PassThru = $true }
+    if ($Arguments.Count -gt 0) { $start.ArgumentList = $Arguments }
+    $app = Start-Process @start
+    $script:StartedAppPid = $app.Id
     $deadline = (Get-Date).AddSeconds(120)
     while (-not (Test-Path -LiteralPath $connectionFile)) {
         if ($app.HasExited) { Fail "puddle-app exited with $($app.ExitCode) before it wrote $connectionFile" }
@@ -602,247 +620,12 @@ function Test-WorkspaceLifecycle($Conn) {
     Remove-Workspace $Conn $wsId $name
 }
 
-# The buttons of the notification area (the tray) named after Puddle: what a person sees of a
-# running app beside the clock. Windows 11 puts them in a XAML island (class SystemTray.NormalButton),
-# older shells in a toolbar of Shell_TrayWnd or of the overflow window. A new icon may sit in the
-# hidden-icons overflow, which UI Automation lists only while it is open, so the overflow is opened
-# first (the "Show Hidden Icons" button, as a person would) when the taskbar has one.
-# With -Hover the pointer passes over each icon found (Windows prunes the icon of a program that is
-# gone when the pointer reaches it). Returns the icons found before any hover; the overflow is
-# closed again.
-function Get-PuddleTrayIcons([switch]$Hover) {
-    Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
-    $A = [System.Windows.Automation.AutomationElement]
-    $buttons = New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
-    $trays = @('Shell_TrayWnd', 'NotifyIconOverflowWindow', 'TopLevelWindowForOverflowXamlIsland')
-    $find = {
-        @($A::RootElement.FindAll('Children', [System.Windows.Automation.Condition]::TrueCondition) |
-            Where-Object { $_.Current.ClassName -in $trays } |
-            ForEach-Object { $_.FindAll('Descendants', $buttons) })
-    }
-    $all = & $find
-    $chevron = @($all | Where-Object { $_.Current.Name -eq 'Show Hidden Icons' }) | Select-Object -First 1
-    if ($chevron) {
-        $chevron.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
-        Start-Sleep -Seconds 2
-        $all = & $find
-    }
-    $icons = @($all | Where-Object { $_.Current.Name -match '^Puddle(:|$)' })
-    if ($Hover) {
-        foreach ($icon in $icons) {
-            $r = $icon.Current.BoundingRectangle
-            [void][TrayCursor]::SetCursorPos([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2))
-            Start-Sleep -Milliseconds 500
-        }
-        [void][TrayCursor]::SetCursorPos(0, 0)
-    }
-    if ($chevron) {
-        $chevron.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
-        Start-Sleep -Milliseconds 500
-    }
-    $icons
-}
-
-Add-Type -TypeDefinition @'
-using System.Runtime.InteropServices;
-public static class TrayCursor {
-  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
-}
-'@
-
-# Work worth losing: a repository with 21 commits, a staged and
-# an unstaged file, in the workspace's folder, synced to the volume.
-function Get-MakeWorkScript([string]$Folder) {
-    "set -e; cd $Folder; git init -q -b main qa-crash; cd qa-crash; git config user.name 'Puddle Test'; " +
-    "git config user.email test@puddle.invalid; git config commit.gpgsign false; " +
-    "echo 0 > qa.txt; git add qa.txt; git commit -qm 'qa 0'; " +
-    "for i in `$(seq 1 20); do echo `$i >> qa.txt; git add qa.txt; git commit -qm `"qa `$i`"; done; " +
-    "echo staged > staged.txt; git add staged.txt; echo unstaged > unstaged.txt; sync; " +
-    "echo count `$(git rev-list --count HEAD)"
-}
-
-function Get-ReadWorkScript([string]$Folder) {
-    "cd $Folder/qa-crash || exit 3; echo count `$(git rev-list --count HEAD); " +
-    "if git fsck --full >/tmp/fsck.out 2>&1; then echo 'fsck clean'; else echo 'fsck failed'; cat /tmp/fsck.out; fi; " +
-    "if git diff --cached --name-only | grep -qx staged.txt; then echo 'staged kept'; else echo 'staged lost'; fi; " +
-    "if [ -f unstaged.txt ]; then echo 'unstaged kept'; else echo 'unstaged lost'; fi"
-}
-
-# A hard kill of the app, with no person: the installed app (puddle-app.exe) is ended with
-# TerminateProcess (Stop-Process -Force), as Task Manager's End task does, while a workspace with
-# work in it runs. Every runtime process it started (msb and the VMs) is gone within 5 s: the
-# kill-on-close job object ends them. The tray icon goes (Windows prunes a dead program's icon when
-# the pointer passes over it, which is what a person sees, so the test passes the pointer over it).
-# The next start shows the workspace crashed or stopped, a start runs it, and the repository has its
-# 21 commits, a clean fsck, and its staged file still staged or a problem that says it was lost.
-function Test-HardKill {
-    $name = 'qa-crash'
-    $conn = Start-Installed
-    $wsId = New-Workspace $conn $name
-    Wait-WorkspaceRunning $conn $wsId $name $CreateBudgetSec | Out-Null
-    $folder = "/workspaces/$wsId"
-    $made = Invoke-InWorkspace $wsId (Get-MakeWorkScript $folder) 'making the work'
-    Expect ($made -match '(?m)^count 21\s*$') "the work was not made: $made"
-    $runtime = @(Get-RuntimeProcesses)
-    Expect ($runtime.Count -gt 0) 'no runtime process runs with the workspace, so the kill below would prove nothing'
-    Expect (@(Get-PuddleTrayIcons).Count -ge 1) 'the running app shows no tray icon, so the check after the kill would prove nothing'
-    $app = @(Get-Process -Name 'puddle-app' -ErrorAction Stop | Sort-Object StartTime)[0]
-
-    Step "TerminateProcess on puddle-app.exe ($($app.Id)) with $($runtime.Count) runtime processes running"
-    $clock = [System.Diagnostics.Stopwatch]::StartNew()
-    Stop-Process -Id $app.Id -Force
-    $ids = @($runtime | ForEach-Object { $_.Id })
-    Wait-Until "runtime processes still run 5 s after the kill: $(($runtime | ForEach-Object { "$($_.Name) $($_.Id)" }) -join ', ')" 5 {
-        @(Get-Process -Id $ids -ErrorAction SilentlyContinue).Count -eq 0
-    } -PollMs 100 | Out-Null
-    Write-Host "every runtime process was gone $([math]::Round($clock.Elapsed.TotalSeconds, 1)) s after the kill"
-    Expect (@(Get-Process -Name 'puddle-app' -ErrorAction SilentlyContinue).Count -eq 0) 'a puddle-app process is left after the kill'
-    $ghosts = @(Get-PuddleTrayIcons -Hover)
-    if ($ghosts.Count -gt 0) {
-        Write-Host "INFO: $($ghosts.Count) dead tray icon(s) stayed until the pointer passed over them (a Windows habit)"
-    }
-    Wait-Until 'a tray icon of the killed app is left' 10 { @(Get-PuddleTrayIcons).Count -eq 0 } -PollMs 500 | Out-Null
-
-    Step 'the next start shows the workspace crashed or stopped, and a start brings back the work'
-    $conn = Start-Installed
-    try {
-        $after = Get-WorkspaceNow $conn $wsId
-        Expect ($null -ne $after) "the workspace $wsId is not listed after the kill"
-        Expect ($after.status -in @('crashed', 'stopped')) "after the kill the workspace shows $($after.status)"
-        Expect (@(Get-PuddleTrayIcons).Count -eq 1) "the started app shows $(@(Get-PuddleTrayIcons).Count) tray icons, not one"
-        Invoke-PuddleApi $conn 'Post' "/api/workspaces/$wsId/start" | Out-Null
-        Wait-WorkspaceRunning $conn $wsId $name $CreateBudgetSec | Out-Null
-        $read = Invoke-InWorkspace $wsId (Get-ReadWorkScript $folder) 'reading the work'
-        Write-Host $read
-        Expect ($read -match '(?m)^count 21\s*$') "commits were lost in the kill: $read"
-        Expect ($read -match '(?m)^fsck clean\s*$') "git fsck finds damage after the kill: $read"
-        if ($read -match '(?m)^staged lost\s*$') {
-            $problems = @((Invoke-PuddleApi $conn 'Get' '/api/problems').problems)
-            $said = @($problems | Where-Object { $_.workspace -eq $wsId -and $_.detail -match 'no longer staged' })
-            Expect ($said.Count -gt 0) "the staged file was lost and no problem says so: $($problems | ConvertTo-Json -Compress -Depth 4)"
-        }
-        Stop-Workspace $conn $wsId $name
-        Remove-Workspace $conn $wsId $name
-    } finally {
-        Stop-Installed
-    }
-}
-
-# Makes a workspace from the stock image over the API and returns the id Puddle gave it.
-function New-Workspace($Conn, [string]$Name) {
-    $made = Invoke-PuddleApi $Conn 'Post' '/api/workspaces' @{ name = $Name }
-    Expect ($made.id -cmatch '^[a-z][0-9a-z]{7}$') "the create answered no generated id: $($made | ConvertTo-Json -Compress)"
-    Expect ($made.name -eq $Name) "the create answered the name $($made.name), not $Name"
-    $made.id
-}
-
-# The files the upgrade must keep, in the folder $Dir of the workspace's volume: a token the
-# test chose and 4 MiB of random bytes. The script fails unless $Dir's parent is a mount (the
-# volume, not the sandbox's own disk), and prints the token and the bytes' SHA-256.
-function Get-WriteFilesScript([string]$VolumeRoot, [string]$Token) {
-    $dir = "$VolumeRoot/upgrade-check"
-    "set -e; grep -q ' $VolumeRoot ' /proc/mounts || { echo '$VolumeRoot is not a mount'; exit 1; }; " +
-    "mkdir -p $dir; echo $Token > $dir/token.txt; head -c 4194304 /dev/urandom > $dir/random.bin; sync; " +
-    "cat $dir/token.txt; sha256sum $dir/random.bin"
-}
-
-# Reads back what Get-WriteFilesScript wrote.
-function Get-ReadFilesScript([string]$VolumeRoot) {
-    $dir = "$VolumeRoot/upgrade-check"
-    "set -e; cat $dir/token.txt; sha256sum $dir/random.bin"
-}
-
-# The token and the SHA-256 from the output of either script, or $null for what is missing.
-function Read-FilesReport([string]$Output) {
-    $lines = @($Output -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-    $sha = $lines | Where-Object { $_ -match '^([0-9a-f]{64})\s' } | ForEach-Object { $Matches[1] } | Select-Object -First 1
-    $token = $lines | Where-Object { $_ -match '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' } | Select-Object -First 1
-    [pscustomobject]@{ Token = $token; Sha256 = $sha }
-}
-
-# Fails unless the package version $To is newer than $From: Windows Installer only upgrades to a
-# higher version, so anything else would test a downgrade or a reinstall.
-function Assert-NewerVersion([string]$From, [string]$To) {
-    Expect ([version]$To -gt [version]$From) "the upgrade goes from $From to $To, which is not newer"
-}
-
-# Runs crates/puddle-app/e2e/upgrade-state.mjs (the state an upgrade must keep) against the running
-# installed program; fails when any of its checks fails. Its lines are the job's log.
-function Invoke-UpgradeState([string[]]$Arguments, [string]$Phase) {
-    $script = Join-Path $PSScriptRoot '..\crates\puddle-app\e2e\upgrade-state.mjs'
-    Expect (Test-Path -LiteralPath $script) "no $script"
-    Step "upgrade state, $Phase"
-    $app = Get-Process -Name 'puddle-app' -ErrorAction SilentlyContinue | Select-Object -First 1
-    $env:PUDDLE_APP_PID = if ($app) { "$($app.Id)" } else { '' }
-    $env:PUDDLE_INSTALL_DIR = $InstallDir
-    $lines = @(& node $script @Arguments 2>&1 | ForEach-Object { "$_" })
-    $code = $LASTEXITCODE
-    $lines | ForEach-Object { Write-Host $_ }
-    $lines | Set-Content -LiteralPath (Join-Path $LogDir "upgrade-state-$Phase.log")
-    Expect ($code -eq 0) "the upgrade-state $Phase step failed (exit $code): $(($lines | Where-Object { $_ -match '^FAIL' }) -join ' | ')"
-}
-
-# The upgrade a user makes: from the older build $Baseline to $Upgrade, with a workspace that
-# holds files. $Policy is 'run' or 'skip' (no usable hypervisor: nothing here can run).
-function Test-UpgradeFromBaseline([string]$Baseline, [string]$Upgrade, [string]$Policy) {
-    if ($Policy -ne 'run') {
-        Write-Host '::warning title=upgrade test skipped::the upgrade with a workspace needs a running workspace, and this machine boots none'
-        return
-    }
-    Invoke-Msiexec @('/i', "`"$Baseline`"") 'msi-baseline-install.log'
-    $first = Assert-InstalledLayout -Baseline
-    Write-Host "installed the baseline, version $($first.Version)"
-
-    Step 'the older build makes a workspace and writes files to its volume, then stops it'
-    $name = 'upgrade-test'
-    $StateDir = Join-Path $LogDir 'upgrade-state'
-    $token = [guid]::NewGuid().ToString()
-    $conn = Start-Installed
-    try {
-        $wsId = New-Workspace $conn $name
-        Wait-WorkspaceRunning $conn $wsId $name $CreateBudgetSec | Out-Null
-        $volume = "/workspaces/$wsId"
-        $wrote = Read-FilesReport (Invoke-InWorkspace $wsId (Get-WriteFilesScript $volume $token) 'writing the files')
-        Expect ($wrote.Token -eq $token -and $wrote.Sha256) "writing the files in $wsId printed no token or checksum"
-        Write-Host "wrote $volume/upgrade-check (random.bin sha256 $($wrote.Sha256))"
-        Invoke-UpgradeState @('before', $StateDir, $wsId) 'before'
-        Stop-Workspace $conn $wsId $name
-    } finally {
-        Stop-Installed
-    }
-    if ($PlantBreakage) { Invoke-UpgradeState @('plant', $PlantBreakage) 'plant' }
-
-    Step 'upgrade to this build'
-    Invoke-Msiexec @('/i', "`"$Upgrade`"") 'msi-upgrade.log'
-    $second = Assert-InstalledLayout
-    Assert-NewerVersion $first.Version $second.Version
-    Write-Host "upgraded $($first.Version) to $($second.Version)"
-    Assert-InstalledWorks $Policy
-
-    Step 'the newer build lists the workspace, starts it, and its files are there'
-    $conn = Start-Installed
-    try {
-        $w = Get-WorkspaceNow $conn $wsId
-        Expect ($null -ne $w) "the upgraded program does not list workspace ${wsId}: $((Invoke-PuddleApi $conn 'Get' '/api/workspaces') | ConvertTo-Json -Depth 4 -Compress)"
-        Expect ($w.name -eq $name) "workspace $wsId is called '$($w.name)' after the upgrade, not '$name'"
-        Expect ($w.status -eq 'stopped') "workspace $wsId is '$($w.status)' after the upgrade, not stopped"
-        $clock = [System.Diagnostics.Stopwatch]::StartNew()
-        Wait-WorkspaceRunning $conn $wsId $name $CreateBudgetSec | Out-Null
-        Write-Host "workspace $name ($wsId) running $([math]::Round($clock.Elapsed.TotalSeconds)) s after the start"
-        $read = Read-FilesReport (Invoke-InWorkspace $wsId (Get-ReadFilesScript $volume) 'reading the files')
-        Expect ($read.Token -eq $token) "the token file in $wsId changed or is gone after the upgrade: '$($read.Token)', expected $token"
-        Expect ($read.Sha256 -eq $wrote.Sha256) "random.bin in $wsId changed after the upgrade: sha256 $($read.Sha256), was $($wrote.Sha256)"
-        Write-Host "the files in $wsId are intact after the upgrade"
-        Invoke-UpgradeState @('after', $StateDir, $wsId) 'after'
-        Stop-Workspace $conn $wsId $name
-        Remove-Workspace $conn $wsId $name
-    } finally {
-        Stop-Installed
-    }
-
-    Invoke-Msiexec @('/x', "`"$Upgrade`"") 'msi-uninstall.log'
-    Expect (-not (Test-Path -LiteralPath $InstallDir)) "$InstallDir is still there after the uninstall"
-}
+# The phases live in ci/msi-install-test/: dot-sourced here, at script scope, so they share the
+# parameters and variables above and every function they define is visible to the code below.
+. "$PSScriptRoot/msi-install-test/workspace.ps1"
+. "$PSScriptRoot/msi-install-test/upgrade.ps1"
+. "$PSScriptRoot/msi-install-test/dialogs.ps1"
+. "$PSScriptRoot/msi-install-test/uninstall.ps1"
 
 if ($SelfTest) {
     $failures = 0
@@ -908,6 +691,40 @@ if ($SelfTest) {
     Check 'a newer package version passes' (-not (Throws { Assert-NewerVersion '0.0.0' '0.0.1' } '.'))
     Check 'the same version is not an upgrade' (Throws { Assert-NewerVersion '0.2.0' '0.2.0' } 'not newer')
     Check 'versions compare as numbers' (Throws { Assert-NewerVersion '0.10.0' '0.9.1' } 'not newer')
+    # The installer's dialogs: which button a person presses, and what is wrong with what they read.
+    function Btn([string]$Name, [bool]$Enabled = $true) { [pscustomobject]@{ Name = $Name; Enabled = $Enabled } }
+    function Dlg([string]$Title, [string[]]$Texts, $Buttons = @()) { [pscustomobject]@{ Title = $Title; Texts = $Texts; Buttons = $Buttons } }
+    Check 'the first page gets Install, the Default setup' ((Select-DialogButton @((Btn '&Install'), (Btn '&Custom setup'), (Btn 'Cancel'))).Name -eq '&Install')
+    Check 'the Custom setup run presses Custom setup on the first page' ((Select-DialogButton @((Btn '&Install'), (Btn '&Custom setup'), (Btn 'Cancel')) $CustomSetupButtonOrder).Name -eq '&Custom setup')
+    Check 'the Custom setup run presses Install on the custom page' ((Select-DialogButton @((Btn '&Back'), (Btn '&Install'), (Btn 'Cancel')) $CustomSetupButtonOrder).Name -eq '&Install')
+    Check 'the finish page gets Finish' ((Select-DialogButton @((Btn '&Back' $false), (Btn '&Finish'), (Btn 'Cancel' $false))).Name -eq '&Finish')
+    Check 'a message gets OK' ((Select-DialogButton @((Btn 'OK'))).Name -eq 'OK')
+    Check 'the progress page gets no button (Cancel is never pressed)' ($null -eq (Select-DialogButton @((Btn '&Back' $false), (Btn '&Next >' $false), (Btn 'Cancel'))))
+    $first = Dlg 'Puddle Setup' @('Install Puddle', 'Puddle runs your coding agents') @((Btn '&Install'), (Btn '&Custom setup'), (Btn 'Cancel'))
+    $customPage = Dlg 'Puddle Setup' @('Custom setup', 'Install Puddle in this folder:') @((Btn '&Back'), (Btn '&Install'), (Btn 'Cancel'))
+    $copying = Dlg 'Puddle Setup' @("Copying Puddle's files. This takes about a minute.")
+    $done = Dlg 'Puddle Setup' @('Puddle is installed', 'The setup log is saved here:', 'C:\Temp\MSI1.LOG') @((Btn 'Open the &log'), (Btn '&Finish'))
+    $pages = @($first, $copying, $done)
+    Check 'a plain installer run has no dialog problem' (@(Find-DialogProblems $pages).Count -eq 0)
+    Check 'a run with too few dialogs is named' ((@(Find-DialogProblems $pages[0..1]) -join ';') -match 'only 2 dialogs')
+    Check 'the Default setup run passes the wizard check' (@(Find-WizardProblems $pages 'default').Count -eq 0)
+    Check 'the Custom setup run passes the wizard check' (@(Find-WizardProblems @($first, $customPage, $copying, $done) 'custom').Count -eq 0)
+    Check 'a Custom setup run that skipped its page is named' ((@(Find-WizardProblems $pages 'custom') -join ';') -match 'never showed its page')
+    Check 'a Default setup run that shows the Custom setup page is named' ((@(Find-WizardProblems @($first, $customPage, $copying, $done) 'default') -join ';') -match 'showed the Custom setup page')
+    Check 'a first page without Custom setup is named' ((@(Find-WizardProblems @((Dlg 'Puddle Setup' @('Install Puddle') @((Btn '&Install'))), $copying, $done) 'default') -join ';') -match 'does not offer Install and Custom setup')
+    Check "WixUI's own folder page is named" ((@(Find-WizardProblems ($pages + (Dlg 'Puddle Setup' @('Destination Folder'))) 'default') -join ';') -match "WixUI's own page")
+    Check 'a run that never says installed is named' ((@(Find-WizardProblems @($first, $copying) 'default') -join ';') -match "Puddle is installed")
+    Check 'a dialog with no text is named' ((@(Find-DialogProblems ($pages + (Dlg 'Puddle Setup' @()))) -join ';') -match 'shows no text')
+    Check 'the installer own script-generation line is not a raw placeholder' (@(Find-DialogProblems ($pages + (Dlg 'Puddle Setup' @('Generating script operations for action: [1]')))).Count -eq 0)
+    Check 'a raw placeholder in a dialog is named' ((@(Find-DialogProblems ($pages + (Dlg 'Puddle Setup' @('File: [1],  Directory: [9]')))) -join ';') -match 'raw placeholder')
+    Check 'a run that never says Puddle is named' ((@(Find-DialogProblems @((Dlg 'Setup' @('a')), (Dlg 'Setup' @('b')), (Dlg 'Setup' @('c')), (Dlg 'Setup' @('d')))) -join ';') -match 'names Puddle')
+    Check 'the refusal is found in a message box' (Test-RefusalShown @((Dlg 'Puddle' @("$RefusalText"))))
+    Check 'a wrapped refusal is found' (Test-RefusalShown @((Dlg 'Puddle' @($RefusalText.Replace(', then', ",`r`nthen")))))
+    Check 'no refusal is found when the upgrade went through' (-not (Test-RefusalShown $pages))
+    Check 'a shortcut to the program passes' ($null -eq (Find-ShortcutProblem 'C:\x\Puddle\puddle-app.exe' 'C:\X\Puddle\puddle-app.exe'))
+    Check 'a shortcut to another program is named' ((Find-ShortcutProblem 'C:\x\Puddle\puddle.exe' 'C:\x\Puddle\puddle-app.exe') -match 'opens .*puddle.exe, not')
+    Check 'a shortcut with no target is named' ((Find-ShortcutProblem '' 'C:\x') -match 'no target')
+    Check 'this process sees its own visible windows as none when it has none' (@([PuddleWin]::VisibleWindows(0)).Count -eq 0)
     # The install-folder digest: equal for the same bytes, different when one byte or one file changes.
     $savedInstallDir = $InstallDir
     $InstallDir = Join-Path ([IO.Path]::GetTempPath()) "msi-digest-$([guid]::NewGuid())"
@@ -991,14 +808,25 @@ if ($BaselineMsi) {
     return
 }
 
-Invoke-Msiexec @('/i', "`"$Msi`"") 'msi-install.log'
+Install-WithUi $Msi 'msi-install.log' $PlantFootprint
+if (-not $PlantFootprint) { Test-CustomSetupAndLog $Msi }
 $first = Assert-InstalledLayout
+if ($PlantFootprint -eq 'no-shortcut') { Remove-Item -LiteralPath $StartMenuLink -Force }
+if ($PlantFootprint -eq 'wrong-shortcut-target') {
+    $link = (New-Object -ComObject WScript.Shell).CreateShortcut($StartMenuLink)
+    $link.TargetPath = Join-Path $InstallDir 'puddle.exe'
+    $link.Save()
+}
+Step 'the Start menu shortcut exists and opens the installed program'
+Assert-StartMenuShortcut
 Step 'the program and its Start menu shortcut carry the duck icon'
 Assert-InstalledIcon
 Write-Host "installed version $($first.Version) in $InstallDir"
 # The program must report the version of the package it came in (the kept MSI is named by it).
 $reported = (& (Join-Path $InstallDir 'puddle.exe') --version) -join ' '
 Expect ($reported -match [regex]::Escape($first.Version)) "puddle --version says '$reported' for package version $($first.Version)"
+Step 'the Start menu shortcut opens a window on "Welcome to Puddle"'
+Test-ShortcutOpensWelcome
 Assert-InstalledWorks $policy
 
 if ($policy -eq 'run') {
@@ -1032,12 +860,19 @@ try {
     Stop-Installed
 }
 
+Step 'a launch with the sign-in entry command (--at-login) shows the tray icon and no window'
+Test-AtLoginLaunch $PlantFootprint
+
 $current = $Msi
 if ($UpgradeMsi) {
     Step 'the upgrade refuses while the program, or a workspace, runs; then it goes through once Puddle is quit'
     $conn = Start-Installed
     try {
         Assert-UpgradeRefused $UpgradeMsi 'with the program running' 'msi-upgrade-refused-app.log' $first.Version
+        # What the same refusal looks like to a person: a dialog whose text UI Automation reads.
+        # -PlantFootprint no-refusal quits the program first, so the installer has nothing to refuse.
+        if ($PlantFootprint -eq 'no-refusal') { Stop-Installed }
+        Assert-UpgradeRefusalDialog $UpgradeMsi $first.Version
         if ($policy -eq 'run') {
             $name = 'refusal-test'
             $wsId = New-Workspace $conn $name
@@ -1104,4 +939,6 @@ Expect ($unexpected.Count -eq 0) "the uninstall left: $($unexpected -join '; ')"
 $removed = @($before | Where-Object { $after -notcontains $_ })
 Write-Host "left behind on purpose: $(($added | ForEach-Object { $_ -replace '^\w+ ', '' }) -join ', ')"
 Write-Host "gone from the machine since the start (not Puddle's): $($removed.Count)"
+if ($policy -eq 'run') { Test-UninstallKeepsData $current $PlantFootprint }
+Test-UninstallRunningApp $current $policy
 Step 'ok'

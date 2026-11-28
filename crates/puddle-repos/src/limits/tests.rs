@@ -155,6 +155,45 @@ fn a_hosts_message_is_cut_short() {
 }
 
 #[test]
+fn a_reset_far_in_the_future_waits_a_few_hours_at_most() {
+    let far = reply(
+        403,
+        &[
+            ("x-ratelimit-remaining", "0"),
+            ("x-ratelimit-reset", "99999999999"),
+        ],
+        PRIMARY,
+    );
+    assert_eq!(
+        github(&far, NOW, 1),
+        Verdict::Limited {
+            until_ms: NOW + MAX_RESET_MS,
+            primary: true
+        }
+    );
+    // A value that is not a number is no reset: the back-off rule answers.
+    let junk = reply(
+        403,
+        &[
+            ("x-ratelimit-remaining", "0"),
+            ("x-ratelimit-reset", "soon"),
+        ],
+        PRIMARY,
+    );
+    assert_eq!(
+        github(&junk, NOW, 1),
+        Verdict::Limited {
+            until_ms: NOW + MIN_WAIT_MS,
+            primary: false
+        }
+    );
+    // The same bound applies to a success that spent the budget.
+    assert_eq!(bounded_reset(u64::MAX, NOW), NOW + MAX_RESET_MS);
+    assert_eq!(bounded_reset(NOW - 5, NOW), NOW + 1000);
+    assert_eq!(bounded_reset(NOW + 60_000, NOW), NOW + 60_000);
+}
+
+#[test]
 fn a_success_that_spent_the_budget_blocks_until_the_reset() {
     let spent = reply(
         200,
@@ -177,17 +216,22 @@ fn azure_devops_takes_its_sign_in_page_for_a_rejected_token() {
     let json = [("content-type", "application/json; charset=utf-8")];
     assert_eq!(azure(&reply(200, &json, "{}"), NOW, 1), Verdict::Ok);
     let html = [("content-type", "text/html; charset=utf-8")];
+    let page = "<html><title>Azure DevOps Services | Sign In</title></html>";
+    assert_eq!(azure(&reply(200, &html, page), NOW, 1), Verdict::Rejected);
+    assert_eq!(azure(&reply(203, &html, page), NOW, 1), Verdict::Rejected);
+    // Not Azure's page: a proxy's block or sign-in page says nothing about the token.
+    let proxy = "<html><title>Blocked</title>Sign in to the company network</html>";
     assert_eq!(
-        azure(&reply(200, &html, "<html>"), NOW, 1),
-        Verdict::Rejected
+        azure(&reply(200, &html, proxy), NOW, 1),
+        Verdict::Other(200)
     );
     assert_eq!(
-        azure(&reply(203, &html, "<html>"), NOW, 1),
-        Verdict::Rejected
+        azure(&reply(203, &html, proxy), NOW, 1),
+        Verdict::Other(203)
     );
     assert_eq!(azure(&reply(302, &[], ""), NOW, 1), Verdict::Rejected);
     assert_eq!(azure(&reply(401, &[], ""), NOW, 1), Verdict::Rejected);
-    assert_eq!(azure(&reply(200, &[], "{}"), NOW, 1), Verdict::Rejected);
+    assert_eq!(azure(&reply(200, &[], "{}"), NOW, 1), Verdict::Other(200));
 }
 
 #[test]

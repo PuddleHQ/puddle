@@ -9,6 +9,7 @@
     type RuleSetEntry,
   } from "#lib/rules/sets.ts";
   import { workspaces as workspaceStore } from "#lib/stores/workspaces.svelte.ts";
+  import HostName from "./HostName.svelte";
   import SetChip from "./SetChip.svelte";
   import ThreeWaySwitch from "./ThreeWaySwitch.svelte";
   import "#lib/theme/controls.css";
@@ -113,12 +114,9 @@
     <h3 id="{id}-name">
       <SetChip name={set.name} fill={set.fill} variant="chip" />
     </h3>
-    <span class="chip">{mine ? "Yours" : "Built in"}</span>
-    {#if does !== null}
-      <span class="chip {does === 'Allows' ? 'allow' : 'deny'}">{does}</span>
-    {/if}
+    {#if does !== null}<span class="meta wrap">{does}</span>{/if}
     {#if set.changed_at !== null}
-      <span class="chip warn">Updated by Puddle {changed(set.changed_at)}</span>
+      <span class="meta">Updated by Puddle {changed(set.changed_at)}</span>
     {/if}
   </header>
   {#if set.description !== ""}<p class="desc">{set.description}</p>{/if}
@@ -143,17 +141,18 @@
         type="button"
         class="btn"
         onclick={() => onSwitch(set, null, null)}
-        >Back to the default ({set.default_on ? "on" : "off"})</button
       >
+        Back to the default ({set.default_on ? "on" : "off"})
+      </button>
     {/if}
   </div>
 
   <details class="per-workspace">
-    <summary
-      >Per workspace{set.overrides.length > 0
+    <summary>
+      Per workspace{set.overrides.length > 0
         ? ` (${set.overrides.length} differ${set.overrides.length === 1 ? "s" : ""})`
-        : ""}</summary
-    >
+        : ""}
+    </summary>
     {#if rows.length === 0}
       <p class="muted">There are no workspaces yet.</p>
     {:else}
@@ -174,10 +173,10 @@
   </details>
 
   <details>
-    <summary
-      >{set.entry_count}
-      {set.entry_count === 1 ? "entry" : "entries"}</summary
-    >
+    <summary>
+      {set.entry_count}
+      {set.entry_count === 1 ? "entry" : "entries"}
+    </summary>
     {#if paged}
       <form
         class="row"
@@ -211,18 +210,20 @@
       <ul class="entries">
         {#each shown as entry (entry.rule_id ?? entry.pattern)}
           <li>
-            <span class="chip {entry.effect}"
-              >{entry.effect === "allow" ? "Allow" : "Deny"}</span
-            >
-            <span class="mono">{entryPattern(entry)}</span>
+            <span class="chip {entry.effect}">
+              {entry.effect === "allow" ? "Allow" : "Deny"}
+            </span>
+            <HostName host={entryPattern(entry)} />
             {#if entry.note !== ""}<span class="muted">{entry.note}</span>{/if}
             {#if mine}
               <button
                 type="button"
                 class="btn"
                 aria-label="Delete {entryPattern(entry)} from {set.name}"
-                onclick={() => onDeleteEntry(set, entry)}>Delete</button
+                onclick={() => onDeleteEntry(set, entry)}
               >
+                Delete
+              </button>
             {/if}
           </li>
         {/each}
@@ -233,9 +234,9 @@
         Showing {shown.length} of {total}{matches !== null ? " matches" : ""}.
       </p>
       {#if shown.length < total}
-        <button type="button" class="btn" onclick={() => void load(true)}
-          >Show more</button
-        >
+        <button type="button" class="btn" onclick={() => void load(true)}>
+          Show more
+        </button>
       {/if}
       {#if loadProblem}<p class="error" role="alert">{loadProblem}</p>{/if}
     {/if}
@@ -243,15 +244,15 @@
 
   {#if mine}
     <div class="row">
-      <button type="button" class="btn" onclick={() => onAddEntry(set)}
-        >Add entry</button
-      >
-      <button type="button" class="btn" onclick={() => onRename(set)}
-        >Edit</button
-      >
-      <button type="button" class="btn deny" onclick={() => onDelete(set)}
-        >Delete set</button
-      >
+      <button type="button" class="btn" onclick={() => onAddEntry(set)}>
+        Add entry
+      </button>
+      <button type="button" class="btn" onclick={() => onRename(set)}>
+        Edit
+      </button>
+      <button type="button" class="btn deny" onclick={() => onDelete(set)}>
+        Delete set
+      </button>
     </div>
   {/if}
 </article>
@@ -314,6 +315,11 @@
     padding: 0;
     list-style: none;
   }
+  /* At the largest text size a host label is wider than the line. The list scrolls in its own box
+     rather than breaking inside a word or widening the card. */
+  .entries {
+    overflow-x: auto;
+  }
   .overrides li,
   .entries li {
     display: flex;
@@ -321,6 +327,10 @@
     align-items: center;
     gap: var(--space-2);
     min-height: 1.75rem;
+  }
+  .entries li :global(.host) {
+    white-space: nowrap;
+    overflow-wrap: normal;
   }
   .mono {
     font-family: var(--font-mono);
@@ -349,9 +359,5 @@
   .chip.deny {
     color: var(--color-danger);
     border-color: var(--color-danger);
-  }
-  .chip.warn {
-    color: var(--color-warning);
-    border-color: var(--color-warning);
   }
 </style>

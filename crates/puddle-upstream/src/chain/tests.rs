@@ -73,3 +73,37 @@ async fn a_refused_connect_is_not_tried_again() {
     assert_eq!(got.unwrap_err().kind(), io::ErrorKind::ConnectionRefused);
     assert_eq!(tries.get(), 1);
 }
+
+/// A connector for the race: the address on port 1 never answers (a route that drops packets), any
+/// other connects at once.
+async fn black_hole_on_port_1(addr: SocketAddr) -> io::Result<u16> {
+    if addr.port() == 1 {
+        std::future::pending::<()>().await;
+    }
+    Ok(addr.port())
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_address_that_never_answers_holds_up_the_next_one_for_one_attempt_delay_only() {
+    let lost: SocketAddr = "10.0.0.1:1".parse().unwrap();
+    let good: SocketAddr = "10.0.0.2:2".parse().unwrap();
+    let per_address = Duration::from_secs(10);
+    let started = tokio::time::Instant::now();
+    let (port, addr) = race_connect(&[lost, good], per_address, black_hole_on_port_1)
+        .await
+        .unwrap();
+    assert_eq!((port, addr), (2, good));
+    assert_eq!(started.elapsed(), ATTEMPT_DELAY);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_race_of_addresses_that_never_answer_fails_after_the_per_address_timeout() {
+    let lost: SocketAddr = "10.0.0.1:1".parse().unwrap();
+    let per_address = Duration::from_secs(10);
+    let started = tokio::time::Instant::now();
+    let err = race_connect(&[lost], per_address, black_hole_on_port_1)
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+    assert_eq!(started.elapsed(), per_address);
+}

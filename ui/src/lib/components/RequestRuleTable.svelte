@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
+  import HostName from "./HostName.svelte";
   import { actorLabel } from "#lib/rules/model.ts";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import { absoluteTime, relativeTime } from "#lib/format/relative-time.ts";
@@ -66,11 +67,8 @@
           {@attach (row) => reveal(row, rule.id === selected)}
         >
           <td class="host">
-            <span class="mono">{rule.host}</span>
-            {#if !rule.enabled}<span class="chip">off</span>{/if}
-            {#if rule.host.startsWith("*.")}
-              <span class="chip">and subdomains</span>
-            {/if}
+            <HostName host={rule.host} />
+            {#if !rule.enabled}<span class="meta">off</span>{/if}
             {#if rule.warning}
               <p class="warning">
                 <b>Note:</b>
@@ -94,8 +92,10 @@
               datetime={new Date(rule.created_at).toISOString()}
               title="{absoluteTime(rule.created_at)} by {actorLabel(
                 rule.created_by,
-              )}">{relativeTime(rule.created_at, now)}</time
+              )}"
             >
+              {relativeTime(rule.created_at, now)}
+            </time>
           </td>
           {#if onEnabled}
             <td class="on">
@@ -170,12 +170,6 @@
   }
   .muted {
     color: var(--color-text-muted);
-  }
-  .chip {
-    padding: 0 var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-pill);
-    white-space: nowrap;
   }
   .warning {
     margin: var(--space-1) 0 0;

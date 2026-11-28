@@ -151,8 +151,10 @@
         onclick={() => {
           addDialog?.clear();
           addOpen = true;
-        }}><Plus aria-hidden="true" size={16} />Add method and path rule</button
+        }}
       >
+        <Plus aria-hidden="true" size={16} />Add method and path rule
+      </button>
     {:else}
       <a class="btn" href="/rules">All method and path rules</a>
     {/if}
@@ -262,9 +264,16 @@
   }
   .head {
     display: flex;
+    /* The button drops below the words when the line is too narrow; squeezed beside them it shrinks
+       under its label, which spills out of the box and widens the page. */
+    flex-wrap: wrap;
     justify-content: space-between;
     align-items: flex-start;
     gap: var(--space-4);
+  }
+  .head > :first-child {
+    flex: 1 1 20rem;
+    min-width: 0;
   }
   .block .head {
     align-items: center;

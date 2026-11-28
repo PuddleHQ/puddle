@@ -10,22 +10,21 @@ use base64::engine::general_purpose::STANDARD;
 use puddle_appicon::{IconError, normalize_upload};
 use puddle_settings::AppIconChoice;
 
-use crate::ApiErrorBody;
-use crate::error::{ApiError, ErrorCode, blocking};
 use crate::extract::File;
 use crate::routes::AppState;
 use crate::routes::settings::load_global;
-use crate::wire::{AppIcons, BuiltInIcon, CustomIcon};
+use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, ErrorCode, blocking};
+use puddle_services::wire::{AppIcons, BuiltInIcon, CustomIcon};
 
 /// The side of the previews of the built-in icons.
 const PREVIEW: u32 = 64;
 
 /// The built-in icons, in the order Settings shows them.
-const BUILT_IN: [AppIconChoice; 4] = [
+const BUILT_IN: [AppIconChoice; 3] = [
     AppIconChoice::Duck,
-    AppIconChoice::DuckPond,
-    AppIconChoice::DuckNight,
-    AppIconChoice::DuckSun,
+    AppIconChoice::RubberDuck,
+    AppIconChoice::DuckFront,
 ];
 
 fn png_of(icon: &puddle_appicon::Icon) -> Result<String, ApiError> {

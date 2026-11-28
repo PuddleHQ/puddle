@@ -13,10 +13,8 @@ set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/gate-sched-test.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
-fail() {
-    echo "gate-sched-test: $*" >&2
-    exit 1
-}
+# shellcheck disable=SC1091 # the helper sits in scripts/
+. "$(dirname "$0")/../scripts/test-fail.sh"
 # A hook (git-env's victim variables) must not steer the git commands below.
 # shellcheck disable=SC2046 # the list is words by design
 unset $(git rev-parse --local-env-vars)
@@ -264,8 +262,10 @@ cat >"$d/scripts/check-standalone.sh" <<'STUB'
 echo "$0 $*" >>"$(dirname "$0")/../standalone.calls"
 STUB
 printf '#!/bin/sh\nexit 0\n' >"$d/scripts/check-product-name.sh"
+mkdir -p "$d/ci"
+printf '#!/bin/sh\nexit 0\n' >"$d/ci/workflow-split-test.sh"
 printf '#!/bin/sh\nexit 1\n' >"$d/bin/pkg-config"
-chmod +x "$d"/scripts/*.sh "$d/bin/pkg-config"
+chmod +x "$d"/scripts/*.sh "$d"/ci/*.sh "$d/bin/pkg-config"
 (cd "$d" && git init -q && git add . && git -c user.email=t@example.org -c user.name=t commit -q -m init)
 dcf() { # dcf <crates the stub reports> <gate>...: one run of check.sh; prints its output
     crates=$1

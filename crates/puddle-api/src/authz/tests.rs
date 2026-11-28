@@ -10,12 +10,15 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 use super::*;
 use crate::events::EventHub;
-use crate::learned::LearnedService as _;
+use crate::openapi;
 use crate::server::{ApiConfig, ApiServer, RunningApi, Services};
-use crate::settings::{MemorySettings, SettingsRepo};
+use crate::settings::MemorySettings;
 use crate::token::ApiToken;
-use crate::{FakeCredentials, FakeLearned, FakeWorkspaces, openapi};
 use puddle_secrets::MemoryStore;
+use puddle_services::learned::LearnedService as _;
+use puddle_services::{
+    credentials::FakeCredentials, fake_workspaces::FakeWorkspaces, learned::FakeLearned,
+};
 
 const TOKEN_STEP: Duration = Duration::from_secs(10);
 
@@ -397,7 +400,7 @@ async fn pair() -> Pair {
     puddle_store::testing::own(&store, &ws("ownerbox"));
     let services = Services::new(
         store.clone(),
-        Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>,
+        Arc::new(MemorySettings::default()),
         events.clone(),
         clock.clone(),
     )
@@ -1049,7 +1052,7 @@ async fn hostile_lists_hold_only_their_callers_things() {
         })
         .map(|(_, path)| path)
         .collect();
-    assert_eq!(lists.len(), 15, "{lists:?}");
+    assert_eq!(lists.len(), 16, "{lists:?}");
     for path in &lists {
         let (status, body) = send(ann, token, "GET", path, None).await;
         // The devices list answers 503 here: this server has no sign-in.
@@ -1348,7 +1351,12 @@ async fn a_user_makes_a_learned_host_permanent_for_her_workspace_only() {
         pair.store.global_never_decrypt().unwrap().is_empty(),
         "nothing changed"
     );
-    let still = pair.learned.list(&anns);
+    let still = pair
+        .learned
+        .list(&puddle_services::owned::OwnedWorkspace::for_test(
+            pair.ann_id,
+            &anns,
+        ));
     assert_eq!(still.len(), 2, "still learned: {still:?}");
     let (status, body) = permanent("one.example", "workspace").await;
     assert_eq!(status, 204, "{body}");

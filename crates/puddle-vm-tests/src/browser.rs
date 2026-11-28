@@ -110,6 +110,44 @@ impl Node {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
+        self.run_timed(args, envs, stdin, budget, None).await
+    }
+
+    /// Like [`Node::run`], but the budget starts when node prints its first byte (to stdout or
+    /// stderr), so a slow start under load does not eat it. Until then only `start_limit`
+    /// applies, so a node that never prints still ends in [`HarnessError::NodeHung`].
+    ///
+    /// # Errors
+    ///
+    /// The same as [`Node::run`].
+    pub async fn run_after_first_output<I, S>(
+        &self,
+        args: I,
+        envs: &[(&str, &OsStr)],
+        stdin: &str,
+        budget: Duration,
+        start_limit: Duration,
+    ) -> Result<NodeOutput, HarnessError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        self.run_timed(args, envs, stdin, budget, Some(start_limit))
+            .await
+    }
+
+    async fn run_timed<I, S>(
+        &self,
+        args: I,
+        envs: &[(&str, &OsStr)],
+        stdin: &str,
+        budget: Duration,
+        start_limit: Option<Duration>,
+    ) -> Result<NodeOutput, HarnessError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
         let mut command = self.command(args);
         command.envs(envs.iter().copied());
         let program = PathBuf::from(&self.program);
@@ -137,6 +175,18 @@ impl Node {
             .stderr
             .take()
             .map(|pipe| progress.drain(pipe, Stream::Err));
+        let (budget, reported) = match start_limit {
+            Some(limit) => {
+                let first = tokio::time::timeout(limit, progress.first_output.notified()).await;
+                // Never printed: the start limit was the whole budget, and the error names it.
+                if first.is_ok() {
+                    (budget, budget)
+                } else {
+                    (Duration::ZERO, limit)
+                }
+            }
+            None => (budget, budget),
+        };
         let waited = tokio::time::timeout(budget, async {
             let status = child.wait().await;
             progress.exited.store(true, Ordering::SeqCst);
@@ -155,7 +205,7 @@ impl Node {
             let stage = progress.stage();
             let _ = child.start_kill();
             return Err(HarnessError::NodeHung {
-                limit: budget,
+                limit: reported,
                 pid,
                 spawn_took,
                 stage,
@@ -189,6 +239,8 @@ struct Progress {
     err_closed: AtomicBool,
     out: Mutex<Vec<u8>>,
     err: Mutex<Vec<u8>>,
+    /// Permit stored when the first byte arrives on either pipe.
+    first_output: tokio::sync::Notify,
 }
 
 impl Progress {
@@ -204,6 +256,7 @@ impl Progress {
                 let Some(got) = chunk.get(..read).filter(|got| !got.is_empty()) else {
                     break;
                 };
+                this.first_output.notify_one();
                 this.buffer(stream)
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
@@ -557,6 +610,21 @@ impl BrowserSession {
     pub async fn press(&mut self, page: PageId, keys: &str) -> Result<(), HarnessError> {
         self.call(
             &json!({"op": "press", "page": page.0, "keys": keys}),
+            START_BUDGET,
+        )
+        .await
+        .map(drop)
+    }
+
+    /// Clicks the first element of `page` that matches the CSS `selector`, as a mouse click does
+    /// (waiting for it to appear and be clickable).
+    ///
+    /// # Errors
+    ///
+    /// [`HarnessError::Browser`] when the page is not open or nothing matched in time.
+    pub async fn click(&mut self, page: PageId, selector: &str) -> Result<(), HarnessError> {
+        self.call(
+            &json!({"op": "click", "page": page.0, "selector": selector, "timeoutMs": 30_000}),
             START_BUDGET,
         )
         .await

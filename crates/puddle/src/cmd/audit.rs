@@ -7,11 +7,9 @@
 
 use std::process::ExitCode;
 
-use puddle_host::HostPaths;
-
 use crate::cli::{Command, UsageError};
-use crate::cmd::data_folder;
 use crate::cmd::serve::options::Flags;
+use crate::cmd::{CommandError, data_folder, data_folder_here};
 
 /// What `puddle audit` should do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,14 +100,6 @@ pub fn run(args: &AuditArgs) -> ExitCode {
     }
 }
 
-fn paths(flags: &Flags) -> Result<HostPaths, String> {
-    let data = match data_folder::configured_here(flags).map_err(|e| e.to_string())? {
-        Some(dir) => dir,
-        None => puddle_fs::data_dir().map_err(|e| e.to_string())?,
-    };
-    Ok(HostPaths::new(data))
-}
-
 fn mib(bytes: u64) -> String {
     let tenths = u128::from(bytes) * 10 / (1024 * 1024);
     format!("{}.{} MiB", tenths / 10, tenths % 10)
@@ -141,15 +131,15 @@ fn status_text(s: &puddle_host::AuditStats) -> String {
     )
 }
 
-fn execute(args: &AuditArgs) -> Result<String, String> {
-    let paths = paths(&args.flags)?;
+fn execute(args: &AuditArgs) -> Result<String, CommandError> {
+    let paths = data_folder_here(&args.flags)?;
     match args.action {
         Action::Status => {
-            let s = puddle_host::audit_status(&paths).map_err(|e| e.to_string())?;
+            let s = puddle_host::audit_status(&paths)?;
             Ok(status_text(&s))
         }
         Action::Prune(days) => {
-            let done = puddle_host::prune_audit(&paths, days).map_err(|e| e.to_string())?;
+            let done = puddle_host::prune_audit(&paths, days)?;
             Ok(format!(
                 "deleted {} records older than {} days; the file gave back {}",
                 done.deleted,

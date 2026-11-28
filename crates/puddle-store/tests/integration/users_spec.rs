@@ -10,17 +10,18 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use puddle_secrets::{AccountName, HostName, SourceSpec};
-use puddle_store::testing::{all_users, own};
+use puddle_store::testing::{all_users, break_database, own};
 use puddle_store::{
     Actor, AuditCursor, AuditFilter, Author, Coverage, CredentialBinding, EnvDraft, EnvName,
-    EnvScope, IdentityDraft, Limits, ManualClock, NewRequestRule, NewRule, Owner, Pattern,
-    PatternChoice, Precedence, Resolution, Scope, ScopeChoice, Store, StoreError, SystemPlan,
-    SystemReason, UserId, UserName,
+    EnvScope, IdentityDraft, Limits, ManualClock, NewRequestRule, NewRule, NewWorkspaceOp, Owner,
+    Pattern, PatternChoice, Precedence, RepoRef, RepoToggles, Resolution, Scope, ScopeChoice,
+    SshAgentAnswer, SshAgentAskStart, Store, StoreError, SwitchChange, SystemPlan, SystemReason,
+    UserId, UserName, WorkspaceOpKind, WorkspaceOpOutcome,
 };
+use puddle_types::{AccountName, HostName, SourceSpec};
 use puddle_types::{
-    CollectingSink, Decision, EgressRequest, Event, Host, Methods, PathPattern, PendingOutcome,
-    RuleSetId, SuffixAllows, WorkspaceId,
+    CollectingSink, Decision, EgressRequest, Event, Host, Methods, PathPattern, PendingId,
+    PendingOutcome, RuleSetId, SuffixAllows, WorkspaceId,
 };
 
 const T0: u64 = 1_800_000_000_000;
@@ -165,6 +166,7 @@ fn approving_for_every_workspace_makes_a_rule_of_the_workspaces_user() {
         unreachable!()
     };
     let decided = store
+        .as_user(ann)
         .resolve_pending(
             id,
             &Resolution {
@@ -294,7 +296,7 @@ fn rules_on_method_and_path_apply_to_their_users_workspaces_only() {
     let (store, ann, _) = fixture();
     let new = |workspace: Option<&str>| NewRequestRule {
         workspace: workspace.map(ws),
-        host: "api.example".to_owned(),
+        host: puddle_types::HostPattern::parse_normalised("api.example").unwrap(),
         methods: Methods::parse(["DELETE"]).unwrap(),
         path: PathPattern::parse("/x").unwrap(),
         created_by: Actor::Api,
@@ -551,7 +553,7 @@ fn every_list_read_keeps_to_one_user_and_a_workspace_with_no_user_to_nobody() {
     // Rules on method and path: Ann's, for her workspace only.
     let new = |workspace: Option<&str>| NewRequestRule {
         workspace: workspace.map(ws),
-        host: "api.example".to_owned(),
+        host: puddle_types::HostPattern::parse_normalised("api.example").unwrap(),
         methods: Methods::parse(["DELETE"]).unwrap(),
         path: PathPattern::parse("/x").unwrap(),
         created_by: Actor::Api,
@@ -719,7 +721,7 @@ fn a_workspace_with_no_user_is_refused_everywhere_and_still_cleaned_up() {
             .as_user(UserId::OWNER)
             .add_request_rule(&NewRequestRule {
                 workspace: Some(stray.clone()),
-                host: "api.example".to_owned(),
+                host: puddle_types::HostPattern::parse_normalised("api.example").unwrap(),
                 methods: Methods::parse(["DELETE"]).unwrap(),
                 path: PathPattern::parse("/x").unwrap(),
                 created_by: Actor::Api,
@@ -735,8 +737,45 @@ fn a_workspace_with_no_user_is_refused_everywhere_and_still_cleaned_up() {
     );
     nobodys(store.workspace_git(&stray).map(drop));
     nobodys(store.set_workspace_identities(&stray, &[]).map(drop));
+    nobodys(
+        store
+            .add_repo(
+                &stray,
+                &RepoRef::new("github.com", "acme", "web").unwrap(),
+                RepoToggles::BOTH,
+                None,
+            )
+            .map(drop),
+    );
+    nobodys(
+        store
+            .change_git_switches(&stray, SwitchChange::Set(true), SwitchChange::Set(true))
+            .map(drop),
+    );
+    nobodys(
+        store
+            .set_ssh_agent_host(&stray, "git.example.com", None)
+            .map(drop),
+    );
+    nobodys(
+        store
+            .start_ssh_agent_ask(&stray, "git.example.com", "SHA256:abc", "ssh-ed25519")
+            .map(drop),
+    );
     assert_eq!(
         store.open_pending_every_user(&all_users(), None).unwrap(),
+        []
+    );
+    // The refused writes left nothing behind: once the workspace has a user it is empty.
+    own(&store, &stray);
+    let git = store.workspace_git(&stray).unwrap();
+    assert_eq!(git.repos, []);
+    assert!(!git.only_pull_listed && git.only_push_listed);
+    assert_eq!(store.ssh_agent_hosts(&stray).unwrap(), []);
+    assert_eq!(
+        store
+            .open_ssh_agent_asks_every_user(&all_users(), Some(&stray))
+            .unwrap(),
         []
     );
 }
@@ -889,7 +928,7 @@ fn every_write_as_a_second_user_leaves_no_row_of_the_owner() {
     for workspace in [None, Some("anns")] {
         anns.add_request_rule(&NewRequestRule {
             workspace: workspace.map(ws),
-            host: "api.example".to_owned(),
+            host: puddle_types::HostPattern::parse_normalised("api.example").unwrap(),
             methods: Methods::parse(["GET"]).unwrap(),
             path: PathPattern::parse("/*").unwrap(),
             created_by: Actor::Api,
@@ -910,6 +949,7 @@ fn every_write_as_a_second_user_leaves_no_row_of_the_owner() {
         unreachable!()
     };
     store
+        .as_user(ann)
         .resolve_pending(
             id,
             &Resolution {
@@ -945,4 +985,156 @@ fn every_write_as_a_second_user_leaves_no_row_of_the_owner() {
         assert!(rows > 0, "{table}: the test wrote nothing");
         assert_eq!(owners, 0, "{table} holds a row of the owner");
     }
+}
+
+#[test]
+fn a_user_cannot_decide_or_read_the_pending_row_of_another_users_workspace() {
+    let (store, ann, _) = fixture();
+    let Decision::Pending(PendingOutcome::New(id)) = decide(&store, "anns", "api.example") else {
+        unreachable!()
+    };
+    assert_eq!(store.pending_owner(id).unwrap(), Some(ann));
+    assert_eq!(store.pending_owner(PendingId(999)).unwrap(), None);
+
+    let owner = store.as_user(UserId::OWNER);
+    assert!(matches!(
+        owner.pending(id),
+        Err(StoreError::UnknownPending(got)) if got == id
+    ));
+    assert!(matches!(
+        owner.resolve_pending(id, &Resolution::allow(), Actor::Api),
+        Err(StoreError::UnknownPending(got)) if got == id
+    ));
+    assert!(matches!(
+        owner.pending(PendingId(999)),
+        Err(StoreError::UnknownPending(_))
+    ));
+    // A row whose workspace lost its user is nobody's: no user reads or decides it.
+    let Decision::Pending(PendingOutcome::New(loose)) = decide(&store, "mine", "loose.example")
+    else {
+        unreachable!()
+    };
+    break_database(
+        &store,
+        "DELETE FROM workspace_owners WHERE workspace_id = 'mine'",
+    );
+    assert_eq!(store.pending_owner(loose).unwrap(), None);
+    assert!(matches!(
+        owner.pending(loose),
+        Err(StoreError::UnknownPending(_))
+    ));
+    // Nothing changed: Ann still sees it open, and decides it.
+    assert_eq!(store.as_user(ann).pending(id).unwrap().id, id);
+    assert!(!allows(&store, "anns", "api.example"));
+    store
+        .as_user(ann)
+        .resolve_pending(id, &Resolution::allow(), Actor::Api)
+        .unwrap();
+    assert!(allows(&store, "anns", "api.example"));
+}
+
+#[test]
+fn a_user_cannot_switch_or_delete_the_request_rule_of_another_user() {
+    let (store, ann, _) = fixture();
+    let anns = store
+        .as_user(ann)
+        .add_request_rule(&NewRequestRule {
+            workspace: None,
+            host: puddle_types::HostPattern::parse_normalised("api.example").unwrap(),
+            methods: Methods::parse(["DELETE"]).unwrap(),
+            path: PathPattern::parse("/x").unwrap(),
+            created_by: Actor::Api,
+            precedence: Precedence::DEFAULT,
+        })
+        .unwrap();
+    let owner = store.as_user(UserId::OWNER);
+    assert!(matches!(
+        owner.set_request_rule_enabled(anns.id, false, Actor::Api),
+        Err(StoreError::UnknownRequestRule(id)) if id == anns.id
+    ));
+    assert!(matches!(
+        owner.delete_request_rule(anns.id, Actor::Api),
+        Err(StoreError::UnknownRequestRule(id)) if id == anns.id
+    ));
+    assert_eq!(store.request_rules(ann, None).unwrap(), vec![anns.clone()]);
+
+    let off = store
+        .as_user(ann)
+        .set_request_rule_enabled(anns.id, false, Actor::Api)
+        .unwrap();
+    assert!(!off.enabled);
+    let gone = store
+        .as_user(ann)
+        .delete_request_rule(anns.id, Actor::Api)
+        .unwrap();
+    assert_eq!(gone.id, anns.id);
+    assert_eq!(store.request_rules(ann, None).unwrap(), vec![]);
+}
+
+#[test]
+fn a_user_sees_and_answers_only_the_ssh_agent_questions_of_their_own_workspaces() {
+    let (store, ann, _) = fixture();
+    let key = "SHA256:abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ";
+    let SshAgentAskStart::Open(id) = store
+        .start_ssh_agent_ask(&ws("anns"), "git.example", key, "ssh-ed25519")
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let owner = store.as_user(UserId::OWNER);
+    assert_eq!(owner.open_ssh_agent_asks(None).unwrap(), vec![]);
+    assert!(matches!(
+        owner.answer_ssh_agent_ask(&ws("anns"), id, SshAgentAnswer::Once, Actor::Api),
+        Err(StoreError::UnknownSshAgentAsk(got)) if got == id
+    ));
+    assert_eq!(
+        store.as_user(ann).open_ssh_agent_asks(None).unwrap().len(),
+        1
+    );
+    assert_eq!(
+        store
+            .open_ssh_agent_asks_every_user(&all_users(), None)
+            .unwrap()
+            .len(),
+        1
+    );
+    // The question is read by its workspace alone.
+    assert!(store.ssh_agent_ask(&ws("mine"), id).unwrap().is_none());
+    assert!(store.ssh_agent_ask(&ws("anns"), id).unwrap().is_some());
+    let answered = store
+        .as_user(ann)
+        .answer_ssh_agent_ask(&ws("anns"), id, SshAgentAnswer::Once, Actor::Api)
+        .unwrap();
+    assert!(answered.state.allows());
+}
+
+#[test]
+fn the_workspace_names_of_audit_records_are_read_for_their_own_user_only() {
+    let (store, ann, _) = fixture();
+    store.set_workspace_name(&ws("anns"), "Ann shop").unwrap();
+    store
+        .record_workspace_op(&NewWorkspaceOp {
+            op: WorkspaceOpKind::Rename,
+            workspace: Some(ws("anns")),
+            user: Some(ann),
+            outcome: WorkspaceOpOutcome::Succeeded,
+            actor: Actor::Api,
+            detail: None,
+        })
+        .unwrap();
+    let ids: Vec<i64> = store
+        .audit_lines(0, 100)
+        .unwrap()
+        .iter()
+        .map(|(id, _)| *id)
+        .collect();
+    assert_eq!(ids.len(), 1);
+    let names = store.audit_workspace_names(ann, &ids).unwrap();
+    assert_eq!(names.get(&ids[0]).map(String::as_str), Some("Ann shop"));
+    assert!(
+        store
+            .audit_workspace_names(UserId::OWNER, &ids)
+            .unwrap()
+            .is_empty()
+    );
 }

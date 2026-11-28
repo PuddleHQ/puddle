@@ -115,7 +115,7 @@ async fn hostile_hg47_every_other_spelling_of_a_command_is_refused_before_a_byte
         );
         assert_eq!(ran.out, "", "{command:?}");
     }
-    assert_eq!(asked(&t), [] as [String; 0], "nothing went upstream");
+    assert_eq!(asked(&t), <[String; 0]>::default(), "nothing went upstream");
     // The connection is not the worse for it: the named repository still works.
     let ran = exec(&ssh, V2, "git-upload-pack 'acme/web.git'", b"").await;
     assert_eq!(ran.exit, Some(0), "{ran:?}");
@@ -186,7 +186,7 @@ async fn hostile_hg47_a_push_to_an_unlisted_repository_is_denied_in_every_spelli
         assert_eq!(ran.exit, Some(1), "{command}: {ran:?}");
         assert!(
             ran.err.starts_with(
-                "puddle: push to bound.test/acme/other is not on this workspace's push list"
+                "puddle: Blocked this push: bound.test/acme/other is not in this workspace's allowed repositories for push"
             ),
             "{command}: {ran:?}"
         );
@@ -829,5 +829,35 @@ async fn hostile_hg51_a_request_that_never_flushes_is_cut_off_at_a_bound_before_
     assert!(
         asked(&t).iter().all(|r| !r.starts_with("POST")),
         "no request was sent"
+    );
+}
+
+/// What a command that ran and ended may leave on its connection, in heap bytes. The SSH library
+/// keeps about 3.7 KB a command for a channel the server closed first (as Puddle always does);
+/// a command task and a channel-table entry kept as well show as about 5.5 KB a command.
+const KEPT_PER_COMMAND: isize = 4_300;
+
+#[tokio::test]
+async fn hostile_hg59_commands_on_one_connection_leave_nothing_of_their_own_behind() {
+    use crate::zeroing_alloc::live_bytes;
+    const COMMANDS: isize = 5_000;
+    let t = SshRig::new().await;
+    let mut guest = t.git.rig.guest();
+    let mut ssh = t.client(&mut guest, "bound.test:22").await;
+    login(&mut ssh).await;
+    for _ in 0..COMMANDS {
+        let ran = exec(&ssh, &[], "nonsense", b"").await;
+        assert_eq!(ran.exit, Some(1));
+    }
+    let before = live_bytes();
+    for _ in 0..COMMANDS {
+        let ran = exec(&ssh, &[], "nonsense", b"").await;
+        assert_eq!(ran.exit, Some(1));
+    }
+    let kept = live_bytes() - before;
+    assert!(
+        kept < COMMANDS * KEPT_PER_COMMAND,
+        "{COMMANDS} more commands left {kept} bytes ({} a command; limit {KEPT_PER_COMMAND})",
+        kept / COMMANDS
     );
 }

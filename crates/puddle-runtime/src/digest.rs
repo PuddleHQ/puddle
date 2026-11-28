@@ -7,7 +7,6 @@
 //! bytes and not only for the version string msb embeds. The file `runtime.json` in the install
 //! folder is not consulted: whatever can replace msb there can replace it too.
 
-use std::fmt::Write as _;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -108,12 +107,7 @@ pub fn sha256_file(path: &Path) -> std::io::Result<String> {
         }
         hasher.update(buffer.get(..read).unwrap_or_default());
     }
-    let mut hex = String::with_capacity(64);
-    for byte in hasher.finalize() {
-        // Writing to a String cannot fail.
-        let _ = write!(hex, "{byte:02x}");
-    }
-    Ok(hex)
+    Ok(puddle_types::hex_lower(&hasher.finalize()))
 }
 
 /// Hashes the runtime files and compares them with `digests`.

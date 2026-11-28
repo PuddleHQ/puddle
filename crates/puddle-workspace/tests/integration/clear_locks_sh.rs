@@ -121,22 +121,36 @@ fn fixture() -> Fixture {
 }
 
 async fn run(shell: &'static str, fx: &Fixture) -> LockReport {
+    run_with_path(shell, fx, None).await
+}
+
+/// [`run`] with `bin` searched before the host's `PATH`, for a stand-in `git`.
+async fn run_with_path(shell: &'static str, fx: &Fixture, bin: Option<&Path>) -> LockReport {
     let rt = FakeRuntime::new();
     let vol = fx.vol.clone();
     let proc_dir = fx.proc_dir.clone();
+    let path = bin.map(|b| {
+        let mut dirs = vec![b.to_path_buf()];
+        dirs.extend(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        ));
+        std::env::join_paths(dirs).unwrap()
+    });
     rt.on_exec(move |_: &mut ExecContext<'_>, r: &ExecRequest| {
         if r.program != "sh" || r.args.get(1).map(String::as_str) != Some(CLEAR_LOCKS_SH) {
             return None;
         }
-        assert_eq!(r.args.get(3).map(String::as_str), Some("/workspaces/acme"));
-        let out = command(shell)
-            .args(["-c", CLEAR_LOCKS_SH, "puddle-clear-locks"])
+        assert_eq!(r.args.get(3).map(String::as_str), Some("/workspace"));
+        let mut cmd = command(shell);
+        cmd.args(["-c", CLEAR_LOCKS_SH, "puddle-clear-locks"])
             .arg(&vol)
             .arg(&proc_dir)
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .output()
-            .unwrap();
+            .env("GIT_CONFIG_NOSYSTEM", "1");
+        if let Some(path) = &path {
+            cmd.env("PATH", path);
+        }
+        let out = cmd.output().unwrap();
         Some(ExecOutput::new(
             out.status.code().unwrap_or(-1),
             out.stdout,
@@ -463,6 +477,38 @@ async fn a_checkout_s_config_and_hooks_cannot_make_the_repair_run_a_program() {
             .collect();
         ran_names.sort();
         assert!(ran_names.is_empty(), "{shell}: ran {ran_names:?}");
+    }
+}
+
+/// Rebuilding an index reads HEAD's tree; when a partial clone lacks it, git must not fetch it by
+/// running the program the remote names (the script runs as root).
+#[tokio::test]
+async fn a_promisor_remote_cannot_make_the_repair_run_a_program() {
+    for shell in shells() {
+        let fx = repair_fixture();
+        let api = fx.vol.join("api");
+        let ran = fx.tmp.path().join("ran");
+        let program = fx.tmp.path().join("uploadpack");
+        puddle_test_kit::write_executable(
+            &program,
+            &format!("#!/bin/sh\n: > '{}'\nexit 1\n", ran.display()),
+        );
+        let tree = git_text(&api, &["rev-parse", "HEAD^{tree}"]);
+        std::fs::remove_file(api.join(".git/objects").join(&tree[..2]).join(&tree[2..])).unwrap();
+        for (key, value) in [
+            ("extensions.partialClone", "origin".to_owned()),
+            ("remote.origin.promisor", "true".to_owned()),
+            (
+                "remote.origin.url",
+                fx.tmp.path().join("nowhere").display().to_string(),
+            ),
+            ("remote.origin.uploadpack", program.display().to_string()),
+        ] {
+            git_ok(&api, &["config", key, &value]);
+        }
+        zero_fill(&api.join(".git/index"), 1234);
+        run(shell, &fx).await;
+        assert!(!ran.exists(), "{shell}: the uploadpack ran");
     }
 }
 
@@ -1055,10 +1101,14 @@ async fn an_index_cut_off_inside_an_entry_is_left_alone_and_reported() {
         // The file ends in the middle of an entry, at a 4 KiB block edge.
         let cut = &bytes[..4096];
         std::fs::write(&index, cut).unwrap();
+        // Git refuses the cut index, but how depends on the stat bytes it reads past the cut: a
+        // message, or a bus error once it reads past the end of the mapped file (about one run in three).
         let err = git(&api, &["ls-files", "--stage"]);
         assert!(
-            String::from_utf8_lossy(&err.stderr).contains("unknown index entry format"),
-            "{shell}: {}",
+            String::from_utf8_lossy(&err.stderr).contains("unknown index entry format")
+                || err.status.code().is_none(),
+            "{shell}: {:?} {}",
+            err.status,
             String::from_utf8_lossy(&err.stderr)
         );
         let report = run(shell, &fx).await;
@@ -1069,5 +1119,117 @@ async fn an_index_cut_off_inside_an_entry_is_left_alone_and_reported() {
             "{shell}"
         );
         assert_eq!(std::fs::read(&index).unwrap(), cut, "{shell}");
+    }
+}
+
+/// Git reads a cut index through a memory map, and reading past the cut ends it with a bus error
+/// and nothing on stderr: that index is left as it is and reported the same way.
+#[tokio::test]
+async fn an_index_git_dies_on_is_left_alone_and_reported() {
+    let real_git = String::from_utf8(
+        Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    for shell in shells() {
+        let fx = repair_fixture();
+        let bin = fx.tmp.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let fake = bin.join("git");
+        puddle_test_kit::write_executable(
+            &fake,
+            &format!(
+                "#!/bin/sh\nif [ \"$1\" = ls-files ]; then kill -BUS $$; fi\nexec {} \"$@\"\n",
+                real_git.trim()
+            ),
+        );
+        let index = fx.vol.join("api/.git/index");
+        let before = std::fs::read(&index).unwrap();
+        let report = run_with_path(shell, &fx, Some(&bin)).await;
+        assert!(report.repaired.is_empty(), "{shell}: {report:?}");
+        assert_eq!(report.damaged.len(), 1, "{shell}: {report:?}");
+        assert!(
+            report.damaged[0].contains("cut off inside an entry"),
+            "{shell}: {report:?}"
+        );
+        assert_eq!(std::fs::read(&index).unwrap(), before, "{shell}");
+    }
+}
+
+/// A `git` that is killed on the subcommand `sub` (as an out-of-memory kill under host load
+/// would), otherwise the real one. Returns the directory to put first on the `PATH`.
+fn git_killed_on(fx: &Fixture, sub: &str) -> PathBuf {
+    let real_git = String::from_utf8(
+        Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let bin = fx.tmp.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    puddle_test_kit::write_executable(
+        &bin.join("git"),
+        &format!(
+            "#!/bin/sh\nif [ \"$1\" = {sub} ]; then kill -KILL $$; fi\nexec {} \"$@\"\n",
+            real_git.trim()
+        ),
+    );
+    bin
+}
+
+/// A git subprocess that dies is no verdict on the repository: the run reports an `E` record
+/// naming the checkout and leaves the damaged `HEAD` as it found it.
+#[tokio::test]
+async fn a_git_that_dies_while_checking_the_last_commit_is_reported_not_read_as_a_missing_commit() {
+    for shell in shells() {
+        let fx = repair_fixture();
+        let api = fx.vol.join("api");
+        zero_fill(&api.join(".git/HEAD"), 24);
+        let bin = git_killed_on(&fx, "cat-file");
+        let report = run_with_path(shell, &fx, Some(&bin)).await;
+        assert!(report.damaged.is_empty(), "{shell}: {report:?}");
+        assert!(report.repaired.is_empty(), "{shell}: {report:?}");
+        assert_eq!(report.errors.len(), 1, "{shell}: {report:?}");
+        assert!(
+            report.errors[0].starts_with("api/.git/HEAD: git failed"),
+            "{shell}: {:?}",
+            report.errors
+        );
+        assert_eq!(
+            std::fs::read(api.join(".git/HEAD")).unwrap(),
+            vec![0_u8; 24],
+            "{shell}"
+        );
+    }
+}
+
+/// The same for the branch-name check: a dead `git check-ref-format` must not make the checkout
+/// read as detached.
+#[tokio::test]
+async fn a_git_that_dies_while_checking_the_branch_name_is_reported_not_read_as_a_detached_head() {
+    for shell in shells() {
+        let fx = repair_fixture();
+        let api = fx.vol.join("api");
+        zero_fill(&api.join(".git/HEAD"), 24);
+        let bin = git_killed_on(&fx, "check-ref-format");
+        let report = run_with_path(shell, &fx, Some(&bin)).await;
+        assert!(report.repaired.is_empty(), "{shell}: {report:?}");
+        assert!(report.damaged.is_empty(), "{shell}: {report:?}");
+        assert_eq!(report.errors.len(), 1, "{shell}: {report:?}");
+        assert!(
+            report.errors[0].starts_with("api/.git/HEAD: git failed"),
+            "{shell}: {:?}",
+            report.errors
+        );
+        assert_eq!(
+            std::fs::read(api.join(".git/HEAD")).unwrap(),
+            vec![0_u8; 24],
+            "{shell}"
+        );
     }
 }

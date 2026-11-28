@@ -18,28 +18,19 @@
 //! name) the login fails: the tool gets a `502` that names the reason, never the real answer, and
 //! the user is told. A real token never reaches the workspace by this path.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use bytes::Bytes;
-use puddle_proxy::{
-    AnswerHead, AnswerRewriter, BodyField, Exchange, ExchangeRewriter, FieldKind, InjectRefusal,
-    MAX_EXCHANGE_BODY, Rewrite, SecretValue, StandIn, StandInError, StandInOrigin, StandIns,
-    TerminationSet, TokenBody, Want,
-};
+use puddle_proxy::{Exchange, ExchangeRewriter, StandIns, TerminationSet};
 use puddle_secrets::SecretStore;
-use puddle_types::{Host, ReasonCode, WorkspaceId};
-use zeroize::Zeroizing;
+use puddle_types::{Host, WorkspaceId};
 
 use crate::marker::Marker;
-use crate::profile::{
-    Audience, Endpoint, Field, Keep, Method, Profile, Role, Scope, Slot, path_matches,
-};
-use crate::shape;
-use crate::vault::{STORE_TIMEOUT, Saved, Vault, VaultError};
+use crate::profile::{Endpoint, Method, Profile, Role, Slot, path_matches};
+use crate::vault::{STORE_TIMEOUT, Vault};
 
 /// What went wrong with a login, for the notice the user sees. Names only: no value is in any of
 /// these.
@@ -127,36 +118,25 @@ struct Inner {
     /// One change of the kept logins at a time (a capture, a forget, the start's load), so two
     /// refreshes at once do not interleave their writes and a login forgotten during a capture
     /// does not come back when the capture ends.
-    capture: tokio::sync::Mutex<()>,
+    capture: Arc<tokio::sync::Mutex<()>>,
     /// How long a call on the credential store may take, in milliseconds.
     store_timeout_ms: AtomicU64,
+    /// Held by the blocking thread of each store call until the call returns, so a call that was
+    /// given up on keeps the next one waiting: its write cannot land after a later one.
+    store_gate: Arc<tokio::sync::Mutex<()>>,
+    /// When each problem was last reported, by profile and kind.
+    told: Mutex<HashMap<(&'static str, Problem), tokio::time::Instant>>,
+    /// How many store calls were given up on.
+    store_timeouts: AtomicU64,
     /// The stand-in of each slot that has one.
     slots: Mutex<BTreeMap<(&'static str, Slot), String>>,
     /// The earlier stand-ins of a slot whose stand-in is made again at every exchange, newest
     /// last. The tool may still hold one of them when the next exchange answers, so each stays
     /// swapped, with the real token of its own exchange, until [`RETIRED_KEPT`] newer ones exist.
     retired: Mutex<BTreeMap<(&'static str, Slot), VecDeque<String>>>,
-}
-
-/// A token found in an answer: its field, the real token, its stand-in and whether that is new.
-type Planned = (&'static Field, Zeroizing<String>, String, bool);
-
-/// How many earlier stand-ins of a slot stay swapped. A session token lasts about half an hour
-/// and is exchanged again before it ends, so the tool never holds more than the last two.
-pub(crate) const RETIRED_KEPT: usize = 3;
-
-/// How many earlier stand-ins of a [`Keep::Memory`] slot stay swapped. A registry mints a token
-/// per repository for each pull and the client uses it for that pull's minutes, so many pulls at
-/// once (a compose file's images) each hold one; the bound keeps a guest that asks again and
-/// again from growing the registry.
-pub(crate) const MEMORY_KEPT: usize = 64;
-
-/// How many earlier stand-ins of `field`'s slot stay swapped when a new one replaces them.
-const fn earlier_kept(field: &Field) -> usize {
-    match field.keep {
-        Keep::Memory => MEMORY_KEPT,
-        _ => RETIRED_KEPT,
-    }
+    /// The profiles whose slots the start's load could not read because the store did not answer
+    /// and that have not been asked again: the first exchange of each one does.
+    unread: Mutex<BTreeSet<&'static str>>,
 }
 
 /// One workspace's captured logins. Cheap to clone.
@@ -276,12 +256,16 @@ impl Logins {
                 registry,
                 notices,
                 marker,
-                capture: tokio::sync::Mutex::new(()),
+                capture: Arc::new(tokio::sync::Mutex::new(())),
                 store_timeout_ms: AtomicU64::new(
                     u64::try_from(STORE_TIMEOUT.as_millis()).unwrap_or(u64::MAX),
                 ),
+                store_gate: Arc::default(),
+                told: Mutex::new(HashMap::new()),
+                store_timeouts: AtomicU64::new(0),
                 slots: Mutex::new(BTreeMap::new()),
                 retired: Mutex::new(BTreeMap::new()),
+                unread: Mutex::new(BTreeSet::new()),
             }),
         }
     }
@@ -316,7 +300,26 @@ impl Logins {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Tells the user of a problem, at most once in `NOTICE_EVERY` for each service and kind of
+    /// problem: a client that retries would otherwise raise one event for every request.
     fn notify(&self, profile: &Profile, problem: Problem) {
+        let now = tokio::time::Instant::now();
+        {
+            let mut told = self
+                .inner
+                .told
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let key = (profile.id, problem);
+            if told
+                .get(&key)
+                .is_some_and(|at| now.duration_since(*at) < NOTICE_EVERY)
+            {
+                return;
+            }
+            // few services and kinds exist, so the map stays small
+            told.insert(key, now);
+        }
         tracing::warn!(
             workspace = %self.inner.workspace,
             profile = profile.id,
@@ -327,575 +330,6 @@ impl Logins {
             .notices
             .problem(&self.inner.workspace, profile, problem);
     }
-
-    /// Runs a blocking call on the credential store off the async threads, with a time limit.
-    async fn store<T: Send + 'static>(
-        &self,
-        call: impl FnOnce(&Vault) -> Result<T, VaultError> + Send + 'static,
-    ) -> Result<T, VaultError> {
-        let vault = self.inner.vault.clone();
-        let limit = Duration::from_millis(self.inner.store_timeout_ms.load(Ordering::Relaxed));
-        match tokio::time::timeout(limit, tokio::task::spawn_blocking(move || call(&vault))).await {
-            Ok(Ok(result)) => result,
-            // The call was cut off or panicked: the store is not usable now.
-            Ok(Err(_)) | Err(_) => Err(VaultError::Unavailable),
-        }
-    }
-
-    /// Puts a pair into the registry and the slots: the stand-in the workspace holds and the real
-    /// token behind it, swapped toward the hosts `scope` names. The slot's stand-in it replaces
-    /// stays swapped as one of the last `keep_earlier` (none: it goes at once). The registry is the
-    /// one place that checks a stand-in and a real value; what it refuses is the error.
-    fn install(
-        &self,
-        profile: &'static Profile,
-        (slot, scope): (Slot, Scope),
-        stand_in: &str,
-        real: &str,
-        keep_earlier: usize,
-    ) -> Result<(), StandInError> {
-        let entry = StandIn::new(
-            StandInOrigin::CapturedLogin,
-            &profile.slot_name_of(slot),
-            stand_in,
-            SecretValue::new(real),
-            profile.hosts_for(scope),
-        )?;
-        let old = self.slots().insert((profile.id, slot), stand_in.to_owned());
-        if let Some(old) = old {
-            if keep_earlier > 0 {
-                self.retire(profile, slot, old, keep_earlier);
-            } else {
-                self.inner.registry.remove(&old);
-            }
-        }
-        self.inner.registry.insert(entry)
-    }
-
-    /// Keeps `old` swapped as an earlier stand-in of the slot, and stops swapping the oldest ones
-    /// beyond `limit`.
-    fn retire(&self, profile: &Profile, slot: Slot, old: String, limit: usize) {
-        let mut retired = self
-            .inner
-            .retired
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let queue = retired.entry((profile.id, slot)).or_default();
-        queue.push_back(old);
-        while queue.len() > limit {
-            if let Some(oldest) = queue.pop_front() {
-                self.inner.registry.remove(&oldest);
-            }
-        }
-    }
-
-    /// Reads the logins kept for the workspace and registers their stand-ins, at the workspace's
-    /// start: the workspace's disk still holds the stand-ins its tool was given.
-    pub async fn load(&self) {
-        // With capture off nothing is registered and a login kept before is not used until
-        // capture is on again. The store is only asked whether one is there, because the
-        // workspace's disk still holds its stand-ins, which are now refused: that is said once.
-        if !self.inner.enabled {
-            self.tell_about_kept_logins().await;
-            return;
-        }
-        let _one_at_a_time = self.inner.capture.lock().await;
-        let mut unreadable: Vec<&'static Profile> = Vec::new();
-        let mut store_down = false;
-        let mut kept: BTreeSet<String> = BTreeSet::new();
-        for profile in self.inner.profiles {
-            for slot in profile.slots() {
-                if store_down {
-                    // One call that did not answer is enough to know; the next would wait as long.
-                    continue;
-                }
-                match self.store(move |vault| vault.read(profile, slot.0)).await {
-                    Ok(Some(saved)) => {
-                        kept.insert(profile.id.to_owned());
-                        if self
-                            .install(profile, slot, &saved.stand_in, &saved.real, 0)
-                            .is_err()
-                        {
-                            unreadable.push(profile);
-                        }
-                    }
-                    Ok(None) => {}
-                    Err(VaultError::Damaged) => {
-                        kept.insert(profile.id.to_owned());
-                        unreadable.push(profile);
-                    }
-                    Err(VaultError::Unavailable) => store_down = true,
-                }
-            }
-        }
-        // Only an answer from every slot says what is kept.
-        if !store_down {
-            self.inner.marker.write(&kept);
-        }
-        // With the store down nothing can be kept either, so every service is told once, with
-        // the words for a login that is not protected.
-        let down: Vec<&'static Profile> = if store_down {
-            self.inner.profiles.iter().collect()
-        } else {
-            Vec::new()
-        };
-        for (list, problem) in [
-            (down, Problem::StoreUnavailable),
-            (unreadable, Problem::Unreadable),
-        ] {
-            let mut seen: Vec<&str> = Vec::new();
-            for profile in list {
-                if !seen.contains(&profile.id) {
-                    seen.push(profile.id);
-                    self.notify(profile, problem);
-                }
-            }
-        }
-    }
-
-    /// With capture off: tells the user, once per service, that Puddle still holds a login it
-    /// kept earlier. The marker says which services those are without asking the credential
-    /// store, which can wait on a locked keyring at every start. With no marker yet (a workspace
-    /// from before it, or one it could not be written for) the store is asked once, the answer
-    /// is written to the marker, and a store that does not answer says nothing: with capture off
-    /// there is nothing to protect, and one call that did not answer is enough to know.
-    async fn tell_about_kept_logins(&self) {
-        if let Some(kept) = self.inner.marker.read() {
-            for profile in self.inner.profiles.iter().filter(|p| kept.contains(p.id)) {
-                self.notify(profile, Problem::CaptureOff);
-            }
-            return;
-        }
-        // A store that does not answer says nothing: with capture off there is nothing to protect.
-        let Some(kept) = self.kept_in_store().await else {
-            return;
-        };
-        for profile in self.inner.profiles.iter().filter(|p| kept.contains(p.id)) {
-            self.notify(profile, Problem::CaptureOff);
-        }
-        self.inner.marker.write(&kept);
-    }
-
-    /// The services the credential store holds a login for, or `None` when it did not answer
-    /// (one call that did not answer is enough to know; the next would wait as long).
-    async fn kept_in_store(&self) -> Option<BTreeSet<String>> {
-        let mut kept: BTreeSet<String> = BTreeSet::new();
-        for profile in self.inner.profiles {
-            for (slot, _) in profile.slots() {
-                match self.store(move |vault| vault.holds(profile, slot)).await {
-                    Ok(true) => {
-                        kept.insert(profile.id.to_owned());
-                        break;
-                    }
-                    Ok(false) => {}
-                    Err(_) => return None,
-                }
-            }
-        }
-        Some(kept)
-    }
-
-    /// The services Puddle keeps a login for in this workspace, for the user to look at: names and
-    /// times, never a value. The marker answers when it is known, so opening the list never waits
-    /// on a locked keyring; with no marker the store is asked once and the answer is written to
-    /// the marker. A store that does not answer gives an empty list that says so
-    /// ([`KeptList::store_answered`]).
-    pub async fn kept_list(&self) -> KeptList {
-        let since = match self.inner.marker.read_since() {
-            Some(since) => since,
-            None => match self.kept_in_store().await {
-                Some(kept) => {
-                    self.inner.marker.write(&kept);
-                    // What the marker now says; where it cannot be written, no time is known.
-                    self.inner
-                        .marker
-                        .read_since()
-                        .unwrap_or_else(|| kept.into_iter().map(|id| (id, None)).collect())
-                }
-                None => {
-                    return KeptList {
-                        logins: Vec::new(),
-                        store_answered: false,
-                    };
-                }
-            },
-        };
-        let logins = self
-            .inner
-            .profiles
-            .iter()
-            .filter_map(|profile| {
-                since.get(profile.id).map(|since_ms| KeptLogin {
-                    profile: profile.id,
-                    name: profile.name,
-                    since_ms: *since_ms,
-                })
-            })
-            .collect();
-        KeptList {
-            logins,
-            store_answered: true,
-        }
-    }
-
-    /// What the marker says is kept, as a sorted list (tests).
-    #[cfg(test)]
-    pub(crate) fn inner_marker_kept(&self) -> Option<Vec<String>> {
-        self.inner
-            .marker
-            .read()
-            .map(|ids| ids.into_iter().collect())
-    }
-
-    /// The logins Puddle holds for this workspace (the ones registered since its start), without
-    /// any value.
-    #[must_use]
-    pub fn kept(&self) -> Vec<Kept> {
-        let slots = self.slots();
-        self.inner
-            .profiles
-            .iter()
-            .filter_map(|profile| {
-                let mut roles: Vec<Role> = profile
-                    .slots()
-                    .into_iter()
-                    .filter(|(slot, _)| slots.contains_key(&(profile.id, *slot)))
-                    .map(|(slot, _)| slot.role)
-                    .collect();
-                roles.dedup();
-                (!roles.is_empty()).then_some(Kept {
-                    profile: profile.id,
-                    name: profile.name,
-                    roles,
-                })
-            })
-            .collect()
-    }
-
-    /// Forgets `profile`'s login for this workspace: its stand-ins stop being swapped (the tool
-    /// will ask for a new sign-in) and its real tokens are deleted from the credential store.
-    /// `false` when the profile is not one of this workspace's.
-    ///
-    /// # Errors
-    /// [`ForgetError::Store`] when the credential store did not delete a token; the stand-ins are
-    /// already gone, and trying again deletes what is left.
-    pub async fn forget(&self, profile_id: &str) -> Result<bool, ForgetError> {
-        let Some(profile) = self
-            .inner
-            .profiles
-            .iter()
-            .find(|p| p.id == profile_id || p.name == profile_id)
-        else {
-            return Ok(false);
-        };
-        let _one_at_a_time = self.inner.capture.lock().await;
-        let mut failed = false;
-        for (slot, _) in profile.memory_slots() {
-            self.unregister(profile, slot);
-        }
-        for (slot, _) in profile.slots() {
-            self.unregister(profile, slot);
-            failed |= self
-                .store(move |vault| vault.delete(profile, slot))
-                .await
-                .is_err();
-        }
-        if failed {
-            Err(ForgetError::Store)
-        } else {
-            self.inner.marker.note(profile.id, false);
-            Ok(true)
-        }
-    }
-
-    /// Stops swapping the stand-ins of `slot`, its current one and the earlier ones.
-    fn unregister(&self, profile: &Profile, slot: Slot) {
-        let current = self.slots().remove(&(profile.id, slot));
-        if let Some(stand_in) = current {
-            self.inner.registry.remove(&stand_in);
-        }
-        let earlier = self
-            .inner
-            .retired
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(&(profile.id, slot));
-        for stand_in in earlier.into_iter().flatten() {
-            self.inner.registry.remove(&stand_in);
-        }
-    }
-
-    /// Deletes every token kept for `workspace`, when the workspace is deleted. Blocking. Returns
-    /// how many deletions the store refused (the rest are gone).
-    #[must_use]
-    pub fn delete_workspace(
-        store: &Arc<dyn SecretStore>,
-        workspace: &WorkspaceId,
-        profiles: &[Profile],
-    ) -> usize {
-        crate::vault::saved_login_ids(workspace, profiles)
-            .iter()
-            .filter(|id| store.delete(id).is_err())
-            .count()
-    }
-
-    /// Captures one token answer: keeps the real tokens, and gives back the body with stand-ins
-    /// in their place. `Ok(None)`: nothing in the answer to capture.
-    async fn capture(
-        &self,
-        route: (&'static Profile, &'static Endpoint),
-        body: &[u8],
-        content_type: Option<&str>,
-    ) -> Result<Option<Bytes>, Problem> {
-        let (profile, endpoint) = route;
-        let mut parsed =
-            TokenBody::parse(content_type, body).map_err(|_| Problem::UnexpectedAnswer)?;
-        if holds_unnamed_token(endpoint, &parsed.fields()) {
-            return Err(Problem::UnnamedToken);
-        }
-        let mut found: Vec<(&'static Field, Zeroizing<String>)> = Vec::new();
-        for field in endpoint.fields {
-            // The first field that takes the token is the one used for its answer field. Fields
-            // with an audience share a path on purpose (one per resource): `by_audience` picks.
-            if field.audience == Audience::Any
-                && found
-                    .iter()
-                    .any(|(taken, _)| taken.path == field.path && taken.audience == Audience::Any)
-            {
-                continue;
-            }
-            let Some(text) = parsed.text_at(field.path).filter(|text| !text.is_empty()) else {
-                continue;
-            };
-            if field.only_prefixed && !field.prefixes.iter().any(|p| text.starts_with(p)) {
-                continue;
-            }
-            found.push((field, Zeroizing::new(text.into_owned())));
-        }
-        if found.is_empty() {
-            // A pending device code, an error, a refusal: nothing to keep.
-            return Ok(None);
-        }
-        let found = by_audience(found, &parsed);
-        if found.is_empty() {
-            // The answer has a token that no field of the profile takes: it must not pass as if
-            // it were kept.
-            return Err(Problem::UnusableToken);
-        }
-        if parsed
-            .text("token_type")
-            .is_some_and(|kind| kind.eq_ignore_ascii_case("dpop"))
-        {
-            return Err(Problem::BoundToken);
-        }
-        if found
-            .iter()
-            .any(|(field, real)| !shape::usable_for(field, real))
-        {
-            return Err(Problem::UnusableToken);
-        }
-        let _one_at_a_time = self.inner.capture.lock().await;
-        let planned = self.plan(profile, found)?;
-        // The credential store first: a token that was not kept is not replaced in the answer.
-        self.keep_stored(profile, &planned).await?;
-        for (field, real, stand_in, is_new) in &planned {
-            let slot = (field.slot(), field.scope);
-            // A refresh gives the stand-in a new token without a moment in which it has none; a
-            // slot the registry has lost (a forgotten login) is made again.
-            let refreshed = !is_new
-                && self
-                    .inner
-                    .registry
-                    .set_real(stand_in, SecretValue::new(real.as_str()))
-                    == Ok(true);
-            if !refreshed {
-                let keep_earlier = if shape::renews(real, field) {
-                    earlier_kept(field)
-                } else {
-                    0
-                };
-                self.install(profile, slot, stand_in, real, keep_earlier)
-                    .map_err(|_| Problem::UnusableToken)?;
-            }
-            parsed.set_text_at(field.path, stand_in);
-            tracing::info!(
-                workspace = %self.inner.workspace,
-                profile = profile.id,
-                role = field.role.key(),
-                new = *is_new,
-                "kept a login's token and gave the workspace a stand-in"
-            );
-        }
-        Ok(Some(Bytes::copy_from_slice(&parsed.render())))
-    }
-
-    /// Writes the tokens of `planned` that are kept in the credential store, with their
-    /// stand-ins, and notes the login in the marker.
-    async fn keep_stored(
-        &self,
-        profile: &'static Profile,
-        planned: &[Planned],
-    ) -> Result<(), Problem> {
-        // One write per slot, with its last field's token, as the registry gets the last one too.
-        let mut writes: Vec<(Slot, &Zeroizing<String>, &String)> = Vec::new();
-        for (field, real, stand_in, _) in planned.iter().rev() {
-            if field.keep == Keep::Stored && !writes.iter().any(|(slot, ..)| *slot == field.slot())
-            {
-                writes.push((field.slot(), real, stand_in));
-            }
-        }
-        writes.reverse();
-        let slots: Vec<Slot> = writes.iter().map(|(slot, ..)| *slot).collect();
-        // An answer with several tokens is kept whole or not at all: what the store held before
-        // goes back when a later token cannot be written, so it never holds a pair that did not
-        // come from one answer. One token needs no copy: its write is the whole change. Only the
-        // slots written before the failure go back: a write that timed out (a locked store) may
-        // still land later, and putting its slot back would only wait out the timeout again.
-        let before = if slots.len() > 1 {
-            self.saved(profile, &slots).await?
-        } else {
-            Vec::new()
-        };
-        for (written, (slot, real, stand_in)) in writes.into_iter().enumerate() {
-            let (stand_in, real) = (stand_in.clone(), real.clone());
-            if self
-                .store(move |vault| vault.write(profile, slot, &stand_in, &real))
-                .await
-                .is_err()
-            {
-                self.put_back(profile, before.into_iter().take(written))
-                    .await;
-                return Err(Problem::StoreUnavailable);
-            }
-        }
-        if !slots.is_empty() {
-            self.inner.marker.note(profile.id, true);
-        }
-        Ok(())
-    }
-
-    /// What the store holds in each of `slots` of `profile` (`None`: nothing, or nothing
-    /// readable), in their order.
-    async fn saved(
-        &self,
-        profile: &'static Profile,
-        slots: &[Slot],
-    ) -> Result<Vec<(Slot, Option<Saved>)>, Problem> {
-        let mut saved = Vec::with_capacity(slots.len());
-        for &slot in slots {
-            match self.store(move |vault| vault.read(profile, slot)).await {
-                Ok(entry) => saved.push((slot, entry)),
-                Err(VaultError::Damaged) => saved.push((slot, None)),
-                Err(VaultError::Unavailable) => return Err(Problem::StoreUnavailable),
-            }
-        }
-        Ok(saved)
-    }
-
-    /// Writes `saved` back into the store, as far as the store lets it: an entry that was
-    /// empty is deleted. A write the store refuses is only logged; the capture fails either way.
-    async fn put_back(
-        &self,
-        profile: &'static Profile,
-        saved: impl IntoIterator<Item = (Slot, Option<Saved>)>,
-    ) {
-        for (slot, entry) in saved {
-            let result = self
-                .store(move |vault| match entry {
-                    Some(entry) => vault.write(profile, slot, &entry.stand_in, &entry.real),
-                    None => vault.delete(profile, slot),
-                })
-                .await;
-            if result.is_err() {
-                tracing::warn!(
-                    workspace = %self.inner.workspace,
-                    profile = profile.id,
-                    "a login's earlier token could not be put back in the credential store"
-                );
-            }
-        }
-    }
-
-    /// The stand-in each found token gets, and whether it is new: the slot's own for a token that
-    /// keeps it, the one an earlier field of the same answer gave the same token, or a new one.
-    fn plan(
-        &self,
-        profile: &'static Profile,
-        found: Vec<(&'static Field, Zeroizing<String>)>,
-    ) -> Result<Vec<Planned>, Problem> {
-        let mut planned: Vec<Planned> = Vec::new();
-        for (field, real) in found {
-            // Two fields of one answer with the same token in one slot (a registry answers with
-            // `token` and `access_token`) give it one stand-in.
-            let in_answer = planned
-                .iter()
-                .find(|(taken, kept, _, _)| {
-                    taken.slot() == field.slot() && kept.as_str() == real.as_str()
-                })
-                .map(|(_, _, stand_in, _)| stand_in.clone());
-            // A session token's fields and a JWT's claims hold its expiry, so a new token gets a
-            // new stand-in; any other token keeps the slot's.
-            let existing = in_answer.or_else(|| {
-                self.slots()
-                    .get(&(profile.id, field.slot()))
-                    .cloned()
-                    .filter(|_| !shape::renews(&real, field))
-            });
-            let planned_stand_in = match existing {
-                Some(stand_in) => (stand_in, false),
-                // The system had no random numbers, or the token cannot be copied: either way
-                // there is no stand-in to give.
-                None => (
-                    shape::stand_in_for(&real, field).map_err(|_| Problem::UnusableToken)?,
-                    true,
-                ),
-            };
-            planned.push((field, real, planned_stand_in.0, planned_stand_in.1));
-        }
-        Ok(planned)
-    }
-}
-
-/// The fields among `found` that this answer is for: the ones with no condition, the first
-/// [`Audience::Named`] field of each path whose resource the answer names, and the
-/// [`Audience::Unnamed`] ones of a path no named field took.
-fn by_audience<'f>(
-    found: Vec<(&'f Field, Zeroizing<String>)>,
-    parsed: &TokenBody,
-) -> Vec<(&'f Field, Zeroizing<String>)> {
-    let answer_hints = {
-        let mut text = String::new();
-        for name in ["scope", "resource"] {
-            if let Some(value) = parsed.text(name) {
-                text.push_str(&value);
-                text.push(' ');
-            }
-        }
-        text
-    };
-    let mut named: BTreeSet<&str> = BTreeSet::new();
-    let mut taken = Vec::new();
-    let mut unnamed = Vec::new();
-    for (field, real) in found {
-        match field.audience {
-            Audience::Any => taken.push((field, real)),
-            Audience::Named(needles) => {
-                if named.contains(field.path) {
-                    continue;
-                }
-                let mut hints = answer_hints.clone();
-                hints.push_str(&shape::audience_of(&real).unwrap_or_default());
-                let hints = hints.to_ascii_lowercase();
-                if needles.iter().any(|needle| hints.contains(needle)) {
-                    named.insert(field.path);
-                    taken.push((field, real));
-                }
-            }
-            Audience::Unnamed => unnamed.push((field, real)),
-        }
-    }
-    taken.extend(unnamed.into_iter().filter(|(f, _)| !named.contains(f.path)));
-    taken
 }
 
 /// Why a login could not be forgotten completely.
@@ -907,128 +341,6 @@ pub enum ForgetError {
         "the operating system's credential store did not delete a saved login; unlock it or start it and ask again (what was already deleted stays deleted)"
     )]
     Store,
-}
-
-/// The shortest text in a token-like field that counts as a token: shorter ones are lifetimes,
-/// counts and flags that happen to carry the word in their name.
-const MIN_TOKEN_LEN: usize = 16;
-
-/// Name endings of fields that carry a count, a kind or an address, not a credential.
-const NOT_TOKENS: [&str; 8] = [
-    "_type",
-    "_in",
-    "_at",
-    "_url",
-    "_uri",
-    "_endpoint",
-    "_scope",
-    "_label",
-];
-
-/// Whether a field's name says it holds a credential.
-fn token_like(name: &str) -> bool {
-    let name = name.to_ascii_lowercase();
-    if NOT_TOKENS.iter().any(|suffix| name.ends_with(suffix)) {
-        return false;
-    }
-    name.contains("token")
-        || name.contains("secret")
-        || name.contains("password")
-        || name.ends_with("key")
-}
-
-/// Whether the answer holds a credential Puddle would not replace: a token-like text in a field
-/// the endpoint does not name (at any depth), or a named field that is repeated or structured
-/// (the tool may read the one Puddle did not).
-fn holds_unnamed_token(endpoint: &Endpoint, fields: &[BodyField]) -> bool {
-    let named = |field: &BodyField| endpoint.fields.iter().any(|f| f.path == field.path);
-    fields.iter().any(|field| {
-        if named(field) {
-            let repeated = fields.iter().filter(|f| f.path == field.path).count() > 1;
-            return repeated || field.kind == FieldKind::Structured;
-        }
-        matches!(field.kind, FieldKind::Text(n) if n >= MIN_TOKEN_LEN) && token_like(&field.name)
-    })
-}
-
-/// What the tool is told when its login is refused: the reason, and what to do.
-fn refusal_for(profile: &Profile, problem: Problem) -> InjectRefusal {
-    let why = match problem {
-        Problem::StoreUnavailable => {
-            "the credential store is not available (locked or not running); unlock it or start it and sign in again"
-        }
-        Problem::UnexpectedAnswer => {
-            "the sign-in answer is in a form Puddle does not read (compressed, too large or not JSON or a form)"
-        }
-        Problem::UnusableToken => "the token has a form Puddle cannot give a stand-in for",
-        Problem::BoundToken => "the service ties its token to a key of the tool's own",
-        Problem::UnnamedToken => "the answer carries a token in a field Puddle does not know",
-        _ => "Puddle could not keep it",
-    };
-    InjectRefusal::new(
-        502,
-        ReasonCode::LoginNotKept,
-        format!(
-            "Puddle did not let the {} sign-in through: {why}. Nothing reached this workspace; Puddle's notice says what to do.",
-            profile.name
-        ),
-    )
-}
-
-/// The answer of one token endpoint, being captured.
-struct Capture {
-    logins: Logins,
-    profile: &'static Profile,
-    endpoint: &'static Endpoint,
-}
-
-impl Capture {
-    /// Tells the user the login was not kept; the tool then gets the refusal, not the answer.
-    fn refuse(&self, problem: Problem) -> InjectRefusal {
-        self.logins.notify(self.profile, problem);
-        refusal_for(self.profile, problem)
-    }
-}
-
-impl AnswerRewriter for Capture {
-    fn wants(&mut self, head: &AnswerHead<'_>) -> Want {
-        // Only a success answer has tokens; an error answer is the tool's to read.
-        if !(200..300).contains(&head.status) || head.status == 204 {
-            return Want::Pass;
-        }
-        let identity = head
-            .content_encoding
-            .is_none_or(|e| e.trim().is_empty() || e.trim().eq_ignore_ascii_case("identity"));
-        let small = head
-            .content_length
-            .is_none_or(|n| n <= MAX_EXCHANGE_BODY as u64);
-        if TokenBody::reads(head.content_type) && identity && small {
-            return Want::Read;
-        }
-        Want::Refuse(self.refuse(Problem::UnexpectedAnswer))
-    }
-
-    fn too_large(&mut self) -> Rewrite {
-        Rewrite::Refuse(self.refuse(Problem::UnexpectedAnswer))
-    }
-
-    fn rewrite<'a>(
-        &'a mut self,
-        head: &'a AnswerHead<'a>,
-        body: &'a [u8],
-    ) -> puddle_proxy::BoxFuture<'a, Rewrite> {
-        Box::pin(async move {
-            match self
-                .logins
-                .capture((self.profile, self.endpoint), body, head.content_type)
-                .await
-            {
-                Ok(Some(replaced)) => Rewrite::Replace(replaced),
-                Ok(None) => Rewrite::Keep,
-                Err(problem) => Rewrite::Refuse(self.refuse(problem)),
-            }
-        })
-    }
 }
 
 impl ExchangeRewriter for Logins {
@@ -1053,6 +365,11 @@ impl ExchangeRewriter for Logins {
         let route = on_host
             .find(|route| route.method.accepts(method) && path_matches(&route.path, &path))?;
         let mut exchange = Exchange::new();
+        if self.unread().remove(route.profile.id) {
+            let logins = self.clone();
+            let profile = route.profile;
+            exchange = exchange.after(Box::pin(async move { logins.read_again(profile).await }));
+        }
         for field in route.endpoint.request_fields {
             exchange = exchange.swapping(*field);
         }
@@ -1069,5 +386,14 @@ impl ExchangeRewriter for Logins {
     }
 }
 
+mod capture;
+mod refusal;
+mod store;
+
+use capture::Capture;
+
+/// A problem is reported at most once in this long for each service and kind (the injector does
+/// the same for its notices).
+const NOTICE_EVERY: Duration = Duration::from_secs(10);
 #[cfg(test)]
-mod refusal_tests;
+pub(crate) use store::{MEMORY_KEPT, RETIRED_KEPT};

@@ -25,8 +25,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use puddle_logins::{LoginNotices, Logins, Problem, Profile, builtin};
-use puddle_proxy::{ExchangeRewriter, InjectDecision, StandIns};
-use puddle_secrets::{MemoryStore, SecretStore};
+use puddle_proxy::{InjectDecision, StandIns};
+use puddle_secrets::MemoryStore;
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 use terminate_support::{
@@ -165,13 +165,19 @@ fn claude_api(request: &Recorded) -> Reply {
         "/api/oauth/claude_cli/create_api_key" => json_reply(&json!({"raw_key": API_KEY})),
         // The inference call: a bearer that is not one of the real tokens is refused the way the
         // real API refuses it, which is what a tool holding only a stand-in meets after a forget.
-        "/v1/messages" if !is_a_real_bearer(request) => Reply::status(
+        // The console login's own API key is accepted the same way; refusing it made the tool retry
+        // the 401 until the test's time limit.
+        "/v1/messages" if !is_a_real_bearer(request) && !is_the_api_key(request) => Reply::status(
             401,
             "content-type: application/json\r\n",
             r#"{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}"#,
         ),
         _ => not_found(),
     }
+}
+
+fn is_the_api_key(request: &Recorded) -> bool {
+    request.header("x-api-key") == Some(API_KEY)
 }
 
 fn is_a_real_bearer(request: &Recorded) -> bool {
@@ -331,8 +337,8 @@ impl Tools {
             true,
             builtin(),
             Arc::clone(&registry),
-            Arc::clone(&store) as Arc<dyn SecretStore>,
-            Arc::clone(&notices) as Arc<dyn LoginNotices>,
+            store.clone(),
+            notices.clone(),
             puddle_logins::Marker::none(),
         ));
         let rig = rig
@@ -340,7 +346,7 @@ impl Tools {
             .allow(bound)
             .injector(TestInjector::new(|_| InjectDecision::PassThrough))
             .stand_ins(&registry)
-            .exchanges(Arc::clone(&logins) as Arc<dyn ExchangeRewriter>)
+            .exchanges(logins.clone())
             .build();
         let guest = rig.guest();
         let (port, bridge) = guest.proxy_port().await;

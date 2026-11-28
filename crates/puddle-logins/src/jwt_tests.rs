@@ -2,14 +2,12 @@
 //! Tests of a field whose stand-in is a JWT ([`StandInKind::Jwt`]): a refresh makes a new stand-in, and
 //! the slot keeps the last few older ones registered.
 
-use base64::Engine as _;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 
 use crate::profile::{Audience, Endpoint, Field, Keep, Method, Profile, Role, Scope, StandInKind};
+use crate::test_rig::{Rig, answered, claims_of, jwt_signed, rig_for, rig_with};
 use crate::vault::Vault;
-use crate::widened_tests::{Rig, answered, rig_for};
 
 static JWT_PROFILE: [Profile; 1] = [Profile {
     id: "jwt",
@@ -50,11 +48,7 @@ static JWT_PROFILE: [Profile; 1] = [Profile {
 }];
 
 fn jwt(exp: u64, signature: &str) -> String {
-    format!(
-        "{}.{}.{signature}",
-        URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256"}"#),
-        URL_SAFE_NO_PAD.encode(json!({"sub": "me", "exp": exp}).to_string()),
-    )
+    jwt_signed(&json!({"sub": "me", "exp": exp}).to_string(), signature)
 }
 
 async fn token(rig: &Rig, access: &str, refresh: &str) -> Value {
@@ -66,11 +60,6 @@ async fn token(rig: &Rig, access: &str, refresh: &str) -> Value {
         &json!({"access_token": access, "refresh_token": refresh, "expires_in": 3600}),
     )
     .await
-}
-
-fn claims_of(token: &str) -> Value {
-    let payload = token.split('.').nth(1).unwrap();
-    serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).unwrap()).unwrap()
 }
 
 const REFRESH: &str = "rt_CANARY0refresh0AAAAAAAAAAAAAAAAAAAAAAAA";
@@ -93,13 +82,10 @@ async fn a_jwt_login_gives_the_tool_a_token_whose_claims_read_the_same() {
     );
     assert_eq!(given["expires_in"], 3600);
     assert_eq!(rig.registry.len(), 2);
-    let kept = Vault::new(
-        std::sync::Arc::clone(&rig.store) as _,
-        &WorkspaceId::new("alpha").unwrap(),
-    )
-    .read(&JWT_PROFILE[0], Role::Access)
-    .unwrap()
-    .unwrap();
+    let kept = Vault::new(rig.store.clone(), &WorkspaceId::new("alpha").unwrap())
+        .read(&JWT_PROFILE[0], Role::Access)
+        .unwrap()
+        .unwrap();
     assert_eq!(
         (kept.stand_in.as_str(), kept.real.as_str()),
         (access, real.as_str())
@@ -110,16 +96,18 @@ async fn a_jwt_login_gives_the_tool_a_token_whose_claims_read_the_same() {
 async fn a_refresh_makes_a_new_stand_in_and_a_few_older_ones_stay_registered() {
     let rig = rig_for(&JWT_PROFILE);
     let mut given = Vec::new();
-    let mut last_real = String::new();
+    let mut reals = Vec::new();
     for (n, letter) in (0_u64..).zip(["A", "B", "C", "D", "E"]) {
-        last_real = jwt(1_000_000_001 + 3600 * n, &letter.repeat(86));
+        let last_real = jwt(1_000_000_001 + 3600 * n, &letter.repeat(86));
         given.push(
             token(&rig, &last_real, REFRESH).await["access_token"]
                 .as_str()
                 .unwrap()
                 .to_owned(),
         );
+        reals.push(last_real);
     }
+    let last_real = reals[4].clone();
     for (a, stand_in) in given.iter().enumerate() {
         assert_eq!(
             claims_of(stand_in)["exp"],
@@ -129,23 +117,22 @@ async fn a_refresh_makes_a_new_stand_in_and_a_few_older_ones_stay_registered() {
     }
     // The newest and the three before it, and the one refresh stand-in, which a refresh keeps.
     assert_eq!(rig.registry.len(), 5);
-    let registered = |stand_in: &str| {
-        rig.registry
-            .set_real(stand_in, puddle_proxy::SecretValue::new(last_real.as_str()))
-            == Ok(true)
-    };
-    assert!(!registered(&given[0]), "the oldest is no longer swapped");
-    for stand_in in &given[1..] {
-        assert!(registered(stand_in), "{stand_in}");
+    assert_eq!(
+        rig.registry.real_of(&given[0]),
+        None,
+        "the oldest is no longer swapped"
+    );
+    for (stand_in, real) in given.iter().zip(&reals).skip(1) {
+        assert_eq!(
+            rig.registry.real_of(stand_in).as_deref(),
+            Some(real.as_str())
+        );
     }
     // The store holds the newest pair only.
-    let kept = Vault::new(
-        std::sync::Arc::clone(&rig.store) as _,
-        &WorkspaceId::new("alpha").unwrap(),
-    )
-    .read(&JWT_PROFILE[0], Role::Access)
-    .unwrap()
-    .unwrap();
+    let kept = Vault::new(rig.store.clone(), &WorkspaceId::new("alpha").unwrap())
+        .read(&JWT_PROFILE[0], Role::Access)
+        .unwrap()
+        .unwrap();
     assert_eq!(
         (kept.stand_in.as_str(), kept.real.as_str()),
         (given[4].as_str(), last_real.as_str())
@@ -196,19 +183,5 @@ async fn forgetting_removes_every_stand_in_and_a_restart_registers_the_newest_on
 }
 
 fn rig_for_store(old: &Rig) -> Rig {
-    let registry = std::sync::Arc::new(puddle_proxy::StandIns::new());
-    let logins = crate::Logins::new(
-        WorkspaceId::new("alpha").unwrap(),
-        true,
-        &JWT_PROFILE,
-        std::sync::Arc::clone(&registry),
-        std::sync::Arc::clone(&old.store) as _,
-        std::sync::Arc::new(crate::widened_tests::Quiet),
-        crate::Marker::none(),
-    );
-    Rig {
-        logins,
-        store: std::sync::Arc::clone(&old.store),
-        registry,
-    }
+    rig_with(&JWT_PROFILE, &old.store, true, crate::Marker::none())
 }

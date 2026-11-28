@@ -110,7 +110,10 @@ fn a_credential_decrypts_its_host_and_azure_devops_its_legacy_names_too() {
         ["dev.azure.com", "*.visualstudio.com"]
     );
     // Only port 443 is terminated.
-    assert_eq!(decrypt_patterns("ghe.example:8443"), [] as [String; 0]);
+    assert_eq!(
+        decrypt_patterns("ghe.example:8443"),
+        <[String; 0]>::default()
+    );
 }
 
 #[test]

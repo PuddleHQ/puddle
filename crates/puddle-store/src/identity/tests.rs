@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use super::*;
 use proptest::prelude::*;
-use puddle_secrets::{AccountName, StoredId, TokenScope};
+use puddle_types::{AccountName, StoredId, TokenScope};
 
 #[test]
 fn an_identity_id_shows_as_its_number() {
@@ -347,5 +347,13 @@ proptest! {
                 prop_assert_eq!(collision(a, b).is_some(), collision(b, a).is_some());
             }
         }
+    }
+}
+
+#[test]
+fn an_author_name_refuses_invisible_characters_and_brackets() {
+    assert!(Author::new("Ann", "ann@example.com").is_ok());
+    for bad in ["A\u{200B}nn", "A\u{202E}nn", "A\nn", "A<nn", "Ann>"] {
+        assert!(Author::new(bad, "ann@example.com").is_err(), "{bad:?}");
     }
 }

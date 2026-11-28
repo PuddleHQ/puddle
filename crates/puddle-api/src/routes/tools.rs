@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! A workspace's managed tools: what its mise files ask for, and edits of the root `mise.toml`
-//! through mise's own commands. The routes only translate; [`crate::WorkspaceService`] does the
+//! through mise's own commands. The routes only translate; [`puddle_services::workspaces::WorkspaceService`] does the
 //! work. Everything in an answer that came from the guest is untrusted text: escape it.
 
 use axum::Json;
@@ -9,12 +9,13 @@ use axum::http::StatusCode;
 use puddle_types::{ToolName, ToolVersion, ToolsFileHash};
 use serde::Deserialize;
 
-use crate::ApiErrorBody;
-use crate::error::ApiError;
+use crate::authz::Principal;
 use crate::extract::{Path, Query};
 use crate::routes::AppState;
-use crate::routes::workspaces::workspace_id;
-use crate::wire::{ToolChangeRequest, ToolRegistry, ToolVersions, ToolsListing};
+use crate::routes::workspaces::owned;
+use puddle_services::error::ApiError;
+use puddle_services::error::ApiErrorBody;
+use puddle_services::wire::{ToolChangeRequest, ToolRegistry, ToolVersions, ToolsListing};
 
 fn invalid<E: std::fmt::Display>(e: E) -> ApiError {
     ApiError::invalid(e.to_string())
@@ -45,9 +46,15 @@ pub(crate) struct HashQuery {
 )]
 pub(crate) async fn list_tools(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
 ) -> Result<Json<ToolsListing>, ApiError> {
-    Ok(Json(state.workspaces.tools(&workspace_id(&id)?).await?))
+    Ok(Json(
+        state
+            .workspaces
+            .tools(&owned(&state, principal, &id).await?)
+            .await?,
+    ))
 }
 
 /// Sets a tool's version in the root `mise.toml` with `mise config set`: every other line, comments
@@ -72,17 +79,18 @@ pub(crate) async fn list_tools(
 )]
 pub(crate) async fn put_tool(
     State(state): State<AppState>,
+    principal: Principal,
     Path((id, name)): Path<(String, String)>,
     crate::extract::Json(body): crate::extract::Json<ToolChangeRequest>,
 ) -> Result<Json<ToolsListing>, ApiError> {
-    let id = workspace_id(&id)?;
+    let workspace = owned(&state, principal, &id).await?;
     let name = ToolName::new(&name).map_err(invalid)?;
     let version = ToolVersion::new(&body.version).map_err(invalid)?;
     let hash = ToolsFileHash::new(&body.sha256).map_err(invalid)?;
     Ok(Json(
         state
             .workspaces
-            .set_tool(&id, &name, &version, &hash)
+            .set_tool(&workspace, &name, &version, &hash)
             .await?,
     ))
 }
@@ -108,13 +116,19 @@ pub(crate) async fn put_tool(
 )]
 pub(crate) async fn delete_tool(
     State(state): State<AppState>,
+    principal: Principal,
     Path((id, name)): Path<(String, String)>,
     Query(query): Query<HashQuery>,
 ) -> Result<Json<ToolsListing>, ApiError> {
-    let id = workspace_id(&id)?;
+    let workspace = owned(&state, principal, &id).await?;
     let name = ToolName::new(&name).map_err(invalid)?;
     let hash = ToolsFileHash::new(&query.sha256).map_err(invalid)?;
-    Ok(Json(state.workspaces.remove_tool(&id, &name, &hash).await?))
+    Ok(Json(
+        state
+            .workspaces
+            .remove_tool(&workspace, &name, &hash)
+            .await?,
+    ))
 }
 
 /// The tools mise knows by name (`mise registry`, about a thousand), for the Add tool dialog's
@@ -132,10 +146,14 @@ pub(crate) async fn delete_tool(
 )]
 pub(crate) async fn tool_registry(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
 ) -> Result<Json<ToolRegistry>, ApiError> {
     Ok(Json(
-        state.workspaces.tool_registry(&workspace_id(&id)?).await?,
+        state
+            .workspaces
+            .tool_registry(&owned(&state, principal, &id).await?)
+            .await?,
     ))
 }
 
@@ -158,11 +176,14 @@ pub(crate) async fn tool_registry(
 )]
 pub(crate) async fn tool_versions(
     State(state): State<AppState>,
+    principal: Principal,
     Path((id, name)): Path<(String, String)>,
 ) -> Result<Json<ToolVersions>, ApiError> {
-    let id = workspace_id(&id)?;
+    let workspace = owned(&state, principal, &id).await?;
     let name = ToolName::new(&name).map_err(invalid)?;
-    Ok(Json(state.workspaces.tool_versions(&id, &name).await?))
+    Ok(Json(
+        state.workspaces.tool_versions(&workspace, &name).await?,
+    ))
 }
 
 /// Installs what the workspace's mise files ask for, in the background: the retry of a failed
@@ -180,8 +201,12 @@ pub(crate) async fn tool_versions(
 )]
 pub(crate) async fn install_tools(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    state.workspaces.install_tools(&workspace_id(&id)?).await?;
+    state
+        .workspaces
+        .install_tools(&owned(&state, principal, &id).await?)
+        .await?;
     Ok(StatusCode::ACCEPTED)
 }

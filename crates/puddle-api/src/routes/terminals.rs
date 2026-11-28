@@ -12,19 +12,20 @@ use axum::extract::State;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade, close_code};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
+use puddle_services::owned::OwnedWorkspace;
 use puddle_types::WorkspaceId;
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 use utoipa::ToSchema;
 
-use crate::ApiErrorBody;
 use crate::auth::ReachedPublicly;
 use crate::authz::{Principal, Via};
-use crate::error::{ApiError, ErrorCode};
 use crate::extract::{Json as BodyJson, Path};
 use crate::routes::AppState;
-use crate::routes::workspaces::named;
-use crate::terminals::{
+use crate::routes::workspaces::owned;
+use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, ErrorCode};
+use puddle_services::terminals::{
     EndReason, MAX_MESSAGE_BYTES, SUBPROTOCOL, TerminalEnd, TerminalError, TerminalInput,
     TerminalLink, TerminalOutput, TerminalSize,
 };
@@ -68,22 +69,6 @@ struct Ended<'a> {
     message: Option<&'a str>,
 }
 
-impl From<TerminalError> for ApiError {
-    fn from(err: TerminalError) -> Self {
-        match err {
-            TerminalError::Unavailable(m) => {
-                Self::new(StatusCode::SERVICE_UNAVAILABLE, ErrorCode::Unavailable, m)
-            }
-            TerminalError::NotRunning(m) => Self::new(StatusCode::CONFLICT, ErrorCode::Conflict, m),
-            TerminalError::Ended(end) => Self::new(
-                StatusCode::CONFLICT,
-                ErrorCode::Conflict,
-                end.message.unwrap_or_else(|| "the terminal ended".into()),
-            ),
-        }
-    }
-}
-
 /// Asks for a terminal in a running or starting workspace. The session opens when the socket
 /// connects, so a ticket that is never used leaves nothing behind.
 #[utoipa::path(
@@ -106,7 +91,7 @@ pub(crate) async fn create_terminal(
     Path(id): Path<String>,
     BodyJson(body): BodyJson<TerminalRequest>,
 ) -> Result<(StatusCode, Json<TerminalTicket>), ApiError> {
-    let workspace = named(&state, &id).await?;
+    let workspace = owned(&state, principal, &id).await?;
     let size = TerminalSize::new(body.cols, body.rows)
         .ok_or_else(|| ApiError::invalid("a terminal is 2 to 500 columns and 1 to 300 rows"))?;
     state.terminal_service.check(&workspace).await?;
@@ -127,14 +112,9 @@ pub(crate) async fn create_terminal(
 }
 
 fn new_ticket() -> Result<String, ApiError> {
-    use std::fmt::Write as _;
     let mut bytes = [0_u8; 32];
     getrandom::fill(&mut bytes).map_err(|e| ApiError::internal(&e))?;
-    Ok(bytes.iter().fold(String::with_capacity(64), |mut out, b| {
-        // writing into a `String` cannot fail
-        let _ = write!(out, "{b:02x}");
-        out
-    }))
+    Ok(puddle_types::hex_lower(&bytes))
 }
 
 /// The ticket among the offered sub-protocols (`puddle-terminal.v1, ticket.<hex>`), when the
@@ -188,12 +168,11 @@ pub(crate) async fn terminal_socket(
         .ok()
         .filter(|_| admitted)
         .and_then(|workspace| {
-            let size = ticket_of(&headers).and_then(|ticket| {
+            ticket_of(&headers).and_then(|ticket| {
                 state
                     .terminals
                     .claim(&workspace, terminal, ticket.as_bytes())
-            })?;
-            Some((workspace, size))
+            })
         });
     let (workspace, size) = claimed.ok_or_else(|| {
         ApiError::new(
@@ -243,7 +222,7 @@ async fn when_handed<S, F: Future<Output = ()>>(
 async fn run(
     mut socket: WebSocket,
     state: &AppState,
-    workspace: &WorkspaceId,
+    workspace: &OwnedWorkspace,
     size: TerminalSize,
     shutdown: watch::Receiver<bool>,
     ended: impl Future<Output = ()> + Unpin,

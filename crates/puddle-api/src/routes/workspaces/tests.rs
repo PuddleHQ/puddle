@@ -2,17 +2,18 @@
 use puddle_store::{Limits, ManualClock};
 
 use super::*;
-use crate::workspaces::{RepoUrl, Repository};
+use puddle_services::workspaces::{RepoUrl, Repository};
 
 fn at(url: &str, identity: Option<i64>) -> NewRepository {
     NewRepository {
         repository: Repository::at_default_directory(
-            crate::new_entry_id(|_| false).unwrap(),
+            puddle_services::workspaces::new_entry_id(|_| false).unwrap(),
             RepoUrl::parse(url).unwrap(),
         ),
         identity: identity.map(IdentityId),
         pull: true,
         push: true,
+        push_block: None,
         local: None,
     }
 }

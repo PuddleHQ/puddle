@@ -153,9 +153,11 @@
       {#if identity}
         Identity: <a href="/identities/{identity.id}">{identity.label}</a>
       {:else}
-        No identity covers this: <a href={tabHref(workspace.id, "git")}
-          >open the Git tab</a
+        No identity needed for a public repository. For a private one, <a
+          href={tabHref(workspace.id, "git")}
         >
+          add an identity on the Git tab
+        </a>
       {/if}
     </span>
   {/if}
@@ -166,8 +168,10 @@
     type="button"
     class="btn"
     aria-label="Remove from the list: {entry.directory}"
-    onclick={() => askRemove(entry)}>Remove from the list</button
+    onclick={() => askRemove(entry)}
   >
+    Remove from the list
+  </button>
 {/snippet}
 
 <section class="card" id="repositories" aria-labelledby="repos-h">
@@ -178,8 +182,10 @@
       class="btn"
       disabled={addOff !== null}
       aria-describedby={addOff ? "repos-add-reason" : undefined}
-      onclick={() => (addOpen = true)}>Add repository</button
+      onclick={() => (addOpen = true)}
     >
+      Add repository
+    </button>
   </div>
   {#if addOff}
     <p class="hint" id="repos-add-reason">{addOff}</p>
@@ -207,8 +213,9 @@
           <time
             datetime={new Date(listing.checked_at).toISOString()}
             title={absoluteTime(listing.checked_at)}
-            >Listed {relativeTime(listing.checked_at, Date.now())}.</time
           >
+            Listed {relativeTime(listing.checked_at, Date.now())}.
+          </time>
         {/if}
       </p>
     {:else if listing.problem}
@@ -230,13 +237,13 @@
           <div class="what">
             <b class="mono">{checkout.directory}</b>
             {#if entry}
-              <span class="chip">On the list</span>
+              <span class="meta">On the list</span>
             {:else}
-              <span class="chip">Not managed by Puddle: works as is</span>
+              <span class="meta">Not managed by Puddle: works as is</span>
             {/if}
             {#if checkout.unreadable === null}
               <span class="meta">{branchLabel(checkout)}</span>
-              {#if checkout.dirty}<span class="chip warn">changes</span>{/if}
+              {#if checkout.dirty}<span class="meta warn">changes</span>{/if}
               {#if checkout.remote_url}
                 <span class="meta mono">{checkout.remote_url}</span>
               {/if}
@@ -245,9 +252,9 @@
             {/if}
             {#if entry}
               {#if remoteDiffers(checkout)}
-                <span class="meta"
-                  >The list says <span class="mono">{entry.url}</span></span
-                >
+                <span class="meta">
+                  The list says <span class="mono">{entry.url}</span>
+                </span>
               {/if}
               {@render identityLine(entry)}
             {/if}
@@ -261,8 +268,9 @@
                 class="btn"
                 aria-label="Manage this: {checkout.directory}"
                 onclick={() => askManage(checkout.directory, remoteUrl)}
-                >Manage this</button
               >
+                Manage this
+              </button>
             {:else if checkout.manage.reason}
               <span class="meta">{checkout.manage.reason}</span>
             {/if}
@@ -273,7 +281,7 @@
         <li>
           <div class="what">
             <b class="mono">{entry.directory}</b>
-            <span class="chip warn">Not on the disk</span>
+            <span class="meta warn">Not on the disk</span>
             <span class="meta mono">{entry.url}</span>
             {@render identityLine(entry)}
           </div>
@@ -284,8 +292,10 @@
               disabled={cloneOff !== null}
               aria-label="Clone again: {entry.directory}"
               aria-describedby={cloneOff ? "repos-clone-reason" : undefined}
-              onclick={() => void cloneAgain(entry)}>Clone again</button
+              onclick={() => void cloneAgain(entry)}
             >
+              Clone again
+            </button>
             {@render removeButton(entry)}
           </div>
         </li>
@@ -306,7 +316,7 @@
         <li>
           <div class="what">
             <b class="mono">{entry.directory}</b>
-            <span class="chip">On the list</span>
+            <span class="meta">On the list</span>
             <span class="meta mono">{entry.url}</span>
             {@render identityLine(entry)}
           </div>
@@ -410,22 +420,19 @@
     flex: 1;
     overflow-wrap: anywhere;
   }
+  /* The global .meta never wraps; here it holds URLs and a sentence, which must wrap at 390 px. */
   .meta {
     color: var(--color-text-muted);
     font-size: var(--text-sm);
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
   .acts {
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-2);
   }
-  .chip {
-    padding: 0 var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-pill);
-    font-size: var(--text-sm);
-  }
-  .chip.warn {
+  .meta.warn {
     border-color: var(--color-warning);
   }
   .btn:disabled {

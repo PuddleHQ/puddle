@@ -11,8 +11,10 @@
 //!   else in it changes.
 //! - **The answer.** When the rewriter wants it, the answer is read in full and handed to the
 //!   rewriter, which may give back a new body: the real token replaced by a stand-in. The new body
-//!   is what the guest gets, with its own framing. An answer larger than the cap, or in an
-//!   encoding the rewriter did not ask for, goes through as it is.
+//!   is what the guest gets, with its own framing. An answer in an encoding the
+//!   rewriter did not ask for goes through as it is. One larger than the cap goes through as it is
+//!   unless [`AnswerRewriter::too_large`] refuses it; each rewriter chooses, and the login rewriter
+//!   refuses.
 //!
 //! The seam knows nothing about tokens: which fields hold what, how a stand-in is made and where
 //! the real token is kept belong to whoever implements [`ExchangeRewriter`].
@@ -47,6 +49,7 @@ pub const MAX_EXCHANGE_BODY: usize = 64 * 1024;
 pub struct Exchange {
     swap_fields: Vec<String>,
     answer: Option<Box<dyn AnswerRewriter>>,
+    before: Option<BoxFuture<'static, ()>>,
 }
 
 impl fmt::Debug for Exchange {
@@ -54,6 +57,7 @@ impl fmt::Debug for Exchange {
         f.debug_struct("Exchange")
             .field("swap_fields", &self.swap_fields)
             .field("answer", &self.answer.is_some())
+            .field("before", &self.before.is_some())
             .finish()
     }
 }
@@ -65,6 +69,21 @@ impl Exchange {
         Self {
             swap_fields: Vec::new(),
             answer: None,
+            before: None,
+        }
+    }
+
+    /// Runs `work` to its end before the request's stand-ins are swapped, so a stand-in the work
+    /// registers (a login read again from the credential store) is found by this very request.
+    pub fn after(mut self, work: BoxFuture<'static, ()>) -> Self {
+        self.before = Some(work);
+        self
+    }
+
+    /// Finishes the work [`Self::after`] named, once; the proxy does this before it swaps.
+    pub async fn prepare(&mut self) {
+        if let Some(work) = self.before.take() {
+            work.await;
         }
     }
 
@@ -169,10 +188,9 @@ pub trait AnswerRewriter: Send {
     ) -> BoxFuture<'a, Rewrite>;
 
     /// The answer turned out larger than [`MAX_EXCHANGE_BODY`] (it had no length to say so up
-    /// front). It goes to the guest as it is unless this refuses it.
-    fn too_large(&mut self) -> Rewrite {
-        Rewrite::Keep
-    }
+    /// front). It goes to the guest as it is unless this refuses it; there is no default, so each
+    /// rewriter says whether an oversized answer may pass.
+    fn too_large(&mut self) -> Rewrite;
 }
 
 /// Decides, per terminated request, whether it is an exchange to read. One rewriter serves one

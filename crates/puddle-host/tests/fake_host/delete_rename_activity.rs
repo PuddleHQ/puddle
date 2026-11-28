@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Delete, rename and the activity log.
 
+use super::start_folder_and_dev_cert::stop_and_start;
 use super::*;
+use puddle_services::owned::OwnedWorkspace;
+use puddle_store::UserId;
 
 /// Creates `acme` with a secret of its own and a settings file, then stops Puddle: what a
 /// delete has to clear besides the runtime. Returns the secrets that exist for it.
@@ -335,7 +338,10 @@ async fn a_busy_database_does_not_hold_up_the_workspace_list_while_a_rename_save
         // The list's lock is a plain mutex, so a reader that has to wait blocks its thread:
         // measure how long the read took rather than time it out.
         let started = std::time::Instant::now();
-        let read = host.workspaces().get(&id).await;
+        let read = host
+            .workspaces()
+            .get(&OwnedWorkspace::for_test(UserId::OWNER, &id))
+            .await;
         let took = started.elapsed();
         db.execute_batch("COMMIT").unwrap();
         (read, took)
@@ -347,6 +353,47 @@ async fn a_busy_database_does_not_hold_up_the_workspace_list_while_a_rename_save
     assert!(
         took < Duration::from_secs(4),
         "the workspace list waited {took:?} for a write to the database"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rename_reaches_the_prompt_of_the_running_guest_and_a_start_reads_the_new_name() {
+    const PROMPT: &str = "/etc/profile.d/04-puddle-prompt-name.sh";
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create(&api, &mut events, "acme").await;
+    after_boot_listing(&rig).await;
+    let prompt = |boot: usize| pem_of(&rig.guest.plan_files(boot), PROMPT);
+    // The guest's prompt reads the name from the first boot on.
+    assert!(
+        prompt(rig.guest.boots() - 1).contains("__puddle_name='acme'"),
+        "{}",
+        prompt(rig.guest.boots() - 1)
+    );
+
+    // A rename is written into the running guest, with no restart, for the next terminal.
+    let boots = rig.guest.boots();
+    let renamed = api
+        .patch("/api/workspaces/acme", &name_body("It's $(a) shop"))
+        .await;
+    assert_eq!(renamed.status, 200, "{}", renamed.body);
+    // The prompt's plan, then the editor file's, whose window title carries the name.
+    assert_eq!(rig.guest.boots(), boots + 2);
+    assert!(
+        prompt(boots).contains("__puddle_name='It'\\''s $(a) shop'"),
+        "{}",
+        prompt(boots)
+    );
+
+    // A start after a stop reads the saved name.
+    stop_and_start(&api, &mut events, "acme").await;
+    assert!(
+        prompt(rig.guest.boots() - 1).contains("shop'"),
+        "{}",
+        prompt(rig.guest.boots() - 1)
     );
     host.shutdown().await;
 }
@@ -370,8 +417,16 @@ async fn a_rename_survives_a_restart_and_leaves_the_sandbox_and_volume_alone() {
         (&ws["id"], &ws["name"], &ws["status"]),
         (&json!("acme"), &json!("Acme shop"), &json!("running"))
     );
-    // The workspace is running and nothing in the runtime was touched: a name only.
-    assert_eq!(rig.runtime.calls().len(), calls_before);
+    // The workspace is running and the runtime's sandbox and volumes are left alone: the only
+    // call is the boot plan that gives new terminals the new name in their prompt.
+    let calls = rig.runtime.calls();
+    assert!(
+        calls[calls_before..]
+            .iter()
+            .all(|call| matches!(call.op, Op::Exec)),
+        "{:?}",
+        &calls[calls_before..]
+    );
     assert_eq!(volume_names(&rig).await, ["ws-acme"]);
     host.shutdown().await;
     drop(host);
@@ -978,9 +1033,13 @@ async fn a_delete_waits_for_a_settings_change_in_flight_so_it_cannot_bring_the_f
     let in_flight = host.settings().lock().await;
     // Straight to the service: the HTTP route reads settings under the same lock.
     let id = WorkspaceId::new("acme").unwrap();
-    puddle_api::WorkspaceService::delete(host.workspaces(), &id, None)
-        .await
-        .unwrap();
+    puddle_services::workspaces::WorkspaceService::delete(
+        host.workspaces(),
+        &OwnedWorkspace::for_test(UserId::OWNER, &id),
+        None,
+    )
+    .await
+    .unwrap();
     // Everything but the settings file goes; that waits on the change in flight.
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert!(

@@ -6,12 +6,15 @@
 //! one place a record becomes text. Nothing secret is representable: there are no header, body,
 //! query-string or credential fields (R-25).
 
-use std::io;
+mod connection;
+mod line;
+use line::{cap_strings, encode, longest_string};
+mod window;
 
-use puddle_types::{
-    ConnectionDecision, ConnectionEvent, ConnectionOrigin, ConnectionOutcome, ConnectionReason,
-    LocalCategory, WorkspaceId, request_path,
-};
+pub use connection::ConnectionRecord;
+pub(crate) use window::ConnectionWindow;
+
+use puddle_types::{ConnectionDecision, ConnectionOrigin, request_path};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -33,202 +36,6 @@ pub enum AuditError {
     /// The record is over the line cap with every string already empty.
     #[error("audit record exceeds {MAX_LINE_BYTES} bytes without its strings")]
     TooLarge,
-}
-
-/// A `connection` record (R-24). `host`, `port` and `decision` are `null` only on a
-/// `reason: suppressed` summary, which carries `count` instead.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ConnectionRecord {
-    /// Epoch ms.
-    pub ts: u64,
-    /// The workspace; `null` for Puddle's own connections (`origin: puddle`).
-    #[serde(alias = "sandbox_id")]
-    pub workspace_id: Option<String>,
-    /// Whose connection it is: `workspace` or `puddle`. Absent in records written before it
-    /// existed, which read as `workspace`.
-    #[serde(default)]
-    pub origin: ConnectionOrigin,
-    /// The requested host.
-    pub host: Option<String>,
-    /// The requested port.
-    pub port: Option<u16>,
-    /// The address connected to.
-    pub resolved_ip: Option<String>,
-    /// The company-proxy hop that carried it (`DIRECT`, `PROXY host:port`), when an upstream
-    /// route is configured. Absent in records written before it existed.
-    #[serde(default)]
-    pub upstream: Option<String>,
-    /// What happened.
-    pub decision: Option<ConnectionDecision>,
-    /// How reaching the destination went after an allow (`connected`, `upstream_refused`,
-    /// `connect_failed`, `timeout`); absent where nothing was attempted and in records written
-    /// before it existed.
-    #[serde(default)]
-    pub outcome: Option<ConnectionOutcome>,
-    /// Why (see [`ConnectionReason`]).
-    pub reason: String,
-    /// The deciding rule.
-    pub rule_id: Option<i64>,
-    /// The rule set whose entry decided (`system`, `builtin:<slug>`, `user:<id>`). Absent in
-    /// records written before rule sets existed.
-    #[serde(default)]
-    pub rule_set: Option<String>,
-    /// The rule on method and path that refused a request of the connection (reason
-    /// `request_rule`); `method` and `path` are that request's. For a tunnel refused with
-    /// `request_rule_port`, the lowest-numbered rule on the host. Its own numbering, apart from
-    /// `rule_id`. Absent in records written before it existed.
-    #[serde(default)]
-    pub request_rule: Option<i64>,
-    /// The first address of the answer that an IP rule denied, else the first the address guard refused, while the connection
-    /// went to the allowed addresses only. Absent in records written before it existed.
-    #[serde(default)]
-    pub refused_address: Option<String>,
-    /// Why `refused_address` was refused (a reason code such as `ip_rule` or `toggle:private`).
-    #[serde(default)]
-    pub refused_reason: Option<String>,
-    /// `company_network` when the destination is in that category (allowed or refused); absent
-    /// otherwise and in records written before it existed.
-    #[serde(default)]
-    pub category: Option<String>,
-    /// The signal that put the destination in the company network (`pac_direct`, `dns_suffix`,
-    /// `private_access_cgnat`, `vpn_route`); absent with `category`.
-    #[serde(default)]
-    pub signal: Option<String>,
-    /// The pending row.
-    pub pending_id: Option<i64>,
-    /// The credential binding, by id.
-    pub binding_id: Option<String>,
-    /// Whether a credential was injected.
-    pub injected: bool,
-    /// The ids of the secret stand-ins that went out unchanged (wrong host, or in the path or
-    /// query). Absent in records written before it existed.
-    #[serde(default)]
-    pub unswapped_stand_ins: Vec<String>,
-    /// The ids of the stand-ins whose real values an answer from one of their hosts held, put back as
-    /// the stand-in before the workspace saw it (`stand-in:secret:<NAME>` or `stand-in:login:<name>`),
-    /// each once, at most 16. Absent in records written
-    /// before it existed.
-    #[serde(default)]
-    pub scrubbed_stand_ins: Vec<String>,
-    /// The kinds of credential the requests carried that Puddle did not add or swap
-    /// (`github_token`, `stale_stand_in`, ...), each once; never a value. Absent in records
-    /// written before it existed.
-    #[serde(default)]
-    pub foreign_credentials: Vec<String>,
-    /// The kinds of token the answers held that Puddle does not hold (`github_token`,
-    /// `jwt_with_refresh_token`, ...), each once; never a value. Absent in records written before
-    /// it existed.
-    #[serde(default)]
-    pub answer_credentials: Vec<String>,
-    /// HTTP method: plain-HTTP requests, tunnels that carry plain HTTP, terminated hosts.
-    pub method: Option<String>,
-    /// HTTP path without query string, where `method` is set.
-    pub path: Option<String>,
-    /// Whether `path` was cut to fit (R-26).
-    pub path_truncated: bool,
-    /// Bytes from the guest.
-    pub bytes_up: u64,
-    /// Bytes to the guest.
-    pub bytes_down: u64,
-    /// Records summarised, on a `suppressed` summary.
-    pub count: Option<u64>,
-}
-
-impl ConnectionRecord {
-    pub(crate) fn from_event(ts: u64, event: &ConnectionEvent) -> Self {
-        let (method, path) = event.http.as_ref().map_or((None, None), |http| {
-            (Some(http.method().to_owned()), Some(http.path().to_owned()))
-        });
-        Self {
-            ts,
-            workspace_id: event.workspace.as_ref().map(ToString::to_string),
-            origin: event.origin,
-            host: Some(event.host.to_string()),
-            port: Some(event.port),
-            resolved_ip: event.resolved_ip.map(|ip| ip.to_string()),
-            upstream: event.upstream.clone(),
-            decision: Some(event.decision),
-            outcome: event.outcome,
-            reason: event.reason.to_string(),
-            refused_address: event.refused_address.map(|(ip, _)| ip.to_string()),
-            refused_reason: event.refused_address.map(|(_, why)| why.code().to_owned()),
-            category: event
-                .company_network
-                .map(|_| LocalCategory::CompanyNetwork.key().to_owned()),
-            signal: event.company_network.map(|s| s.code().to_owned()),
-            rule_id: event.rule_id.map(|id| id.0),
-            rule_set: event.rule_set.map(|set| set.to_string()),
-            request_rule: event.request_rule.map(|id| id.0),
-            pending_id: event.pending_id.map(|id| id.0),
-            binding_id: event.binding_id.clone(),
-            injected: event.injected,
-            unswapped_stand_ins: event.unswapped_stand_ins.clone(),
-            scrubbed_stand_ins: event.scrubbed_stand_ins.clone(),
-            foreign_credentials: event.foreign_credentials.clone(),
-            answer_credentials: event.answer_credentials.clone(),
-            method,
-            path,
-            path_truncated: false,
-            bytes_up: event.bytes_up,
-            bytes_down: event.bytes_down,
-            count: None,
-        }
-    }
-
-    /// The `suppressed` summary for a workspace, or for Puddle's own connections when `workspace` is
-    /// `None`.
-    pub(crate) fn suppressed_summary(ts: u64, workspace: Option<&WorkspaceId>, count: u64) -> Self {
-        Self::summary(ts, workspace, ConnectionReason::Suppressed, count)
-    }
-
-    /// The `merged` summary of the oldest records of waiting requests a workspace had too many of.
-    pub(crate) fn merged_summary(ts: u64, workspace: &WorkspaceId, count: u64) -> Self {
-        Self::summary(ts, Some(workspace), ConnectionReason::Merged, count)
-    }
-
-    fn summary(
-        ts: u64,
-        workspace: Option<&WorkspaceId>,
-        reason: ConnectionReason,
-        count: u64,
-    ) -> Self {
-        Self {
-            ts,
-            workspace_id: workspace.map(ToString::to_string),
-            origin: if workspace.is_some() {
-                ConnectionOrigin::Workspace
-            } else {
-                ConnectionOrigin::Puddle
-            },
-            host: None,
-            port: None,
-            resolved_ip: None,
-            upstream: None,
-            decision: None,
-            outcome: None,
-            reason: reason.to_string(),
-            refused_address: None,
-            refused_reason: None,
-            category: None,
-            signal: None,
-            rule_id: None,
-            rule_set: None,
-            request_rule: None,
-            pending_id: None,
-            binding_id: None,
-            injected: false,
-            unswapped_stand_ins: Vec::new(),
-            scrubbed_stand_ins: Vec::new(),
-            foreign_credentials: Vec::new(),
-            answer_credentials: Vec::new(),
-            method: None,
-            path: None,
-            path_truncated: false,
-            bytes_up: 0,
-            bytes_down: 0,
-            count: Some(count),
-        }
-    }
 }
 
 /// Which workspaces a rule in the audit applies to. Records written before the rename read
@@ -393,6 +200,10 @@ pub struct PendingWire {
     /// The rule set whose entry decided it. Absent in records written before rule sets existed.
     #[serde(default)]
     pub rule_set: Option<String>,
+    /// The program that asked first, as the agent named it. Absent when none was named and in
+    /// records written before the column existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program: Option<String>,
 }
 
 impl From<&PendingRow> for PendingWire {
@@ -410,6 +221,7 @@ impl From<&PendingRow> for PendingWire {
             decided_by: row.decided_by.map(ActorWire::from),
             rule_id: row.rule_id.map(|id| id.0),
             rule_set: row.rule_set.clone(),
+            program: row.program.as_ref().map(ToString::to_string),
         }
     }
 }
@@ -542,6 +354,11 @@ pub enum WorkspaceOpKind {
     SshAgentRefused,
     /// The user answered the first-use question of the filtered SSH agent; `detail` says how.
     SshAgentAnswered,
+    /// The days the activity log is kept were changed; `detail` says from how many to how many.
+    AuditRetentionChanged,
+    /// Records older than the retention were deleted on request (`puddle audit prune`); `detail`
+    /// says for how many days the log was kept and how many records went.
+    AuditPruned,
 }
 
 /// How a workspace operation ended.
@@ -879,16 +696,18 @@ impl AuditRecord {
 
     /// The text the audit search box matches, lower case (ASCII), one part per line: a
     /// connection's host, method, path and reason; a rule on method and path's host and path;
-    /// otherwise the record's [`host`](Self::host). Stored in a column so `q` needs no JSON
-    /// parsing. The migration that added the column derives the same value in SQL
-    /// (`schema.rs`); a test keeps the two equal.
+    /// otherwise the record's [`host`](Self::host). Each part is cut to [`MAX_FIELD_BYTES`] and
+    /// a path loses its query string, as in the line, so the column stays within what the line
+    /// holds (the audit size counts it). Stored in a column so `q` needs no JSON parsing. The
+    /// migration that added the column derives the same value in SQL (`schema.rs`); a test
+    /// keeps the two equal.
     #[must_use]
     pub fn search_text(&self) -> Option<String> {
         let parts: Vec<Option<String>> = match self {
             Self::Connection(r) => vec![
                 r.host.clone(),
                 r.method.clone(),
-                r.path.clone(),
+                r.path.as_deref().map(|path| request_path(path).to_owned()),
                 Some(r.reason.clone()),
                 r.category.clone(),
             ],
@@ -900,11 +719,23 @@ impl AuditRecord {
         let text = parts
             .into_iter()
             .flatten()
+            .map(capped_field)
             .filter(|part| !part.is_empty())
             .collect::<Vec<_>>()
             .join("\n")
             .to_ascii_lowercase();
         (!text.is_empty()).then_some(text)
+    }
+
+    /// The destination category of a `connection` record (`company_network`), cut to
+    /// [`MAX_FIELD_BYTES`] as the line has it. Stored in a column of its own, so the category
+    /// filter never matches a request method or a path that spells it.
+    #[must_use]
+    pub fn category(&self) -> Option<String> {
+        match self {
+            Self::Connection(record) => record.category.clone().map(capped_field),
+            _ => None,
+        }
     }
 
     /// Whose connection the record describes: `connection` records only (every other record
@@ -1083,141 +914,11 @@ impl AuditRecord {
     }
 }
 
-/// Cuts every string over `max` bytes, recording the JSON pointer of each one cut.
-fn cap_strings(value: &mut Value, max: usize, pointer: &str, cut: &mut Vec<String>) {
-    match value {
-        Value::String(s) if s.len() > max => {
-            let keep = s.floor_char_boundary(max);
-            s.truncate(keep);
-            cut.push(pointer.to_owned());
-        }
-        Value::Object(map) => {
-            for (key, child) in map {
-                cap_strings(child, max, &format!("{pointer}/{key}"), cut);
-            }
-        }
-        Value::Array(items) => {
-            for (index, child) in items.iter_mut().enumerate() {
-                cap_strings(child, max, &format!("{pointer}/{index}"), cut);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// The JSON pointer and encoded length of the non-empty string whose encoding is longest.
-fn longest_string(value: &Value, pointer: &str) -> Option<(usize, String)> {
-    match value {
-        Value::String(s) if !s.is_empty() => Some((encoded_len(s), pointer.to_owned())),
-        Value::Object(map) => map
-            .iter()
-            .filter_map(|(key, child)| longest_string(child, &format!("{pointer}/{key}")))
-            .max_by_key(|(len, _)| *len),
-        Value::Array(items) => items
-            .iter()
-            .enumerate()
-            .filter_map(|(index, child)| longest_string(child, &format!("{pointer}/{index}")))
-            .max_by_key(|(len, _)| *len),
-        _ => None,
-    }
-}
-
-fn encoded_len(s: &str) -> usize {
-    s.chars()
-        .map(|c| if needs_escape(c) { 6 } else { c.len_utf8() })
-        .sum()
-}
-
-fn needs_escape(c: char) -> bool {
-    c.is_control() || c == '"' || c == '\\' || c == '\u{2028}' || c == '\u{2029}'
-}
-
-fn encode(value: &Value) -> Result<String, AuditError> {
-    let mut out = Vec::new();
-    let mut ser = serde_json::Serializer::with_formatter(&mut out, EscapingFormatter);
-    value.serialize(&mut ser)?;
-    // serde_json only ever writes UTF-8.
-    Ok(String::from_utf8_lossy(&out).into_owned())
-}
-
-/// `serde_json`'s compact formatter, plus `\uXXXX` for DEL, C1 controls and U+2028/U+2029,
-/// which `serde_json` leaves raw. C0 controls are already escaped before they get here.
-struct EscapingFormatter;
-
-impl serde_json::ser::Formatter for EscapingFormatter {
-    fn write_string_fragment<W: ?Sized + io::Write>(
-        &mut self,
-        writer: &mut W,
-        fragment: &str,
-    ) -> io::Result<()> {
-        let mut start = 0;
-        for (index, c) in fragment.char_indices() {
-            if needs_escape(c) {
-                writer.write_all(fragment.get(start..index).unwrap_or_default().as_bytes())?;
-                write!(writer, "\\u{:04x}", u32::from(c))?;
-                start = index + c.len_utf8();
-            }
-        }
-        writer.write_all(fragment.get(start..).unwrap_or_default().as_bytes())
-    }
-}
-
-/// Per-workspace limit on `connection` records (R-26): at most `limit` per wall-clock second; the
-/// excess is counted and written as one summary record when the second is over.
-#[derive(Debug, Default)]
-pub(crate) struct ConnectionWindow {
-    second: u64,
-    written: u32,
-    excess: u64,
-    /// A summary whose audit write failed: `(second_start_ms, count)`, handed out again by the
-    /// next [`ConnectionWindow::roll`].
-    owed: Option<(u64, u64)>,
-}
-
-impl ConnectionWindow {
-    /// Whether a record at `now` may be written, and a summary `(second_start_ms, count)` for a
-    /// finished second that had excess.
-    pub(crate) fn admit(&mut self, now: u64, limit: u32) -> (bool, Option<(u64, u64)>) {
-        let finished = self.roll(now);
-        if self.written < limit {
-            self.written += 1;
-            (true, finished)
-        } else {
-            self.excess += 1;
-            (false, finished)
-        }
-    }
-
-    /// The summary of a finished second with excess, if `now` is past it, merged with one owed
-    /// from a failed write.
-    pub(crate) fn roll(&mut self, now: u64) -> Option<(u64, u64)> {
-        let second = now / 1000;
-        // A clock that stepped back stays in the current window, so the limit does not restart.
-        let finished = if second <= self.second {
-            None
-        } else {
-            let finished = (self.excess > 0).then_some((self.second * 1000, self.excess));
-            *self = Self {
-                second,
-                written: 0,
-                excess: 0,
-                owed: self.owed,
-            };
-            finished
-        };
-        match (self.owed.take(), finished) {
-            (Some((a_ts, a)), Some((b_ts, b))) => Some((a_ts.min(b_ts), a + b)),
-            (owed, finished) => owed.or(finished),
-        }
-    }
-
-    /// Keeps a summary whose audit write failed, to hand out again.
-    pub(crate) fn owe(&mut self, ts: u64, count: u64) {
-        self.owed = match self.owed {
-            Some((owed_ts, owed)) => Some((owed_ts.min(ts), owed + count)),
-            None => Some((ts, count)),
-        };
-    }
+/// `text` cut to [`MAX_FIELD_BYTES`], at a character boundary.
+fn capped_field(mut text: String) -> String {
+    let keep = text.floor_char_boundary(MAX_FIELD_BYTES);
+    text.truncate(keep);
+    text
 }
 
 /// Maps a stored actor to the wire string.

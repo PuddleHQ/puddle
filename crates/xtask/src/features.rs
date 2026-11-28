@@ -21,8 +21,11 @@ pub const TEST_ONLY_FEATURES: [&str; 2] = ["testing", "fuzzing"];
 /// (package name, test-only feature, the opt-in that does it). Only the all-features pass
 /// tolerates them: a release build never enables the opt-in, and the default pass still fails if
 /// the feature is on without it.
-pub const OPT_IN_TEST_FEATURES: [(&str, &str, &str); 1] =
-    [("puddle-api", "testing", "puddle-app `fixture`")];
+pub const OPT_IN_TEST_FEATURES: [(&str, &str, &str); 2] = [
+    ("puddle-api", "testing", "puddle-app `fixture`"),
+    // `puddle-api/testing` forwards to it.
+    ("puddle-services", "testing", "puddle-app `fixture`"),
+];
 
 /// A test-only feature found enabled in a shipped tree.
 #[derive(Debug, Clone, PartialEq, Eq)]

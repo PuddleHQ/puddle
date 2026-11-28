@@ -2,7 +2,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { api } from "#lib/api/client.ts";
-  import { sentence } from "#lib/rules/model.ts";
+  import { sentence } from "#lib/format/sentence.ts";
   import { live } from "#lib/stores/live.svelte.ts";
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import type { Workspace } from "#lib/workspaces/model.ts";
@@ -105,8 +105,15 @@
     }
   }
 
+  const only = $derived(
+    workspace.repositories.length === 1 ? workspace.repositories[0] : undefined,
+  );
   const where = $derived(
-    stored === "" ? "the workspace root" : `/workspaces/${wid}/${stored}`,
+    stored !== ""
+      ? `/workspace/${stored}`
+      : only
+        ? `/workspace/${only.directory}, the one repository`
+        : "the workspace root, /workspace",
   );
 </script>
 
@@ -134,9 +141,10 @@
         <p class="error" id="{id}-error" role="alert">{shown}</p>
       {:else}
         <p class="desc" id="{id}-hint">
-          A path under the workspace root, such as <span class="mono"
-            >api/services/web</span
-          >. Leave it empty for the root itself. The folder may not exist yet.
+          A path under the workspace root, such as <span class="mono">
+            api/services/web
+          </span>. Leave it empty for the root itself. The folder may not exist
+          yet.
         </p>
       {/if}
     </div>
@@ -159,8 +167,10 @@
     {/if}
   </div>
   <p class="desc">
-    New terminals land in {where}, and the editor opens it. Several checkouts at
-    the workspace root open together in the editor.
+    New terminals land in {where}, and the editor opens {stored === ""
+      ? "the workspace root"
+      : "it"}. Several checkouts at the workspace root open together in the
+    editor.
   </p>
 </section>
 

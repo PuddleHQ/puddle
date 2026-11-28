@@ -15,6 +15,9 @@ import {
   methodLabel,
   problemSummary,
   problems,
+  quietLine,
+  shownSections,
+  stateSentence,
   waitText,
   type NetworkHealth,
 } from "./model.ts";
@@ -68,8 +71,9 @@ describe("findings", () => {
     const r = report();
     r.proxy.pac_state = "unreachable";
     expect(findings(r)[0]?.title).toContain("http://wpad.corp.example");
+    expect(findings(r)[0]?.title).not.toContain("the proxy script");
     r.proxy.pac_url = null;
-    expect(findings(r)[0]?.title).toContain("the proxy script");
+    expect(findings(r)[0]?.title).toBe("The proxy script isn't answering.");
   });
 
   it("explains a failed sign-in with the scheme and detail when there are some", () => {
@@ -304,5 +308,103 @@ describe("words", () => {
     expect(isNetworkChanged({ type: "rules_changed" })).toBe(false);
     expect(isNetworkChanged(null)).toBe(false);
     expect(isNetworkChanged("network_changed")).toBe(false);
+  });
+
+  describe("the short list", () => {
+    const direct = () => {
+      const r = report();
+      r.proxy.detected = "direct";
+      r.pull_proxy.via_upstream = false;
+      return r;
+    };
+    it("shows no section for a plain direct connection", () => {
+      const r = direct();
+      expect(shownSections(r)).toEqual([]);
+      expect(quietLine(r)).toBe(
+        "Nothing found for: proxy setup, proxy sign-in, company certificates, company network, image downloads, routes.",
+      );
+      expect(stateSentence(r)).toBe(
+        "No proxy (direct connection), no company certificates.",
+      );
+    });
+    it("shows the sign-in methods whenever a proxy was found", () => {
+      const r = direct();
+      r.proxy.detected = "env";
+      expect(shownSections(r)).toEqual(["proxy", "sign-in"]);
+    });
+    it("shows each section as soon as it holds something", () => {
+      const cases: [string, (r: ReturnType<typeof direct>) => void][] = [
+        ["proxy", (r) => (r.proxy.bypass_entries = 2)],
+        ["proxy", (r) => (r.proxy.http_proxy = "p:3128")],
+        [
+          "proxy",
+          (r) => (r.proxy.dead_proxies = [{ proxy: "d:1", retry_in_secs: 5 }]),
+        ],
+        ["proxy", (r) => (r.proxy.settings_error = "denied")],
+        ["sign-in", (r) => (r.sign_in.stored = [{ proxy: "p:1", user: "u" }])],
+        ["roots", (r) => (r.roots.unreadable_stores = ["LocalMachine"])],
+        [
+          "roots",
+          (r) =>
+            (r.roots.skipped = [
+              { subject: null, fingerprint: "ab", reason: "x" },
+            ]),
+        ],
+        ["company", (r) => (r.company_network.dns_suffixes = ["corp.example"])],
+        ["company", (r) => (r.company_network.private_access_client = true)],
+        ["pull", (r) => (r.pull_proxy.via_upstream = true)],
+        [
+          "routes",
+          (r) =>
+            (r.routes = [
+              {
+                scheme: "https",
+                host: "h",
+                port: 443,
+                hops: [],
+                source: "pac",
+              },
+            ]),
+        ],
+      ];
+      for (const [id, change] of cases) {
+        const r = direct();
+        change(r);
+        expect(shownSections(r)).toEqual([id]);
+        expect(quietLine(r)).not.toContain(
+          {
+            "sign-in": "proxy sign-in",
+            roots: "company certificates",
+            company: "company network",
+            pull: "image downloads",
+            routes: "routes",
+            proxy: "proxy setup",
+          }[id]!,
+        );
+      }
+    });
+    it("says nothing about quiet sections when all have something, and counts certificates", () => {
+      const r = report();
+      r.proxy.bypass_entries = 1;
+      r.sign_in.stored = [{ proxy: "p:1", user: "u" }];
+      r.roots.unreadable_stores = ["x"];
+      r.company_network.dns_suffixes = ["c"];
+      r.routes = [
+        { scheme: "https", host: "h", port: 443, hops: [], source: "pac" },
+      ];
+      expect(quietLine(r)).toBe("");
+      r.roots.certificates = [
+        {
+          subject: "A",
+          fingerprint: "a",
+          kind: "root",
+          not_after: 1,
+          sources: [],
+        },
+      ];
+      expect(stateSentence(r)).toBe(
+        "Automatic proxy script (PAC), 1 company certificate.",
+      );
+    });
   });
 });

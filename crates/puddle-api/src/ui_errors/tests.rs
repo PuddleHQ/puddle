@@ -2,7 +2,7 @@
 use puddle_store::UserId;
 
 use super::*;
-use crate::wire::{UiErrorKind, UiErrorReport};
+use puddle_services::wire::{UiErrorKind, UiErrorReport};
 
 const API_TOKEN: &str = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0";
 
@@ -237,6 +237,23 @@ fn a_secret_name_and_its_value_with_spaces_between_lose_the_value() {
     assert_eq!(scrub_line("password = hunter2"), "password = [redacted]");
     assert_eq!(scrub_line("accessToken : abc"), "accessToken : [redacted]");
     assert_eq!(scrub_line("password =hunter2"), "password =[redacted]");
+}
+
+#[test]
+fn every_pair_of_a_cookie_header_loses_its_value() {
+    assert_eq!(
+        scrub_line("Cookie: a=1; other=2; third=3"),
+        "Cookie: [redacted]; [redacted]; [redacted]"
+    );
+    assert_eq!(
+        scrub_line("request failed, Set-Cookie: sid=abc; Path=/; HttpOnly"),
+        "request failed, Set-Cookie: [redacted]; [redacted]; [redacted]"
+    );
+    assert_eq!(
+        scrub_line("cookie : a=1; b=2"),
+        "cookie : [redacted]; [redacted]"
+    );
+    assert_eq!(scrub_line("the cookie expired"), "the cookie expired");
 }
 
 #[test]

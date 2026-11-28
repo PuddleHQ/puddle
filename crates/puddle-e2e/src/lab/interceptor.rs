@@ -255,10 +255,19 @@ impl Interceptor {
     /// When mitmproxy is required but missing, or does not start.
     #[must_use]
     pub fn start_signing_in(names: &[&str]) -> Option<Self> {
+        Self::start_signing_in_on_ports(&plain(names))
+    }
+
+    /// As [`Self::start_signing_in`], with a port for each name (see [`Self::start_on_ports`]).
+    ///
+    /// # Panics
+    /// When mitmproxy is required but missing, or does not start.
+    #[must_use]
+    pub fn start_signing_in_on_ports(names: &[(String, Option<u16>)]) -> Option<Self> {
         let root = Root::generate(&Prefix::new("root"));
         let addons = [
             include_str!("ntlm_proxy_addon.py").to_owned(),
-            split_dns(&borrowed(&plain(names))),
+            split_dns(&borrowed(names)),
         ];
         let mitm = Mitm::spawn("interceptor", Some(&root), &[], &addons)?;
         Some(Self { mitm, root })

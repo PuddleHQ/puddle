@@ -17,7 +17,7 @@ use puddle_store::{
 };
 use puddle_types::{
     ConnectionDecision, ConnectionEvent, ConnectionLog, Decision, EgressRequest, Fill, Host,
-    PatternKind, PendingId, PendingOutcome, Rgb, RuleId, RuleSetId, SuffixAllows, WorkspaceId,
+    PatternKind, PendingId, PendingOutcome, Rgb, RuleSetId, SuffixAllows, WorkspaceId,
 };
 use serde_json::Value;
 
@@ -273,7 +273,10 @@ fn r38_sets_you_make_hold_rules_and_inbox_approvals() {
     let in_b = pending(decide(&store, "b", "login.microsoftonline.com"));
     let mut into_set = Resolution::allow();
     into_set.scope = ScopeChoice::Set(azure);
-    let decided = store.resolve_pending(in_a, &into_set, Actor::Ui).unwrap();
+    let decided = store
+        .as_user(puddle_store::UserId::OWNER)
+        .resolve_pending(in_a, &into_set, Actor::Ui)
+        .unwrap();
     assert_eq!(decided.rule.scope, Scope::Set(azure));
     assert_eq!(decided.also_closed, vec![in_b]);
     assert_eq!(
@@ -296,14 +299,16 @@ fn r38_sets_you_make_hold_rules_and_inbox_approvals() {
         .unwrap();
     let in_c = pending(decide(&store, "c", "graph.microsoft.com"));
     assert!(matches!(
-        store.resolve_pending(in_c, &into_set, Actor::Ui),
+        store.as_user(puddle_store::UserId::OWNER).resolve_pending(in_c, &into_set, Actor::Ui),
         Err(StoreError::RuleSetOff { set, workspace }) if set == format!("user:{azure}") && workspace == "c"
     ));
     assert_eq!(store.pending(in_c).unwrap().state, PendingState::Requested);
     // Nor into a set that doesn't exist.
     into_set.scope = ScopeChoice::Set(999);
     assert!(matches!(
-        store.resolve_pending(in_c, &into_set, Actor::Ui),
+        store
+            .as_user(puddle_store::UserId::OWNER)
+            .resolve_pending(in_c, &into_set, Actor::Ui),
         Err(StoreError::UnknownRuleSet(_))
     ));
     assert!(matches!(
@@ -840,11 +845,7 @@ fn r43_connection_records_name_the_set_that_decided() {
     assert_eq!(record["rule_id"], Value::Null);
     assert_eq!(record["rule_set"], "system");
     assert_eq!(event.decision, ConnectionDecision::Allow);
-    let rows: Vec<RuleId> = store
-        .rules_every_user(&puddle_store::testing::all_users())
-        .iter()
-        .map(|r| r.id)
-        .collect();
+    let rows = store.rules_every_user(&puddle_store::testing::all_users());
     assert!(rows.is_empty(), "System managed writes no rule rows");
 }
 
@@ -1399,7 +1400,10 @@ fn r59_approving_a_request_into_a_group_takes_the_groups_default() {
     let row = pending(decide(&store, "a", "approve.example.com"));
     let mut into_set = Resolution::allow();
     into_set.scope = ScopeChoice::Set(set);
-    let decided = store.resolve_pending(row, &into_set, Actor::Ui).unwrap();
+    let decided = store
+        .as_user(puddle_store::UserId::OWNER)
+        .resolve_pending(row, &into_set, Actor::Ui)
+        .unwrap();
     assert_eq!(decided.rule.precedence, prec(7));
 }
 
@@ -1434,4 +1438,84 @@ fn r59_a_default_precedence_is_the_users_own_and_never_the_systems() {
     let github = store.rule_set(OWNER, RuleSetId::BuiltIn("github")).unwrap();
     assert!(github.entries.iter().all(|e| e.precedence == 0));
     assert_eq!(github.default_precedence, None);
+}
+
+#[test]
+fn switching_a_set_to_the_state_it_is_in_writes_nothing_and_closes_nothing() {
+    let (_, store) = fixture();
+    let set = RuleSetId::BuiltIn("github");
+    let switch = |enabled: Option<bool>| {
+        store
+            .switch_rule_set(OWNER, set, None, enabled, Actor::Ui)
+            .unwrap()
+    };
+    switch(None);
+    assert_eq!(
+        audit_of(&store, "rule_set_switched").len(),
+        0,
+        "no override yet"
+    );
+    switch(Some(true));
+    assert_eq!(audit_of(&store, "rule_set_switched").len(), 1);
+    let waiting = pending(decide(&store, "a", "example.org"));
+    switch(Some(true));
+    assert_eq!(audit_of(&store, "rule_set_switched").len(), 1, "already on");
+    assert_eq!(
+        store.pending(waiting).unwrap().state,
+        PendingState::Requested
+    );
+    switch(Some(false));
+    switch(None);
+    assert_eq!(audit_of(&store, "rule_set_switched").len(), 3);
+}
+
+#[test]
+fn another_user_cannot_switch_or_delete_a_set_or_use_a_workspace_that_is_not_theirs() {
+    let (_, store) = fixture();
+    let ann = store
+        .admin_add_user(OWNER, &puddle_store::UserName::new("ann").unwrap())
+        .unwrap()
+        .id;
+    let mine = user_set(&store, "Mine");
+    assert!(matches!(
+        store.switch_rule_set(ann, RuleSetId::User(mine), None, Some(true), Actor::Ui),
+        Err(StoreError::UnknownRuleSet(_))
+    ));
+    assert!(matches!(
+        store.switch_rule_set(
+            ann,
+            RuleSetId::BuiltIn("github"),
+            Some(&sb("a")),
+            Some(true),
+            Actor::Ui
+        ),
+        Err(StoreError::UnknownWorkspace(_))
+    ));
+    assert!(matches!(
+        store.delete_rule_set(ann, mine, Actor::Ui),
+        Err(StoreError::UnknownRuleSet(_))
+    ));
+    assert!(store.rule_set(OWNER, RuleSetId::User(mine)).is_ok());
+    assert_eq!(audit_of(&store, "rule_set_switched").len(), 0);
+    assert_eq!(audit_of(&store, "rule_set_deleted").len(), 0);
+}
+
+#[test]
+fn deleting_a_set_returns_it_as_it_was_with_its_entries_and_switches() {
+    let (_, store) = fixture();
+    let set = user_set(&store, "Mine");
+    store
+        .switch_rule_set(OWNER, RuleSetId::User(set), None, Some(true), Actor::Ui)
+        .unwrap();
+    for host in ["a.example", "b.example"] {
+        store
+            .as_user(OWNER)
+            .add_rule(&new_rule(Scope::Set(set), host, Effect::Allow))
+            .unwrap();
+    }
+    let info = store.delete_rule_set(OWNER, set, Actor::Ui).unwrap();
+    assert_eq!(info.name, "Mine");
+    assert_eq!(info.entries.len(), 2);
+    assert_eq!(info.global, Some(true));
+    assert!(store.rule_set(OWNER, RuleSetId::User(set)).is_err());
 }

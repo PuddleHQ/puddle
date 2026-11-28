@@ -37,6 +37,9 @@ pub enum StoreError {
     /// The copy made before migrating could not be written or pruned.
     #[error("could not back up the database before migrating: {0}")]
     Backup(String),
+    /// A file path SQLite takes as text is not valid UTF-8, so SQLite would open another file.
+    #[error("the path {} is not valid UTF-8", .0.display())]
+    PathNotUtf8(std::path::PathBuf),
     /// A stored row doesn't parse (edited by hand, or a bug).
     #[error("stored {table} row {id} is invalid: {reason}")]
     Corrupt {
@@ -58,6 +61,12 @@ pub enum StoreError {
         /// Its current state.
         state: PendingState,
     },
+    /// An allow for a row that only an exact allow decides came as a suffix or into a rule set
+    /// (R-16).
+    #[error(
+        "pending request {0} needs an exact allow: a suffix or rule set allow would not admit it"
+    )]
+    ExactAllowOnly(PendingId),
     /// No rule has this id.
     #[error("no rule {0}")]
     UnknownRule(RuleId),
@@ -139,6 +148,9 @@ pub enum StoreError {
     /// A workspace has the SSH agent on for as many hosts as it may.
     #[error("at most {0} hosts may use the SSH agent in one workspace")]
     TooManySshAgentHosts(usize),
+    /// The keys given for an SSH agent host were refused; the text says why.
+    #[error("{0}")]
+    SshAgentKeys(String),
     /// A workspace has as many SSH agent questions open as it may.
     #[error("at most {0} SSH agent questions may wait in one workspace")]
     TooManySshAgentAsks(usize),
@@ -180,6 +192,9 @@ pub enum StoreError {
     /// An invite's digest was refused (too short to be a hash).
     #[error("an invite digest must be at least 16 bytes")]
     InviteInvalid,
+    /// A refresh token's digest was refused (too short to be a hash).
+    #[error("a refresh token digest must be at least 16 bytes")]
+    SessionDigestInvalid,
     /// A device name was refused; the text says why.
     #[error("{0}")]
     DeviceName(String),

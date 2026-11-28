@@ -5,9 +5,9 @@
 use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
-use puddle_api::wire::{PortEntry, WorkspacePorts};
-use puddle_api::{PortsService, PortsServiceError};
 use puddle_ports::{Pin, Pins, PinsError, PortRow, Ports, PortsError};
+use puddle_services::wire::{PortEntry, WorkspacePorts};
+use puddle_services::{owned::OwnedWorkspace, ports::PortsService, ports::PortsServiceError};
 use puddle_store::{PinnedPort, Store};
 use puddle_types::WorkspaceId;
 
@@ -104,9 +104,9 @@ fn refusal(err: &PortsError) -> PortsServiceError {
 impl PortsService for HostPorts {
     fn list(
         &self,
-        workspace: &WorkspaceId,
+        workspace: &OwnedWorkspace,
     ) -> BoxFuture<'_, Result<WorkspacePorts, PortsServiceError>> {
-        let view = self.ports.view(workspace);
+        let view = self.ports.view(workspace.id());
         Box::pin(async move {
             let view = view.map_err(|e| refusal(&e))?;
             Ok(WorkspacePorts {
@@ -118,12 +118,12 @@ impl PortsService for HostPorts {
 
     fn forward(
         &self,
-        workspace: &WorkspaceId,
+        workspace: &OwnedWorkspace,
         guest_port: u16,
         host_port: Option<u16>,
         pinned: bool,
     ) -> BoxFuture<'_, Result<PortEntry, PortsServiceError>> {
-        let workspace = workspace.clone();
+        let workspace = workspace.id().clone();
         Box::pin(async move {
             self.ports
                 .forward(&workspace, guest_port, host_port, pinned)
@@ -135,10 +135,10 @@ impl PortsService for HostPorts {
 
     fn release(
         &self,
-        workspace: &WorkspaceId,
+        workspace: &OwnedWorkspace,
         guest_port: u16,
     ) -> BoxFuture<'_, Result<(), PortsServiceError>> {
-        let workspace = workspace.clone();
+        let workspace = workspace.id().clone();
         Box::pin(async move {
             self.ports
                 .release(&workspace, guest_port)

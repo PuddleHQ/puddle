@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Workspace volume lifecycle (ADR 0006).
 //!
-//! Each workspace is a named msb disk volume `ws-<id>` (ext4), mounted at `/workspaces/<id>`.
+//! Each workspace is a named msb disk volume `ws-<id>` (ext4), mounted at `/workspace` in its sandbox.
 //! The volume outlives its sandboxes: rebuilding a sandbox reattaches it. Code gets in by
 //! cloning inside the guest, into a subdirectory (the volume root also holds Puddle's `.puddle`).
 //!
@@ -45,6 +45,7 @@
 mod check;
 mod checkouts;
 mod error;
+mod guest_output;
 mod guest_text;
 mod import;
 mod layout;
@@ -62,8 +63,13 @@ pub use checkouts::{
     RemoteNote,
 };
 pub use error::WorkspaceError;
-pub use import::{FINISH_IMPORT_SH, Import, LocalCheckout, https_form, import_mount};
-pub use layout::{CLONE_SH, LOST_AND_FOUND, Layout, PREPARE_SH, PUDDLE_DIR, WORKSPACES_ROOT};
+pub use import::{
+    CheckoutRefusal, FINISH_IMPORT_SH, Import, LocalCheckout, https_form, import_mount,
+};
+pub use layout::{
+    CLONE_SH, LOST_AND_FOUND, Layout, OLDER_MOUNT_SH, OLDER_MOUNT_STEP_GUEST, PREPARE_SH,
+    PUDDLE_DIR, WORKSPACE_DIR,
+};
 pub use locks::{CLEAR_LOCKS_SH, CLEAR_LOCKS_TIMEOUT, LockReport, MAX_LOCKS};
 pub use registry::{HoldKind, Holder};
 pub use trim::{TRIM_TIMEOUT, TrimReport};

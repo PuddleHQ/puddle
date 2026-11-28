@@ -73,6 +73,64 @@ async function runTheCheck(page: Page) {
   await expect(control(page, check.afterStart!)).toBeVisible();
 }
 
+const backupFile = {
+  name: "puddle-backup.tar.gz",
+  mimeType: "application/gzip",
+  buffer: Buffer.from("Puddle fake backup: a file the fixture accepts"),
+};
+
+test("a backup can be imported from the welcome page, with no mode choice, and the flow is still to run", async ({
+  page,
+  backend,
+  request,
+}) => {
+  await freshInstall(page, backend);
+  await page.goto("/welcome");
+  await page.getByRole("link", { name: "Import a backup" }).click();
+  await expect(heading(page, "Import a backup")).toBeFocused();
+  await backend.control.step({ do: "restore_preview", secrets: ["TOKEN"] });
+  await page.getByTestId("import-file").setInputFiles(backupFile);
+  await expect(page.getByTestId("import-preview")).toBeVisible();
+  await expect(page.getByTestId("restore-part-rules")).toContainText("Rules");
+  await expect(page.getByTestId("restore-secrets")).toContainText("TOKEN");
+  await expect(page.getByRole("radio")).toHaveCount(0);
+  await page.getByTestId("import-confirm").click();
+  await expect(page.getByTestId("import-waiting")).toContainText(
+    "Setup continues after the restart",
+  );
+  // The first-run flag is not taken over: the flow has still to run.
+  expect((await firstRun(request, backend)).completed).toBe(false);
+});
+
+test("a file that is not a backup is refused on the import page and cannot be confirmed", async ({
+  page,
+  backend,
+}) => {
+  await freshInstall(page, backend);
+  await page.goto("/welcome/import");
+  await page.getByTestId("import-file").setInputFiles({
+    name: "notes.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("just some notes"),
+  });
+  await expect(page.getByTestId("import-problem")).toContainText(
+    "not a gzip archive",
+  );
+  await expect(page.getByTestId("import-confirm")).toHaveCount(0);
+});
+
+test("going back from the import page continues to the system check", async ({
+  page,
+  backend,
+}) => {
+  await freshInstall(page, backend);
+  await page.goto("/welcome/import");
+  await page.getByRole("link", { name: "Back" }).click();
+  await expect(heading(page, "Welcome to Puddle")).toBeVisible();
+  await goOn(page, "Welcome to Puddle");
+  await expect(heading(page, "System check")).toBeVisible();
+});
+
 test("a fresh install is led through every step and then opens on the workspaces", async ({
   page,
   backend,
@@ -119,19 +177,19 @@ test("a fresh install is led through every step and then opens on the workspaces
     page.getByRole("radio", { name: /Built-in VS Code server/ }),
   ).toBeChecked();
   const directSsh = page.getByRole("checkbox", {
-    name: /Allow direct SSH for new workspaces/,
+    name: /Allow direct SSH by default/,
   });
   await expect(directSsh).not.toBeChecked();
   await directSsh.click();
   const trust = page.getByRole("alertdialog", {
-    name: "Allow direct SSH for new workspaces?",
+    name: "Allow direct SSH by default?",
   });
   await expect(trust).toBeVisible();
   await expect(directSsh).not.toBeChecked();
   const saved = page.waitForResponse(
     (r) => r.request().method() === "PUT" && r.url().endsWith("/api/settings"),
   );
-  await trust.getByRole("button", { name: "Allow for new workspaces" }).click();
+  await trust.getByRole("button", { name: "Allow by default" }).click();
   await saved;
   await expect(directSsh).toBeChecked();
   const settings = (await (
@@ -145,8 +203,13 @@ test("a fresh install is led through every step and then opens on the workspaces
     heading(page, "Which hosts should Puddle decrypt?"),
   ).toBeVisible();
   await expect(
-    page.getByRole("radio", { name: /except a known list/ }),
+    page.getByRole("radio", { name: /except sites known to break/ }),
   ).toBeChecked();
+  const more = page.getByText("More details", { exact: true });
+  await expect(more).toBeVisible();
+  await expect(page.getByText(/own certificate, which/)).toBeHidden();
+  await more.click();
+  await expect(page.getByText(/own certificate, which/)).toBeVisible();
   const kept = page.waitForResponse(
     (r) =>
       r.request().method() === "PUT" && r.url().endsWith("/api/interception"),
@@ -260,8 +323,9 @@ test("a blocking finding stops the flow until it is fixed, and the report can be
   await page.getByRole("link", { name: "Leave setup for now" }).click();
   await expect(page).toHaveURL(/\/workspaces$/);
   expect((await firstRun(request, backend)).completed).toBe(false);
+  // Reopening the setup resumes on the step that was left.
   await page.goto("/");
-  await expect(page).toHaveURL(/\/welcome$/);
+  await expect(page).toHaveURL(/\/welcome\/check$/);
 });
 
 test("skipping the setup ends it for good", async ({
@@ -272,6 +336,10 @@ test("skipping the setup ends it for good", async ({
   await freshInstall(page, backend);
   await page.goto("/");
   await page.getByRole("button", { name: "Skip setup" }).click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Skip setup" })
+    .click();
   await expect(page).toHaveURL(/\/workspaces$/);
   expect((await firstRun(request, backend)).completed).toBe(true);
   await page.goto("/");
@@ -291,9 +359,11 @@ test("the certificates step counts the company roots Puddle will add", async ({
   await backend.signIn(page);
   await page.goto("/welcome/certificates");
   await expect(
-    page.getByText("2 company root certificates found"),
+    page.getByText("2 root certificates copied from this computer"),
   ).toBeVisible();
-  await expect(page.getByText(/Added to every workspace/)).toBeVisible();
+  await expect(
+    page.getByText(/From this computer's trust store/),
+  ).toBeVisible();
 });
 
 test("Trust it now shows a no and a failure in words, and ends the offer after a yes", async ({
@@ -436,7 +506,7 @@ for (const scheme of ["light", "dark"] as const) {
       }
       if (path === "/welcome/interception") {
         await expect(
-          page.getByRole("radio", { name: /except a known list/ }),
+          page.getByRole("radio", { name: /except sites known to break/ }),
         ).toBeVisible();
       }
       await expectNoAxeViolations(page, path);

@@ -15,6 +15,8 @@ import {
   RECONNECT_WAIT_MS,
   watchCsp,
   staysEmpty,
+  hostName,
+  showArrived,
 } from "./support";
 
 interface Rule {
@@ -50,8 +52,7 @@ async function ask(
 
 const rowFor = (page: Page, host: string): Locator =>
   page.locator("li.req", {
-    // `:text-is` is an exact, case-sensitive match and takes the host as text, never as a pattern.
-    has: page.locator(`.host:text-is(${JSON.stringify(host)})`),
+    has: hostName(page, host),
   });
 
 async function openInbox(page: Page, backend: Backend): Promise<void> {
@@ -68,6 +69,29 @@ async function openOptions(row: Locator, page: Page): Promise<Locator> {
   await expect(dialog).toBeVisible();
   return dialog;
 }
+
+test.describe("the program that asked", () => {
+  test("a row shows it next to the workspace, from the list and from a live request", async ({
+    page,
+    backend,
+  }) => {
+    await ask(backend, "shop", "listed.example.com", { program: "pip" });
+    await ask(backend, "shop", "plain.example.com");
+    await openInbox(page, backend);
+    await expect(rowFor(page, "listed.example.com")).toContainText(
+      "shop (pip) · 1 try",
+    );
+    await expect(rowFor(page, "plain.example.com")).toContainText(
+      "shop · 1 try",
+    );
+    await ask(backend, "shop", "live.example.com", { program: "node" });
+    // A request that arrives later waits behind a line: it never moves the rows on screen.
+    await page.getByRole("button", { name: /new request/ }).click();
+    await expect(rowFor(page, "live.example.com")).toContainText(
+      "shop (node) · 1 try",
+    );
+  });
+});
 
 test.describe("deciding", () => {
   test("approve here: one click, this workspace, exact host, permanent", async ({
@@ -379,9 +403,11 @@ test.describe("live", () => {
     await openInbox(page, backend);
     await expect(rowFor(page, "live.example.com")).toHaveCount(0);
     await ask(backend, "shop", "live.example.com");
-    await expect(rowFor(page, "live.example.com")).toBeVisible({
+    await expect(rowFor(page, "live.example.com")).toHaveCount(0);
+    await page.getByRole("button", { name: /new request/ }).click({
       timeout: CONVERGE_WAIT_MS,
     });
+    await expect(rowFor(page, "live.example.com")).toBeVisible();
     await expect(page).toHaveTitle("Inbox (2) - Puddle");
     await expect(page.getByTestId("pending-badge")).toContainText("2 pending");
     await ask(backend, "shop", "live.example.com", { repeat: 2 });
@@ -397,9 +423,7 @@ test.describe("live", () => {
     await page.route("**/api/events", (route) => route.abort());
     await openInbox(page, backend);
     await ask(backend, "shop", "nostream.example.com");
-    await expect(rowFor(page, "nostream.example.com")).toBeVisible({
-      timeout: CONVERGE_WAIT_MS,
-    });
+    await showArrived(page, rowFor(page, "nostream.example.com"));
   });
 
   test("a restarted API makes the page resync at once", async ({
@@ -409,9 +433,11 @@ test.describe("live", () => {
     await openInbox(page, backend);
     await ask(backend, "shop", "resync.example.com");
     await backend.control.restart();
-    await expect(rowFor(page, "resync.example.com")).toBeVisible({
-      timeout: RECONNECT_WAIT_MS,
-    });
+    await showArrived(
+      page,
+      rowFor(page, "resync.example.com"),
+      RECONNECT_WAIT_MS,
+    );
   });
 
   test("the badge and the title follow decisions at once", async ({
@@ -677,9 +703,11 @@ test.describe("keyboard only", () => {
       await expect(line.locator("dd")).toHaveText(shortcut.does);
       await page.keyboard.press("Escape");
       await expect(list).toHaveCount(0);
-      const listed = (
-        await page.locator("li.req .host").allTextContents()
-      ).filter((host) => /^s\d\.example\.com$/.test(host));
+      // The port is drawn after the name (`s0.example.com:443`); the name is what the keys act on.
+      const listed = (await page.locator("li.req .host").allTextContents())
+        .map((host) => host.replace(/:\d+$/, ""))
+        .filter((host) => /^s\d\.example\.com$/.test(host));
+      // flake-ok: the rows were on screen before the shortcuts list opened and nothing changes them
       expect(listed).toHaveLength(3);
       const hosts = listed as unknown as readonly [string, string, string];
       await reach(page, hosts[0]);

@@ -1,11 +1,14 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
+  import HostName from "./HostName.svelte";
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import {
     describe,
     rawJson,
+    ruleLink,
+    sentence,
     splitDetail,
     type AuditEntry,
   } from "#lib/audit/model.ts";
@@ -48,6 +51,7 @@
   let viewport = $state(0);
   let scrollTop = $state(0);
   let openId = $state<number | null>(null);
+  let rawOpen = $state(false);
   let frame = 0;
 
   const dayStart = $derived(startOfDay(now));
@@ -101,6 +105,7 @@
 
   function toggle(id: number) {
     openId = openId === id ? null : id;
+    rawOpen = false;
   }
 </script>
 
@@ -138,13 +143,17 @@
     </thead>
     <tbody>
       {#if range.padTop > 0}
-        <tr class="pad" aria-hidden="true" style:height="{range.padTop}px"
-          ><td colspan="6"></td></tr
-        >
+        <tr class="pad" aria-hidden="true" style:height="{range.padTop}px">
+          <td colspan="6"></td>
+        </tr>
       {/if}
       {#each drawn as entry, i (entry.id)}
         {@const row = describe(entry.record)}
         {@const open = entry.id === openId}
+        {@const link = ruleLink(
+          entry.record,
+          row.workspace === null ? null : workspaces.labelOf(row.workspace),
+        )}
         <!-- The toggle button is the keyboard route; the row click is for the pointer. -->
         <tr
           class="row"
@@ -161,7 +170,7 @@
               aria-controls="raw-{entry.id}"
               aria-label="{open
                 ? 'Hide'
-                : 'Show'} the raw record of {row.type} at {clockTime(
+                : 'Show'} the details of {row.type} at {clockTime(
                 row.ts,
                 dayStart,
               )}"
@@ -176,41 +185,47 @@
                 />{:else}<ChevronRight aria-hidden="true" size={14} />{/if}
               <time
                 datetime={new Date(row.ts).toISOString()}
-                title={absoluteTime(row.ts)}>{clockTime(row.ts, dayStart)}</time
+                title={absoluteTime(row.ts)}
               >
+                {clockTime(row.ts, dayStart)}
+              </time>
             </button>
           </td>
           <td class="mono" title={row.workspace ?? undefined}>
-            {#if row.workspace === null}<span class="muted">Puddle</span
-              >{:else}{workspaces.labelOf(row.workspace)}{/if}
+            {#if row.workspace === null}<span class="muted">
+                Puddle
+              </span>{:else}{workspaces.labelOf(row.workspace)}{/if}
           </td>
           <td>{row.type}</td>
-          <td class="mono" title={row.destination ?? undefined}
-            >{row.destination ?? ""}</td
-          >
+          <td title={row.destination ?? undefined}>
+            {#if row.destination}<HostName host={row.destination} />{/if}
+          </td>
           <td>
             {#if row.outcome}
               <span class="chip {row.outcome.tone}">{row.outcome.label}</span>
             {/if}
             {#if row.company}
-              <span class="chip neutral" title={row.company.title}
-                >{row.company.label}</span
-              >
+              <span class="meta" title={row.company.title}>
+                {row.company.label}
+              </span>
             {/if}
           </td>
           <td class="muted" title={row.detail}>
             {#if row.requestRule === undefined}{row.detail}{:else}
               {@const cut = splitDetail(row.detail, row.requestRule)}
-              <span class="split"
-                ><span class="cut">{cut.before}</span
-                >{#if ruleGone(row.requestRule)}<span class="keep"
-                    >{cut.name} (deleted)</span
-                  >{:else}<a
+              <span class="split">
+                <span class="cut">
+                  {cut.before}
+                </span>{#if ruleGone(row.requestRule)}<span class="keep">
+                    {cut.name} (deleted)
+                  </span>{:else}<a
                     class="keep"
                     href="/rules?request-rule={row.requestRule}"
-                    onclick={(e) => e.stopPropagation()}>{cut.name}</a
-                  >{/if}<span class="cut">{cut.after}</span></span
-              >
+                    onclick={(e) => e.stopPropagation()}
+                  >
+                    {cut.name}
+                  </a>{/if}<span class="cut">{cut.after}</span>
+              </span>
             {/if}
           </td>
         </tr>
@@ -218,18 +233,34 @@
           <tr class="detail" aria-rowindex={range.start + i + 2}>
             <td colspan="6">
               <div class="raw" id="raw-{entry.id}">
-                <pre tabindex="0" aria-label="Raw record {entry.id}">{rawJson(
-                    entry.record,
-                  )}</pre>
+                <p class="said">{sentence(row)}</p>
+                <p class="acts">
+                  {#if link !== null}<a href={link}>
+                      Make a rule from this
+                    </a>{/if}
+                  <button
+                    type="button"
+                    class="linkish"
+                    aria-expanded={rawOpen}
+                    onclick={() => (rawOpen = !rawOpen)}
+                  >
+                    {rawOpen ? "Hide" : "Show"} raw record
+                  </button>
+                </p>
+                {#if rawOpen}
+                  <pre tabindex="0" aria-label="Raw record {entry.id}">{rawJson(
+                      entry.record,
+                    )}</pre>
+                {/if}
               </div>
             </td>
           </tr>
         {/if}
       {/each}
       {#if range.padBottom > 0}
-        <tr class="pad" aria-hidden="true" style:height="{range.padBottom}px"
-          ><td colspan="6"></td></tr
-        >
+        <tr class="pad" aria-hidden="true" style:height="{range.padBottom}px">
+          <td colspan="6"></td>
+        </tr>
       {/if}
     </tbody>
   </table>
@@ -333,9 +364,27 @@
     height: calc(var(--detail-h) - 1px);
     padding: var(--space-2) var(--space-3);
   }
+  .said {
+    margin: 0 0 var(--space-2);
+    overflow-wrap: anywhere;
+  }
+  .acts {
+    display: flex;
+    gap: var(--space-4);
+    margin: 0 0 var(--space-2);
+  }
+  .linkish {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--color-accent);
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+  }
   pre {
     box-sizing: border-box;
-    height: 100%;
+    height: calc(100% - 4.5rem);
     margin: 0;
     padding: var(--space-2) var(--space-3);
     overflow: auto;

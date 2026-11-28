@@ -64,6 +64,10 @@ Known-bad commit for -Bisect. Default HEAD.
 .PARAMETER BisectStep
 Internal: set by -Bisect for each step.
 
+.PARAMETER CheckoutRoot
+Internal: the checkout -Bisect passes to each step, because a step runs from a temp copy of this
+script and cannot find the checkout from $PSScriptRoot.
+
 .EXAMPLE
 powershell -ExecutionPolicy Bypass -File ci\windows-e2e.ps1 -RuntimeDir C:\puddle\msb-0.7.8-puddle.2
 
@@ -88,7 +92,8 @@ param(
     [switch]$Bisect,
     [string]$Good,
     [string]$Bad = 'HEAD',
-    [switch]$BisectStep
+    [switch]$BisectStep,
+    [string]$CheckoutRoot
 )
 
 $ErrorActionPreference = 'Stop'
@@ -154,6 +159,7 @@ function Test-Prefix([string]$Value) {
 }
 
 function Get-RepoRoot {
+    if ($CheckoutRoot) { return $CheckoutRoot }
     $root = (& git -C $PSScriptRoot rev-parse --show-toplevel 2>$null)
     if ($LASTEXITCODE -ne 0 -or -not $root) { throw "not inside a git checkout: $PSScriptRoot" }
     return $root.Trim()
@@ -176,7 +182,7 @@ if ($Bisect) {
     # Older commits may not have this script (or have another version): run a copy.
     $copy = Join-Path $env:TEMP "puddle-windows-e2e-bisect-$PID.ps1"
     $stepArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $copy, '-BisectStep',
-        '-RuntimeDir', $RuntimeDir, '-Root', $Root, '-MinBattery', "$MinBattery")
+        '-CheckoutRoot', $repoRoot, '-RuntimeDir', $RuntimeDir, '-Root', $Root, '-MinBattery', "$MinBattery")
     if ($All) { $stepArgs += '-All' } else { $stepArgs += @('-Filter', $Filter) }
     $powershell = Join-Path $PSHOME 'powershell.exe'
     Write-Step "bisect $Good..$Bad in $repoRoot, step: $powershell $($stepArgs -join ' ')"

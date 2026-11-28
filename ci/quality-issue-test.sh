@@ -10,10 +10,8 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/quality-issue-test.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
-fail() {
-    echo "quality-issue-test: $*" >&2
-    exit 1
-}
+# shellcheck disable=SC1091 # the helper sits in scripts/
+. "$(dirname "$0")/../scripts/test-fail.sh"
 
 cat >"$tmp/gh" <<'STUB'
 #!/bin/sh
@@ -25,7 +23,11 @@ case "$1 $2" in
     esac ;;
 "issue list") [ -z "${LIST_FAIL:-}" ] || exit 1; printf '%s\n' "${OPEN_ISSUES:-[]}" ;;
 "issue create") echo "$*" >>"$GH_LOG"; cp "$6" "$tmp_body" ;;
-"issue edit") echo "$*" >>"$GH_LOG"; cp "$5" "$tmp_body" ;;
+"issue edit")
+    echo "$*" >>"$GH_LOG"
+    # EDIT_FAILS=n: the first n edits fail the way GitHub's GraphQL "Something went wrong" does
+    if [ "${EDIT_FAILS:-0}" -ge "$(grep -c '^issue edit' "$GH_LOG")" ]; then echo "GraphQL: Something went wrong" >&2; exit 1; fi
+    cp "$5" "$tmp_body" ;;
 *) echo "$*" >>"$GH_LOG" ;;
 esac
 STUB
@@ -60,7 +62,7 @@ run() {
     rm -f "$tmp/body.md"
     CODE_JSON="$tmp/$code" DEP_JSON="$tmp/dep.json" DEP_FAIL=$depfail SCAN_OUT="$tmp/$scan" SCAN_STATUS=$sstatus \
         OPEN_ISSUES=$open GH_LOG="$tmp/gh.log" tmp_body="$tmp/body.md" LIST_FAIL=${LIST_FAIL:-} \
-        QUALITY_CHECK="$tmp/scan" QUALITY_GH="$tmp/gh" GITHUB_REPOSITORY=o/r GITHUB_RUN_ID=42 \
+        QUALITY_RETRY_SLEEP=0 EDIT_FAILS=${EDIT_FAILS:-0} QUALITY_CHECK="$tmp/scan" QUALITY_GH="$tmp/gh" GITHUB_REPOSITORY=o/r GITHUB_RUN_ID=42 \
         "$here/quality-issue.sh" >"$tmp/out" 2>&1 || got=$?
     [ "$got" = "$want" ] || fail "$name: exit $got, wanted $want: $(cat "$tmp/out")"
 }
@@ -103,3 +105,10 @@ LIST_FAIL=1 run "issue list failure touches nothing" 1 code1.json scan1.tsv 1 '[
 
 
 echo "quality-issue-test: ok"
+
+EDIT_FAILS=2 run "a transient edit failure is retried" 0 code1.json scan1.tsv 1 "$(open_with "$body1")"
+[ "$(grep -c '^issue edit 7 ' "$tmp/gh.log")" = 3 ] || fail "edit not retried to success: $(cat "$tmp/gh.log")"
+grep -q 'Open: \*\*2\*\*' "$tmp/body.md" || fail "retried edit wrote no body"
+
+EDIT_FAILS=3 run "an edit that keeps failing still fails the run" 1 code1.json scan1.tsv 1 "$(open_with "$body1")"
+[ "$(grep -c '^issue edit 7 ' "$tmp/gh.log")" = 3 ] || fail "retried more than three times: $(cat "$tmp/gh.log")"

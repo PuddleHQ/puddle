@@ -501,6 +501,11 @@ fn registering_is_checked() {
         "*.co.uk",
         "*.azurewebsites.net",
         "*.s3.amazonaws.com",
+        // Registrable themselves, with public suffixes below (`s3.amazonaws.com`,
+        // `blob.core.windows.net`): a guest owns `x.s3.amazonaws.com`.
+        "*.amazonaws.com",
+        "*.windows.net",
+        "*.core.windows.net",
     ] {
         let wide = TerminationSet::parse(["github.com", shared]).unwrap();
         assert!(
@@ -510,7 +515,13 @@ fn registering_is_checked() {
     }
     // An exact name below a shared domain is the user's own choice; a pattern below a
     // registrable domain is fine.
-    for fine in ["a.github.io", "*.githubcopilot.com", "*.example.co.uk"] {
+    for fine in [
+        "a.github.io",
+        "*.githubcopilot.com",
+        "*.example.co.uk",
+        "*.api.github.com",
+        "a.amazonaws.com",
+    ] {
         let set = TerminationSet::parse([fine]).unwrap();
         assert!(new("N", GH, "r", set).is_ok(), "{fine}");
     }
@@ -567,6 +578,20 @@ fn the_registry_changes_while_in_use() {
     );
     let (headers, _) = swap(&registry, &[("x", GH)], "github.com");
     assert_eq!(headers["x"], "ghp_refreshed");
+}
+
+#[test]
+fn the_real_value_behind_a_stand_in_is_readable_to_tests() {
+    let registry = registry();
+    assert_eq!(registry.real_of(GH).as_deref(), Some(REAL_GH));
+    assert_eq!(registry.real_of(API).as_deref(), Some(REAL_API));
+    assert_eq!(
+        registry.set_real(GH, SecretValue::new("ghp_refreshed")),
+        Ok(true)
+    );
+    assert_eq!(registry.real_of(GH).as_deref(), Some("ghp_refreshed"));
+    assert_eq!(registry.real_of(API).as_deref(), Some(REAL_API));
+    assert_eq!(registry.real_of("nope-nope-nope-nope"), None);
 }
 
 #[test]

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The agent's side of the control stream: hello first, then every report from the OOM watch.
-//! A failed write reopens the stream (on a new session if the old one died) and resends.
+//! A failed write, or a stream the host or its session ended, reopens the stream (on a new session
+//! if the old one died) and resends.
 
 use std::io;
 use std::sync::Arc;
@@ -8,7 +9,7 @@ use std::time::Duration;
 
 use puddle_agent_proto::AgentMessage;
 use puddle_agent_proto::control::PREAMBLE;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio_yamux::StreamHandle;
 
@@ -38,12 +39,19 @@ pub async fn run(upstream: Arc<Upstream>, mut reports: mpsc::Receiver<AgentMessa
             }
         };
         loop {
-            let msg = match pending.take() {
-                Some(msg) => msg,
-                None => match reports.recv().await {
-                    Some(msg) => msg,
-                    None => return,
-                },
+            let msg = if let Some(msg) = pending.take() {
+                msg
+            } else {
+                tokio::select! {
+                    next = reports.recv() => match next {
+                        Some(msg) => msg,
+                        None => return,
+                    },
+                    () = lost(&mut stream) => {
+                        tracing::info!("control stream ended by the host or its session, reopening");
+                        break;
+                    }
+                }
             };
             if let Err(err) = write(&mut stream, &msg).await {
                 tracing::info!(error = %err, "control stream lost, reopening");
@@ -52,6 +60,13 @@ pub async fn run(upstream: Arc<Upstream>, mut reports: mpsc::Receiver<AgentMessa
             }
         }
     }
+}
+
+/// Resolves when the stream ends or fails. The host never writes on it, so a read that returns
+/// (end of stream, an error, or a stray byte) means the stream or its session is gone, and the
+/// host holds a dead link until a hello arrives again.
+async fn lost(stream: &mut StreamHandle) {
+    let _ = stream.read(&mut [0u8; 1]).await;
 }
 
 async fn open(upstream: &Upstream) -> io::Result<StreamHandle> {

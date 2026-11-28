@@ -2,12 +2,47 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # The quality gates, in one place: git hooks, CI and humans all run this script, so the gates
 # can't drift apart. Usage: scripts/check.sh <gate>...   Gates:
-#   fmt, typos, spdx, shellcheck, hooks, git-env, platform-literals, standalone, git-pins, mutants-exclusions, silent-skips, early-exit-pipes, spawn, workflow-yaml, test-hooks, quality, secrets, clippy, clippy-windows, dormant, deny, advisories, notices, openapi, test, rustdoc, doc, coverage,
-#   coverage-ratchet, diff-coverage, diff-coverage-fast, coverage-determinism, mutants,
-#   ui, ui-licences, ui-audit, ui-e2e
-#   fast     = fmt typos spdx shellcheck hooks platform-literals standalone git-pins mutants-exclusions silent-skips early-exit-pipes spawn workflow-yaml test-hooks   (pre-commit hook)
-#   all      = fast quality git-env secrets clippy clippy-windows dormant deny advisories notices openapi ui ui-licences ui-audit ui-e2e rustdoc doc coverage
-#              (CI, the nightly run, by hand; coverage runs the tests, and must follow `ui`: the embedded UI is built there)
+#   - fmt
+#   - typos
+#   - spdx
+#   - shellcheck
+#   - hooks
+#   - git-env
+#   - platform-literals
+#   - standalone
+#   - git-pins
+#   - mutants-exclusions
+#   - quality
+#   - layering
+#   - silent-skips
+#   - silent-revert
+#   - early-exit-pipes
+#   - workflow-yaml
+#   - spawn
+#   - test-hooks
+#   - secrets
+#   - clippy
+#   - dormant
+#   - clippy-windows
+#   - deny
+#   - advisories
+#   - notices
+#   - openapi
+#   - ui
+#   - ui-licences
+#   - ui-audit
+#     ui-e2e
+#   - test
+#   - rustdoc
+#   - doc
+#   - coverage
+#   - coverage-ratchet
+#   - coverage-determinism
+#   - mutants
+#   - diff-coverage-fast
+#   - diff-coverage
+#   fast     = the first set, run by the pre-commit hook (see `fast_gates` below)
+#   all      = fast, then the rest (CI, the nightly run, by hand; coverage runs the tests, and must follow `ui`: the embedded UI is built there)
 #   pre-push = every gate of `all` except ui-e2e, the slowest one, and advisories and ui-audit, which depend on
 #              the day's advisory databases and not on the change, plus diff-coverage-fast right after the fast gates
 #              (pre-push hook; CI still runs ui-e2e after the push)
@@ -144,7 +179,32 @@ ui_install() {
 # failure, with its message and stack). A failing run also leaves ui/vitest-out/vitest-failed-<UTC time>.log, which a
 # rerun never overwrites, and prints its path: a failure that happens once (it once lost its output, so the test that failed
 # stayed unknown) must stay diagnosable. CI uploads ui/vitest-out (ci.yml, job ui).
+# A shared host can run at many times its core count (2026-11-25: load about 500 on 40 cores, a 46 ms vitest
+# test lost 7.5 s to an 8142 ms event-loop stall). Before vitest, wait until the 1-minute load average is under
+# the core count, at most CHECK_LOAD_WAIT seconds (default 900; 0 turns it off; CI runners are skipped), then go
+# on and say so. A wait, never a longer test timeout: a stall of the machine is not a slow test.
+wait_for_load() {
+    [ -z "${CI:-}" ] || return 0
+    _lw_max=${CHECK_LOAD_WAIT:-900}
+    [ "$_lw_max" -gt 0 ] 2>/dev/null || return 0
+    _lw_cores=${CHECK_LOAD_CORES:-$(nproc 2>/dev/null || echo 1)}
+    _lw_t=0
+    while :; do
+        _lw_l=$(awk '{print $1}' "${CHECK_LOADAVG_FILE:-/proc/loadavg}" 2>/dev/null)
+        [ -n "$_lw_l" ] || return 0
+        awk -v l="$_lw_l" -v c="$_lw_cores" 'BEGIN { exit !(l + 0 < c + 0) }' && break
+        if [ "$_lw_t" -ge "$_lw_max" ]; then
+            echo "ui: load $_lw_l on $_lw_cores cores still not under the core count after ${_lw_t} s; running vitest anyway" >&2
+            return 0
+        fi
+        [ "$_lw_t" -gt 0 ] || echo "ui: load $_lw_l on $_lw_cores cores; waiting for it to drop below the core count before vitest (at most $_lw_max s; CHECK_LOAD_WAIT=0 skips)" >&2
+        sleep "${CHECK_LOAD_POLL:-10}"
+        _lw_t=$((_lw_t + ${CHECK_LOAD_POLL:-10}))
+    done
+}
+
 ui_test() {
+    wait_for_load
     mkdir -p ui/vitest-out
     # The pipe hides npm's status (a plain sh pipeline), so the status goes through a file.
     rm -f ui/vitest-out/vitest.rc
@@ -211,13 +271,9 @@ run_gate() {
         git ls-files -z -- '*.sh' '.githooks/*' | xargs -0 shellcheck
         ;;
     hooks)
-        scripts/check-test-git-env.sh --self-test && scripts/check-test-git-env.sh && scripts/pre-push-test.sh && scripts/check-spdx-test.sh && scripts/diff-coverage-crates-test.sh && scripts/mutants-test.sh && scripts/diff-base-test.sh && scripts/check-tmp-test.sh && scripts/check-socket-guard-test.sh && scripts/check-enclosing-repo-test.sh && scripts/cap-test-memory-test.sh && scripts/check-sets-test.sh && scripts/rustdoc-gate-test.sh && scripts/gate-sched-test.sh && scripts/check-gate-exit.sh --self-test && scripts/check-gate-exit.sh &&
-            scripts/target-names-test.sh --self-test && scripts/target-names-test.sh && scripts/coverage-run-test.sh && scripts/dead-resolver-test.sh && scripts/coverage-cargo-test.sh && scripts/coverage-determinism.sh --self-test && scripts/flake-lints-test.sh && scripts/flake-rules-test.sh &&
-            ci/fetch-msb-test.sh && ci/fetch-gitleaks-test.sh && ci/fetch-code-server-test.sh && ci/check-mise-pin-test.sh && ci/check-az-contract-test.sh && ci/fetch-forgejo-test.sh && ci/fetch-vscode-test.sh && ci/fetch-gateway-test.sh && ci/fetch-tauri-cli-test.sh && ci/fetch-wix-test.sh && ci/fetch-baseline-msi-test.sh && ci/check-runtime-layout-test.sh && ci/check-dormant-release-test.sh && ci/fetch-real-tools-test.sh && ci/github-rest/check-test.sh &&
-            ci/scope-test.sh && ci/cargo-fetch-test.sh && ci/apt-setup-test.sh && ci/free-disk-test.sh && ci/advisories-issue-test.sh && ci/deny-fresh-test.sh && ci/quality-issue-test.sh && ci/lab-override-check-test.sh && ci/cache-drop-test.sh && ci/disk-watch-test.sh &&
-            ci/should-run-test.sh && ci/nightly-issue-test.sh && ci/cancel-group-test.sh && ci/bisect-red-test.sh && ci/cache-gc-test.sh && ci/tools-cache-heal-test.sh && ci/dependabot-auto-merge-test.sh && ci/merge-queue-sweep-test.sh && ci/cancel-dissolved-groups-test.sh && ci/dependabot-notices-test.sh && ci/raise-coverage-baseline-test.sh && ci/test-vm-skip-policy.sh && ci/stress-test.sh && ci/fake-host-starved-test.sh && ci/vm-tests-report-test.sh && ci/vm-partition-test.sh &&
-            ci/fork-upkeep.py self-test && ci/fork-upkeep.py lint && ci/fork-upkeep-issue-test.sh &&
-            scripts/check-hooks-tmpdir-test.sh
+        # The self-tests of the scripts, in scripts/hooks-gate.list, a few at a time (one `&&` chain took 133 s, and 3 times that with the
+        # long-TMPDIR reruns of scripts/check-hooks-tmpdir-test.sh).
+        scripts/hooks-gate.sh
         ;;
     git-env)
         # Through the coverage gate's build (same arguments), so it compiles no test binary of its own.
@@ -234,7 +290,7 @@ run_gate() {
             exit 1
         fi
         ;;
-    standalone) scripts/check-standalone.sh --self-test && scripts/check-standalone.sh && scripts/check-product-name.sh --self-test && scripts/check-product-name.sh ;;
+    standalone) scripts/check-standalone.sh --self-test && scripts/check-standalone.sh && scripts/check-product-name.sh --self-test && scripts/check-product-name.sh && ci/workflow-split-test.sh ;;
     git-pins) scripts/check-git-pins.sh --self-test && scripts/check-git-pins.sh && ci/image-pins-test.sh && ci/image-pins.sh check &&
         scripts/check-external-fetch.sh --self-test && scripts/check-external-fetch.sh ;;
     # An `exclude_re` entry of .cargo/mutants.toml that matches no mutant of `cargo mutants --list` is stale
@@ -257,8 +313,12 @@ run_gate() {
     # A test that returns early because a prerequisite is missing passes without testing; this fails
     # the hidden forms (docs/STANDARDS.md, "Skipped tests").
     silent-skips) scripts/check-silent-skips.sh --self-test && scripts/check-silent-skips.sh ;;
+    # A change that undoes a merged commit of the last 14 days without naming it (self-test only here; CI passes the PR's base).
+    silent-revert) scripts/check-silent-revert.sh --self-test && scripts/check-silent-revert.sh ;;
     early-exit-pipes) scripts/check-early-exit-pipes.sh --self-test && scripts/check-early-exit-pipes.sh ;;
     workflow-yaml) python3 -I scripts/check-workflow-yaml.py --self-test && python3 -I scripts/check-workflow-yaml.py ;;
+    # Forbidden crate edges from `cargo metadata`, and the "Depends on" column of docs/architecture 5.2 kept in step (`--write` regenerates it).
+    layering) python3 -I scripts/check-layering.py --self-test && python3 -I scripts/check-layering.py ;;
     spawn) python3 -I scripts/check-spawn.py --self-test && python3 -I scripts/check-spawn.py ;;
     test-hooks) scripts/check-test-hooks.sh --self-test && scripts/check-test-hooks.sh ;;
     secrets)
@@ -270,19 +330,41 @@ run_gate() {
     clippy)
         # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
         "$cargo" clippy --workspace $skip_app --all-targets --all-features --locked -- -D warnings
+        # fuzz/ is its own workspace (nightly libFuzzer), so the line above never sees it; it builds on stable
+        # for a lint run, and carries a copy of the workspace lint table (fuzz/Cargo.toml `[lints]`).
+        (cd fuzz && "$cargo" clippy --all-targets --locked -- -D warnings)
         ;;
     dormant)
         # the build that ships (default features, so the `serve` and `mise` cargo features
         # are off) shows nothing of `puddle serve`, mise or the built-in mise rule set: not in the
         # CLI help or usage, not in the rule list, and no stored switch turns the layer on. The
         # `test` gate runs these tests with every feature on, where they check the opposite.
+        # the shipped crates also compile as libraries with default features: the test builds below set cfg(test),
+        # which hides an item that is gated on the `testing` feature and re-exported without that gate
+        "$cargo" check --locked -p puddle -p puddle-api -p puddle-services
         "$cargo" test --locked -p puddle --test dormant
         # the advice (doctor findings, the vault warning) names no command this build refuses
         "$cargo" test --locked -p puddle-doctor --test snapshots the_no_desktop_advice_names_the_serve_command_only_when_it_is_built_in
         "$cargo" test --locked -p puddle-host --lib the_warning_says_whether_the_login_is_graphical_and_whether_the_store_works
+        # and no unit test needs a dormant feature to pass: the same lib tests with the shipped
+        # (default) features. A test that checks the layer branches on `Tools::AVAILABLE` or
+        # carries `#[cfg(feature = ...)]`, so it cannot hide behind the `test` gate's --all-features.
+        # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
+        "$cargo" test --locked --workspace $skip_app --lib --no-fail-fast
+        # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
+        "$cargo" test --locked --doc --workspace $skip_app --no-fail-fast
+        # the fake-host and HTTP suites are the integration tests that exercise the layer; the
+        # others of the workspace need a VM (vm_*) or a UI build
+        # The churn tests count the descriptors and threads of their whole process, so each runs
+        # alone, as under nextest (one process per test): beside 340 parallel tests in one
+        # process their counts drift by hundreds and the run fails without a leak.
+        "$cargo" test --locked -p puddle-host --test fake_host -- --skip churn::
+        "$cargo" test --locked -p puddle-host --test fake_host -- churn:: --test-threads=1
+        "$cargo" test --locked -p puddle-api --test api_http
+        "$cargo" test --locked -p puddle --test cli --test serve_config
+        "$cargo" test --locked -p puddle-settings --test properties
         # and the release pipeline passes neither feature
         ci/check-dormant-release.sh
-        "$cargo" test --locked -p puddle-api --test api_http nothing_of_the_mise_layer_shows_in_a_build_without_it
         ;;
     clippy-windows)
         # cargo-xwin supplies the MSVC headers and libraries, so C dependencies (bundled SQLite)
@@ -338,6 +420,7 @@ run_gate() {
         # The committed API contract (openapi.json, schema.d.ts) matches the routes (ADR 0004).
         # The TypeScript half needs Node; without it locally the gate says so and checks the JSON
         # only. In CI (CI set) a missing Node fails.
+        scripts/check-wire-docs.sh --self-test && scripts/check-wire-docs.sh
         "$cargo" run --quiet --locked -p xtask -- openapi --check
         ;;
     ui)
@@ -399,6 +482,8 @@ run_gate() {
     rustdoc)
         # The doc build with every rustdoc warning an error (a public item whose docs link to a private one, a broken intra-doc link). It is
         # its own gate so the cheap half of `doc` runs where the doc tests do not: the pre-flight and the medium pre-check tier.
+        # A doc comment on a wire type is also part of the API contract: say `cargo xtask openapi` before the build, not after the tests.
+        scripts/check-wire-docs.sh
         # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
         RUSTDOCFLAGS="-D warnings" "$cargo" doc --workspace $skip_app --no-deps --all-features --locked
         ;;
@@ -415,12 +500,16 @@ run_gate() {
         ui_install
         target=${CARGO_TARGET_DIR:-target}
         coverage_unlock "$target"
+        # The totals count the crates compiled into the shipped binaries only; the check fails first when a
+        # workspace crate is neither (scripts/coverage-crates.txt). The lcov report stays whole: the diff gate reads it.
+        python3 -I scripts/coverage-crates.py --self-test
+        totals_ignore=$(CARGO="$plain_cargo" python3 -I scripts/coverage-crates.py)
         # shellcheck disable=SC2086 # $skip_app is empty or one `--exclude <crate>` pair
         scripts/coverage-run.sh "$plain_cargo" --workspace $skip_app --all-features --locked \
             --profile "${NEXTEST_PROFILE:-default}"
         "$plain_cargo" llvm-cov report --lcov --output-path "$target/lcov.info"
-        "$plain_cargo" llvm-cov report --summary-only
-        "$plain_cargo" llvm-cov report --json --summary-only --output-path "$target/coverage-summary.json"
+        "$plain_cargo" llvm-cov report --summary-only --ignore-filename-regex "$totals_ignore"
+        "$plain_cargo" llvm-cov report --json --summary-only --ignore-filename-regex "$totals_ignore" --output-path "$target/coverage-summary.json"
         ratchet="--summary $target/coverage-summary.json --baseline scripts/coverage-baseline.json"
         ratchet="$ratchet --floor-lines $COV_LINES --floor-regions $COV_REGIONS"
         [ -n "${CI:-}" ] || ratchet="$ratchet --write"
@@ -527,12 +616,45 @@ run_gate() {
 }
 
 # The gate sets, in run order. `pre-push` is derived from `all`, so a gate added to `all` is in it too.
-fast_gates="fmt typos spdx shellcheck hooks platform-literals standalone git-pins mutants-exclusions silent-skips early-exit-pipes spawn workflow-yaml test-hooks"
-all_gates="$fast_gates quality git-env secrets clippy clippy-windows dormant deny advisories notices openapi ui ui-licences ui-audit ui-e2e rustdoc doc coverage"
+# One gate per line, so two changes that each add a gate touch different lines.
+fast_gates="fmt
+typos
+spdx
+shellcheck
+hooks
+platform-literals
+standalone
+git-pins
+mutants-exclusions
+silent-skips
+early-exit-pipes
+spawn
+workflow-yaml
+test-hooks"
+all_gates="$fast_gates
+quality
+layering
+git-env
+secrets
+clippy
+clippy-windows
+dormant
+deny
+advisories
+notices
+openapi
+ui
+ui-licences
+ui-audit
+ui-e2e
+rustdoc
+doc
+coverage"
 # After the fast gates and before the slow ones: a change whose added lines no test runs fails in minutes.
 pre_push_gates=$fast_gates" diff-coverage-fast"
 for g in $all_gates; do
-    case " $fast_gates " in *" $g "*) continue ;; esac
+    # shellcheck disable=SC2086 # the set is a list of names, one per line
+    case " $(printf '%s ' $fast_gates)" in *" $g "*) continue ;; esac
     case $g in ui-e2e | advisories | ui-audit) ;; *) pre_push_gates="$pre_push_gates $g" ;; esac
 done
 

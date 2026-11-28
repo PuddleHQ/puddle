@@ -37,14 +37,32 @@ pub struct BackupInfo {
 /// # Errors
 ///
 /// [`StoreError::Database`] when `source` is missing or not a database, `dest` exists or cannot
-/// be written, the wait for a writer runs out, or the copy fails its integrity check.
+/// be written, the wait for a writer runs out, or the copy fails its integrity check or its
+/// secrets cannot be emptied (the copy is removed again on any error after it was made);
+/// [`StoreError::PathNotUtf8`] for a `dest` that is not UTF-8.
 pub fn backup_database(source: &Path, dest: &Path) -> Result<BackupInfo, StoreError> {
+    let target = utf8_path(dest)?;
     let conn = Connection::open_with_flags(source, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     conn.busy_timeout(BUSY_TIMEOUT)?;
     // The target is a bound value, so a path with a quote in it needs no escaping.
-    conn.execute("VACUUM INTO ?1", [dest.to_string_lossy().as_ref()])?;
+    conn.execute("VACUUM INTO ?1", [target])?;
     drop(conn);
 
+    // The copy still holds the password hashes until `drop_sign_in_secrets` has run: no error
+    // after the copy leaves it behind.
+    finish_copy(dest).inspect_err(|_| drop(std::fs::remove_file(dest)))
+}
+
+/// `path` as the text SQLite takes it as; a path that is not UTF-8 would silently name another file.
+///
+/// # Errors
+/// [`StoreError::PathNotUtf8`].
+pub(crate) fn utf8_path(path: &Path) -> Result<&str, StoreError> {
+    path.to_str()
+        .ok_or_else(|| StoreError::PathNotUtf8(path.to_owned()))
+}
+
+fn finish_copy(dest: &Path) -> Result<BackupInfo, StoreError> {
     drop_sign_in_secrets(dest)?;
     let copy = Connection::open_with_flags(dest, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let check: String = copy.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
@@ -54,8 +72,9 @@ pub fn backup_database(source: &Path, dest: &Path) -> Result<BackupInfo, StoreEr
 }
 
 /// The tables that hold sign-in secrets (see [`crate::AccountSecrets`]); a backup never keeps
-/// their rows.
-const SECRET_TABLES: [&str; 2] = ["account_passwords", "account_invites"];
+/// their rows. A session's refresh digest is one too: a restore must not bring back a device that
+/// was revoked after the backup.
+const SECRET_TABLES: [&str; 3] = ["account_passwords", "account_invites", "account_sessions"];
 
 const TABLE_EXISTS: &str =
     "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)";

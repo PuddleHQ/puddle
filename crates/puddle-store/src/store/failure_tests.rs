@@ -1,0 +1,608 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! What the store does when SQLite fails in the middle of a change: the error comes back as it is
+//! and the change leaves nothing behind.
+
+use puddle_types::{ConnectionDecision, ConnectionReason, RuleSetId};
+
+use puddle_types::{ConnectionEvent, ConnectionLog};
+
+use super::test_fixtures::{new_pending, request, store, store_with, workspace, workspace_rule};
+use super::*;
+use crate::clock::ManualClock;
+use crate::rule::{Effect, Precedence, RuleEdit};
+use crate::test_support::Logs;
+
+const DISK_FULL: &str = "database error: disk full";
+
+/// The `type` of every audit record, oldest first.
+fn audit_kinds(store: &Store) -> Vec<String> {
+    store
+        .audit_lines(0, 1000)
+        .unwrap()
+        .into_iter()
+        .map(|(_, line)| {
+            let record: serde_json::Value = serde_json::from_str(&line).unwrap();
+            record["type"].as_str().unwrap().to_owned()
+        })
+        .collect()
+}
+
+const PENDING_UPDATES_FAIL: &str = "CREATE TRIGGER pending_updates_fail BEFORE UPDATE ON pending
+     BEGIN SELECT RAISE(ABORT, 'disk full'); END";
+
+#[test]
+fn a_repeat_request_that_cannot_be_counted_leaves_its_row_as_it_was() {
+    let store = store();
+    let id = new_pending(&store, "x.example");
+    store.break_database(PENDING_UPDATES_FAIL);
+
+    let err = store
+        .decide(&request("x.example"), SuffixAllows::Count)
+        .unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL);
+    assert_eq!(store.pending(id).unwrap().attempts, 1);
+}
+
+#[test]
+fn a_request_whose_open_rows_cannot_be_counted_makes_no_row() {
+    let store = store();
+    store.refuse_sql_function("count");
+
+    let err = store
+        .decide(&request("x.example"), SuffixAllows::Count)
+        .unwrap_err();
+
+    assert!(
+        err.to_string()
+            .starts_with("database error: not authorized to use function: count"),
+        "{err}"
+    );
+    assert_eq!(
+        store
+            .open_pending_every_user(&crate::testing::all_users(), None)
+            .unwrap()
+            .len(),
+        0
+    );
+}
+
+#[test]
+fn a_new_row_whose_record_cannot_be_written_is_not_made() {
+    let store = store();
+    store.fail_audit_writes("pending_created");
+
+    let err = store
+        .decide(&request("x.example"), SuffixAllows::Count)
+        .unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL);
+    assert_eq!(
+        store
+            .open_pending_every_user(&crate::testing::all_users(), None)
+            .unwrap()
+            .len(),
+        0
+    );
+    assert_eq!(audit_kinds(&store), Vec::<String>::new());
+}
+
+#[test]
+fn a_rule_that_cannot_be_inserted_is_not_made() {
+    let store = store();
+    store.break_database(
+        "CREATE TRIGGER rule_inserts_fail BEFORE INSERT ON rules
+         BEGIN SELECT RAISE(ABORT, 'disk full'); END",
+    );
+
+    let err = store
+        .as_user(UserId::OWNER)
+        .add_rule(&workspace_rule("x.example"))
+        .unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL);
+    assert_eq!(
+        store.rules_every_user(&crate::testing::all_users()),
+        Vec::<Rule>::new()
+    );
+}
+
+#[test]
+fn a_rule_whose_record_cannot_be_written_is_not_made() {
+    let store = store();
+    store.fail_audit_writes("rule_created");
+
+    let err = store
+        .as_user(UserId::OWNER)
+        .add_rule(&workspace_rule("x.example"))
+        .unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL);
+    assert_eq!(
+        store.rules_every_user(&crate::testing::all_users()),
+        Vec::<Rule>::new()
+    );
+}
+
+#[test]
+fn a_rule_whose_deletion_cannot_be_recorded_stays() {
+    let store = store();
+    let rule = store
+        .as_user(UserId::OWNER)
+        .add_rule(&workspace_rule("x.example"))
+        .unwrap();
+    store.fail_audit_writes("rule_deleted");
+
+    let err = store.delete_rule(rule.id, Actor::Cli).unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL);
+    assert_eq!(store.rules_every_user(&crate::testing::all_users()), [rule]);
+}
+
+#[test]
+fn a_rule_whose_switch_cannot_be_recorded_stays_as_it_was() {
+    let store = store();
+    let rule = store
+        .as_user(UserId::OWNER)
+        .add_rule(&workspace_rule("x.example"))
+        .unwrap();
+    store.fail_audit_writes("rule_switched");
+
+    let err = store
+        .set_rule_enabled(rule.id, false, Actor::Cli)
+        .unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL);
+    assert_eq!(store.rules_every_user(&crate::testing::all_users()), [rule]);
+}
+
+#[test]
+fn a_request_rule_whose_switch_cannot_be_recorded_stays_as_it_was() {
+    let store = store();
+    let rule = store
+        .as_user(UserId::OWNER)
+        .add_request_rule(&request_rule())
+        .unwrap();
+    store.fail_audit_writes("rule_switched");
+
+    let err = store
+        .as_user(UserId::OWNER)
+        .set_request_rule_enabled(rule.id, false, Actor::Cli)
+        .unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL);
+    assert_eq!(
+        store
+            .request_rules_every_user(&crate::testing::all_users())
+            .unwrap(),
+        [rule]
+    );
+}
+
+#[test]
+fn a_built_in_entry_whose_switch_cannot_be_recorded_stays_on() {
+    let store = store();
+    let github = RuleSetId::BuiltIn("github");
+    store.fail_audit_writes("rule_switched");
+
+    let err = store
+        .switch_builtin_entry(
+            UserId::OWNER,
+            github,
+            "codeload.github.com",
+            false,
+            Actor::Cli,
+        )
+        .unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL);
+    let set = store.rule_set(UserId::OWNER, github).unwrap();
+    assert!(set.entries.iter().all(|entry| entry.enabled));
+}
+
+#[test]
+fn a_rule_whose_expiry_change_cannot_be_recorded_keeps_its_expiry() {
+    let store = store();
+    let rule = store
+        .as_user(UserId::OWNER)
+        .add_rule(&workspace_rule("x.example"))
+        .unwrap();
+    store.fail_audit_writes("rule_updated");
+
+    let err = store
+        .set_rule_expiry(rule.id, Some(2_000_000), Actor::Cli)
+        .unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL);
+    assert_eq!(store.rules_every_user(&crate::testing::all_users()), [rule]);
+}
+
+#[test]
+fn a_rule_whose_edit_cannot_be_recorded_stays_as_it_was() {
+    let store = store();
+    let rule = store
+        .as_user(UserId::OWNER)
+        .add_rule(&workspace_rule("x.example"))
+        .unwrap();
+    store.fail_audit_writes("rule_updated");
+    let edit = RuleEdit {
+        scope: rule.scope.clone(),
+        pattern: rule.pattern.clone(),
+        effect: Effect::Deny,
+        expires_at: rule.expires_at,
+        precedence: None,
+    };
+
+    let err = store.update_rule(rule.id, &edit, Actor::Cli).unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL);
+    assert_eq!(store.rules_every_user(&crate::testing::all_users()), [rule]);
+}
+
+#[test]
+fn a_decision_that_cannot_update_its_row_makes_no_rule() {
+    let store = store();
+    let id = new_pending(&store, "x.example");
+    store.break_database(PENDING_UPDATES_FAIL);
+
+    let err = store
+        .as_user(UserId::OWNER)
+        .resolve_pending(id, &Resolution::allow(), Actor::Ui)
+        .unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL);
+    assert_eq!(
+        store.rules_every_user(&crate::testing::all_users()),
+        Vec::<Rule>::new()
+    );
+    assert_eq!(store.pending(id).unwrap().state, PendingState::Requested);
+}
+
+#[test]
+fn a_decision_whose_record_cannot_be_written_makes_no_rule() {
+    let store = store();
+    let id = new_pending(&store, "x.example");
+    store.fail_audit_writes("pending_decided");
+
+    let err = store
+        .as_user(UserId::OWNER)
+        .resolve_pending(id, &Resolution::allow(), Actor::Ui)
+        .unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL);
+    assert_eq!(
+        store.rules_every_user(&crate::testing::all_users()),
+        Vec::<Rule>::new()
+    );
+    assert_eq!(store.pending(id).unwrap().state, PendingState::Requested);
+}
+
+#[test]
+fn a_workspace_whose_rule_deletion_cannot_be_recorded_keeps_everything() {
+    let store = store();
+    let rule = store
+        .as_user(UserId::OWNER)
+        .add_rule(&workspace_rule("x.example"))
+        .unwrap();
+    store.fail_audit_writes("rule_deleted");
+
+    let err = store.delete_workspace(&workspace()).unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL);
+    assert_eq!(store.rules_every_user(&crate::testing::all_users()), [rule]);
+}
+
+#[test]
+fn a_workspace_whose_open_requests_cannot_be_expired_keeps_everything() {
+    let store = store();
+    let rule = store
+        .as_user(UserId::OWNER)
+        .add_rule(&workspace_rule("x.example"))
+        .unwrap();
+    let id = new_pending(&store, "y.example");
+    store.fail_audit_writes("pending_expired");
+
+    let err = store.delete_workspace(&workspace()).unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL);
+    assert_eq!(store.rules_every_user(&crate::testing::all_users()), [rule]);
+    assert_eq!(store.pending(id).unwrap().state, PendingState::Requested);
+}
+
+#[test]
+fn a_workspace_whose_pinned_ports_cannot_be_removed_keeps_everything() {
+    let store = store();
+    let rule = store
+        .as_user(UserId::OWNER)
+        .add_rule(&workspace_rule("x.example"))
+        .unwrap();
+    let pin = PinnedPort {
+        guest_port: 3000,
+        host_port: 3000,
+    };
+    store.pin_port(&workspace(), pin).unwrap();
+    store.break_database(
+        "CREATE TRIGGER pin_deletes_fail BEFORE DELETE ON pinned_ports
+         BEGIN SELECT RAISE(ABORT, 'disk full'); END",
+    );
+
+    let err = store.delete_workspace(&workspace()).unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL);
+    assert_eq!(store.rules_every_user(&crate::testing::all_users()), [rule]);
+    assert_eq!(store.pinned_ports(&workspace()).unwrap(), [pin]);
+}
+
+fn waiting_event(host: &str) -> ConnectionEvent {
+    ConnectionEvent::new(
+        &request(host),
+        ConnectionDecision::Pending,
+        ConnectionReason::NoRule,
+    )
+}
+
+#[test]
+fn waiting_records_stay_unmerged_when_their_summary_cannot_be_written() {
+    let (_, store) = store_with(Limits {
+        max_waiting_connection_records: 1,
+        ..Limits::default()
+    });
+    for host in ["a.example", "b.example", "c.example"] {
+        store.record_connection(&waiting_event(host)).unwrap();
+    }
+    store.fail_audit_writes("connection");
+
+    let err = store.sweep().unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL);
+    assert_eq!(audit_kinds(&store), ["connection"; 3]);
+    store.audit_writes_work_again();
+    assert_eq!(store.sweep().unwrap().waiting_records_merged, 2);
+}
+
+/// A store whose oldest audit record is two days old and whose retention is one day, with a
+/// newer record that stays, so a prune has something to delete and something to keep.
+fn store_with_one_old_record_and_one_new() -> (Arc<ManualClock>, Store) {
+    let (clock, store) = store_with(Limits::default());
+    store.set_audit_retention_days(1).unwrap();
+    store
+        .as_user(UserId::OWNER)
+        .add_rule(&workspace_rule("old.example"))
+        .unwrap();
+    clock.advance(2 * 24 * 60 * 60 * 1000);
+    store
+        .as_user(UserId::OWNER)
+        .add_rule(&workspace_rule("new.example"))
+        .unwrap();
+    (clock, store)
+}
+
+#[test]
+fn an_audit_prune_whose_record_cannot_be_written_deletes_nothing() {
+    let (_, store) = store_with_one_old_record_and_one_new();
+    let before = audit_kinds(&store);
+    store.fail_audit_writes("audit_trimmed");
+
+    let err = store.sweep().unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL);
+    assert_eq!(audit_kinds(&store), before, "no record deleted unrecorded");
+    store.audit_writes_work_again();
+    assert_eq!(store.sweep().unwrap().audit_records_pruned, 1);
+    assert_eq!(
+        audit_kinds(&store),
+        ["rule_created", "audit_trimmed"],
+        "the delete and its record came together"
+    );
+}
+
+#[test]
+fn a_failing_sweep_step_does_not_starve_the_prune_and_keeps_its_error() {
+    let (clock, store) = store_with(Limits {
+        max_waiting_connection_records: 1,
+        ..Limits::default()
+    });
+    store.set_audit_retention_days(1).unwrap();
+    store
+        .as_user(UserId::OWNER)
+        .add_rule(&workspace_rule("old.example"))
+        .unwrap();
+    clock.advance(2 * 24 * 60 * 60 * 1000);
+    for host in ["a.example", "b.example", "c.example"] {
+        store.record_connection(&waiting_event(host)).unwrap();
+    }
+    store.fail_audit_writes("connection");
+
+    let err = store.sweep().unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL, "the merge's error comes back");
+    assert_eq!(
+        audit_kinds(&store),
+        ["connection", "connection", "connection", "audit_trimmed"],
+        "the prune ran although the merge before it failed"
+    );
+}
+
+#[test]
+fn the_policy_reports_a_failed_decision_as_unavailable() {
+    let store = store();
+    store.fail_audit_writes("pending_created");
+
+    let err = Policy::decide(&store, &request("x.example"), SuffixAllows::Count).unwrap_err();
+
+    assert_eq!(
+        err,
+        PolicyError {
+            reason: DISK_FULL.into()
+        }
+    );
+}
+
+#[test]
+fn a_connection_record_that_cannot_be_written_is_logged_and_dropped() {
+    let store = store();
+    store.fail_audit_writes("connection");
+    let logs = Logs::capture();
+
+    ConnectionLog::record(&store, &waiting_event("x.example"));
+
+    assert_eq!(
+        logs.lines(),
+        [format!(
+            "WARN connection record not written origin={} error={DISK_FULL}",
+            ConnectionOrigin::Workspace
+        )]
+    );
+    assert_eq!(audit_kinds(&store), Vec::<String>::new());
+}
+
+#[test]
+fn pinned_ports_that_cannot_be_read_are_a_database_error() {
+    let store = store();
+    store.break_database("DROP TABLE pinned_ports");
+
+    let err = store.pinned_ports(&workspace()).unwrap_err();
+
+    assert_eq!(
+        err.to_string(),
+        "database error: no such table: pinned_ports"
+    );
+}
+
+fn request_rule() -> NewRequestRule {
+    NewRequestRule {
+        workspace: Some(workspace()),
+        host: puddle_types::HostPattern::parse_normalised("api.example").unwrap(),
+        methods: puddle_types::Methods::parse(["DELETE"]).unwrap(),
+        path: puddle_types::PathPattern::parse("/**").unwrap(),
+        created_by: Actor::Cli,
+        precedence: Precedence::DEFAULT,
+    }
+}
+
+#[test]
+fn a_request_rule_whose_scope_cannot_be_counted_is_not_made() {
+    let store = store();
+    store.refuse_sql_function("count");
+
+    let err = store
+        .as_user(UserId::OWNER)
+        .add_request_rule(&request_rule())
+        .unwrap_err();
+
+    assert!(
+        err.to_string()
+            .starts_with("database error: not authorized to use function: COUNT"),
+        "{err}"
+    );
+    assert_eq!(
+        store
+            .request_rules_every_user(&crate::testing::all_users())
+            .unwrap(),
+        []
+    );
+}
+
+#[test]
+fn a_request_rule_that_cannot_be_inserted_is_not_made() {
+    let store = store();
+    store.break_database(
+        "CREATE TRIGGER request_rule_inserts_fail BEFORE INSERT ON request_rules
+         BEGIN SELECT RAISE(ABORT, 'disk full'); END",
+    );
+
+    let err = store
+        .as_user(UserId::OWNER)
+        .add_request_rule(&request_rule())
+        .unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL);
+    assert_eq!(
+        store
+            .request_rules_every_user(&crate::testing::all_users())
+            .unwrap(),
+        []
+    );
+}
+
+#[test]
+fn a_request_rule_whose_record_cannot_be_written_is_not_made() {
+    let store = store();
+    store.fail_audit_writes("request_rule_created");
+
+    let err = store
+        .as_user(UserId::OWNER)
+        .add_request_rule(&request_rule())
+        .unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL);
+    assert_eq!(
+        store
+            .request_rules_every_user(&crate::testing::all_users())
+            .unwrap(),
+        []
+    );
+    assert_eq!(audit_kinds(&store), Vec::<String>::new());
+}
+
+#[test]
+fn a_request_rule_whose_deletion_cannot_be_recorded_stays() {
+    let store = store();
+    let rule = store
+        .as_user(UserId::OWNER)
+        .add_request_rule(&request_rule())
+        .unwrap();
+    store.fail_audit_writes("request_rule_deleted");
+
+    let err = store
+        .as_user(UserId::OWNER)
+        .delete_request_rule(rule.id, Actor::Cli)
+        .unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL);
+    assert_eq!(
+        store
+            .request_rules_every_user(&crate::testing::all_users())
+            .unwrap(),
+        [rule]
+    );
+}
+
+#[test]
+fn a_workspace_whose_request_rule_deletion_cannot_be_recorded_keeps_its_request_rules() {
+    let store = store();
+    let rule = store
+        .as_user(UserId::OWNER)
+        .add_request_rule(&request_rule())
+        .unwrap();
+    store.fail_audit_writes("request_rule_deleted");
+
+    let err = store.delete_workspace(&workspace()).unwrap_err();
+
+    assert_eq!(err.to_string(), DISK_FULL);
+    assert_eq!(
+        store
+            .request_rules_every_user(&crate::testing::all_users())
+            .unwrap(),
+        [rule]
+    );
+}
+
+#[test]
+fn a_workspace_operation_that_cannot_be_recorded_is_logged_and_dropped() {
+    let store = store();
+    let op = NewWorkspaceOp {
+        op: WorkspaceOpKind::Create,
+        workspace: Some(WorkspaceId::new("acme").unwrap()),
+        user: None,
+        outcome: WorkspaceOpOutcome::Succeeded,
+        actor: Actor::Api,
+        detail: None,
+    };
+    store.fail_audit_writes("workspace_op");
+    assert!(!store.note_workspace_op(&op));
+    assert_eq!(store.audit_lines(0, 10).unwrap(), []);
+    store.audit_writes_work_again();
+    assert!(store.note_workspace_op(&op));
+    assert_eq!(store.audit_lines(0, 10).unwrap().len(), 1);
+}

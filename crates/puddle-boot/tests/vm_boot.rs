@@ -392,7 +392,7 @@ fn docker_login(config: &str) -> String {
         .lines()
         .map(|l| {
             let body = l.trim_start_matches(' ');
-            "\t".repeat((l.len() - body.len()) / 2) + body
+            format!("{}{body}", "\t".repeat((l.len() - body.len()) / 2))
         })
         .collect();
     lines.join("\n")

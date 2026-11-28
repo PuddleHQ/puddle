@@ -8,15 +8,16 @@ use crate::authz::Principal;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
+use puddle_services::owned::OwnedWorkspace;
 use puddle_types::WorkspaceId;
 
-use crate::ApiErrorBody;
-use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
 use crate::routes::workspaces::{StoreGitSetup, view};
-use crate::wire::{OrphanVolumeList, OrphanVolumeView, RestoreOrphanRequest, Workspace};
-use crate::workspaces::{GitSetup as _, RepoUrl};
+use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, blocking};
+use puddle_services::wire::{OrphanVolumeList, OrphanVolumeView, RestoreOrphanRequest, Workspace};
+use puddle_services::workspaces::{GitSetup as _, RepoUrl};
 
 /// The workspace disks Puddle keeps that no workspace in its list claims, read fresh from the
 /// runtime on every call. Puddle cannot tell from outside whether such a disk holds any files.
@@ -93,8 +94,20 @@ pub(crate) async fn restore_orphan_volume(
         .restore_orphan(&id, owner, repository, &git)
         .await?;
     crate::system_managed::refresh(&state).await;
+    // The handle is for the disk's owner, who is the restorer unless the disk was another user's.
+    let (store, restored) = (state.store.clone(), record.id.clone());
+    let workspace = blocking(move || {
+        OwnedWorkspace::resolve(&*store, owner, &restored)
+            .map_err(puddle_services::workspaces::WorkspaceError::from)
+            .map_err(ApiError::from)
+    })
+    .await?;
     Ok((
         StatusCode::CREATED,
-        Json(view(&state, record).await.with_identities(git.take())),
+        Json(
+            view(&state, &workspace, record)
+                .await
+                .with_identities(git.take()),
+        ),
     ))
 }

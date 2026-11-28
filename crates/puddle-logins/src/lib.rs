@@ -30,6 +30,8 @@ mod openai_tests;
 mod profile;
 mod shape;
 #[cfg(test)]
+mod test_rig;
+#[cfg(test)]
 mod tests;
 mod vault;
 #[cfg(test)]

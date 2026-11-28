@@ -13,6 +13,9 @@ publish.workspace = true
 [features]
 # Serves the built single-page app from the API's origin (see puddle-api).
 embedded-ui = ["puddle-api/embedded-ui"]
+# The managed mise layer (dormant in v0.1), see puddle-settings. Only the tests that need the layer
+# read it: the code asks `puddle_settings::Tools::AVAILABLE`.
+mise = ["puddle-settings/mise"]
 
 [dependencies]
 base64 = { workspace = true }
@@ -43,6 +46,7 @@ puddle-proxy = { workspace = true }
 puddle-repos = { workspace = true }
 puddle-runtime = { workspace = true }
 puddle-secrets = { workspace = true }
+puddle-services = { workspace = true }
 puddle-settings = { workspace = true }
 puddle-ssh = { workspace = true }
 puddle-ssh-agent = { workspace = true }
@@ -65,6 +69,7 @@ zeroize = { workspace = true }
 
 [dev-dependencies]
 # The tests record their workspaces' users through `puddle_store::testing`.
+puddle-services = { workspace = true, features = ["testing"] }
 puddle-store = { workspace = true, features = ["testing"] }
 puddle-test-kit = { workspace = true }
 puddle-types = { workspace = true, features = ["testing"] }
@@ -73,6 +78,7 @@ puddle-ssh-agent = { workspace = true, features = ["testing"] }
 microsandbox = { workspace = true }
 puddle-agent = { workspace = true }
 puddle-e2e = { workspace = true }
+puddle-host-test-support = { workspace = true }
 puddle-compute = { workspace = true, features = ["fake"] }
 puddle-repos = { workspace = true, features = ["testing"] }
 puddle-upstream = { workspace = true, features = ["testing"] }

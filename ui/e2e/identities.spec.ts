@@ -37,8 +37,8 @@ const SIGN_IN_NEEDED = {
 
 const row = (page: Page, label: string) =>
   page
-    .locator("[data-identity-id]")
-    .filter({ has: page.getByRole("heading", { name: label }) });
+    .locator("tr[data-identity-id]")
+    .filter({ has: page.getByRole("link", { name: label, exact: true }) });
 
 test("lists the identities with author, credentials, default and use; the sidebar marks the section", async ({
   page,
@@ -55,11 +55,10 @@ test("lists the identities with author, credentials, default and use; the sideba
   const work = row(page, "Work");
   await expect(work).toContainText("Default");
   await expect(work).toContainText("Tijs Work <tijs@acme.example>");
+  await expect(work).toContainText("github.com: acme, acme-labs");
+  await expect(work).toContainText("(gh · tijs-work)");
   await expect(work).toContainText(
-    "gh · tijs-work · github.com: acme, acme-labs",
-  );
-  await expect(work).toContainText(
-    "Git Credential Manager · dev.azure.com/contoso",
+    "(Git Credential Manager · dev.azure.com/contoso)",
   );
   await expect(work).toContainText("Used by 2 workspaces");
   await expect(work).toContainText("Not tested");
@@ -105,7 +104,7 @@ test("a credential's last read survives a reload, from a push and a repository l
 });
 
 test("Settings points to the Identities section", async ({ page, backend }) => {
-  await open(page, backend, "/settings/editor-and-git");
+  await open(page, backend, "/settings/git");
   await page.getByRole("link", { name: "Manage identities" }).click();
   await expect(page).toHaveURL(/\/identities$/);
 });

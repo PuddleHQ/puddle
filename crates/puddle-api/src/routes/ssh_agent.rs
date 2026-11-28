@@ -17,15 +17,15 @@ use puddle_netpolicy::normalise_host;
 use puddle_store::MAX_SSH_AGENT_KEYS;
 use puddle_types::WorkspaceId;
 
-use crate::ApiErrorBody;
-use crate::error::{ApiError, blocking};
 use crate::extract::Path;
 use crate::routes::AppState;
 use crate::routes::workspaces::named;
+use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, blocking};
 use puddle_store::Actor;
 
 use crate::authz::Principal;
-use crate::wire::{
+use puddle_services::wire::{
     SshAgentAnswerRequest, SshAgentAskList, SshAgentAskView, SshAgentHostRequest, SshAgentHostView,
     SshAgentView,
 };
@@ -193,7 +193,8 @@ pub(crate) async fn list_asks(
     blocking(move || {
         let asks = state
             .store
-            .open_ssh_agent_asks(Some(principal.user), None)?
+            .as_user(principal.user)
+            .open_ssh_agent_asks(None)?
             .into_iter()
             .map(SshAgentAskView::from)
             .collect();
@@ -223,14 +224,18 @@ pub(crate) async fn list_asks(
 )]
 pub(crate) async fn answer_ask(
     State(state): State<AppState>,
+    principal: Principal,
     Path((id, ask)): Path<(String, i64)>,
     crate::extract::Json(body): crate::extract::Json<SshAgentAnswerRequest>,
 ) -> Result<StatusCode, ApiError> {
     let name = named(&state, &id).await?;
     blocking(move || {
-        state
-            .store
-            .answer_ssh_agent_ask(&name, ask, body.answer.into(), Actor::Api)?;
+        state.store.as_user(principal.user).answer_ssh_agent_ask(
+            &name,
+            ask,
+            body.answer.into(),
+            Actor::Api,
+        )?;
         Ok(StatusCode::NO_CONTENT)
     })
     .await

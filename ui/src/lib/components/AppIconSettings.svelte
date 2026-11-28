@@ -100,10 +100,9 @@
             onchange={(e) => choose(e.currentTarget.value)}
           />
           <img src={pngUrl(icon.png_base64)} alt="" width="48" height="48" />
-          <span
-            >{ICON_NAMES[icon.choice as keyof typeof ICON_NAMES] ??
-              icon.choice}</span
-          >
+          <span>
+            {ICON_NAMES[icon.choice as keyof typeof ICON_NAMES] ?? icon.choice}
+          </span>
         </label>
       {/each}
       <label class="choice" class:on={choice === "custom"} class:off={!custom}>
@@ -137,8 +136,10 @@
           type="button"
           class="btn"
           disabled={busy || !removable}
-          onclick={() => void remove()}>Remove your image</button
+          onclick={() => void remove()}
         >
+          Remove your image
+        </button>
       {/if}
       <input
         bind:this={picker}

@@ -78,9 +78,11 @@ libkrun	candidate	pick	fix(vsock): keep the tail of a short TSI stream send and 
 libkrun	candidate	pick	fix(block): refresh the Windows raw handle's cached length after a live grow	generic Windows bug (a live grow is not seen by the cached length)
 libkrun	permanent	pick	ci:*	the fork's own workflows; upstream has no use for them
 russh	candidate	pick	fix: drop queued data when the peer closes a channel	generic server bug (a peer that closes a channel wedges the session)
+russh	candidate	pick	fix: release a channel and call channel_close when the peer closes one the server closed first	generic server bug (the answering close of a server-closed channel leaked the channel and skipped channel_close)
 imago	candidate	pick	fix(file): sync file-backed storage with fdatasync	generic latency fix, measured; target is the imago maintainer
 imago	permanent	pick	chore(deps): release imago with shared memory crate update	version and dependency bookkeeping for the fork's release
 libkrunfw	permanent	pick	feat(kernel): enable nested KVM on Windows x86 guests	Windows guest kernel option Puddle's Windows build needs
 libkrunfw	candidate	pick	build(kernel): update Linux to 6.12.112	a kernel bump; upstream tracks kernel releases itself
 libkrunfw	candidate	pick	fix(config): drop /dev/mem from the guest kernels	hardening upstream could take
 libkrunfw	permanent	pick	ci(puddle):*	the fork's own build and release workflow
+microsandbox	permanent	regen	build(deps): pin the russh fork at v0.65.2-puddle.1	the fork's russh pin, regenerated with the patch section

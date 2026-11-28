@@ -83,8 +83,11 @@ async fn a_desktop_attach_with_unreadable_settings_says_so_instead_of_blaming_th
     let attached = host
         .workspaces()
         .attach(
-            &WorkspaceId::new("acme").unwrap(),
-            puddle_api::AttachMode::Desktop,
+            &puddle_services::owned::OwnedWorkspace::for_test(
+                puddle_store::UserId::OWNER,
+                &WorkspaceId::new("acme").unwrap(),
+            ),
+            puddle_services::workspaces::AttachMode::Desktop,
         )
         .await
         .unwrap();
@@ -329,7 +332,7 @@ async fn the_runtime_gets_the_login_key_and_the_ssh_entry_follows_the_endpoint()
     let prepared = prepare(rig.config(), &FakePlatform::new(&rig.log)).unwrap();
     let mut options = named_id_options();
     options.secret_store = Some(rig.secrets.clone());
-    options.dev_cert = Some(rig.dev_cert.clone() as Arc<dyn DevCertSource>);
+    options.dev_cert = Some(rig.dev_cert.clone());
     let host = Host::start(prepared, &factory, options).await.unwrap();
     let key = factory.ssh_login_key.lock().unwrap().clone().unwrap();
     let public =

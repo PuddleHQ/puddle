@@ -114,6 +114,7 @@
     if (wanted === null || pending.status !== "ready") return;
     const id = wanted;
     wanted = null;
+    pending.show(id);
     if (!flat.some((r) => r.request.id === id)) return;
     currentId = id;
     afterPaint(() => rowElement(id)?.focus());
@@ -219,18 +220,13 @@
     Requests that matched no rule. Each stays here until you decide. Meanwhile
     the tool that asked is told the host is waiting for approval, and can retry.
   </p>
+  {#if pending.status === "ready" && pending.allowedToday > 0}
+    <p class="muted" data-testid="allowed-today">
+      {pending.allowedToday}
+      {pending.allowedToday === 1 ? "request" : "requests"} allowed by rules today.
+    </p>
+  {/if}
 </div>
-
-{#each pending.full as workspace (workspace)}
-  <p class="full" role="status">
-    <b
-      ><span class="mono">{workspaces.labelOf(workspace)}</span> has {pending.openLimit}
-      waiting requests</b
-    >, the most Puddle lists. If it asks about more hosts, they are listed once
-    you answer some. Allowing or denying a domain with its subdomains clears
-    many at once.
-  </p>
-{/each}
 
 {#if pending.status === "ready" && pending.loadError}
   <LoadNotice what="the requests" message={pending.loadError} stale />
@@ -246,13 +242,13 @@
     <p>Nothing is waiting. New requests from your workspaces appear here.</p>
   </section>
 {:else}
-  {#if sshAgentAsks.asks.length > 0}
-    <SshAgentAsks asks={sshAgentAsks.asks} {now} onAnswer={answerAsk} />
-  {/if}
   {#each shownGroups as group (group.domain)}
     <section class="group" aria-labelledby="group-{group.domain}">
       <div class="group-head">
-        <h2 id="group-{group.domain}" class="domain">{group.domain}</h2>
+        <h2 id="group-{group.domain}" class="domain">
+          {#each group.domain.split(/(?<=\.)/) as label, i (i)}{label}<wbr
+            />{/each}
+        </h2>
         <span class="chip">{group.total} waiting</span>
       </div>
       <ul>
@@ -275,15 +271,38 @@
   {/each}
 {/if}
 
+<!-- Below the rows, never above: a section that appears above them would push every row down
+     under the pointer, and a guest chooses when it appears. -->
+{#if sshAgentAsks.asks.length > 0}
+  <SshAgentAsks asks={sshAgentAsks.asks} {now} onAnswer={answerAsk} />
+{/if}
+
+{#each pending.full as workspace (workspace)}
+  <p class="full" role="status">
+    <b>
+      <span class="mono">{workspaces.labelOf(workspace)}</span> has {pending.openLimit}
+      waiting requests
+    </b>, the most Puddle lists. If it asks about more hosts, they are listed
+    once you answer some. Allowing or denying a domain with its subdomains
+    clears many at once.
+  </p>
+{/each}
+
+{#if pending.held > 0}
+  <button type="button" class="new-requests" onclick={() => pending.showHeld()}>
+    {pending.held} new {pending.held === 1 ? "request" : "requests"}
+  </button>
+{/if}
+
 {#if pending.decided.length > 0}
   <section class="decided" aria-labelledby="decided-h">
     <h2 id="decided-h">Decided just now</h2>
     <ul>
       {#each pending.decided as d (d.ruleId)}
         <li>
-          <span class="chip {d.effect}"
-            >{d.effect === "allow" ? "allowed" : "denied"}</span
-          >
+          <span class="chip {d.effect}">
+            {d.effect === "allow" ? "allowed" : "denied"}
+          </span>
           <span class="what">
             <span class="mono">{decidedPattern(d)}</span>
             for {d.workspace === null
@@ -292,9 +311,9 @@
             {d.expiresAt === null
               ? "permanently"
               : `until ${relativeTime(d.expiresAt, now)}`}
-            {#if d.alsoClosed > 0}<span class="muted"
-                >· also closed {d.alsoClosed} other</span
-              >{/if}
+            {#if d.alsoClosed > 0}<span class="muted">
+                · also closed {d.alsoClosed} other
+              </span>{/if}
           </span>
           <button
             type="button"
@@ -326,13 +345,6 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-3);
-    max-width: 64rem;
-  }
-  h1 {
-    font-size: var(--text-xl);
-  }
-  h1:focus {
-    outline: none;
   }
   .sub,
   .muted {
@@ -340,23 +352,38 @@
     color: var(--color-text-muted);
   }
   .full {
-    margin: 0 0 var(--space-3);
+    margin: 0 0 var(--space-4);
     padding: var(--space-3) var(--space-4);
     background: var(--color-surface-raised);
     border: 1px solid var(--color-border-subtle);
     border-radius: var(--radius-md);
   }
+  /* Out of the flow: the line that offers new requests must not move a row either. */
+  .new-requests {
+    position: fixed;
+    inset-block-end: var(--space-4);
+    inset-inline: 0;
+    margin-inline: auto;
+    width: max-content;
+    padding: var(--space-2) var(--space-4);
+    color: var(--color-text);
+    background: var(--color-surface-raised);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-pill);
+    box-shadow: 0 2px 8px rgb(0 0 0 / 0.25);
+    cursor: pointer;
+    z-index: 5;
+  }
   .group,
-  .decided,
-  .empty {
+  .decided {
     margin-bottom: var(--space-4);
     background: var(--color-surface);
     border: 1px solid var(--color-border-subtle);
     border-radius: var(--radius-md);
-    max-width: 64rem;
   }
+  /* An empty screen is plain words on the page, not a box. */
   .empty {
-    padding: var(--space-6);
+    padding-block: var(--space-4);
   }
   .empty h2,
   .empty p {
@@ -364,6 +391,8 @@
   }
   .group-head {
     display: flex;
+    /* The count drops below the domain before the domain is squeezed into breaking inside a label. */
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--space-3);
     padding: var(--space-3) var(--space-4);

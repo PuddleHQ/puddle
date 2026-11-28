@@ -304,7 +304,17 @@ async fn a_guest_is_told_the_company_proxy_is_down_never_goes_around_it_and_work
         reached,
         "nothing went around the company proxy to the target the host can resolve itself"
     );
-    let records = connection_records(&host, TARGET);
+    // The record is written when the connection ends, which can be after the guest has read the 502.
+    // The healthy connection above already left one, so wait for the second.
+    let records = eventually(
+        "the failed connection's record",
+        Duration::from_secs(5),
+        || {
+            let records = connection_records(&host, TARGET);
+            (records.len() >= 2).then_some(records)
+        },
+    )
+    .await;
     assert_eq!(
         records.last().map(|r| r["outcome"].clone()),
         Some(json!("connect_failed")),

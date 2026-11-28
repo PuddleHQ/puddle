@@ -2,7 +2,7 @@
 //! What a workspace's Git settings hold: its ordered identities, the repository table with a
 //! Pull and a Push toggle per repository, and the two "only listed" switches.
 
-use puddle_secrets::HostName;
+use puddle_types::HostName;
 
 use crate::error::StoreError;
 use crate::identity::{CredentialChoice, Identity, Owner, resolve};
@@ -21,6 +21,10 @@ const MAX_NESTED: usize = 21;
 /// request's path (and refuses one that is not in its one canonical escaping) before it looks a
 /// repository up, and an address typed by the user is decoded the same way, so one repository has
 /// one spelling here however it is reached.
+///
+/// One exception: an Azure DevOps repository has two hosts, `dev.azure.com` and
+/// `<org>.visualstudio.com`, and so two `RepoRef`s. They are not merged: a table row or a listing
+/// under one host does not answer for the other, and the one the user typed is the one kept.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub struct RepoRef {
@@ -84,11 +88,18 @@ impl RepoRef {
         let host = HostName::new(host.trim().to_ascii_lowercase()).map_err(|_| bad("host"))?;
         // The proxy builds its reference from the plain host, so a port or a trailing dot would
         // be another spelling of the same repository that never matches.
-        if host.as_str().contains(':') || host.as_str().ends_with('.') {
+        if host.as_str().contains(':') || host.as_str().split('.').any(str::is_empty) {
             return Err(bad("host"));
         }
         let owner = Owner::new(owner).map_err(|_| bad("owner"))?;
         if matches!(owner.as_str(), "." | "..") {
+            return Err(bad("owner"));
+        }
+        // On `<org>.visualstudio.com` the organisation is the host's first label: another owner
+        // names no repository there.
+        if let Some(org) = host.as_str().strip_suffix(".visualstudio.com")
+            && !owner.as_str().eq_ignore_ascii_case(org)
+        {
             return Err(bad("owner"));
         }
         // ASCII only, as the proxy folds a request's path: `K` (the Kelvin sign) is not `k` to every host.
@@ -231,6 +242,37 @@ impl std::fmt::Display for RepoRef {
     }
 }
 
+/// Why a push to a repository cannot succeed, as its listing said when the row was made.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PushBlock {
+    /// Archived on its Git host, so read-only.
+    Archived,
+    /// The listing account can only read it.
+    Read,
+}
+
+impl PushBlock {
+    /// The spelling the database holds.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Archived => "archived",
+            Self::Read => "read",
+        }
+    }
+
+    /// The block a stored spelling names.
+    #[must_use]
+    pub fn from_stored(text: &str) -> Option<Self> {
+        match text {
+            "archived" => Some(Self::Archived),
+            "read" => Some(Self::Read),
+            _ => None,
+        }
+    }
+}
+
 /// The Pull and Push toggles of one row of the repository table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RepoToggles {
@@ -271,10 +313,12 @@ pub struct RepoEntry {
     pub id: i64,
     /// The repository.
     pub repo: RepoRef,
-    /// A fetch from it may go out (when "only pull from listed repos" is on).
+    /// A fetch from it may go out (when "only pull from allowed repositories" is on).
     pub pull: bool,
-    /// A push to it may go out (when "only push to listed repos" is on).
+    /// A push to it may go out (when "only push to allowed repositories" is on).
     pub push: bool,
+    /// Why a push to it cannot succeed, when its listing said so at the time it was added.
+    pub push_block: Option<PushBlock>,
     /// Epoch ms it was added.
     pub created_at: u64,
 }
@@ -325,6 +369,8 @@ pub struct RepoGitRequest {
     pub pull: bool,
     /// Push on its table row, when the row is new.
     pub push: bool,
+    /// Why a push to it cannot succeed, kept on its table row when the row is new.
+    pub push_block: Option<PushBlock>,
 }
 
 /// What [`crate::Store::start_repository_git`] set up.

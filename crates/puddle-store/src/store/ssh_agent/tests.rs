@@ -31,7 +31,12 @@ fn store() -> (Arc<ManualClock>, Store, Arc<Seen>) {
     let seen = Arc::new(Seen::default());
     let store = Store::open_in_memory(clock.clone(), Limits::default())
         .unwrap()
-        .with_events(Arc::clone(&seen) as Arc<dyn EventSink>);
+        .with_events(seen.clone());
+    for name in ["a", "b"] {
+        store
+            .set_workspace_owner(&ws(name), crate::users::UserId::OWNER)
+            .unwrap();
+    }
     (clock, store, seen)
 }
 
@@ -113,6 +118,27 @@ fn turning_it_off_removes_the_host_and_says_whether_it_was_on() {
         .map(|h| h.host)
         .collect();
     assert_eq!(left, ["i.example"]);
+}
+
+#[test]
+fn a_host_takes_between_one_and_the_limit_of_keys_and_a_refusal_changes_nothing() {
+    let (_, store, _) = store();
+    let list = |n: usize| -> Vec<String> { (0..n).map(|i| format!("SHA256:k{i}")).collect() };
+    assert!(matches!(
+        store.set_ssh_agent_host(&ws("a"), "h.example", Some(&[])),
+        Err(StoreError::SshAgentKeys(_))
+    ));
+    assert!(matches!(
+        store.set_ssh_agent_host(&ws("a"), "h.example", Some(&list(MAX_SSH_AGENT_KEYS + 1))),
+        Err(StoreError::SshAgentKeys(_))
+    ));
+    assert_eq!(store.ssh_agent_hosts(&ws("a")).unwrap(), []);
+    store
+        .set_ssh_agent_host(&ws("a"), "h.example", Some(&list(MAX_SSH_AGENT_KEYS)))
+        .unwrap();
+    store
+        .set_ssh_agent_host(&ws("a"), "one.example", Some(&list(1)))
+        .unwrap();
 }
 
 #[test]

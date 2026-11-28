@@ -24,10 +24,12 @@
   );
 
   // A workspace that was here and is gone (deleted, here or elsewhere) takes you back to the list.
-  let seen = false;
+  // The layout outlives a move to another id, so what was seen is the id, not a flag.
+  let seen = "";
   $effect(() => {
-    if (workspace) seen = true;
-    else if (seen && workspaces.status === "ready") void goto("/workspaces");
+    if (workspace) seen = id;
+    else if (seen === id && workspaces.status === "ready")
+      void goto("/workspaces");
   });
 </script>
 
@@ -113,10 +115,6 @@
     margin: 0;
     font-size: var(--text-sm);
     color: var(--color-text-muted);
-  }
-  h1 {
-    font-size: var(--text-xl);
-    overflow-wrap: anywhere;
   }
   .problem {
     margin: 0 0 var(--space-3);

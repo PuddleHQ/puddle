@@ -26,6 +26,7 @@ const live = vi.hoisted(() => ({
   stream: "connected" as string,
   start: vi.fn(() => () => undefined),
   subscribe: vi.fn(() => () => undefined),
+  reopenStream: vi.fn(),
 }));
 vi.mock("#lib/stores/live.svelte.ts", () => ({ live }));
 
@@ -48,7 +49,7 @@ import ErrorPage from "../../routes/+error.svelte";
 import { ssr, prerender } from "../../routes/+layout.ts";
 import Sidebar from "./Sidebar.svelte";
 import { theme } from "../theme/theme.svelte.ts";
-import { toasts } from "#lib/stores/toasts.svelte.ts";
+import { workspaces } from "#lib/stores/workspaces.svelte.ts";
 import { session } from "#lib/session/session.svelte.ts";
 
 beforeEach(() => {
@@ -61,6 +62,7 @@ beforeEach(() => {
   live.stream = "connected";
   live.start.mockClear();
   live.subscribe.mockClear();
+  live.reopenStream.mockClear();
   health.start.mockClear();
   // The desktop window: the shell hands the page its token, so there is nothing to sign in to.
   (globalThis as { __PUDDLE__?: unknown }).__PUDDLE__ = { token: "shell" };
@@ -68,6 +70,8 @@ beforeEach(() => {
   admin.available = false;
   admin.probe.mockClear();
   localStorage.clear();
+  workspaces.status = "loading";
+  workspaces.list = [];
   delete document.documentElement.dataset["theme"];
   // The theme is one object for the whole file: read the (now empty) storage so every test starts on "system".
   theme.init();
@@ -129,40 +133,34 @@ describe("Sidebar", () => {
     ).toBeInTheDocument();
   });
 
-  it("changes the theme from the toggle and remembers it", async () => {
+  it("has no theme switch: the theme is chosen in Settings, Appearance", () => {
     render(Sidebar);
-    await fireEvent.click(
-      screen.getByRole("radio", { name: "Dark" }).closest("button") ??
-        screen.getByText("Dark"),
-    );
-    expect(document.documentElement.dataset["theme"]).toBe("dark");
-    expect(localStorage.getItem("puddle.theme")).toBe("dark");
-    await fireEvent.click(screen.getByText("System"));
-    expect(document.documentElement.dataset["theme"]).toBeUndefined();
+    expect(screen.queryByRole("radio", { name: "Dark" })).toBeNull();
+    expect(screen.queryByLabelText("Colour theme")).toBeNull();
   });
 
-  it("keeps the theme when the chosen one is clicked again", async () => {
-    const set = vi.spyOn(theme, "set");
-    const shown = toasts.items.length;
-    render(Sidebar);
-    await fireEvent.click(screen.getByText("System"));
-    expect(set).not.toHaveBeenCalled();
-    expect(theme.choice).toBe("system");
-    expect(toasts.items).toHaveLength(shown);
+  it("has no icons: the sections are words, with counts where there is something to count", () => {
+    const { container } = render(Sidebar);
+    expect(container.querySelector("nav svg")).toBeNull();
   });
 
-  it("says why a theme choice wasn't saved", async () => {
-    vi.spyOn(theme, "set").mockResolvedValue({
-      ok: false,
-      message: "Settings file is damaged.",
-    });
-    render(Sidebar);
-    await fireEvent.click(screen.getByText("Dark"));
-    await vi.waitFor(() =>
-      expect(toasts.items.map((t) => t.message)).toContain(
-        "The theme changed here but wasn't saved. Settings file is damaged.",
-      ),
+  it("counts the workspaces and how many run, once the list is read", () => {
+    const { unmount } = render(Sidebar);
+    expect(screen.queryByTestId("workspaces-count")).toBeNull();
+    unmount();
+    workspaces.status = "ready";
+    workspaces.list = [
+      { id: "a", status: "running" },
+      { id: "b", status: "stopped" },
+    ] as never;
+    const view = render(Sidebar);
+    expect(screen.getByTestId("workspaces-count")).toHaveTextContent(
+      "2 \u00b7 1 running",
     );
+    view.unmount();
+    workspaces.list = [{ id: "b", status: "stopped" }] as never;
+    render(Sidebar);
+    expect(screen.getByTestId("workspaces-count")).toHaveTextContent(/^1$/);
   });
 });
 
@@ -180,8 +178,8 @@ describe("root layout", () => {
     expect(health.start).toHaveBeenCalledTimes(1);
     // The sidebar asks once whether there is an admin screen to list.
     expect(admin.probe).toHaveBeenCalledTimes(1);
-    // The notice watcher, the build guard and the tab's notifications each listen to the shell…
-    expect(live.subscribe).toHaveBeenCalledTimes(3);
+    // The workspace list (the sidebar counts it), the notice watcher, the build guard, the tab's notifications and the waiting strip each listen to the shell…
+    expect(live.subscribe).toHaveBeenCalledTimes(5);
     expect(screen.getByRole("region", { name: "Notices" })).toBeInTheDocument();
     expect(document.title).toBe("Inbox - Puddle");
     unmount();
@@ -287,6 +285,7 @@ describe("root layout and signing in", () => {
     live.problem = "unauthorized";
     render(Layout, { children: (() => {}) as never });
     await vi.waitFor(() => expect(recover).toHaveBeenCalled());
+    await vi.waitFor(() => expect(live.reopenStream).toHaveBeenCalledTimes(1));
     live.problem = null;
     live.stream = "refused";
     recover.mockClear();

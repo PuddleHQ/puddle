@@ -17,7 +17,16 @@
     task): a missing WebView2 runtime stops the install with a message naming it.
   - No desktop shortcut, file associations, deep links or merge modules: the program has none.
   - The program asks for no PATH change.
-  - The install refuses while the shell or a workspace runtime runs (see PuddleRunning below).
+  - The installer's own pages (PuddleSetupDlg, PuddleCustomDlg, PuddleFinishDlg, PuddleFailedDlg) replace WixUI's
+    welcome, folder, finish and failure pages, and the stock ones are switched off through their overridable
+    Show rows: a first page with Install ("Default setup": per-user folder, no more questions) and Custom setup
+    (folder, launch box), then the progress page, then a finish page. The artwork is in wix/artwork (drawn by
+    ci/make-installer-artwork.py, named by tauri.conf.json), and the package turns on Windows Installer's own
+    log (MsiLogging) so the finish and failure pages can name it and open it.
+  - The install refuses while the shell or a workspace runtime runs (see PuddleRunning below; the interactive
+    installer says so on PuddleRunningDlg before its first page); an
+    uninstall instead offers to quit Puddle and go on (PuddleStop; PuddleAskStop asks in the basic interface of msiexec /x), and to remove everything Puddle
+    keeps on the computer (PuddleRemoveAll), both off unless the person chooses them.
 -->
 <?if $(sys.BUILDARCH)="x64"?>
     <?define Win64 = "yes" ?>
@@ -43,6 +52,18 @@
                  Compressed="yes"
                  InstallScope="perUser"
                  SummaryCodepage="!(loc.TauriCodepage)"/>
+
+        {{#if banner_path}}
+        <WixVariable Id="WixUIBannerBmp" Value="{{banner_path}}" />
+        {{/if}}
+        {{#if dialog_image_path}}
+        <WixVariable Id="WixUIDialogBmp" Value="{{dialog_image_path}}" />
+        {{/if}}
+
+        <!-- Windows Installer writes a verbose log of every run to the person's Temp folder (MSI<random>.LOG) and
+             sets MsiLogFileLocation to its path, so the finish and failure pages can name it and open it. A run that
+             names its own log (msiexec /l) keeps that one and leaves the property unset: the pages then say so. -->
+        <Property Id="MsiLogging" Value="voicewarmup" />
 
         <!-- Reinstall all files, rewrite registry entries and shortcuts. -->
         <Property Id="REINSTALLMODE" Value="amus" />
@@ -76,11 +97,73 @@
         <util:CloseApplication Id="PuddleShellRunning" Target="puddle-app.exe" Property="PUDDLE_SHELL_RUNNING" RebootPrompt="no" />
         <util:CloseApplication Id="PuddleRuntimeRunning" Target="msb.exe" Property="PUDDLE_RUNTIME_RUNNING" RebootPrompt="no" />
         <CustomAction Id="PuddleDetect" BinaryKey="WixCA" DllEntry="WixCloseApplications" Execute="immediate" Return="check" SuppressModularization="yes" />
+        <CustomAction Id="PuddleDetectAgain" BinaryKey="WixCA" DllEntry="WixCloseApplications" Execute="immediate" Return="check" SuppressModularization="yes" />
         <CustomAction Id="PuddleRunning" Error="Puddle is running. Quit Puddle from its tray icon (this stops your workspaces), then run this installer again." />
+        <!-- The detection only ever sets its two properties, never clears them, so each run starts
+             from "0" (a value from the dialog's own run must not outlive a Puddle quit meanwhile). -->
+        <CustomAction Id="PuddleForgetShell" Property="PUDDLE_SHELL_RUNNING" Value="0" />
+        <CustomAction Id="PuddleForgetRuntime" Property="PUDDLE_RUNTIME_RUNNING" Value="0" />
+        <CustomAction Id="PuddleForgetShellAgain" Property="PUDDLE_SHELL_RUNNING" Value="0" />
+        <CustomAction Id="PuddleForgetRuntimeAgain" Property="PUDDLE_RUNTIME_RUNNING" Value="0" />
+        <!-- The uninstall's two choices, both off unless set: in the dialog (checkbox, and Remove when
+             Puddle runs), or on the command line of a silent run (PUDDLE_STOP_RUNNING=1,
+             PUDDLE_REMOVE_ALL=1). puddle-uninstall.ps1 (installed beside the program) does the work. -->
+        <Property Id="PUDDLE_STOP_RUNNING" Secure="yes" />
+        <Property Id="PUDDLE_REMOVE_ALL" Secure="yes" />
+        <!-- Windows' "Apps" list and Control Panel start an uninstall with msiexec /x, which runs the
+             basic user interface (UILevel 3): the installer's own dialogs, PuddleRemoveDlg among them,
+             are never shown, only the "are you sure" box and a progress bar. There the offer is a Yes/No
+             box drawn by msiexec's own client: an error-type message (INSTALLMESSAGE_ERROR, the route the
+             "Puddle is running" refusal takes) with Yes/No buttons. An inline script runs its top-level code only (no entry function is called),
+             so the statements stand at the top. A silent run (UILevel 2) gets no box and keeps refusing
+             unless PUDDLE_STOP_RUNNING=1. -->
+        <CustomAction Id="PuddleAskStop" Script="vbscript" Execute="immediate" Return="ignore"><![CDATA[
+            Dim rec
+            Set rec = Session.Installer.CreateRecord(0)
+            rec.StringData(0) = "Puddle is running. Quit it now (this stops your workspaces cleanly) and remove it?"
+            If Session.Message(&H01000000 + 4 + 32, rec) = 6 Then Session.Property("PUDDLE_STOP_RUNNING") = "1"
+        ]]></CustomAction>
+        <CustomAction Id="PuddleStop" Directory="INSTALLDIR" Execute="immediate" Impersonate="yes" Return="ignore"
+            ExeCommand="&quot;[SystemFolder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;[INSTALLDIR]uninstall\puddle-uninstall.ps1&quot; -Stop" />
+        <CustomAction Id="PuddleRemoveAll" Directory="INSTALLDIR" Execute="deferred" Impersonate="yes" Return="ignore"
+            ExeCommand="&quot;[SystemFolder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;[INSTALLDIR]uninstall\puddle-uninstall.ps1&quot; -RemoveAll" />
         <InstallExecuteSequence>
+            <Custom Action="PuddleForgetShell" Before="PuddleDetect" />
+            <Custom Action="PuddleForgetRuntime" After="PuddleForgetShell" />
             <Custom Action="PuddleDetect" Before="InstallValidate" />
-            <Custom Action="PuddleRunning" After="PuddleDetect"><![CDATA[(PUDDLE_SHELL_RUNNING <> "" AND PUDDLE_SHELL_RUNNING <> "0") OR (PUDDLE_RUNTIME_RUNNING <> "" AND PUDDLE_RUNTIME_RUNNING <> "0")]]></Custom>
+            <Custom Action="PuddleAskStop" After="PuddleDetect"><![CDATA[REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND UILevel >= 3 AND NOT PUDDLE_STOP_RUNNING AND ((PUDDLE_SHELL_RUNNING <> "" AND PUDDLE_SHELL_RUNNING <> "0") OR (PUDDLE_RUNTIME_RUNNING <> "" AND PUDDLE_RUNTIME_RUNNING <> "0"))]]></Custom>
+            <Custom Action="PuddleStop" After="PuddleAskStop"><![CDATA[REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND PUDDLE_STOP_RUNNING="1" AND ((PUDDLE_SHELL_RUNNING <> "" AND PUDDLE_SHELL_RUNNING <> "0") OR (PUDDLE_RUNTIME_RUNNING <> "" AND PUDDLE_RUNTIME_RUNNING <> "0"))]]></Custom>
+            <Custom Action="PuddleForgetShellAgain" After="PuddleStop"><![CDATA[REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND PUDDLE_STOP_RUNNING="1"]]></Custom>
+            <Custom Action="PuddleForgetRuntimeAgain" After="PuddleForgetShellAgain"><![CDATA[REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND PUDDLE_STOP_RUNNING="1"]]></Custom>
+            <Custom Action="PuddleDetectAgain" After="PuddleForgetRuntimeAgain"><![CDATA[REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND PUDDLE_STOP_RUNNING="1"]]></Custom>
+            <Custom Action="PuddleRunning" After="PuddleDetectAgain"><![CDATA[(PUDDLE_SHELL_RUNNING <> "" AND PUDDLE_SHELL_RUNNING <> "0") OR (PUDDLE_RUNTIME_RUNNING <> "" AND PUDDLE_RUNTIME_RUNNING <> "0")]]></Custom>
+            <Custom Action="PuddleRemoveAll" Before="RemoveFiles"><![CDATA[REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND PUDDLE_REMOVE_ALL="1"]]></Custom>
         </InstallExecuteSequence>
+        <!-- The page order: PuddleSetupDlg first (in the place of WixUI's WelcomeDlg), the progress page, and
+             after the install PuddleFinishDlg (a normal step after ExecuteAction, which a failed or cancelled run
+             never reaches). A failed run ends on PuddleFailedDlg in the place of WixUI's FatalError. WixUI marks
+             its own Show rows overridable, so a row of the same dialog with a false condition replaces each. -->
+        <InstallUISequence>
+            <Show Dialog="WelcomeDlg" Before="ProgressDlg">0</Show>
+            <Show Dialog="PuddleSetupDlg" Before="ProgressDlg">NOT Installed OR PATCH</Show>
+            <Show Dialog="ExitDialog" OnExit="success">0</Show>
+            <Show Dialog="PuddleFinishDlg" After="ExecuteAction">1</Show>
+            <Show Dialog="FatalError" OnExit="error">0</Show>
+            <Show Dialog="PuddleFailedDlg" OnExit="error" />
+        </InstallUISequence>
+        <!-- The two dialogs below need to know whether Puddle runs, before the install starts: the
+             uninstall page (to offer to quit it) and, for an install or upgrade, the refusal page, shown in
+             front of the first page so setup ends on the refusal text and not on a failure page after
+             Install. The refusal page's OK ends the run with Exit, and the stock UserExit page ("setup was
+             interrupted") is switched off for that case only. -->
+        <InstallUISequence>
+            <Custom Action="PuddleForgetShell" Sequence="1205"><![CDATA[NOT UPGRADINGPRODUCTCODE]]></Custom>
+            <Custom Action="PuddleForgetRuntime" Sequence="1206"><![CDATA[NOT UPGRADINGPRODUCTCODE]]></Custom>
+            <Custom Action="PuddleDetect" Sequence="1210"><![CDATA[NOT UPGRADINGPRODUCTCODE]]></Custom>
+            <Show Dialog="PuddleRemoveDlg" Sequence="1220">REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE</Show>
+            <Show Dialog="PuddleRunningDlg" Sequence="1225"><![CDATA[REMOVE<>"ALL" AND ((PUDDLE_SHELL_RUNNING <> "" AND PUDDLE_SHELL_RUNNING <> "0") OR (PUDDLE_RUNTIME_RUNNING <> "" AND PUDDLE_RUNTIME_RUNNING <> "0"))]]></Show>
+            <Show Dialog="UserExit" OnExit="cancel"><![CDATA[REMOVE="ALL" OR NOT ((PUDDLE_SHELL_RUNNING <> "" AND PUDDLE_SHELL_RUNNING <> "0") OR (PUDDLE_RUNTIME_RUNNING <> "" AND PUDDLE_RUNTIME_RUNNING <> "0"))]]></Show>
+        </InstallUISequence>
 
         <Media Id="1" Cabinet="app.cab" EmbedCab="yes" />
 
@@ -118,10 +201,10 @@
         <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1"/>
         <CustomAction Id="RemoveStartAtSignIn" Directory="TARGETDIR" ExeCommand="&quot;[SystemFolder]reg.exe&quot; delete &quot;HKCU\Software\Microsoft\Windows\CurrentVersion\Run&quot; /v &quot;{{product_name}}&quot; /f" Impersonate="yes" Return="ignore" />
         <CustomAction Id="LaunchApplication" Impersonate="yes" FileKey="Path" ExeCommand="" Return="asyncNoWait" />
+        <CustomAction Id="OpenSetupLog" Directory="TARGETDIR" Impersonate="yes" Return="asyncNoWait"
+            ExeCommand="&quot;[SystemFolder]notepad.exe&quot; &quot;[MsiLogFileLocation]&quot;" />
 
         <UI>
-            <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApplication">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed</Publish>
-
             <Property Id="WIXUI_INSTALLDIR" Value="INSTALLDIR" />
 
             <!-- The "Installing" page shows one line per action and, below it, a template filled in for
@@ -130,7 +213,7 @@
                  thousands of files), and a package that sets no text shows those. Each action below
                  has a plain sentence and no template, so no per-item line is shown.
                  ci/msi-install-test.ps1 reads the built MSI's ActionText table and fails on a "[". -->
-            <ProgressText Action="InstallFiles">Copying Puddle's files. This is the longest step and can take a minute or more.</ProgressText>
+            <ProgressText Action="InstallFiles">Copying Puddle's files. This takes about a minute.</ProgressText>
             <ProgressText Action="CreateFolders">Creating Puddle's folders</ProgressText>
             <ProgressText Action="RemoveFolders">Removing Puddle's folders</ProgressText>
             <ProgressText Action="RemoveFiles">Removing Puddle's files</ProgressText>
@@ -138,6 +221,7 @@
             <ProgressText Action="RemoveShortcuts">Removing Puddle from the Start menu</ProgressText>
             <ProgressText Action="WriteRegistryValues">Saving where Puddle is installed</ProgressText>
             <ProgressText Action="RemoveRegistryValues">Removing the saved install settings</ProgressText>
+            <ProgressText Action="RegisterUser">Registering Puddle for your Windows account</ProgressText>
             <ProgressText Action="RegisterProduct">Adding Puddle to the Windows list of installed apps</ProgressText>
             <ProgressText Action="PublishProduct">Adding Puddle to the Windows list of installed apps</ProgressText>
             <ProgressText Action="PublishFeatures">Adding Puddle to the Windows list of installed apps</ProgressText>
@@ -148,11 +232,162 @@
             <ProgressText Action="AppSearch">Checking this computer</ProgressText>
             <ProgressText Action="MigrateFeatureStates">Checking earlier install choices</ProgressText>
             <ProgressText Action="RollbackCleanup">Cleaning up temporary files</ProgressText>
+            <ProgressText Action="InstallFinalize">Finishing the installation</ProgressText>
             <ProgressText Action="InstallAdminPackage">Copying Puddle's files to the chosen folder</ProgressText>
 
-            <!-- No licence dialog: the licences ship in the licenses folder. -->
-            <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="2">1</Publish>
-            <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2">1</Publish>
+
+            <!-- The uninstall's own page (the program's own list, not WixUI's): what goes, what stays,
+                 the offer to quit a running Puddle, and the removal of everything Puddle keeps. -->
+            <Dialog Id="PuddleRemoveDlg" Width="370" Height="270" Title="[ProductName] Setup">
+                <Control Id="Title" Type="Text" X="20" Y="12" Width="330" Height="20" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Remove Puddle" />
+                <Control Id="Kept" Type="Text" X="20" Y="40" Width="330" Height="34" Transparent="yes" NoPrefix="yes"
+                    Text="Puddle's program files and its Start menu entry are removed. Your workspaces, their disks and your settings stay on this computer unless you tick the box below." />
+                <Control Id="RunningNotice" Type="Text" X="20" Y="80" Width="330" Height="34" Transparent="yes" NoPrefix="yes"
+                    Text="Puddle is running. Choosing Remove quits it first, and stops your workspaces cleanly.">
+                    <Condition Action="hide"><![CDATA[NOT ((PUDDLE_SHELL_RUNNING <> "" AND PUDDLE_SHELL_RUNNING <> "0") OR (PUDDLE_RUNTIME_RUNNING <> "" AND PUDDLE_RUNTIME_RUNNING <> "0"))]]></Condition>
+                </Control>
+                <Control Id="RemoveAllBox" Type="CheckBox" X="20" Y="122" Width="330" Height="18" Property="PUDDLE_REMOVE_ALL" CheckBoxValue="1"
+                    Text="Also remove all of Puddle's files from this computer" />
+                <Control Id="RemoveAllList" Type="Text" X="38" Y="142" Width="312" Height="80" Transparent="yes" NoPrefix="yes"
+                    Text="This deletes, for good: every workspace and its disk, your Puddle settings and the activity log, the workspaces' repositories that Puddle keeps, its logs, the saved window state, the development certificate Puddle added to your trusted certificates, and the Include line Puddle added to your ssh config. Leave it unticked to keep them." />
+                <Control Id="Remove" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="&amp;Remove">
+                    <Publish Property="PUDDLE_STOP_RUNNING" Value="1" Order="1"><![CDATA[(PUDDLE_SHELL_RUNNING <> "" AND PUDDLE_SHELL_RUNNING <> "0") OR (PUDDLE_RUNTIME_RUNNING <> "" AND PUDDLE_RUNTIME_RUNNING <> "0")]]></Publish>
+                    <Publish Event="EndDialog" Value="Return" Order="2">1</Publish>
+                </Control>
+                <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="Cancel">
+                    <Publish Event="EndDialog" Value="Exit">1</Publish>
+                </Control>
+            </Dialog>
+
+            <DialogRef Id="CancelDlg" />
+            <DialogRef Id="InvalidDirDlg" />
+
+            <!-- The refusal, before the first page: the same sentence PuddleRunning gives a silent run, one
+                 button, nothing installed or changed. -->
+            <Dialog Id="PuddleRunningDlg" Width="370" Height="270" Title="[ProductName] Setup">
+                <Control Id="Bitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="234" TabSkip="no" Text="WixUI_Bmp_Dialog" />
+                <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+                <Control Id="Title" Type="Text" X="135" Y="20" Width="220" Height="30" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Bigger}Puddle is running" />
+                <Control Id="Description" Type="Text" X="135" Y="56" Width="220" Height="80" Transparent="yes" NoPrefix="yes"
+                    Text="Puddle is running. Quit Puddle from its tray icon (this stops your workspaces), then run this installer again." />
+                <Control Id="Ok" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Cancel="yes" Text="OK">
+                    <Publish Event="EndDialog" Value="Exit">1</Publish>
+                </Control>
+            </Dialog>
+
+            <!-- The installer's own pages. WixUI's welcome, folder, ready, finish and failure pages stay in the
+                 package (other pages point at them) but are not shown: their Show rows are switched off below. -->
+
+            <!-- First page. Install is the "Default setup": the per-user folder and nothing more to answer, straight
+                 to the progress page. Custom setup goes to the next page (folder and launch box). -->
+            <Dialog Id="PuddleSetupDlg" Width="370" Height="270" Title="[ProductName] Setup">
+                <Control Id="Bitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="234" TabSkip="no" Text="WixUI_Bmp_Dialog" />
+                <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+                <Control Id="Title" Type="Text" X="135" Y="20" Width="220" Height="30" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Bigger}Install Puddle" />
+                <Control Id="Description" Type="Text" X="135" Y="56" Width="220" Height="40" Transparent="yes" NoPrefix="yes"
+                    Text="Puddle runs your coding agents in safe workspaces on this computer." />
+                <Control Id="DefaultNote" Type="Text" X="135" Y="104" Width="220" Height="56" Transparent="yes" NoPrefix="yes"
+                    Text="Install sets Puddle up for you only, in your own Programs folder, and needs no administrator rights. Choose Custom setup to pick another folder." />
+                <Control Id="Install" Type="PushButton" X="150" Y="243" Width="60" Height="17" Default="yes" Text="&amp;Install">
+                    <Publish Event="SetTargetPath" Value="[WIXUI_INSTALLDIR]" Order="1">1</Publish>
+                    <Publish Event="EndDialog" Value="Return" Order="2">1</Publish>
+                </Control>
+                <Control Id="Custom" Type="PushButton" X="214" Y="243" Width="84" Height="17" Text="&amp;Custom setup">
+                    <Publish Event="NewDialog" Value="PuddleCustomDlg">1</Publish>
+                </Control>
+                <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="Cancel">
+                    <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
+                </Control>
+            </Dialog>
+
+            <!-- Custom setup: the folder (checked the way WixUI's folder page checks it) and whether Puddle opens
+                 when setup ends; Install goes straight to the progress page. -->
+            <Dialog Id="PuddleCustomDlg" Width="370" Height="270" Title="[ProductName] Setup">
+                <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="WixUI_Bmp_Banner" />
+                <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+                <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+                <Control Id="Title" Type="Text" X="15" Y="6" Width="300" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Custom setup" />
+                <Control Id="Description" Type="Text" X="25" Y="23" Width="300" Height="15" Transparent="yes" NoPrefix="yes" Text="Choose where Puddle goes and what happens when setup ends." />
+                <Control Id="FolderLabel" Type="Text" X="20" Y="60" Width="320" Height="18" NoPrefix="yes" Text="Install Puddle in this folder:" />
+                <Control Id="Folder" Type="PathEdit" X="20" Y="82" Width="320" Height="18" Property="WIXUI_INSTALLDIR" Indirect="yes" />
+                <Control Id="ChangeFolder" Type="PushButton" X="20" Y="104" Width="56" Height="17" Text="&amp;Change...">
+                    <Publish Property="_BrowseProperty" Value="[WIXUI_INSTALLDIR]" Order="1">1</Publish>
+                    <Publish Event="SpawnDialog" Value="BrowseDlg" Order="2">1</Publish>
+                </Control>
+                <Control Id="LaunchBox" Type="CheckBox" X="20" Y="146" Width="320" Height="18" Property="WIXUI_EXITDIALOGOPTIONALCHECKBOX" CheckBoxValue="1" Text="&amp;Open Puddle when setup ends" />
+                <Control Id="Back" Type="PushButton" X="150" Y="243" Width="56" Height="17" Text="&amp;Back">
+                    <Publish Event="NewDialog" Value="PuddleSetupDlg">1</Publish>
+                </Control>
+                <Control Id="Install" Type="PushButton" X="214" Y="243" Width="84" Height="17" Default="yes" Text="&amp;Install">
+                    <Publish Event="SetTargetPath" Value="[WIXUI_INSTALLDIR]" Order="1">1</Publish>
+                    <Publish Event="DoAction" Value="WixUIValidatePath" Order="2">NOT WIXUI_DONTVALIDATEPATH</Publish>
+                    <Publish Event="SpawnDialog" Value="InvalidDirDlg" Order="3"><![CDATA[NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID<>"1"]]></Publish>
+                    <Publish Event="EndDialog" Value="Return" Order="4">WIXUI_DONTVALIDATEPATH OR WIXUI_INSTALLDIR_VALID="1"</Publish>
+                </Control>
+                <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="Cancel">
+                    <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
+                </Control>
+            </Dialog>
+
+            <!-- Last page of a run that worked (an install, an upgrade or a removal): what happened, the box that
+                 opens Puddle, where the log is and a button that opens it. -->
+            <Dialog Id="PuddleFinishDlg" Width="370" Height="270" Title="[ProductName] Setup">
+                <Control Id="Bitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="234" TabSkip="no" Text="WixUI_Bmp_Dialog" />
+                <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+                <Control Id="TitleInstalled" Type="Text" X="135" Y="20" Width="220" Height="30" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Bigger}Puddle is installed">
+                    <Condition Action="hide"><![CDATA[REMOVE~="ALL"]]></Condition>
+                </Control>
+                <Control Id="TitleRemoved" Type="Text" X="135" Y="20" Width="220" Height="30" Transparent="yes" NoPrefix="yes" Hidden="yes" Text="{\WixUI_Font_Bigger}Puddle is removed">
+                    <Condition Action="show"><![CDATA[REMOVE~="ALL"]]></Condition>
+                </Control>
+                <Control Id="Description" Type="Text" X="135" Y="56" Width="220" Height="40" Transparent="yes" NoPrefix="yes" Text="Choose Finish to close setup. You can start Puddle from the Start menu." />
+                <Control Id="OptionalCheckBox" Type="CheckBox" X="135" Y="104" Width="220" Height="18" Hidden="yes" Property="WIXUI_EXITDIALOGOPTIONALCHECKBOX" CheckBoxValue="1" Text="[WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT]">
+                    <Condition Action="show"><![CDATA[NOT Installed AND NOT (REMOVE~="ALL")]]></Condition>
+                </Control>
+                <Control Id="LogLabel" Type="Text" X="135" Y="140" Width="220" Height="12" Transparent="yes" NoPrefix="yes" Hidden="yes" Text="The setup log is saved here:">
+                    <Condition Action="show">MsiLogFileLocation</Condition>
+                </Control>
+                <Control Id="LogPath" Type="Text" X="135" Y="154" Width="220" Height="36" Transparent="yes" NoPrefix="yes" Hidden="yes" Text="[MsiLogFileLocation]">
+                    <Condition Action="show">MsiLogFileLocation</Condition>
+                </Control>
+                <Control Id="NoLog" Type="Text" X="135" Y="140" Width="220" Height="36" Transparent="yes" NoPrefix="yes" Text="This run was started with its own log file, named on its command line.">
+                    <Condition Action="hide">MsiLogFileLocation</Condition>
+                </Control>
+                <Control Id="OpenLog" Type="PushButton" X="135" Y="196" Width="84" Height="17" Hidden="yes" Text="Open the &amp;log">
+                    <Condition Action="show">MsiLogFileLocation</Condition>
+                    <Publish Event="DoAction" Value="OpenSetupLog">1</Publish>
+                </Control>
+                <Control Id="Finish" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Cancel="yes" Text="&amp;Finish">
+                    <Publish Event="DoAction" Value="LaunchApplication" Order="1">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed</Publish>
+                    <Publish Event="EndDialog" Value="Return" Order="2">1</Publish>
+                </Control>
+            </Dialog>
+
+            <!-- The page of a run that failed. Windows Installer has already undone what the run changed. -->
+            <Dialog Id="PuddleFailedDlg" Width="370" Height="270" Title="[ProductName] Setup">
+                <Control Id="Bitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="234" TabSkip="no" Text="WixUI_Bmp_Dialog" />
+                <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+                <Control Id="Title" Type="Text" X="135" Y="20" Width="220" Height="30" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Bigger}Puddle setup did not finish" />
+                <Control Id="Description" Type="Text" X="135" Y="56" Width="220" Height="64" Transparent="yes" NoPrefix="yes"
+                    Text="Something went wrong, and Windows has undone what setup changed. The setup log says what happened. Keep it when you report the problem." />
+                <Control Id="LogLabel" Type="Text" X="135" Y="130" Width="220" Height="12" Transparent="yes" NoPrefix="yes" Hidden="yes" Text="The setup log is saved here:">
+                    <Condition Action="show">MsiLogFileLocation</Condition>
+                </Control>
+                <Control Id="LogPath" Type="Text" X="135" Y="144" Width="220" Height="36" Transparent="yes" NoPrefix="yes" Hidden="yes" Text="[MsiLogFileLocation]">
+                    <Condition Action="show">MsiLogFileLocation</Condition>
+                </Control>
+                <Control Id="NoLog" Type="Text" X="135" Y="130" Width="220" Height="36" Transparent="yes" NoPrefix="yes" Text="This run was started with its own log file, named on its command line.">
+                    <Condition Action="hide">MsiLogFileLocation</Condition>
+                </Control>
+                <Control Id="OpenLog" Type="PushButton" X="135" Y="190" Width="84" Height="17" Hidden="yes" Text="Open the &amp;log">
+                    <Condition Action="show">MsiLogFileLocation</Condition>
+                    <Publish Event="DoAction" Value="OpenSetupLog">1</Publish>
+                </Control>
+                <Control Id="Finish" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Cancel="yes" Text="&amp;Finish">
+                    <Publish Event="EndDialog" Value="Exit">1</Publish>
+                </Control>
+            </Dialog>
+
         </UI>
 
         <UIRef Id="WixUI_InstallDir" />

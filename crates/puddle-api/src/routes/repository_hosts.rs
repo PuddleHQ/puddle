@@ -10,12 +10,14 @@ use axum::http::StatusCode;
 use puddle_store::{RepoRef, Store, UserId};
 use puddle_types::{Decision, Host, WorkspaceId};
 
-use crate::ApiErrorBody;
 use crate::authz::{self, Action, Principal, ResourceRef};
-use crate::error::{ApiError, ErrorCode, blocking};
 use crate::routes::AppState;
-use crate::routes::workspaces::workspace_id;
-use crate::wire::{RepositoryHost, RepositoryHostState, RepositoryHosts, RepositoryHostsRequest};
+use crate::routes::workspaces::{owned, workspace_id};
+use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, ErrorCode, blocking};
+use puddle_services::wire::{
+    RepositoryHost, RepositoryHostState, RepositoryHosts, RepositoryHostsRequest,
+};
 
 /// Stands for a workspace that does not exist yet: no workspace rule or switch can name it, so
 /// the rules answer as they do for any new workspace (a 40-bit id; a clash is one in 10^12).
@@ -130,7 +132,7 @@ pub(crate) async fn repository_hosts(
     principal: Principal,
     crate::extract::Json(body): crate::extract::Json<RepositoryHostsRequest>,
 ) -> Result<Json<RepositoryHosts>, ApiError> {
-    if body.urls.len() > crate::workspaces::MAX_REPOSITORIES {
+    if body.urls.len() > puddle_services::workspaces::MAX_REPOSITORIES {
         return Err(ApiError::invalid("too many repository addresses"));
     }
     let workspace = body.workspace.as_deref().map(workspace_id).transpose()?;
@@ -143,7 +145,8 @@ pub(crate) async fn repository_hosts(
             ResourceRef::Workspace(id.clone()),
         )
         .await?;
-        state.workspaces.get(id).await?;
+        let handle = owned(&state, principal, id.as_str()).await?;
+        state.workspaces.get(&handle).await?;
     }
     let hosts = hosts_of(body.urls.iter().map(String::as_str));
     let store = state.store.clone();

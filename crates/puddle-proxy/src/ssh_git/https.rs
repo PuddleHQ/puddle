@@ -9,7 +9,8 @@
 //! company-proxy route and the check of the host's certificate. The guest never sees a key or a
 //! token, and nothing it receives could be replayed.
 
-use std::sync::{Arc, OnceLock};
+use std::future::Future;
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use http_body_util::BodyExt as _;
@@ -23,12 +24,12 @@ use tokio::task::JoinHandle;
 use super::bridge::{self, SmartHttp};
 use super::{
     GitSshAccount, GitSshAccounts, GitSshCommand, GitSshContext, GitSshFailure, GitSshGreeting,
-    GitSshStream, GitSshUpstream,
+    GitSshStream, GitSshUpstream, keep_leg,
 };
 use crate::counted::Counted;
 use crate::destination::BoxFuture;
-use crate::proxy::admit;
-use crate::target::Target;
+use crate::proxy::{Seen, admit, refuse_not_running};
+use crate::request_target::Target;
 use crate::terminate::h1::{BoxError, UpBody};
 use crate::terminate::{self, Outcome};
 
@@ -158,12 +159,27 @@ impl Leg<'_> {
         let handler = &self.cx.handler;
         let proxy = &handler.proxy;
         let https = EgressRequest::new(handler.workspace.clone(), self.host.clone(), 443);
+        if matches!(proxy.seen(&https.workspace), Seen::NotRunning) {
+            let (refusal, event) = refuse_not_running(&https);
+            self.cx.leg_refused(event);
+            return Err(GitSshFailure::new(refusal.message));
+        }
         let (admitted, event) = admit(proxy, &https).await;
         let admitted = admitted.map_err(|refusal| {
             self.cx.leg_refused(event);
             GitSshFailure::new(refusal.message)
         })?;
-        let (termination, mode, tls) = proxy.terminating(&https, false).ok_or_else(|| {
+        let (termination, mode, tls) = proxy
+            .terminating(&https, false)
+            .or_else(|| {
+                // A built-in Git host with no identity on it is not in the workspace's decrypt
+                // set, but a public repository there clones with no credential, as it does
+                // over HTTPS.
+                super::is_built_in_https(&self.host)
+                    .then(|| proxy.terminating_ssh_leg(&https))
+                    .flatten()
+            })
+            .ok_or_else(|| {
             GitSshFailure::new(format!(
                 "Puddle does not decrypt {} for this workspace, so it cannot carry Git over SSH there",
                 self.host
@@ -186,7 +202,10 @@ impl Leg<'_> {
         });
         let (mut client, server) = tokio::io::duplex(PIPE);
         let (server, _) = Counted::new(server);
-        let done = tokio::spawn(terminate::run(context, BufReader::new(server).into()));
+        let done = record_when_done(
+            self.cx.leg_log(),
+            terminate::run(context, BufReader::new(server).into()),
+        );
         connected(&mut client).await?;
         let tls = tls_connector(root, &self.host)?
             .connect(server_name(&self.host)?, client)
@@ -199,19 +218,40 @@ impl Leg<'_> {
         Ok(Open { send, done })
     }
 
-    /// Ends the connection and keeps its outcome for the connection's record.
+    /// Ends the connection. Its outcome reaches the connection's record from the leg's own task,
+    /// so a command that is dropped before this runs loses nothing; this only gives the record a
+    /// moment to hold the outcome before the command reports.
     async fn close(self) {
         let Some(open) = self.open else {
             return;
         };
         drop(open.send);
-        if let Ok(Ok(outcome)) = tokio::time::timeout(OUTCOME_WAIT, open.done).await {
-            self.cx.leg_closed(outcome);
-        }
+        // The wait only orders the record before the report: a timeout or a failed task changes nothing, the leg's own task keeps the outcome.
+        let _ = tokio::time::timeout(OUTCOME_WAIT, open.done).await;
     }
 }
 
+/// Runs `run` (a leg's termination) on its own task and keeps its outcome in `legs` when it ends.
+/// The task holds the log, not the command, so the record has the leg however the command ends.
+fn record_when_done(
+    legs: Arc<Mutex<Vec<Outcome>>>,
+    run: impl Future<Output = Outcome> + Send + 'static,
+) -> JoinHandle<Outcome> {
+    tokio::spawn(async move {
+        let outcome = run.await;
+        keep_leg(
+            &mut legs.lock().unwrap_or_else(PoisonError::into_inner),
+            outcome.clone(),
+        );
+        outcome
+    })
+}
+
 impl SmartHttp for Leg<'_> {
+    fn body_idle(&self) -> Duration {
+        self.cx.handler.proxy.config.body_idle_timeout
+    }
+
     fn send(
         &mut self,
         request: http::Request<UpBody>,

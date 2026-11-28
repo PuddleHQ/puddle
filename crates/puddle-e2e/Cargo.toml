@@ -50,6 +50,7 @@ puddle-netpolicy = { workspace = true }
 puddle-proxy = { workspace = true, features = ["testing"] }
 puddle-repos = { workspace = true }
 puddle-secrets = { workspace = true }
+puddle-services = { workspace = true, features = ["testing"] }
 puddle-settings = { workspace = true }
 # The rigs record their workspaces' users through `puddle_store::testing`.
 puddle-store = { workspace = true, features = ["testing"] }
@@ -73,7 +74,9 @@ tracing-subscriber = { workspace = true }
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",
+    "Win32_Storage_FileSystem",
     "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_ProcessStatus",
     "Win32_System_SystemInformation",
     "Win32_System_Threading",
 ] }

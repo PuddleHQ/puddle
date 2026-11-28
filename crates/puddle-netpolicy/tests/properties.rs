@@ -46,9 +46,9 @@ proptest! {
     #[test]
     fn ip_literals_round_trip(ip in any::<IpAddr>()) {
         let text = ip.to_string();
-        prop_assert_eq!(normalise_host(&text).unwrap().into_host(), Host::Ip(ip));
+        prop_assert_eq!(normalise_host(&text).unwrap().into_host(), Host::from_ip(ip));
         if ip.is_ipv6() {
-            prop_assert_eq!(normalise_host(&format!("[{text}]")).unwrap().into_host(), Host::Ip(ip));
+            prop_assert_eq!(normalise_host(&format!("[{text}]")).unwrap().into_host(), Host::from_ip(ip));
         }
     }
 

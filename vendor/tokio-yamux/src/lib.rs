@@ -7,6 +7,7 @@
 
 // Config module
 pub mod config;
+mod budget;
 // Error module
 pub mod error;
 // Frame module

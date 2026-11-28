@@ -156,7 +156,7 @@ fn the_npm_document_names_the_sha1_of_the_tarball_it_serves() {
     );
     assert_eq!(
         doc["versions"]["1.0.0"]["dist"]["shasum"],
-        hex(&sha1::Sha1::digest(&tarball.body))
+        puddle_types::hex_lower(&sha1::Sha1::digest(&tarball.body))
     );
 }
 

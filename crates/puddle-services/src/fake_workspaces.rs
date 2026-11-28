@@ -1,0 +1,1495 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! An in-memory [`WorkspaceService`] for tests and the UI fixture, with scripted progress.
+//!
+//! It follows the trait's contract the way the real service does: a call checks the request,
+//! marks the workspace busy, returns it, and a background task walks the operation's steps,
+//! emitting [`Event::StatusChanged`] and [`Event::WorkspaceProgress`] as it goes. Tests wait for
+//! the end with [`FakeWorkspaces::idle`], and can make the next operation fail.
+
+use std::collections::BTreeMap;
+use std::net::SocketAddr;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
+
+use futures_util::future::BoxFuture;
+use puddle_store::{Clock, UserId};
+use puddle_types::{
+    CheckoutDir, EntryId, Event, EventSink, OriginRefusal, SessionUser, ToolName, ToolVersion,
+    ToolsFileHash, WorkspaceId, WorkspaceStatus, WorkspaceStep,
+};
+use tokio::sync::watch;
+
+use crate::checkouts::{AddRepository, Checkouts, FoundList, check_addition, checkouts_view};
+use crate::owned::OwnedWorkspace;
+use crate::wire::{RegistryTool, ToolRegistry, ToolVersions, ToolsFile, ToolsListing};
+use crate::workspaces::phase::{Action, Move, Next, Outcome, admit, begin};
+use crate::workspaces::{
+    AttachMode, Attached, BrowserTarget, DEFAULT_DISK_MIB, DEFAULT_IMAGE, DEFAULT_ROOT_DISK_MIB,
+    DeleteCheck, DesktopTarget, DisplayName, GitSetup, KeptLogins, LaunchError, Launcher, Listing,
+    LocalCheckoutError, LocalSource, NameIds, NewRepository, NewWorkspace, Operation, RepoFindings,
+    ShellInitCheck, StartFolder, StartFolderChange, WorkspaceError, WorkspaceRecord,
+    WorkspaceService, admit_delete_fingerprint, admit_grow_size, not_found,
+};
+
+/// The size of the image a fake create "downloads", and how far each report of it is.
+const FAKE_PULL_BYTES: u64 = 400 * 1024 * 1024;
+const FAKE_PULL_DOWNLOAD: [u64; 3] = [
+    FAKE_PULL_BYTES / 4,
+    FAKE_PULL_BYTES * 3 / 5,
+    FAKE_PULL_BYTES,
+];
+
+/// One step an operation reports: the step, its detail, and the checkout a cloning step is about.
+type Step = (WorkspaceStep, Option<String>, Option<CheckoutDir>);
+
+/// A [`Launcher`] that opens nothing and remembers what it was asked to open.
+#[derive(Debug, Default)]
+pub struct FakeLauncher {
+    opened: Mutex<Vec<WorkspaceId>>,
+    browsers: Mutex<Vec<WorkspaceId>>,
+    fail_with: Mutex<Option<String>>,
+}
+
+impl FakeLauncher {
+    /// A launcher that succeeds.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Makes the next launch fail with this message (once).
+    pub fn fail_next(&self, message: impl Into<String>) {
+        *lock(&self.fail_with) = Some(message.into());
+    }
+
+    /// The workspaces opened in desktop VS Code so far, in order.
+    #[must_use]
+    pub fn opened(&self) -> Vec<WorkspaceId> {
+        lock(&self.opened).clone()
+    }
+
+    /// The workspaces whose browser editor window was opened so far, in order.
+    #[must_use]
+    pub fn browsers_opened(&self) -> Vec<WorkspaceId> {
+        lock(&self.browsers).clone()
+    }
+}
+
+impl Launcher for FakeLauncher {
+    fn open_desktop<'a>(
+        &'a self,
+        workspace: &'a WorkspaceRecord,
+        _target: &'a DesktopTarget,
+    ) -> BoxFuture<'a, Result<(), LaunchError>> {
+        Box::pin(async move {
+            let failure = lock(&self.fail_with).take();
+            if let Some(message) = failure {
+                return Err(LaunchError::new(message));
+            }
+            lock(&self.opened).push(workspace.id.clone());
+            Ok(())
+        })
+    }
+
+    fn open_browser<'a>(
+        &'a self,
+        workspace: &'a WorkspaceRecord,
+        _target: &'a BrowserTarget,
+    ) -> BoxFuture<'a, Result<(), LaunchError>> {
+        Box::pin(async move {
+            let failure = lock(&self.fail_with).take();
+            if let Some(message) = failure {
+                return Err(LaunchError::new(message));
+            }
+            lock(&self.browsers).push(workspace.id.clone());
+            Ok(())
+        })
+    }
+}
+
+/// What a seeded workspace would lose if it were deleted.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Unsaved {
+    /// Per checkout.
+    pub repos: Vec<RepoFindings>,
+    /// Data outside any checkout.
+    pub other: Listing,
+    /// What the check could not read.
+    pub errors: Vec<String>,
+}
+
+struct Entry {
+    record: WorkspaceRecord,
+    unsaved: Unsaved,
+}
+
+struct State {
+    entries: BTreeMap<WorkspaceId, Entry>,
+    fail_next: BTreeMap<Operation, String>,
+    /// What a shell-init check in a running workspace answers; passes when unset.
+    shell_init_check: Option<ShellInitCheck>,
+    /// The scripts the checks were asked about.
+    shell_init_checked: Vec<String>,
+    /// The logins forgotten, as (workspace id, service), in order.
+    forgotten_logins: Vec<(String, String)>,
+    /// Whether forgetting a login fails as a credential store that refuses would.
+    login_store_refuses: bool,
+    /// The logins each workspace keeps, by workspace id; none when unset.
+    kept_logins: BTreeMap<String, KeptLogins>,
+    /// What each running workspace's guest holds: the checkouts a listing would find.
+    guest: BTreeMap<WorkspaceId, FoundList>,
+    /// The last listing made of each workspace, with its time (epoch ms).
+    last_listing: BTreeMap<WorkspaceId, (u64, FoundList)>,
+    /// The workspace disks the list does not name, each with the remote address a read of its
+    /// checkout finds (`None`: no readable address).
+    orphans: BTreeMap<WorkspaceId, Option<crate::workspaces::RepoUrl>>,
+    /// The managed tools of every workspace.
+    tools: tools::FakeTools,
+}
+
+struct Inner {
+    state: Mutex<State>,
+    events: Arc<dyn EventSink>,
+    clock: Arc<dyn Clock>,
+    launcher: Arc<dyn Launcher>,
+    step_delay: Duration,
+    front: SocketAddr,
+    in_flight: watch::Sender<usize>,
+    /// Operations wait here while it is `true`.
+    held: watch::Sender<bool>,
+    /// How many times the API reported a settings change.
+    settings_changes: std::sync::atomic::AtomicUsize,
+}
+
+/// The in-memory service. Cheap to clone; clones share state.
+#[derive(Clone)]
+pub struct FakeWorkspaces {
+    inner: Arc<Inner>,
+}
+
+impl std::fmt::Debug for FakeWorkspaces {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FakeWorkspaces")
+            .field("workspaces", &lock(&self.inner.state).entries.len())
+            .finish_non_exhaustive()
+    }
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+impl FakeWorkspaces {
+    /// An empty service that emits into `events` and stamps creations from `clock`.
+    #[must_use]
+    pub fn new(events: Arc<dyn EventSink>, clock: Arc<dyn Clock>) -> Self {
+        Self::with_options(events, clock, Arc::new(FakeLauncher::new()), Duration::ZERO)
+    }
+
+    /// Like [`FakeWorkspaces::new`], with the launcher desktop attaches go through and a pause
+    /// between operation steps (zero for none; a few hundred milliseconds lets a page show them).
+    #[must_use]
+    pub fn with_options(
+        events: Arc<dyn EventSink>,
+        clock: Arc<dyn Clock>,
+        launcher: Arc<dyn Launcher>,
+        step_delay: Duration,
+    ) -> Self {
+        Self {
+            inner: Arc::new(Inner {
+                state: Mutex::new(State {
+                    entries: BTreeMap::new(),
+                    fail_next: BTreeMap::new(),
+                    shell_init_check: None,
+                    shell_init_checked: Vec::new(),
+                    forgotten_logins: Vec::new(),
+                    login_store_refuses: false,
+                    kept_logins: BTreeMap::new(),
+                    guest: BTreeMap::new(),
+                    last_listing: BTreeMap::new(),
+                    orphans: BTreeMap::new(),
+                    tools: tools::FakeTools::default(),
+                }),
+                events,
+                clock,
+                launcher,
+                step_delay,
+                front: SocketAddr::from(([127, 0, 0, 1], 18080)),
+                in_flight: watch::channel(0).0,
+                held: watch::channel(false).0,
+                settings_changes: std::sync::atomic::AtomicUsize::new(0),
+            }),
+        }
+    }
+
+    /// Adds a workspace as it is (no events). Replaces one with the same id.
+    pub fn seed(&self, record: WorkspaceRecord, unsaved: Unsaved) {
+        lock(&self.inner.state)
+            .entries
+            .insert(record.id.clone(), Entry { record, unsaved });
+    }
+
+    /// Makes the next `operation` fail after its steps with this reason, once. The workspace
+    /// goes back to where it was (a failed create leaves nothing behind) and a
+    /// [`WorkspaceStep::Failed`] event carries the reason.
+    pub fn fail_next(&self, operation: Operation, reason: impl Into<String>) {
+        lock(&self.inner.state)
+            .fail_next
+            .insert(operation, reason.into());
+    }
+
+    /// Makes the shell-init check of a running workspace answer `answer` from now on (it passes
+    /// until this is called). A stopped workspace is never checked.
+    pub fn set_shell_init_check(&self, answer: ShellInitCheck) {
+        lock(&self.inner.state).shell_init_check = Some(answer);
+    }
+
+    /// The scripts the shell-init check was run on, in order.
+    #[must_use]
+    pub fn shell_init_checked(&self) -> Vec<String> {
+        lock(&self.inner.state).shell_init_checked.clone()
+    }
+
+    /// The logins forgotten so far, as (workspace id, service).
+    #[must_use]
+    pub fn forgotten_logins(&self) -> Vec<(String, String)> {
+        lock(&self.inner.state).forgotten_logins.clone()
+    }
+
+    /// Sets the logins workspace `id` keeps; forgetting one removes it from the list.
+    pub fn set_kept_logins(&self, id: &WorkspaceId, kept: KeptLogins) {
+        lock(&self.inner.state)
+            .kept_logins
+            .insert(id.to_string(), kept);
+    }
+
+    /// Adds a workspace disk the list does not name. `remote` is the address a read of its
+    /// checkout finds; `None` makes a restore ask for one.
+    pub fn add_orphan_volume(&self, id: &WorkspaceId, remote: Option<crate::workspaces::RepoUrl>) {
+        lock(&self.inner.state).orphans.insert(id.clone(), remote);
+    }
+
+    /// Makes forgetting a login fail the way a credential store that refuses does.
+    pub fn set_login_store_refuses(&self, refuses: bool) {
+        lock(&self.inner.state).login_store_refuses = refuses;
+    }
+
+    /// Sets what `id`'s guest holds: the checkouts a listing of the running workspace finds.
+    pub fn set_checkouts(&self, id: &WorkspaceId, checkouts: FoundList) {
+        lock(&self.inner.state).guest.insert(id.clone(), checkouts);
+    }
+
+    /// Sets what the root `mise.toml` of `id` holds, as (name, version, installed); changes the
+    /// file's hash.
+    pub fn set_tools(&self, id: &WorkspaceId, tools: Vec<(ToolName, ToolVersion, bool)>) {
+        lock(&self.inner.state).tools.set_root(id, tools);
+    }
+
+    /// Switches the managed tools off (or on) for `id`.
+    pub fn set_tools_off(&self, id: &WorkspaceId, off: bool) {
+        lock(&self.inner.state).tools.set_off(id, off);
+    }
+
+    /// Changes the root `mise.toml` of `id` as a hand edit does: its hash differs afterwards.
+    pub fn edit_tools_file_by_hand(&self, id: &WorkspaceId) {
+        lock(&self.inner.state).tools.hand_edit(id);
+    }
+
+    /// Sets the repositories' own mise files a listing of `id` shows after the root file.
+    pub fn set_tool_files(&self, id: &WorkspaceId, files: Vec<ToolsFile>) {
+        lock(&self.inner.state).tools.set_repo_files(id, files);
+    }
+
+    /// Sets the registry the Add tool search reads, and why it is empty when it is.
+    pub fn set_tool_registry(&self, tools: Vec<RegistryTool>, problem: Option<String>) {
+        lock(&self.inner.state).tools.set_registry(tools, problem);
+    }
+
+    /// Sets the versions listed for `name`, or why mise could not list them.
+    pub fn set_tool_versions(&self, name: ToolName, answer: Result<Vec<ToolVersion>, String>) {
+        lock(&self.inner.state).tools.set_versions(name, answer);
+    }
+
+    /// The workspaces an install was started for (by an edit or a retry), in order.
+    #[must_use]
+    pub fn tool_installs(&self) -> Vec<WorkspaceId> {
+        lock(&self.inner.state).tools.installs()
+    }
+
+    /// Replaces what deleting `id` would lose. `false` if there is no such workspace.
+    #[must_use]
+    pub fn set_unsaved(&self, id: &WorkspaceId, unsaved: Unsaved) -> bool {
+        lock(&self.inner.state)
+            .entries
+            .get_mut(id)
+            .map(|e| e.unsaved = unsaved)
+            .is_some()
+    }
+
+    /// Holds every operation before its next step until [`FakeWorkspaces::release`], so a test
+    /// can look at the busy state.
+    pub fn hold(&self) {
+        self.inner.held.send_replace(true);
+    }
+
+    /// Lets held operations go on.
+    pub fn release(&self) {
+        self.inner.held.send_replace(false);
+    }
+
+    /// How many settings changes the API has reported to this service.
+    #[must_use]
+    pub fn settings_changes(&self) -> usize {
+        self.inner
+            .settings_changes
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Resolves when no operation is running.
+    pub async fn idle(&self) {
+        let mut rx = self.inner.in_flight.subscribe();
+        // The sender lives in `inner`, which this borrow keeps alive.
+        let _ = rx.wait_for(|n| *n == 0).await;
+    }
+
+    fn emit_status(&self, record: &WorkspaceRecord) {
+        self.inner.events.emit(Event::StatusChanged {
+            workspace: record.id.clone(),
+            status: record.status,
+        });
+    }
+
+    fn progress(&self, record: &WorkspaceRecord, (step, detail, repository): Step) {
+        self.inner.events.emit(Event::WorkspaceProgress {
+            workspace: record.id.clone(),
+            step,
+            detail,
+            repository,
+            bytes_done: None,
+            bytes_total: None,
+        });
+    }
+
+    fn progress_bytes(
+        &self,
+        record: &WorkspaceRecord,
+        step: WorkspaceStep,
+        bytes_done: u64,
+        bytes_total: Option<u64>,
+    ) {
+        self.inner.events.emit(Event::WorkspaceProgress {
+            workspace: record.id.clone(),
+            step,
+            detail: None,
+            repository: None,
+            bytes_done: Some(bytes_done),
+            bytes_total,
+        });
+    }
+
+    /// Begins `op` on `id` when its phase admits it and `check` passes, runs `enter` on the
+    /// record (what the operation changes at once besides the phase) and returns the record.
+    fn accept(
+        &self,
+        id: &WorkspaceId,
+        op: Operation,
+        check: impl FnOnce(&WorkspaceRecord) -> Result<(), WorkspaceError>,
+        enter: impl FnOnce(&mut WorkspaceRecord),
+    ) -> Result<WorkspaceRecord, WorkspaceError> {
+        let mut state = lock(&self.inner.state);
+        let entry = state.entries.get_mut(id).ok_or_else(|| not_found(id))?;
+        let mut next = entry.record.clone();
+        begin(&mut next, op)?;
+        check(&entry.record)?;
+        enter(&mut next);
+        entry.record = next;
+        Ok(entry.record.clone())
+    }
+
+    /// Runs the rest of an operation on a task: the steps, then the end state.
+    fn run(&self, record: &WorkspaceRecord, op: Operation, steps: Vec<Step>) {
+        let this = self.clone();
+        let record = record.clone();
+        self.inner.in_flight.send_modify(|n| *n += 1);
+        tokio::spawn(async move {
+            for step in steps {
+                this.pause().await;
+                let pulling = step.0 == WorkspaceStep::PullingImage;
+                this.progress(&record, step);
+                if pulling {
+                    // What a first pull of the image reports: a download that counts up to its
+                    // total, then an unpack whose total is not known until the end.
+                    for done in FAKE_PULL_DOWNLOAD {
+                        this.pause().await;
+                        this.progress_bytes(
+                            &record,
+                            WorkspaceStep::PullingImage,
+                            done,
+                            Some(FAKE_PULL_BYTES),
+                        );
+                    }
+                    this.pause().await;
+                    this.progress_bytes(&record, WorkspaceStep::UnpackingImage, 0, None);
+                }
+            }
+            this.pause().await;
+            this.finish(&record.id, op);
+            this.inner.in_flight.send_modify(|n| *n -= 1);
+        });
+    }
+
+    async fn pause(&self) {
+        let mut held = self.inner.held.subscribe();
+        // The sender lives in `inner`, which `self` keeps alive.
+        let _ = held.wait_for(|held| !*held).await;
+        if self.inner.step_delay.is_zero() {
+            tokio::task::yield_now().await;
+        } else {
+            // The configured step latency: a simulated delay, not a wait for a condition.
+            tokio::time::sleep(self.inner.step_delay).await;
+        }
+    }
+
+    fn finish(&self, id: &WorkspaceId, op: Operation) {
+        let mut state = lock(&self.inner.state);
+        let failure = state.fail_next.remove(&op);
+        let Some(entry) = state.entries.get_mut(id) else {
+            return;
+        };
+        let before = entry.record.status;
+        let outcome = if failure.is_some() {
+            Outcome::Failed
+        } else {
+            Outcome::Done
+        };
+        let next = entry.record.apply(Move::End(outcome));
+        if failure.is_none() {
+            match op {
+                Operation::Reclaiming => {
+                    entry.record.disk_used_mib = entry.record.disk_used_mib.map(|used| used / 2);
+                }
+                Operation::ResettingRootDisk => {
+                    entry.record.root_disk_used_mib = entry.record.root_disk_size_mib.map(|_| 0);
+                }
+                _ => {}
+            }
+        }
+        let record = entry.record.clone();
+        if next == Ok(Next::Removed) {
+            state.entries.remove(id);
+        }
+        drop(state);
+        if record.status != before {
+            self.emit_status(&record);
+        }
+        let last = match failure {
+            Some(reason) => (WorkspaceStep::Failed, Some(reason), None),
+            None => (WorkspaceStep::Done, None, None),
+        };
+        self.progress(&record, last);
+    }
+
+    fn repositories_changed(&self, record: &WorkspaceRecord) {
+        self.inner.events.emit(Event::WorkspaceRepositoriesChanged {
+            workspace: record.id.clone(),
+        });
+    }
+
+    /// Clones `new` into the running workspace `id`: a new entry when `add`, else the entry it
+    /// already is.
+    async fn clone_into(
+        &self,
+        id: &WorkspaceId,
+        new: NewRepository,
+        add: bool,
+        git: &dyn GitSetup,
+    ) -> Result<WorkspaceRecord, WorkspaceError> {
+        let guest_has = |state: &State| {
+            state.guest.get(id).is_some_and(|g| {
+                g.checkouts
+                    .iter()
+                    .any(|c| c.directory == new.repository.directory.as_str())
+            })
+        };
+        let has_dir = guest_has(&lock(&self.inner.state));
+        let record = self.accept(
+            id,
+            Operation::Cloning,
+            |r| {
+                if add {
+                    check_addition(&r.repositories, &new.repository)?;
+                }
+                if has_dir {
+                    return Err(WorkspaceError::Conflict(format!(
+                        "{} already exists in the workspace; Puddle never clones into a folder that holds anything",
+                        new.repository.directory
+                    )));
+                }
+                Ok(())
+            },
+            |r| {
+                if add {
+                    r.repositories.push(new.repository.clone());
+                }
+            },
+        )?;
+        git.set_up(&record.id, std::slice::from_ref(&new)).await;
+        if add {
+            self.repositories_changed(&record);
+        }
+        let repository = &new.repository;
+        self.run(
+            &record,
+            Operation::Cloning,
+            vec![(
+                WorkspaceStep::Cloning,
+                Some(repository.url.as_str().to_owned()),
+                Some(repository.directory.clone()),
+            )],
+        );
+        // The clone puts the checkout on the guest's disk, for the next listing.
+        let found = crate::checkouts::Found {
+            directory: repository.directory.as_str().to_owned(),
+            remote_url: Some(repository.url.as_str().to_owned()),
+            remote_note: None,
+            branch: Some("main".to_owned()),
+            head: Some("0000000".to_owned()),
+            dirty: false,
+            unreadable: None,
+        };
+        lock(&self.inner.state)
+            .guest
+            .entry(id.clone())
+            .or_default()
+            .checkouts
+            .push(found);
+        Ok(record)
+    }
+
+    /// "Manage this": the checkout `directory` the guest holds joins the list.
+    async fn manage_existing(
+        &self,
+        id: &WorkspaceId,
+        (directory, seen): (&CheckoutDir, &crate::workspaces::RepoUrl),
+        identity: Option<puddle_store::IdentityId>,
+        toggles: puddle_store::RepoToggles,
+        git: &dyn GitSetup,
+    ) -> Result<WorkspaceRecord, WorkspaceError> {
+        let (name, new) = {
+            let state = lock(&self.inner.state);
+            let entry = state.entries.get(id).ok_or_else(|| not_found(id))?;
+            let record = &entry.record;
+            if let Some(busy) = record.busy {
+                return Err(WorkspaceError::Conflict(format!(
+                    "{} is busy ({busy}); wait for it to finish",
+                    record.name
+                )));
+            }
+            if record.status != WorkspaceStatus::Running {
+                return Err(WorkspaceError::Conflict(format!(
+                    "{} is {}; start it to manage a checkout",
+                    record.name, record.status
+                )));
+            }
+            let found = state
+                .guest
+                .get(id)
+                .and_then(|g| {
+                    g.checkouts
+                        .iter()
+                        .find(|c| c.directory == directory.as_str())
+                })
+                .ok_or_else(|| {
+                    WorkspaceError::Conflict(format!(
+                        "{directory} is not a checkout in the workspace"
+                    ))
+                })?;
+            let url = found
+                .remote_url
+                .as_deref()
+                .ok_or_else(|| {
+                    WorkspaceError::Conflict(format!(
+                        "cannot manage {directory}: {}",
+                        crate::checkouts::why_no_remote(found.remote_note)
+                    ))
+                })
+                .and_then(|u| {
+                    crate::workspaces::RepoUrl::parse(u).map_err(WorkspaceError::conflict)
+                })?;
+            crate::checkouts::check_seen(directory, seen, &url)?;
+            let repository = crate::workspaces::Repository {
+                entry: crate::workspaces::new_entry_id(|e| {
+                    record.repositories.iter().any(|r| r.entry == *e)
+                })
+                .map_err(WorkspaceError::unavailable)?,
+                url,
+                directory: directory.clone(),
+            };
+            check_addition(&record.repositories, &repository)?;
+            (
+                record.id.clone(),
+                NewRepository {
+                    repository,
+                    identity,
+                    pull: toggles.pull,
+                    push: toggles.push,
+                    push_block: None,
+                    local: None,
+                },
+            )
+        };
+        git.set_up(&name, std::slice::from_ref(&new)).await;
+        let record = {
+            let mut state = lock(&self.inner.state);
+            let entry = state.entries.get_mut(id).ok_or_else(|| not_found(id))?;
+            entry.record.repositories.push(new.repository);
+            entry.record.clone()
+        };
+        self.repositories_changed(&record);
+        Ok(record)
+    }
+
+    fn record_of(&self, id: &WorkspaceId) -> Result<WorkspaceRecord, WorkspaceError> {
+        lock(&self.inner.state)
+            .entries
+            .get(id)
+            .map(|e| e.record.clone())
+            .ok_or_else(|| not_found(id))
+    }
+
+    fn check_for(&self, id: &WorkspaceId) -> Result<DeleteCheck, WorkspaceError> {
+        let state = lock(&self.inner.state);
+        let entry = state.entries.get(id).ok_or_else(|| not_found(id))?;
+        Ok(delete_check(entry))
+    }
+}
+
+impl FakeWorkspaces {
+    /// Whether `id` exists and is running.
+    fn is_running(&self, id: &WorkspaceId) -> Result<bool, WorkspaceError> {
+        lock(&self.inner.state)
+            .entries
+            .get(id)
+            .map(|e| e.record.status == WorkspaceStatus::Running)
+            .ok_or_else(|| not_found(id))
+    }
+
+    fn tools_listing(&self, id: &WorkspaceId) -> Result<ToolsListing, WorkspaceError> {
+        let running = self.is_running(id)?;
+        let now = self.inner.clock.now_ms();
+        Ok(lock(&self.inner.state).tools.listing(id, running, now))
+    }
+
+    /// Runs an edit of the root file when the workspace can take it, then lists again.
+    fn tools_edit(
+        &self,
+        id: &WorkspaceId,
+        edit: impl FnOnce(&mut tools::FakeTools) -> Result<(), WorkspaceError>,
+    ) -> Result<ToolsListing, WorkspaceError> {
+        let running = self.is_running(id)?;
+        {
+            let mut state = lock(&self.inner.state);
+            state.tools.require(id, running)?;
+            edit(&mut state.tools)?;
+        }
+        self.tools_listing(id)
+    }
+}
+
+fn delete_check(entry: &Entry) -> DeleteCheck {
+    let removes_sandbox = entry
+        .record
+        .status
+        .is_down()
+        .then(|| entry.record.id.sandbox_name());
+    if entry.record.status == WorkspaceStatus::VolumeMissing {
+        return DeleteCheck::new(
+            entry.record.id.clone(),
+            Vec::new(),
+            Listing::default(),
+            Vec::new(),
+            removes_sandbox,
+        )
+        .with_volume_missing();
+    }
+    DeleteCheck::new(
+        entry.record.id.clone(),
+        entry.unsaved.repos.clone(),
+        entry.unsaved.other.clone(),
+        entry.unsaved.errors.clone(),
+        removes_sandbox,
+    )
+}
+
+/// A checkout on this computer as the fake sees it: a folder with a `.git/HEAD`, its origin the
+/// first `url = ` line of `.git/config`. Only the shape a screen needs; the real service reads
+/// much more carefully (`puddle-workspace`'s `LocalCheckout`).
+fn fake_local_checkout(path: &str) -> Result<LocalSource, LocalCheckoutError> {
+    let folder = std::path::Path::new(path.trim_end_matches(['/', '\\']));
+    let folder = if folder.file_name().is_some_and(|n| n == ".git") {
+        folder.parent().unwrap_or(folder)
+    } else {
+        folder
+    };
+    let git_dir = folder.join(".git");
+    if !git_dir.join("HEAD").is_file() {
+        return Err(LocalCheckoutError::NotCheckout {
+            folder: folder.to_path_buf(),
+        });
+    }
+    let origin = std::fs::read_to_string(git_dir.join("config"))
+        .ok()
+        .and_then(|text| {
+            text.lines()
+                .find_map(|l| l.trim().strip_prefix("url = ").map(str::to_owned))
+        })
+        .ok_or(OriginRefusal::NoOrigin);
+    Ok(LocalSource {
+        folder_name: folder
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        git_dir,
+        origin,
+    })
+}
+
+impl WorkspaceService for FakeWorkspaces {
+    fn local_checkout(&self, path: &str) -> Result<LocalSource, LocalCheckoutError> {
+        fake_local_checkout(path)
+    }
+
+    fn list(&self) -> BoxFuture<'_, Result<Vec<WorkspaceRecord>, WorkspaceError>> {
+        Box::pin(async move {
+            Ok(lock(&self.inner.state)
+                .entries
+                .values()
+                .map(|e| e.record.clone())
+                .collect())
+        })
+    }
+
+    fn default_image_description(&self) -> Option<String> {
+        // The labels the real default image carries, so the form shows what it shows with Puddle.
+        let labels = [
+            ("dev.containers.id", "base-debian"),
+            ("dev.containers.variant", "trixie"),
+            (
+                "devcontainer.metadata",
+                r#"[{"id":"ghcr.io/devcontainers/features/common-utils:2"},{"id":"ghcr.io/devcontainers/features/git:1"}]"#,
+            ),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .collect();
+        crate::describe_image(&labels)
+    }
+
+    fn names(&self) -> Vec<(WorkspaceId, String)> {
+        lock(&self.inner.state)
+            .entries
+            .values()
+            .map(|e| (e.record.id.clone(), e.record.name.as_str().to_owned()))
+            .collect()
+    }
+
+    fn get<'a>(
+        &'a self,
+        workspace: &'a OwnedWorkspace,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move { self.record_of(workspace.id()) })
+    }
+
+    fn create<'a>(
+        &'a self,
+        new: NewWorkspace,
+        git: &'a dyn GitSetup,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move {
+            let record = {
+                // The id is picked under the lock, so two creates cannot take the same one.
+                let mut state = lock(&self.inner.state);
+                // Ids come from the name, so a test or the UI fixture can name a workspace's
+                // paths before it exists.
+                let id = new
+                    .id(&NameIds, |id| state.entries.contains_key(id))
+                    .map_err(WorkspaceError::unavailable)?;
+                let mut record =
+                    WorkspaceRecord::new(id.clone(), new.owner, new.name.clone(), new.entries());
+                record.start_folder.clone_from(&new.start_folder);
+                record.image = new
+                    .image
+                    .as_ref()
+                    .map_or_else(|| DEFAULT_IMAGE.to_owned(), |i| i.as_str().to_owned());
+                if let Some(memory) = new.memory {
+                    record.memory = memory;
+                }
+                record.created_at = self.inner.clock.now_ms();
+                record.disk_size_mib = DEFAULT_DISK_MIB;
+                record.disk_used_mib = Some(0);
+                record.root_disk_size_mib = Some(DEFAULT_ROOT_DISK_MIB);
+                record.root_disk_used_mib = Some(0);
+                begin(&mut record, Operation::Creating)?;
+                if crate::label_taken(
+                    state.entries.values().map(|e| &e.record),
+                    new.owner,
+                    new.name.as_str(),
+                    None,
+                )
+                .is_some()
+                {
+                    return Err(WorkspaceError::Conflict(format!(
+                        "a workspace named {} already exists",
+                        new.name
+                    )));
+                }
+                git.claim(&id, new.owner)?;
+                state.entries.insert(
+                    id,
+                    Entry {
+                        record: record.clone(),
+                        unsaved: Unsaved::default(),
+                    },
+                );
+                record
+            };
+            git.set_up(&record.id, &new.repositories).await;
+            self.emit_status(&record);
+            self.run(
+                &record,
+                Operation::Creating,
+                vec![
+                    (WorkspaceStep::PreparingVolume, None, None),
+                    (
+                        WorkspaceStep::PullingImage,
+                        Some(record.image.clone()),
+                        None,
+                    ),
+                ]
+                .into_iter()
+                .chain(record.repositories.iter().map(|r| {
+                    (
+                        WorkspaceStep::Cloning,
+                        Some(r.url.as_str().to_owned()),
+                        Some(r.directory.clone()),
+                    )
+                }))
+                .collect(),
+            );
+            Ok(record)
+        })
+    }
+
+    fn start<'a>(
+        &'a self,
+        workspace: &'a OwnedWorkspace,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move {
+            let id = workspace.id();
+            let record = self.accept(id, Operation::Starting, |_| Ok(()), |_| {})?;
+            self.emit_status(&record);
+            self.run(
+                &record,
+                Operation::Starting,
+                vec![
+                    (WorkspaceStep::Starting, None, None),
+                    (WorkspaceStep::WaitingForAgent, None, None),
+                    (WorkspaceStep::Syncing, None, None),
+                ],
+            );
+            Ok(record)
+        })
+    }
+
+    fn stop<'a>(
+        &'a self,
+        workspace: &'a OwnedWorkspace,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move {
+            let id = workspace.id();
+            let record = self.accept(id, Operation::Stopping, |_| Ok(()), |_| {})?;
+            self.emit_status(&record);
+            self.run(
+                &record,
+                Operation::Stopping,
+                vec![
+                    (WorkspaceStep::Stopping, None, None),
+                    (WorkspaceStep::Reclaiming, None, None),
+                ],
+            );
+            Ok(record)
+        })
+    }
+
+    fn reclaim<'a>(
+        &'a self,
+        workspace: &'a OwnedWorkspace,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move {
+            let id = workspace.id();
+            let record = self.accept(id, Operation::Reclaiming, |_| Ok(()), |_| {})?;
+            self.run(
+                &record,
+                Operation::Reclaiming,
+                vec![(WorkspaceStep::Reclaiming, None, None)],
+            );
+            Ok(record)
+        })
+    }
+
+    fn reset_root_disk<'a>(
+        &'a self,
+        workspace: &'a OwnedWorkspace,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move {
+            let id = workspace.id();
+            let record = self.accept(id, Operation::ResettingRootDisk, |_| Ok(()), |_| {})?;
+            self.run(
+                &record,
+                Operation::ResettingRootDisk,
+                vec![(WorkspaceStep::ResettingRootDisk, None, None)],
+            );
+            Ok(record)
+        })
+    }
+
+    fn grow_root_disk<'a>(
+        &'a self,
+        workspace: &'a OwnedWorkspace,
+        size_mib: u32,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move {
+            let id = workspace.id();
+            let record = self.accept(
+                id,
+                Operation::GrowingRootDisk,
+                |r| {
+                    r.root_disk_size_mib
+                        .map_or(Ok(()), |current| admit_grow_size(size_mib, current))
+                },
+                |r| {
+                    r.root_disk_size_mib = Some(u64::from(size_mib));
+                    r.root_disk_grown_mib = Some(size_mib);
+                },
+            )?;
+            self.run(
+                &record,
+                Operation::GrowingRootDisk,
+                vec![(WorkspaceStep::GrowingRootDisk, None, None)],
+            );
+            Ok(record)
+        })
+    }
+
+    fn delete_check<'a>(
+        &'a self,
+        workspace: &'a OwnedWorkspace,
+    ) -> BoxFuture<'a, Result<DeleteCheck, WorkspaceError>> {
+        Box::pin(async move { self.check_for(workspace.id()) })
+    }
+
+    fn delete<'a>(
+        &'a self,
+        workspace: &'a OwnedWorkspace,
+        fingerprint: Option<&'a str>,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move {
+            let id = workspace.id();
+            let check = self.check_for(id)?;
+            let record = self.accept(
+                id,
+                Operation::Deleting,
+                |r| admit_delete_fingerprint(r, fingerprint, &check),
+                |_| {},
+            )?;
+            self.run(
+                &record,
+                Operation::Deleting,
+                vec![
+                    (WorkspaceStep::Checking, None, None),
+                    (WorkspaceStep::Removing, None, None),
+                ],
+            );
+            Ok(record)
+        })
+    }
+
+    fn rename<'a>(
+        &'a self,
+        workspace: &'a OwnedWorkspace,
+        name: DisplayName,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move {
+            let id = workspace.id();
+            let mut state = lock(&self.inner.state);
+            crate::check_rename(state.entries.values().map(|e| &e.record), id, &name)?;
+            let entry = state.entries.get_mut(id).ok_or_else(|| not_found(id))?;
+            entry.record.name = name;
+            Ok(entry.record.clone())
+        })
+    }
+
+    fn set_start_folder<'a>(
+        &'a self,
+        workspace: &'a OwnedWorkspace,
+        start_folder: Option<StartFolder>,
+    ) -> BoxFuture<'a, Result<StartFolderChange, WorkspaceError>> {
+        Box::pin(async move {
+            let id = workspace.id();
+            let mut state = lock(&self.inner.state);
+            crate::check_start_folder_change(state.entries.values().map(|e| &e.record), id)?;
+            let entry = state.entries.get_mut(id).ok_or_else(|| not_found(id))?;
+            entry.record.start_folder = start_folder;
+            // A folder the fake was never told about "exists" only in a running workspace.
+            let exists = (entry.record.status == WorkspaceStatus::Running
+                && entry.record.start_folder.is_some())
+            .then_some(true);
+            Ok(StartFolderChange {
+                record: entry.record.clone(),
+                exists,
+            })
+        })
+    }
+
+    fn orphan_volumes(&self) -> BoxFuture<'_, Result<Vec<WorkspaceId>, WorkspaceError>> {
+        Box::pin(async move { Ok(lock(&self.inner.state).orphans.keys().cloned().collect()) })
+    }
+
+    fn restore_orphan<'a>(
+        &'a self,
+        id: &'a WorkspaceId,
+        owner: UserId,
+        repository: Option<crate::workspaces::RepoUrl>,
+        git: &'a dyn GitSetup,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move {
+            DisplayName::parse(id.as_str()).map_err(|e| {
+                WorkspaceError::Invalid(format!("this name can't be a workspace: {e}"))
+            })?;
+            let (record, new) = {
+                let mut state = lock(&self.inner.state);
+                let Some(found) = state.orphans.get(id).cloned() else {
+                    return Err(WorkspaceError::NotFound(format!(
+                        "no workspace disk {}",
+                        id.volume_name()
+                    )));
+                };
+                if let Some(entry) = state.entries.get(id) {
+                    return Err(WorkspaceError::Conflict(format!(
+                        "{} already uses the disk {}; nothing was replaced",
+                        entry.record.name,
+                        id.volume_name()
+                    )));
+                }
+                let named_after_checkout = found.is_some();
+                let Some(url) = found.or(repository) else {
+                    return Err(WorkspaceError::Invalid(format!(
+                        "Puddle could not read a repository address from {}; enter the address of the repository on it",
+                        id.volume_name()
+                    )));
+                };
+                let entry = crate::workspaces::Repository {
+                    entry: crate::workspaces::new_entry_id(|_| false)
+                        .map_err(WorkspaceError::unavailable)?,
+                    directory: CheckoutDir::from_url(url.as_str()),
+                    url,
+                };
+                // Named as the host names it: after the checkout the disk holds, else its id.
+                let base = if named_after_checkout {
+                    entry.directory.as_str().to_owned()
+                } else {
+                    id.to_string()
+                };
+                let name = crate::workspaces::free_label(
+                    state.entries.values().map(|e| &e.record),
+                    owner,
+                    &base,
+                );
+                let mut record = WorkspaceRecord::new(id.clone(), owner, name, vec![entry.clone()]);
+                record.created_at = self.inner.clock.now_ms();
+                record.status = WorkspaceStatus::Stopped;
+                state.orphans.remove(id);
+                state.entries.insert(
+                    id.clone(),
+                    Entry {
+                        record: record.clone(),
+                        unsaved: Unsaved::default(),
+                    },
+                );
+                let new = NewRepository {
+                    repository: entry,
+                    identity: None,
+                    pull: true,
+                    push: true,
+                    push_block: None,
+                    local: None,
+                };
+                (record, new)
+            };
+            git.set_up(id, std::slice::from_ref(&new)).await;
+            self.emit_status(&record);
+            Ok(record)
+        })
+    }
+
+    fn set_session_user<'a>(
+        &'a self,
+        workspace: &'a OwnedWorkspace,
+        user: SessionUser,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move {
+            let id = workspace.id();
+            let mut state = lock(&self.inner.state);
+            crate::check_session_user_change(state.entries.values().map(|e| &e.record), id)?;
+            let entry = state.entries.get_mut(id).ok_or_else(|| not_found(id))?;
+            entry.record.session_user = user;
+            Ok(entry.record.clone())
+        })
+    }
+
+    fn kept_logins<'a>(
+        &'a self,
+        workspace: &'a OwnedWorkspace,
+    ) -> BoxFuture<'a, Result<KeptLogins, WorkspaceError>> {
+        Box::pin(async move {
+            let id = workspace.id();
+            self.record_of(id)?;
+            Ok(lock(&self.inner.state)
+                .kept_logins
+                .get(id.as_str())
+                .cloned()
+                .unwrap_or(KeptLogins {
+                    logins: Vec::new(),
+                    store_readable: true,
+                }))
+        })
+    }
+
+    fn forget_login<'a>(
+        &'a self,
+        workspace: &'a OwnedWorkspace,
+        service: &'a str,
+    ) -> BoxFuture<'a, Result<(), WorkspaceError>> {
+        Box::pin(async move {
+            let id = workspace.id();
+            self.record_of(id)?;
+            if !matches!(service, "claude" | "github" | "Claude Code" | "GitHub") {
+                return Err(WorkspaceError::NotFound(format!(
+                    "no login service {service:?}"
+                )));
+            }
+            let mut state = lock(&self.inner.state);
+            if state.login_store_refuses {
+                return Err(WorkspaceError::Unavailable(
+                    "the operating system's credential store did not delete a saved login; unlock it or start it and ask again (what was already deleted stays deleted)".to_owned(),
+                ));
+            }
+            if let Some(kept) = state.kept_logins.get_mut(id.as_str()) {
+                kept.logins
+                    .retain(|login| login.service != service && login.name != service);
+            }
+            state
+                .forgotten_logins
+                .push((id.to_string(), service.to_owned()));
+            Ok(())
+        })
+    }
+
+    fn check_shell_init<'a>(
+        &'a self,
+        workspace: &'a OwnedWorkspace,
+        script: &'a str,
+    ) -> BoxFuture<'a, Result<ShellInitCheck, WorkspaceError>> {
+        Box::pin(async move {
+            let id = workspace.id();
+            let record = self.record_of(id)?;
+            if record.status != WorkspaceStatus::Running {
+                return Ok(ShellInitCheck::NotRun(format!(
+                    "{} is not running; Puddle checks the script when it starts",
+                    record.name
+                )));
+            }
+            let mut state = lock(&self.inner.state);
+            state.shell_init_checked.push(script.to_owned());
+            Ok(state
+                .shell_init_check
+                .clone()
+                .unwrap_or(ShellInitCheck::Passed))
+        })
+    }
+
+    fn attach<'a>(
+        &'a self,
+        workspace: &'a OwnedWorkspace,
+        mode: AttachMode,
+    ) -> BoxFuture<'a, Result<Attached, WorkspaceError>> {
+        Box::pin(async move {
+            let id = workspace.id();
+            let record = self.record_of(id)?;
+            admit(&record, Action::Attach)?;
+            match mode {
+                AttachMode::Browser => {
+                    let target = BrowserTarget {
+                        origin: format!(
+                            "http://{}.localhost:{}",
+                            record.id,
+                            self.inner.front.port()
+                        ),
+                        front: self.inner.front,
+                        settings: puddle_settings::resolve(
+                            &puddle_settings::GlobalSettings::default(),
+                            None::<&puddle_settings::WorkspaceSettings>,
+                        ),
+                        login: None,
+                        open: None,
+                    };
+                    // The answer the host gives: the launcher opens a window or says why not.
+                    Ok(
+                        match self.inner.launcher.open_browser(&record, &target).await {
+                            Ok(()) => Attached::opened(),
+                            Err(err) => Attached::not_opened(err.to_string()),
+                        },
+                    )
+                }
+                AttachMode::Desktop => {
+                    let target = DesktopTarget {
+                        ssh_host: format!("puddle-{}", record.id),
+                        path: "/workspace".to_owned(),
+                        is_workspace_file: false,
+                    };
+                    Ok(
+                        match self.inner.launcher.open_desktop(&record, &target).await {
+                            Ok(()) => Attached::opened(),
+                            Err(err) => Attached::not_opened(err.to_string()),
+                        }
+                        .with_open_uri(target.open_uri()),
+                    )
+                }
+            }
+        })
+    }
+
+    fn tools<'a>(
+        &'a self,
+        workspace: &'a OwnedWorkspace,
+    ) -> BoxFuture<'a, Result<ToolsListing, WorkspaceError>> {
+        Box::pin(async move { self.tools_listing(workspace.id()) })
+    }
+
+    fn set_tool<'a>(
+        &'a self,
+        workspace: &'a OwnedWorkspace,
+        name: &'a ToolName,
+        version: &'a ToolVersion,
+        hash: &'a ToolsFileHash,
+    ) -> BoxFuture<'a, Result<ToolsListing, WorkspaceError>> {
+        Box::pin(async move {
+            self.tools_edit(workspace.id(), |tools| {
+                tools.set(workspace.id(), name, version, hash)
+            })
+        })
+    }
+
+    fn remove_tool<'a>(
+        &'a self,
+        workspace: &'a OwnedWorkspace,
+        name: &'a ToolName,
+        hash: &'a ToolsFileHash,
+    ) -> BoxFuture<'a, Result<ToolsListing, WorkspaceError>> {
+        Box::pin(async move {
+            self.tools_edit(workspace.id(), |tools| {
+                tools.remove(workspace.id(), name, hash)
+            })
+        })
+    }
+
+    fn tool_registry<'a>(
+        &'a self,
+        workspace: &'a OwnedWorkspace,
+    ) -> BoxFuture<'a, Result<ToolRegistry, WorkspaceError>> {
+        Box::pin(async move {
+            let id = workspace.id();
+            let running = self.is_running(id)?;
+            let state = lock(&self.inner.state);
+            state.tools.require(id, running)?;
+            Ok(state.tools.registry())
+        })
+    }
+
+    fn tool_versions<'a>(
+        &'a self,
+        workspace: &'a OwnedWorkspace,
+        name: &'a ToolName,
+    ) -> BoxFuture<'a, Result<ToolVersions, WorkspaceError>> {
+        Box::pin(async move {
+            let id = workspace.id();
+            let running = self.is_running(id)?;
+            let state = lock(&self.inner.state);
+            state.tools.require(id, running)?;
+            Ok(state.tools.versions(name))
+        })
+    }
+
+    fn install_tools<'a>(
+        &'a self,
+        workspace: &'a OwnedWorkspace,
+    ) -> BoxFuture<'a, Result<(), WorkspaceError>> {
+        Box::pin(async move {
+            let id = workspace.id();
+            let running = self.is_running(id)?;
+            let mut state = lock(&self.inner.state);
+            state.tools.require(id, running)?;
+            state.tools.install(id);
+            Ok(())
+        })
+    }
+
+    fn known_branches(&self, workspace: &OwnedWorkspace) -> BTreeMap<String, String> {
+        lock(&self.inner.state)
+            .last_listing
+            .get(workspace.id())
+            .map(|(_, list)| {
+                list.checkouts
+                    .iter()
+                    .filter_map(|c| Some((c.directory.clone(), c.branch.clone()?)))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn checkouts<'a>(
+        &'a self,
+        workspace: &'a OwnedWorkspace,
+    ) -> BoxFuture<'a, Result<Checkouts, WorkspaceError>> {
+        Box::pin(async move {
+            let id = workspace.id();
+            let now = self.inner.clock.now_ms();
+            let mut state = lock(&self.inner.state);
+            let entry = state.entries.get(id).ok_or_else(|| not_found(id))?;
+            let (running, entries) = (
+                entry.record.status == WorkspaceStatus::Running,
+                entry.record.repositories.clone(),
+            );
+            if running {
+                let found = state.guest.get(id).cloned().unwrap_or_default();
+                state.last_listing.insert(id.clone(), (now, found));
+            }
+            let last = state.last_listing.get(id);
+            let problem = (!running)
+                .then(|| "the workspace is not running; start it to list its checkouts".to_owned());
+            Ok(checkouts_view(
+                running,
+                last.map(|(at, _)| *at),
+                problem,
+                last.map(|(_, list)| list),
+                &entries,
+            ))
+        })
+    }
+
+    fn add_repository<'a>(
+        &'a self,
+        workspace: &'a OwnedWorkspace,
+        add: AddRepository,
+        git: &'a dyn GitSetup,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move {
+            let id = workspace.id();
+            match add {
+                AddRepository::Clone(new) => self.clone_into(id, new, true, git).await,
+                AddRepository::Existing {
+                    directory,
+                    seen,
+                    identity,
+                    pull,
+                    push,
+                } => {
+                    self.manage_existing(
+                        id,
+                        (&directory, &seen),
+                        identity,
+                        puddle_store::RepoToggles { pull, push },
+                        git,
+                    )
+                    .await
+                }
+            }
+        })
+    }
+
+    fn clone_again<'a>(
+        &'a self,
+        workspace: &'a OwnedWorkspace,
+        entry_id: &'a EntryId,
+        git: &'a dyn GitSetup,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move {
+            let id = workspace.id();
+            let repository = {
+                let state = lock(&self.inner.state);
+                let entry = state.entries.get(id).ok_or_else(|| not_found(id))?;
+                entry
+                    .record
+                    .repositories
+                    .iter()
+                    .find(|r| &r.entry == entry_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        WorkspaceError::NotFound(format!("{entry_id} is not on the list"))
+                    })?
+            };
+            let new = NewRepository {
+                repository,
+                identity: None,
+                pull: true,
+                push: true,
+                push_block: None,
+                local: None,
+            };
+            self.clone_into(id, new, false, git).await
+        })
+    }
+
+    fn remove_repository<'a>(
+        &'a self,
+        workspace: &'a OwnedWorkspace,
+        entry_id: &'a EntryId,
+    ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
+        Box::pin(async move {
+            let id = workspace.id();
+            let record = {
+                let mut state = lock(&self.inner.state);
+                let entry = state.entries.get_mut(id).ok_or_else(|| not_found(id))?;
+                if let Some(busy @ (Operation::Creating | Operation::Deleting)) = entry.record.busy
+                {
+                    return Err(WorkspaceError::Conflict(format!(
+                        "{} is {busy}; remove it from the list when that is done",
+                        entry.record.label()
+                    )));
+                }
+                let before = entry.record.repositories.len();
+                entry.record.repositories.retain(|r| &r.entry != entry_id);
+                if entry.record.repositories.len() == before {
+                    return Err(WorkspaceError::NotFound(format!(
+                        "{entry_id} is not on the list"
+                    )));
+                }
+                entry.record.clone()
+            };
+            self.repositories_changed(&record);
+            Ok(record)
+        })
+    }
+
+    fn settings_changed(&self) -> BoxFuture<'_, ()> {
+        self.inner
+            .settings_changes
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async {})
+    }
+}
+
+mod tools;
+
+#[cfg(test)]
+mod tests;

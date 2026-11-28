@@ -22,7 +22,7 @@ import {
   type Source,
 } from "#lib/identities/model.ts";
 import { isIdentitiesChanged } from "#lib/identities/events.ts";
-import { sentence } from "#lib/rules/model.ts";
+import { sentence } from "#lib/format/sentence.ts";
 import { live, type LiveSource } from "./live.svelte.ts";
 
 type StoreApi = Pick<ApiClient, "GET" | "POST" | "PUT" | "DELETE">;
@@ -342,10 +342,17 @@ export class IdentitiesStore {
     }
   }
 
-  /** Tests one credential and remembers the answer. */
-  async check(credential: Credential): Promise<Check> {
+  /**
+   * Tests one credential and remembers the answer. The credential store only says a token is
+   * there; with `identity` (the id of the identity that holds it) a readable credential is then
+   * tried on its Git host too, so a token the host refuses shows as a problem.
+   */
+  async check(credential: Credential, identity?: Identity): Promise<Check> {
     this.#setCheck(credential, { state: "checking" });
-    const read = await this.checkSource(credential.source);
+    let read = await this.checkSource(credential.source);
+    if (read.state === "ok" && identity) {
+      read = (await this.#askHost(credential, identity)) ?? read;
+    }
     const result: Check = {
       ...read,
       seen: { at: Date.now(), by: "test" },
@@ -355,13 +362,40 @@ export class IdentitiesStore {
     return result;
   }
 
+  /**
+   * What the Git host says of a credential's token: a problem when its list cannot be read,
+   * `null` when it can or the host could not be asked (the store's answer stands).
+   */
+  async #askHost(
+    credential: Credential,
+    identity: Identity,
+  ): Promise<Check | null> {
+    const at = identity.credentials.indexOf(credential);
+    try {
+      const { data } = await this.#api.POST("/api/repos/refresh", {
+        body: { identity_id: identity.id },
+      });
+      const problem = data?.sources.find(
+        (s) => s.credential === at && s.problem !== null,
+      )?.problem;
+      if (!problem) return null;
+      return {
+        state: "problem",
+        message: problem.message,
+        needsSignIn: problem.needs_sign_in,
+      };
+    } catch {
+      return null;
+    }
+  }
+
   /** Tests every credential of the identities, one after another. */
   async checkAll(
     identities: readonly Identity[] = this.identities,
   ): Promise<void> {
     for (const identity of identities) {
       for (const credential of identity.credentials) {
-        await this.check(credential);
+        await this.check(credential, identity);
       }
     }
   }

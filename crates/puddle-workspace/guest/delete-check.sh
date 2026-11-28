@@ -17,7 +17,11 @@
 #   E <dir> <message>  something could not be checked
 #   D                  the check ran to the end
 # Names have tabs and newlines replaced by '?'. Lines are cut at 500 characters, lists at 200.
+# shellcheck disable=SC2034,SC2154 # `repo` and `why` are shared with git-guard.sh, put in front of this text
 set -u
+
+# git-guard.sh (the git calls' guard: `g`, `read_filters`) comes in front of this text; it is not
+# a script of its own, so run this one through its Rust constant.
 
 cap=200
 
@@ -29,57 +33,6 @@ emit() {
 
 clean() {
     printf '%s' "$1" | tr '\t\n' '??' | cut -c1-300
-}
-
-# Config in a checkout can name programs for git to run, and this script runs as root, so every
-# git call switches them off: fsmonitor; hooks (with no optional locks `status` writes no index,
-# so `post-index-change` has no cause to run either); signature checks in `log`; and each filter
-# driver the checkout's config or the config of a repository nested in it names (blanked, so its
-# clean or process program never runs; the -c settings reach the git that `status` starts in a
-# nested repository). Any owner is accepted (the checkout may belong to the session user, not
-# root). A file a filter would rewrite may then read as changed: more is reported, never less.
-tab=$(printf '\t')
-
-# The filter drivers named in the config of the repository in $1 and of those nested in it, at
-# most $2 levels down, one per line; a line starting with `!` says why one cannot be switched off.
-filter_names() {
-    git -c safe.directory='*' -c core.fsmonitor=false -C "$1" config --name-only \
-        --get-regexp '^filter\.' 2>/dev/null |
-        awk '/^filter\.[A-Za-z0-9._-]+\.[A-Za-z0-9-]+$/ { sub(/^filter\./, ""); sub(/\.[A-Za-z0-9-]+$/, ""); print; next }
-            { print "!the filter in config entry " $0 " has a name no setting can carry" }'
-    git -c safe.directory='*' -c core.fsmonitor=false -C "$1" ls-files --stage 2>/dev/null |
-        while IFS= read -r entry; do
-            case $entry in 160000\ *) ;; *) continue ;; esac
-            nested=${entry#*"$tab"}
-            case $nested in \"*)
-                echo "!the nested repository $nested has a name git quotes"
-                continue
-                ;;
-            esac
-            [ -e "$1/$nested/.git" ] || continue
-            if [ "$2" -le 0 ]; then
-                echo "!the repository $1/$nested is nested too deep to read its filters"
-                continue
-            fi
-            filter_names "$1/$nested" $(($2 - 1))
-        done
-}
-
-# Sets $filters to the filter drivers of checkout $1; fails, with the reason in $why, when one
-# cannot be switched off.
-read_filters() {
-    filters=$(filter_names "$1" 8 | awk '!seen[$0]++')
-    why=$(printf '%s\n' "$filters" | awk '/^!/ { print substr($0, 2); exit }')
-    [ -z "$why" ]
-}
-
-g() {
-    for f in $filters; do
-        set -- -c "filter.$f.clean=" -c "filter.$f.smudge=" -c "filter.$f.process=" \
-            -c "filter.$f.required=false" "$@"
-    done
-    git -c safe.directory='*' -c core.fsmonitor=false -c core.hooksPath=/dev/null \
-        -c log.showSignature=false --no-optional-locks -C "$repo" "$@"
 }
 
 fail() {

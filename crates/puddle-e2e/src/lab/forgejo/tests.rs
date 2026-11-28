@@ -151,6 +151,7 @@ fn unreachable_fixture() -> Forgejo {
         ssh_port: quiet_port(),
         root: CertificateDer::from(Vec::new()),
         token: "secret-token".to_owned(),
+        password: "secret-password".to_owned(),
         started: StartCost::default(),
     }
 }
@@ -167,7 +168,7 @@ fn a_call_to_a_server_that_is_not_there_panics_without_the_token() {
 #[test]
 fn the_host_keys_are_the_sorted_public_key_files_and_none_without_a_data_folder() {
     let fixture = unreachable_fixture();
-    assert_eq!(fixture.ssh_host_keys(), [] as [String; 0]);
+    assert_eq!(fixture.ssh_host_keys(), <[String; 0]>::default());
     let ssh = fixture.scratch().join("data/ssh");
     fs::create_dir_all(ssh.join("unreadable.pub")).unwrap();
     fs::write(ssh.join("b.pub"), "ssh-rsa BBB host\n").unwrap();
@@ -241,4 +242,72 @@ fn a_private_key_file_is_readable_by_its_owner_only_and_never_overwritten() {
     assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o077, 0);
     assert!(std::panic::catch_unwind(|| write_private(&path, b"again")).is_err());
     assert_eq!(fs::read(&path).unwrap(), b"secret");
+}
+
+/// What the closure panics with.
+fn panic_text(run: impl FnOnce() + std::panic::UnwindSafe) -> String {
+    let caught = std::panic::catch_unwind(run).expect_err("the call must panic");
+    caught
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| caught.downcast_ref::<&str>().map(|text| (*text).to_owned()))
+        .unwrap()
+}
+
+#[test]
+fn a_refused_token_call_fails_with_its_status_and_leaks_neither_token_nor_password() {
+    let refused = PasswordAnswer {
+        status: 403,
+        body: r#"{"sha1":"tok-abc123","message":"secret-password is wrong"}"#.to_owned(),
+    };
+    let from_token = panic_text(|| {
+        refused.token("make token t");
+    });
+    let from_status = panic_text(|| refused.expect_status(204, "revoke token t"));
+    for text in [from_token, from_status, format!("{refused:?}")] {
+        assert!(text.contains("403") || text.contains("hidden"), "{text}");
+        assert!(!text.contains("tok-abc123"), "{text}");
+        assert!(!text.contains("secret-password"), "{text}");
+    }
+}
+
+#[test]
+fn a_created_token_answer_without_a_token_fails_without_its_body() {
+    let odd = PasswordAnswer {
+        status: 201,
+        body: r#"{"other":"tok-xyz789"}"#.to_owned(),
+    };
+    let text = panic_text(|| {
+        odd.token("make token t");
+    });
+    assert!(text.contains("holds no token"), "{text}");
+    assert!(!text.contains("tok-xyz789"), "{text}");
+}
+
+#[test]
+fn a_created_token_answer_yields_its_token() {
+    let made = PasswordAnswer {
+        status: 201,
+        body: r#"{"sha1":"tok-abc123"}"#.to_owned(),
+    };
+    assert_eq!(made.token("make token t"), "tok-abc123");
+}
+
+#[test]
+fn a_status_outside_the_known_ones_is_named_by_a_fixed_text() {
+    let odd = PasswordAnswer {
+        status: 418,
+        body: String::new(),
+    };
+    let text = panic_text(|| odd.expect_status(204, "revoke token t"));
+    assert!(text.contains("another status"), "{text}");
+    assert!(!text.contains("418"), "{text}");
+    assert_eq!(status_text(403), "403");
+}
+
+#[test]
+fn every_known_status_is_named_by_its_own_number() {
+    for status in [200, 201, 204, 400, 401, 403, 404, 409, 422, 500, 502, 503] {
+        assert_eq!(status_text(status), status.to_string());
+    }
 }

@@ -100,8 +100,10 @@
             type="button"
             class="btn"
             aria-label="Forget the {login.name} login"
-            onclick={() => ask(login)}>Forget</button
+            onclick={() => ask(login)}
           >
+            Forget
+          </button>
         </li>
       {/each}
     </ul>

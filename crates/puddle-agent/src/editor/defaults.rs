@@ -10,6 +10,7 @@
 //!
 //! - Settings (`User/settings.json`, JSON with comments): `workbench.colorTheme`, with
 //!   `window.autoDetectColorScheme` off while a theme is set, and `editor.fontSize`.
+//!   The user's own custom settings (`EditorDefaults::settings`, top-level keys) take the same path.
 //! - Key bindings (`User/keybindings.json`, an array): each planned entry is added when the file
 //!   has none with the same key, command and `when`, and not added again once the user removed it.
 //! - Extensions: an id that is not installed and that Puddle did not install before is installed
@@ -22,7 +23,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use puddle_agent_proto::editor::{EditorDefaults, EditorServer};
-use puddle_types::{MergeEntry, MergeFormat, MergeSpec, Merged, parse_merge_file, unmerge};
+use puddle_types::{
+    MergeEntry, MergeFormat, MergeRefusal, MergeSpec, Merged, ValidationError, parse_merge_file,
+    unmerge,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -163,20 +167,55 @@ struct Run<'a> {
 fn wanted_settings(
     defaults: &EditorDefaults,
     applied: &Applied,
-) -> Vec<(&'static str, Option<Value>)> {
+    current: &Value,
+) -> Vec<(String, Option<Value>)> {
+    // The theme goes back in this run only when the file still holds the one Puddle wrote.
+    let theme_handed_back = defaults.colour_theme.is_none()
+        && applied
+            .settings
+            .get(THEME)
+            .is_some_and(|last| current.get(THEME) == Some(last));
     let auto = if defaults.colour_theme.is_some() {
         Some(json!(false))
-    } else if applied.settings.get(AUTO_DETECT) == Some(&json!(false)) {
+    } else if theme_handed_back && applied.settings.get(AUTO_DETECT) == Some(&json!(false)) {
         // The theme is unset again: hand the colour scheme back to the system, as the first open does.
         Some(json!(true))
     } else {
         applied.settings.get(AUTO_DETECT).cloned()
     };
-    vec![
-        (THEME, defaults.colour_theme.as_ref().map(|t| json!(t))),
-        (AUTO_DETECT, auto),
-        (FONT_SIZE, defaults.font_size.map(|px| json!(px))),
-    ]
+    let mut wanted = vec![
+        (
+            THEME.to_owned(),
+            defaults.colour_theme.as_ref().map(|t| json!(t)),
+        ),
+        (AUTO_DETECT.to_owned(), auto),
+        (FONT_SIZE.to_owned(), defaults.font_size.map(|px| json!(px))),
+    ];
+    let custom = planned_custom_settings(defaults);
+    // A key Puddle wrote before that is no longer planned is handed back.
+    let gone = applied
+        .settings
+        .keys()
+        .filter(|k| !OWNED.contains(&k.as_str()) && !custom.contains_key(*k));
+    wanted.extend(gone.map(|k| (k.clone(), None)));
+    wanted.extend(custom.into_iter().map(|(k, v)| (k, Some(v))));
+    wanted
+}
+
+/// The keys Puddle owns through their own fields; a custom entry for one is ignored.
+const OWNED: [&str; 3] = [THEME, AUTO_DETECT, FONT_SIZE];
+
+/// The user's own planned settings (a text that is not a JSON object plans none), without the
+/// owned keys.
+fn planned_custom_settings(defaults: &EditorDefaults) -> BTreeMap<String, Value> {
+    defaults
+        .settings
+        .as_deref()
+        .and_then(|text| serde_json::from_str::<BTreeMap<String, Value>>(text).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(k, _)| !OWNED.contains(&k.as_str()))
+        .collect()
 }
 
 /// `bytes` as a JSON or JSONC value of one kind: `None` for a file that is not valid or holds
@@ -204,7 +243,11 @@ impl Run<'_> {
         };
         let mut sets = Vec::new();
         let mut removes = Vec::new();
-        for (key, wanted) in wanted_settings(self.defaults, &self.applied) {
+        // Kept apart until the file holds the values: a refused or failed write must not be
+        // remembered as done.
+        let mut next = self.applied.settings.clone();
+        for (key, wanted) in wanted_settings(self.defaults, &self.applied, &current) {
+            let key = key.as_str();
             let now = current.get(key);
             let last = self.applied.settings.get(key);
             // The first-open seed writes the colour scheme following; that is Puddle's own value.
@@ -214,21 +257,29 @@ impl Run<'_> {
             }
             if let Some(value) = wanted {
                 sets.push(MergeEntry::json(&[key], &value));
-                self.applied.settings.insert(key.to_owned(), value);
+                next.insert(key.to_owned(), value);
             } else {
                 if now.is_some() {
                     removes.push(vec![key.to_owned()]);
                 }
-                self.applied.settings.remove(key);
+                next.remove(key);
             }
         }
         if sets.is_empty() && removes.is_empty() {
+            self.applied.settings = next;
             return Ok(());
         }
         let edited = edit_settings(existing, &sets, &removes);
         match edited {
-            Ok(Some(text)) => self.write_user_file(file, &text),
-            Ok(None) => Ok(()),
+            Ok(Some(text)) => {
+                self.write_user_file(file, &text)?;
+                self.applied.settings = next;
+                Ok(())
+            }
+            Ok(None) => {
+                self.applied.settings = next;
+                Ok(())
+            }
             Err(err) => {
                 tracing::warn!(%err, "the editor settings file is left as it is");
                 Ok(())
@@ -251,9 +302,8 @@ impl Run<'_> {
             );
             return Ok(());
         };
-        let in_file = |entry: &Value| entries.iter().any(|e| identity(e) == identity(entry));
-        let was =
-            |list: &[Value], entry: &Value| list.iter().any(|a| identity(a) == identity(entry));
+        let in_file = |entry: &Value| entries.contains(entry);
+        let was = |list: &[Value], entry: &Value| list.contains(entry);
         let add: Vec<&Value> = wanted
             .iter()
             .filter(|w| !in_file(w) && !was(&self.applied.keybindings, w))
@@ -272,9 +322,7 @@ impl Run<'_> {
         // could not take out.
         let mut next: Vec<Value> = wanted
             .iter()
-            .filter(|w| {
-                was(&self.applied.keybindings, w) || add.iter().any(|a| identity(a) == identity(w))
-            })
+            .filter(|w| was(&self.applied.keybindings, w) || add.contains(w))
             .cloned()
             .collect();
         next.extend(
@@ -287,10 +335,7 @@ impl Run<'_> {
         let text = if drop.is_empty() {
             insert_entries(existing.as_deref(), &add)
         } else {
-            let mut kept: Vec<&Value> = entries
-                .iter()
-                .filter(|e| !drop.iter().any(|d| identity(d) == identity(e)))
-                .collect();
+            let mut kept: Vec<&Value> = entries.iter().filter(|e| !drop.contains(e)).collect();
             kept.extend(add.iter().copied());
             format!(
                 "{}\n",
@@ -313,8 +358,9 @@ impl Run<'_> {
             );
             return Ok(());
         }
+        self.write_user_file(file, text.as_bytes())?;
         self.applied.keybindings = next;
-        self.write_user_file(file, text.as_bytes())
+        Ok(())
     }
 
     /// Writes `text` to `file` and notes what it made.
@@ -336,41 +382,42 @@ fn written(merged: Merged, old: Vec<u8>) -> Vec<u8> {
     }
 }
 
+/// Why the editor's settings file is left as it is.
+#[derive(Debug, thiserror::Error)]
+enum SettingsRefused {
+    /// The entries to write are not a valid merge.
+    #[error(transparent)]
+    Spec(#[from] ValidationError),
+    /// The file cannot be merged into or edited.
+    #[error(transparent)]
+    File(#[from] MergeRefusal),
+}
+
 /// `existing` with `sets` written and `removes` taken out: `None` when that changes nothing, or
 /// why the file is left alone.
 fn edit_settings(
     existing: Option<Vec<u8>>,
     sets: &[MergeEntry],
     removes: &[Vec<String>],
-) -> Result<Option<Vec<u8>>, String> {
+) -> Result<Option<Vec<u8>>, SettingsRefused> {
     let old = existing.unwrap_or_default();
     let mut text = old.clone();
     if !sets.is_empty() {
         text = with_sets(text, sets)?;
     }
     if !removes.is_empty() {
-        let gone = unmerge(MergeFormat::Jsonc, &text, removes).map_err(|e| e.to_string())?;
+        let gone = unmerge(MergeFormat::Jsonc, &text, removes)?;
         text = written(gone.merged, text);
     }
     Ok((text != old).then_some(text))
 }
 
 /// `text` with `sets` merged in, or why the file is left alone.
-fn with_sets(text: Vec<u8>, sets: &[MergeEntry]) -> Result<Vec<u8>, String> {
-    let spec = MergeSpec::new(MergeFormat::Jsonc, sets.to_vec()).map_err(|e| e.to_string())?;
+fn with_sets(text: Vec<u8>, sets: &[MergeEntry]) -> Result<Vec<u8>, SettingsRefused> {
+    let spec = MergeSpec::new(MergeFormat::Jsonc, sets.to_vec())?;
     let from = (!text.is_empty()).then_some(text.as_slice());
-    let merged = spec.apply(from, &[]).map_err(|e| e.to_string())?;
+    let merged = spec.apply(from, &[])?;
     Ok(written(merged, text))
-}
-
-/// One key binding's identity: its key, command and `when`.
-fn identity(entry: &Value) -> Option<(String, String, String)> {
-    let get = |k: &str| entry.get(k).and_then(Value::as_str).map(str::to_owned);
-    Some((
-        get("key")?,
-        get("command")?,
-        get("when").unwrap_or_default(),
-    ))
 }
 
 fn planned_keybindings(defaults: &EditorDefaults) -> Vec<Value> {
@@ -379,6 +426,13 @@ fn planned_keybindings(defaults: &EditorDefaults) -> Vec<Value> {
         .as_deref()
         .and_then(|text| serde_json::from_str::<Vec<Value>>(text).ok())
         .unwrap_or_default()
+        .into_iter()
+        .filter(|entry| {
+            ["key", "command"]
+                .iter()
+                .all(|k| entry.get(k).is_some_and(Value::is_string))
+        })
+        .collect()
 }
 
 /// `existing` (an array in JSON with comments, or no file) with `add` before its closing bracket.
@@ -414,10 +468,7 @@ fn missing_extensions(
     let mut install = Vec::new();
     for id in &wanted {
         let known = applied.extensions.contains(id);
-        if installed
-            .iter()
-            .any(|name| name.starts_with(&format!("{id}-")))
-        {
+        if installed.iter().any(|name| is_folder_of(name, id)) {
             if !known {
                 applied.extensions.push(id.clone());
             }
@@ -427,6 +478,14 @@ fn missing_extensions(
     }
     applied.extensions.retain(|id| wanted.contains(id));
     install
+}
+
+/// Whether the folder `name` is an install of extension `id`: `<id>-<version>`, where the version
+/// starts with a digit, so `acme.tool-extra-1.0.0` is not `acme.tool`.
+fn is_folder_of(name: &str, id: &str) -> bool {
+    name.strip_prefix(id)
+        .and_then(|rest| rest.strip_prefix('-'))
+        .is_some_and(|version| version.starts_with(|c: char| c.is_ascii_digit()))
 }
 
 /// The lower-cased folder names in the extensions folder (`publisher.name-version`).

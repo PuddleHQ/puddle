@@ -268,6 +268,49 @@ pub(crate) fn hostile_checkout(root: &Path, vol: &Path) -> PathBuf {
     markers
 }
 
+/// Makes `vol/lazy`: a partial clone whose only remote names a program as its `uploadpack`, and
+/// whose HEAD blob `a.txt` is missing from the object store. A staged `c.txt` that is a near copy
+/// of it makes `git status` read that blob for rename detection, which lazy-fetches it by
+/// running the program. The program leaves `ran` in the returned folder.
+#[cfg(unix)]
+pub(crate) fn promisor_checkout(root: &Path, vol: &Path) -> PathBuf {
+    let markers = root.join("lazy-ran");
+    std::fs::create_dir_all(&markers).unwrap();
+    let program = root.join("lazy-uploadpack");
+    puddle_test_kit::write_executable(
+        &program,
+        &format!(
+            "#!/bin/sh\n: > '{}'\nexit 1\n",
+            markers.join("ran").display()
+        ),
+    );
+    let lazy = vol.join("lazy");
+    std::fs::create_dir_all(&lazy).unwrap();
+    git(&lazy, &["init", "-q", "-b", "main"]);
+    let text = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n";
+    std::fs::write(lazy.join("a.txt"), text).unwrap();
+    git(&lazy, &["add", "."]);
+    git(&lazy, &["commit", "-qm", "first"]);
+    let blob = git_output(&lazy, &["rev-parse", "HEAD:a.txt"]);
+    let loose = lazy.join(".git/objects").join(&blob[..2]).join(&blob[2..]);
+    std::fs::remove_file(loose).unwrap();
+    for (key, value) in [
+        ("extensions.partialClone", "origin".to_owned()),
+        ("remote.origin.promisor", "true".to_owned()),
+        (
+            "remote.origin.url",
+            root.join("nowhere").display().to_string(),
+        ),
+        ("remote.origin.uploadpack", program.display().to_string()),
+    ] {
+        git(&lazy, &["config", key, &value]);
+    }
+    std::fs::write(lazy.join("c.txt"), format!("{text}nine\n")).unwrap();
+    git(&lazy, &["rm", "-q", "--cached", "a.txt"]);
+    git(&lazy, &["add", "c.txt"]);
+    markers
+}
+
 /// The [`HOSTILE_COMMANDS`] that left a marker in `markers`.
 #[cfg(unix)]
 pub(crate) fn hostile_commands_that_ran(markers: &Path) -> Vec<String> {

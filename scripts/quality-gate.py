@@ -27,14 +27,14 @@ Flake rules (`flake-<id>` kinds; `--flakes` lists them with the fix each names) 
 raced in the past: a hand-rolled wait helper (every one outside the shared test kit counts; the row says
 whether it lacks a name or a bound), a hand-rolled wait loop (a `for`, `while` or `loop` in a test that sleeps or yields between looks), `file.lock()`, `try_recv()`, a port picked
 and dropped, a literal port bound or connected in a test (a name's authority and a URL are fakes and stay out), a name built from the clock, a wall-clock bar, records matched by position, an awaited page read
-asserted once, a reserved name (`.test`, `.example`, `example.com`) in a test that reaches the resolver, a script written in-process and then made executable (`flake-e1`, ETXTBSY: use `puddle_test_kit::write_executable`), a child's piped stdin written with the result unwrapped (`flake-s1`, BrokenPipe: use `puddle_test_kit::feed_stdin`), a Unix path literal (`/tmp`, `/home`, `/no...`) used as a host path or a path joined by hand with `format!` (`flake-f1`, it fails on Windows). Four bans have kinds of their own: `ban-untagged` (`#[serde(untagged)]`), `ban-error-capital` and `ban-error-period` (thiserror messages), and `ban-html-sink` (an HTML injection sink in `ui/src`: `{@html`, `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`; no reason comment excuses one). A site is reasoned by `flake-ok: <why>` on the line or within three lines above. A rule is
+asserted once, a reserved name (`.test`, `.example`, `example.com`) in a test that reaches the resolver, a script written in-process and then made executable (`flake-e1`, ETXTBSY: use `puddle_test_kit::write_executable`), a child's piped stdin written with the result unwrapped (`flake-s1`, BrokenPipe: use `puddle_test_kit::feed_stdin`), a Unix path literal (`/tmp`, `/home`, `/no...`) used as a host path or a path joined by hand with `format!` (`flake-f1`, it fails on Windows). Six bans have kinds of their own: `ban-untagged` (`#[serde(untagged)]`), `ban-error-capital` and `ban-error-period` (thiserror messages), `ban-allow` (any `#[allow]` or `#![allow]`, which clippy's `allow_attributes` skips in the inner form: write `#[expect(lint, reason = "...")]`; a file in `ALLOW_EXEMPT` (none now) keeps its `allow` until its reason is gone, and the entry fails once the file has no `allow`), `ban-result-string` (`Result<_, String>` in production code: return a typed error; no reason comment excuses one) and `ban-html-sink` (an HTML injection sink in `ui/src`: `{@html`, `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`; no reason comment excuses one). A site is reasoned by `flake-ok: <why>` on the line or within three lines above. A rule is
 counted (`flake-<id>`, `flake-<id>-unreasoned`) until its sites are fixed or reasoned, then its `scripts/flake-rules/<id>.rule` says
 `status: failing` and an unreasoned site becomes a `noreason` row. Their self-test replays the original code of
 fixed flakes from `scripts/flake-fixtures/`.
 
 Context per Rust line: `test` (under tests/, benches/, examples/; in a `#[cfg(test)]` or
-`#[cfg(any(test, feature = "testing"))]` item or a file module so declared; or in the test-only
-crates puddle-e2e, puddle-vm-tests, puddle-test-kit and puddle-proxy-test-support), else `prod`. Rows: kind, context, file:line, detail.
+`#[cfg(any(test, feature = "testing"))]` item (never `any(windows, test)`: it builds outside tests) or a file module so declared; or in the test-only
+crates puddle-e2e, puddle-vm-tests, puddle-test-kit, puddle-proxy-test-support, puddle-host-test-support and puddle-compute-msb-test-support), else `prod`. Rows: kind, context, file:line, detail.
 
 It is a lexer-free scanner (strings and comments are blanked by a small state machine), so it
 can miss or misplace a hit in macro-generated or very unusual code: a count is a safety net, the
@@ -51,12 +51,32 @@ import sys
 import tomllib
 from collections import Counter
 
+
+def load_sibling(name):
+    """Load scripts/<name>.py by path: `python3 -I` leaves the script's folder off sys.path."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(name, os.path.join(os.path.dirname(os.path.abspath(__file__)), name + ".py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_flakes = load_sibling("quality_gate_flakes")
+item_end, flake_rust, flake_e2e, flake_fixed_port, flake_port_calls, flake_summary = (
+    _flakes.item_end, _flakes.flake_rust, _flakes.flake_e2e, _flakes.flake_fixed_port, _flakes.flake_port_calls, _flakes.flake_summary)
+FLAKE_RULES, FLAKE_FAILING, FLAKE_FIX, load_flake_rules = _flakes.FLAKE_RULES, _flakes.FLAKE_FAILING, _flakes.FLAKE_FIX, _flakes.load_flake_rules
+
 SKIP_DIRS = {"target", "node_modules", ".git", ".svelte-kit", "build", "corpus", "dist", "test-results",
              "playwright-report", ".scratch", "coverage"}  # coverage: vitest's lcov-report (ui/coverage, gitignored) ships istanbul's own eslint-disable lines
 TEST_CRATES = ("crates/puddle-e2e/", "crates/puddle-vm-tests/", "crates/puddle-test-kit/",
-              "crates/puddle-proxy-test-support/")
-TEST_CFG = re.compile(r"#\[cfg\((?:test|all\(test\b[^\]]*|any\(test\b[^\]]*|any\([^\]]*feature\s*=\s*\"testing\"[^\]]*|feature\s*=\s*\"testing\")\)\]")
+              "crates/puddle-proxy-test-support/", "crates/puddle-host-test-support/",
+              "crates/puddle-compute-msb-test-support/")
+_TEST_ONLY = r"(?:test|feature\s*=\s*\"testing\")"
+# Test code is `cfg(test)`, `all(test, ..)` and `any(..)` whose every member is `test` or `feature = "testing"`.
+# `any(windows, test)` and `any(test, windows)` also build outside tests, so they stay production code.
+TEST_CFG = re.compile(r"#\[cfg\((?:test|all\(test\b[^\]]*|any\(\s*" + _TEST_ONLY + r"(?:\s*,\s*" + _TEST_ONLY + r")*\s*,?\s*\)|feature\s*=\s*\"testing\")\)\]")
 TEST_ATTR = re.compile(r"#\[(?:tokio::|rstest|test_case|test_log::)?test\b[^\]]*\]|#\[tokio::test\b")
+SCANNER_FILES = ("scripts/quality-gate.py", "scripts/quality_gate_flakes.py", "scripts/quality_gate_selftest.py")  # their docs and fixtures name the markers
 TEXT_EXT = {".rs", ".ts", ".js", ".svelte", ".sh", ".ps1", ".py", ".toml", ".yml", ".yaml", ".mjs", ".cjs"}
 
 
@@ -129,24 +149,6 @@ def strip_code(lines):
         code_out.append("".join(code))
         com_out.append("".join(com))
     return code_out, com_out
-
-
-def item_end(code, start):
-    """Line index where the item starting at `start` ends (brace-balanced), or `start` if it ends
-    with `;` before any `{`. Returns (end, is_decl_without_body)."""
-    depth, opened = 0, False
-    for j in range(start, len(code)):
-        for ch in code[j]:
-            if ch == "{":
-                depth += 1
-                opened = True
-            elif ch == "}":
-                depth -= 1
-            elif ch == ";" and not opened and depth == 0:
-                return j, True
-        if opened and depth <= 0:
-            return j, False
-    return len(code) - 1, False
 
 
 def indent(line):
@@ -400,7 +402,13 @@ def scan(root):
             flake_pickers = flake_rust(f, raw, code, com, test_lines, lambda kind, i, detail: add(kind, ctx(i), f, i, detail))
             port_pickers.update({n: f for n in flake_pickers})
             flake_fixed_port(raw, code, com, test_lines, lambda kind, i, detail: add(kind, ctx(i), f, i, detail))
-            ban_rows(raw, code, ctx, lambda kind, c, i, detail: add(kind, c, f, i, detail))
+            ban_rows(raw, code, com, ctx, lambda kind, c, i, detail: add(kind, c, f, i, detail), f.split("/"), f in ALLOW_EXEMPT)
+
+    # A `ban-allow` exemption whose file no longer has an `allow` is stale: delete the entry.
+    held = {r[2].rsplit(":", 1)[0] for r in rows if r[0] == "ban-allow-exempt"}
+    for exempt, why in ALLOW_EXEMPT.items():
+        if exempt not in held and os.path.exists(os.path.join(root, exempt)):
+            add("noreason", "any", exempt, 0, f"stale ban-allow exemption ({why}): the file has no `allow` any more; delete the entry from ALLOW_EXEMPT in scripts/quality-gate.py")
 
     # Rule p1: the callers of the port-picking functions found above, in any file.
     for f, (code, com) in stripped.items():
@@ -411,7 +419,7 @@ def scan(root):
     # Markers in every text file (comments and strings alike, so docs inside scripts count).
     for f, lines in texts.items():
         vendor = f.startswith("vendor/")
-        if vendor or f == "scripts/quality-gate.py":
+        if vendor or f in SCANNER_FILES:
             continue
         for i, line in enumerate(lines):
             # A marker is the first word of a comment or is followed by `:` or `(`; prose that mentions TODO is not one.
@@ -547,7 +555,8 @@ def crate_root_rows(texts, stripped, add):
 # The shared test kit (crates/puddle-test-kit) is a dev-dependency only: a product crate that lists it under
 # [dependencies] or [build-dependencies] (also per target, or renamed) would ship test helpers. The test-only
 # crates (TEST_CRATES) may list it as a normal dependency, since they are not product code.
-TEST_KIT = ("puddle-test-kit", "puddle-proxy-test-support")
+TEST_KIT = ("puddle-test-kit", "puddle-proxy-test-support", "puddle-host-test-support",
+            "puddle-compute-msb-test-support")
 
 
 # Bans in the standards' own words (docs/adr/0002 "never `#[serde(untagged)]`", docs/STANDARDS.md section 5 "error messages
@@ -556,9 +565,54 @@ BAN_UNTAGGED = re.compile(r"#!?\[\s*serde\s*\([^\]]*\buntagged\b")
 BAN_ERROR_MESSAGE = re.compile(r'#\[\s*error\(\s*"((?:[^"\\]|\\.)*)"')
 
 
-def ban_rows(raw, code, ctx, add):
-    """Rows `ban-untagged`, `ban-error-capital`, `ban-error-period` for one Rust file; `add(kind, ctx, i, detail)`."""
+# `#[allow]` and `#![allow]` are banned: `#[expect(lint, reason = "...")]` says the same and fails when the lint stops
+# firing. clippy's own `allow_attributes` skips the inner `#![allow]` form, so this rule covers it. A file listed here
+# keeps its `allow` until the reason names is gone; the entry fails once the file has none (stale). Empty since the
+# last three test-support modules moved into library crates.
+ALLOW_EXEMPT: dict[str, str] = {}
+# Modules behind `feature = "contract"` or `"fake"` are test support the scanner reads as prod; their string errors are
+# the contract tests' own verdicts, not an error type a caller matches on.
+STRING_ERROR_TEST_DIRS = {"contract", "fake"}
+BAN_ALLOW = re.compile(r"#!?\[\s*(?:cfg_attr\([^\]]*?\ballow\b|allow\s*\()")
+
+
+def result_string_hits(line):
+    """Count `Result<_, String>` (two type arguments, the second exactly `String`) in one code line."""
+    hits = 0
+    for m in re.finditer(r"(?<![\w:])(?:std::)?Result\s*<", line):
+        depth, args, cur = 1, [], ""
+        for ch in line[m.end():]:
+            if ch == "<":
+                depth += 1
+            elif ch == ">" and depth == 1:
+                args.append(cur)
+                break
+            elif ch == ">":
+                depth -= 1
+            elif ch == "," and depth == 1:
+                args.append(cur)
+                cur = ""
+                continue
+            cur += ch
+        else:
+            continue
+        if len(args) == 2 and args[1].strip() == "String":
+            hits += 1
+    return hits
+
+
+def ban_rows(raw, code, com, ctx, add, path_parts=(), allow_exempt=False):
+    """Rows `ban-untagged`, `ban-error-capital`, `ban-error-period`, `ban-allow`, `ban-result-string` for one Rust file; `add(kind, ctx, i, detail)`."""
     for i, line in enumerate(code):
+        if BAN_ALLOW.search(line):
+            if allow_exempt:
+                add("ban-allow-exempt", ctx(i), i, raw[i])
+            else:
+                add("ban-allow", ctx(i), i, raw[i])
+                add("noreason", ctx(i), i, "allow attribute: use #[expect(lint, reason = \"...\")] (cfg_attr for a lint that fires under one cfg only); an `allow` hides a lint that stopped firing | " + raw[i])
+        if ctx(i) == "prod" and not STRING_ERROR_TEST_DIRS.intersection(path_parts) and result_string_hits(line):
+            add("ban-result-string", ctx(i), i, raw[i])
+            add("noreason", ctx(i), i, "Result<_, String> in production code: return a typed error (thiserror); no comment excuses one (STANDARDS section 6) | " + raw[i])
         if BAN_UNTAGGED.search(line):
             add("ban-untagged", ctx(i), i, raw[i])
             add("noreason", ctx(i), i, "#[serde(untagged)]: a wrong branch is silent, use an internally or adjacently tagged enum (ADR 0002) | " + raw[i])
@@ -608,809 +662,12 @@ def kit_dependency_rows(texts, add):
                             f"{kit} in [{kind}]: a shared test kit is a dev-dependency only; move it to [dev-dependencies] | {lines[at]}")
 
 
-# Flake-prone test shapes (counted; failing once the rule's file says so). Each rule has two kinds: `flake-<id>` for every
-# site and `flake-<id>-unreasoned` for the sites with no `flake-ok: <why>` comment on the line or within
-# three lines above (a UI line may carry `eslint-disable-next-line no-restricted-syntax -- <why>` instead).
-# A failing rule also adds a `noreason` row per unreasoned site, so `--missing` and the `quality`
-# gate fail on it. Each rule is one file, `scripts/flake-rules/<id>.rule` (`status: counted|failing`, `fix:`, and the
-# `fixture:` and `as:` the self-test replays). Flipping a rule is a one-line edit of its own file and a new rule is a
-# new file, so two branches that each add or flip a rule never edit the same line (`scripts/flake-rules-test.sh`).
-# The scan reads shapes, not truth: a reason is read by a reviewer, and a shape it cannot see
-# (a producer that is synchronous, a wait anchored on something already true) needs a run under load.
-FLAKE_RULES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "flake-rules")
-FLAKE_RULE_KEYS = ("status", "fix", "fixture", "as")
-
-
-def load_flake_rules(directory):
-    """Read `<id>.rule` files: one `key: value` per line, keys in FLAKE_RULE_KEYS, status counted or failing."""
-    rules = {}
-    for name in sorted(os.listdir(directory)):
-        if not name.endswith(".rule"):
-            continue
-        fields = {}
-        with open(os.path.join(directory, name), encoding="utf-8") as h:
-            for n, line in enumerate(h, 1):
-                key, sep, value = line.rstrip("\n").partition(": ")
-                if not sep or key not in FLAKE_RULE_KEYS or key in fields:
-                    raise SystemExit(f"{name}:{n}: want one `key: value` per line with keys {FLAKE_RULE_KEYS}, each once")
-                fields[key] = value
-        if sorted(fields) != sorted(FLAKE_RULE_KEYS) or fields["status"] not in ("counted", "failing"):
-            raise SystemExit(f"{name}: needs {FLAKE_RULE_KEYS} and `status: counted` or `status: failing`")
-        rules[name[:-len(".rule")]] = fields
-    return rules
-
-
-FLAKE_RULES = load_flake_rules(FLAKE_RULES_DIR)
-FLAKE_FAILING = {r for r, v in FLAKE_RULES.items() if v["status"] == "failing"}
-FLAKE_FIX = {r: v["fix"] for r, v in FLAKE_RULES.items()}
-FLAKE_OK = re.compile(r"flake-ok:\s*\S")
-FLAKE_POSIX_LIT = re.compile(r'"/(?:tmp|home|no|nonexistent)\b')  # a literal Unix path; `/none` (a URL path) is not `/no`
-FLAKE_PATH_SINK = re.compile(r"\bPath(?:Buf)?::(?:new|from)\(|\.join\(|\b\w*(?:dir|path|file|root)\w*\b.*\.(?:into|to_owned)\(\)")
-FLAKE_PATH_FORMAT = re.compile(r'format!\(\s*"\{[^}"]*\}/\{')
-FLAKE_PATH_WORD = re.compile(r"\b\w*(?:dir|path|root|tmp|home|base)\w*\b", re.I)
-FLAKE_WAIT_NAME = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(until\w*|eventually\w*|wait_for\w*|wait_until\w*|poll_until\w*)\b")
-FLAKE_WAIT_HOME = "crates/puddle-test-kit/"  # the kit's own helpers (the crate is that path) are the target, not a hit
-FLAKE_RESERVED = re.compile(r'"[^"]*(?<![@\w.-])(?:[a-z0-9-]+\.)*(?:[a-z0-9-]+\.(?:test|example)|example\.(?:com|net|org))(?![\w-]|\.[a-z0-9])', re.I)  # not `x.test.invalid` (a `.invalid` name) or `x.test.rs` (a file)
-FLAKE_REAL_DNS = re.compile(r"\b(?:web_internet|through_company_proxy|SystemResolver)\b")  # a test file where a connect can reach the OS resolver
-FLAKE_LOOP_HEAD = re.compile(r"^\s*(?:'\w+:\s*)?(?:(?:let\b[^=]*=\s*|break\s+)?loop\b|for\b.*\bin\b|while\b)")
-FLAKE_PAUSE = re.compile(r"\bsleep\(|\byield_now\(\)|\.tick\(\)")
-FLAKE_KIT_CALL = re.compile(r"\b(?:eventually\w*|next_event_\w+|no_event_\w+)\s*\(")
-FLAKE_EXEC_MODE = re.compile(r"from_mode\(\s*0o0*[1357][0-7]{2}\b")  # an owner-executable mode; 0o644, 0o600 and friends stay out
-FLAKE_CHMOD_X = re.compile(r'Command::new\(\s*"chmod"\s*\)')
-FLAKE_FILE_WRITE = re.compile(r"\bfs::write\(|\bFile::create\(|\.write_all\(|\bfs::copy\(|\bwrite\(\s*&?\w*(?:path|file)")
-FLAKE_CLOCK = re.compile(r"SystemTime::now\(\)|UNIX_EPOCH|as_nanos\(\)|subsec_nanos\(\)|\{nanos\}|\bnanos\b")
-FLAKE_PAGE_READ = re.compile(r"\.(evaluate|evaluateAll|boundingBox|textContent|innerText|innerHTML|getAttribute|isVisible|isHidden|isChecked|isEnabled|isDisabled|isEditable|count|inputValue|allTextContents|allInnerTexts|all)\(|\b\w+\(\s*page\b")
-
-
-def flake_row(add, rule, i, detail, reasoned):
-    add(f"flake-{rule}", i, detail)
-    if not reasoned:
-        add(f"flake-{rule}-unreasoned", i, detail)
-        if rule in FLAKE_FAILING:
-            add("noreason", i, f"flake-{rule}: {FLAKE_FIX[rule]} | {detail}")
-
-
-def flake_rust(f, raw, code, com, test, rows_add):
-    """Per-file Rust rules. `rows_add(kind, i, detail)` records a row; returns the port-picking fns found."""
-    def reasoned(i):
-        return any(FLAKE_OK.search(com[k]) for k in range(max(0, i - 3), i + 1))
-
-    def hit(rule, i, detail=None):
-        flake_row(rows_add, rule, i, (detail if detail is not None else raw[i]).strip(), reasoned(i))
-
-    # Rule w3: a loop that pauses between looks is a wait written by hand, whatever it is called. Only the
-    # innermost loop of a nest counts, and a loop on tokio's paused clock (`advance`) steps virtual time.
-    loops = []
-    wait_fns = [(i, item_end(code, i)[0]) for i, line in enumerate(code) if FLAKE_WAIT_NAME.match(line)]  # rule w1 owns these
-    for i, line in enumerate(code):
-        if test[i] and not f.startswith(FLAKE_WAIT_HOME) and FLAKE_LOOP_HEAD.match(line) and not any(a < i <= b for a, b in wait_fns):
-            end, _ = item_end(code, i)
-            body = code[i:end + 1]
-            if any(FLAKE_PAUSE.search(b) for b in body) and not any(re.search(r"\badvance\(", b) for b in body):
-                loops.append((i, end))
-    for i, end in loops:
-        if not any(i < j and e <= end for j, e in loops):
-            hit("w3", i)
-
-    pickers = {}
-    picker_ranges = [(i, item_end(code, i)[0]) for i, line in enumerate(code)
-                     if re.search(r"\bfn\s+\w+[^{;]*->\s*u16\b", line)]
-    stdin_pipes = set()  # names bound to a child's `stdin.take()` earlier in the file (rule s1)
-    real_dns = f.startswith("crates/puddle-vm-tests/") or (("/tests/" in f or f.startswith("tests/")) and any(FLAKE_REAL_DNS.search(c) for c in code))
-    for i, line in enumerate(code):
-        t = test[i]
-        if t and real_dns and FLAKE_RESERVED.search(raw[i]) and not raw[i].lstrip().startswith("//"):
-            hit("d1", i)
-        if t and re.search(r"\.try_recv\(\)", line):
-            hit("o1", i)
-        m = re.search(r"\bfn\s+(\w+)[^{;]*->\s*u16\b", line)
-        if m:
-            e, _ = item_end(code, i)
-            body = "\n".join(code[i:e + 1])
-            if re.search(r"\bbind\(", body) and re.search(r"\.port\(\)", body) and not re.search(r"spawn|into_std|forget", body):
-                pickers[m.group(1)] = i
-                hit("p1", i)
-        elif re.search(r"bind\([^;]*\)[^;]*\.local_addr\(\)[^;]*\.port\(\)", line) and not re.search(r"\blet\s+\w+\s*=\s*\w*Listener", line):
-            hit("p1", i)
-        if t:
-            flake_dropped_port(code, raw, i, hit, picker_ranges)
-            flake_refused_after_stop(code, i, hit)
-        if t and re.search(r"\b\w*file\w*\.lock(?:_exclusive|_shared)?\(\)", line, re.I):
-            hit("w2", i)
-        m = FLAKE_WAIT_NAME.match(line)
-        if m and t and not f.startswith(FLAKE_WAIT_HOME) and FLAKE_KIT_CALL.search("\n".join(code[i:item_end(code, i)[0] + 1]).partition("{")[2]):
-            m = None  # a helper that only fills in the probe of a kit wait is named and bounded by the kit
-        if t and m and not f.startswith(FLAKE_WAIT_HOME):
-            sig, k = line, i
-            while "{" not in sig and k + 1 < len(code) and k < i + 6:
-                k += 1
-                sig += code[k]
-            sig = sig.split("{")[0]
-            named = bool(re.search(r":\s*&(?:'\w+\s+)?str\b|line:|what:|name:", sig))
-            bounded = bool(re.search(r"Duration|Instant|within|limit|deadline|timeout", sig))
-            hit("w1", i, ("no-name " if not named else "") + ("no-bound " if not bounded else "") + raw[i])
-        if t and FLAKE_CLOCK.search(raw[i]) and re.search(r"format!|\.join\(|temp_dir", raw[i]):
-            hit("n1", i)
-        elif t and re.search(r"\benv::temp_dir\(\)", line):
-            # the clock may be read a few lines above or below the path it names
-            stmt = "".join(raw[max(0, i - 10):i + 1])
-            k = i
-            while k + 1 < len(code) and k < i + 8 and code[k + 1].strip() != "}":
-                k += 1
-                stmt += raw[k]
-            if FLAKE_CLOCK.search(stmt) or "Instant::now()" in stmt:
-                hit("n1", i)
-        if t and re.search(r"\b(?:assert|debug_assert)\w*!\s*\(", line):
-            stmt, k = line, i
-            while ");" not in code[k] and k + 1 < len(code) and k < i + 6:
-                k += 1
-                stmt += code[k]
-            if (re.search(r"<=?\s*Duration::from_|elapsed\(\)\s*<|Duration::from_\w+\([^)]*\)\s*>=?", stmt)
-                    and not re.search(r"Instant::now\(\)\s*<=?\s*\w*deadline|now\(\)\s*<\s*\w+", stmt)
-                    and not (re.search(r"\b\w*cpu\w*\s*<=?\s*Duration::from_", stmt) and not re.search(r"elapsed\(\)|Instant", stmt)
-                             and any("cpu_time(" in c for c in code[max(0, i - 15):i]))):  # a bar on `puddle_test_kit::cpu_time`
-                hit("t1", i)
-        # Rule e1: a file this test wrote in the last few lines, then made executable. The write leaves a writable
-        # descriptor open in this process, a sibling test's fork copies it, and the exec fails with `Text file busy`.
-        if t and ("set_permissions(" in line or FLAKE_CHMOD_X.search(raw[i])):
-            ahead = "".join(raw[i:i + 5])
-            if (FLAKE_EXEC_MODE.search(ahead) or ("chmod" in raw[i] and "+x" in ahead)) and any(FLAKE_FILE_WRITE.search(code[k]) for k in range(max(0, i - 12), i + 1)):
-                hit("e1", i)
-        # Rule s1: a test that writes a child's piped stdin and unwraps the result. A child that exits before it reads
-        # (the script failed, the hook refused the plan) closes the pipe, the write returns `BrokenPipe`, and the test panics
-        # on that instead of reading the child's own outcome. `puddle_test_kit::feed_stdin` treats that as the child's result.
-        if t and "write_all(" in line:
-            k = i
-            while k > 0 and i - k < 6 and code[k - 1].strip() and not code[k - 1].rstrip().endswith((";", "{", "}")):
-                k -= 1
-            stmt = "".join(code[k:min(len(code), i + 4)]).partition(";")[0]
-            head, _, tail = stmt.partition("write_all(")
-            taken = re.search(r"\.stdin\s*\.take\(\)", head) or any(re.search(rf"(?<![\w.]){v}\s*\.\s*$", head) for v in stdin_pipes)
-            checked = re.search(r"\)\s*(?:\.await\s*)?(?:\.unwrap\(\)|\.expect\(|\?)", tail) and not re.match(r"\s*let\s+_\b", stmt)
-            if taken and checked:
-                hit("s1", k)
-        mp = re.search(r"\blet\s+(?:mut\s+)?(\w+)\s*=\s*\w+(?:\.\w+)*\.stdin\s*\.take\(\)", line)
-        if mp:
-            stdin_pipes.add(mp.group(1))
-        if t and re.search(r"\b\w*(record|event|row|entr|audit|line)\w*\.(?:iter\(\)\.)?zip\(", line, re.I):
-            hit("a1", i)
-        # Rule f1: a Unix path literal that becomes a host path, or two parts joined with a `/` by hand, is a test that
-        # passes on Linux and fails on Windows (`/tmp` has no drive, `a/b` mixes separators). Guest paths stay strings.
-        if t and not raw[i].lstrip().startswith("//") and "://" not in raw[i]:
-            if (FLAKE_POSIX_LIT.search(raw[i]) and FLAKE_PATH_SINK.search(line)) or (
-                    FLAKE_PATH_FORMAT.search(raw[i]) and FLAKE_PATH_WORD.search(raw[i])):
-                hit("f1", i)
-    return pickers
-
-
-FLAKE_SOCKET_BIND = re.compile(r"\b(?:TcpListener|UdpSocket)::bind\(")
-FLAKE_HELD_PORT = re.compile(r"\b(?:quiet_port|ReservedPort|refused_port|reserved)\b")
-FLAKE_FN_HEAD = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s")
-
-
-def statement_from(code, i, span=8):
-    """The text of the statement that starts on line i: up to the first `;`, or a closing brace line, within `span` lines."""
-    out = []
-    for k in range(i, min(len(code), i + span)):
-        out.append(code[k])
-        if ";" in code[k] or code[k].strip() == "}":
-            break
-    return "\n".join(out).split(";")[0]
-
-
-def flake_dropped_port(code, raw, i, hit, picker_ranges):
-    """Rule p1 beyond a picker fn: a listener bound to port 0 whose port is read and then given up (a chain
-    that drops the listener in the same statement, or `drop(listener)` after `listener.local_addr()`)."""
-    line = code[i]
-    if not FLAKE_SOCKET_BIND.search(line) or re.search(r"\blet\s*\(", line) or any(a <= i <= b for a, b in picker_ranges):
-        return
-    stmt = statement_from(code, i)
-    after_bind = FLAKE_SOCKET_BIND.split(stmt, maxsplit=1)[-1]
-    if "local_addr(" in after_bind:
-        hit("p1", i)
-        return
-    m = re.search(r"\blet\s+(?:mut\s+)?(\w+)\s*=", line)
-    if not m:
-        return
-    name = m.group(1)
-    end = item_end(code, max(range(i + 1), key=lambda k: k if FLAKE_FN_HEAD.match(code[k]) else -1))[0]
-    ports = set()  # variables that took the listener's address or port
-    for j in range(i + 1, min(end, i + 60) + 1):
-        if re.search(rf"\b{name}\.local_addr\(\)", code[j]):
-            taken = re.match(r"\s*let\s+(?:mut\s+)?(\w+)\s*=", code[j])
-            if taken:
-                ports.add(taken.group(1))
-        if re.search(rf"\bdrop\(\s*{name}\s*\)", code[j]):
-            if any(re.search(rf"\b{v}\b", c) for v in ports for c in raw[j + 1:end + 1]):  # the number is used after the listener is gone
-                hit("p1", i)
-            return
-
-
-def flake_refused_after_stop(code, i, hit):
-    """Rule p3: a connect that must fail because a server stopped or never was. The port is a stranger's by then
-    unless the test holds it (a port from `quiet_port` or `ReservedPort`)."""
-    line = code[i]
-    if not re.search(r"\bTcpStream::connect\(", line):
-        return
-    stmt = statement_from(code, i)
-    if not re.search(r"\.is_err\(\)|\.unwrap_err\(\)|\.expect_err\(", stmt.partition("connect(")[2]):
-        return
-    start = max((k for k in range(i + 1) if FLAKE_FN_HEAD.match(code[k])), default=0)
-    if any(FLAKE_HELD_PORT.search(code[k]) for k in range(start, i + 1)):
-        return
-    hit("p3", i)
-
-
-FLAKE_NET_CALL = re.compile(r"\b(?:bind|connect)\w*\s*\(|\blisten\s*\(|\b(?:Tcp(?:Listener|Stream)|UdpSocket)\b")
-# A port after an address of this machine (an IP, `localhost`, `[::1]`) or a bare `:port`. A name (`api.test:8443`) is an
-# authority handed to a fake, not a socket, and a URL (`://`) is a fake site: both stay out.
-FLAKE_LOCAL_ADDR = re.compile(r'(?:(?<=\d)|(?<=localhost)|(?<=\])|(?<![\w.-])):[1-9]\d{3,4}(?!\d)', re.I)
-FLAKE_BIND_LITERAL = re.compile(r'bind\(\s*(?:"[^"]*:[1-9]\d*"|\(\s*[^,()]+,\s*[1-9]\d*\s*\))')
-
-
-def flake_fixed_port(raw, code, com, test, rows_add):
-    """Rule p2: a test that binds or connects a literal port. Another test or process may hold it, and it stays held
-    after a run that died. A literal 4 or 5 digit port in a string within two lines of `bind`, `listen` or `connect`
-    (the string is read from `raw`; `code` has them blanked), or a `bind` of any nonzero literal."""
-    for i, line in enumerate(code):
-        if not test[i]:
-            continue
-        near = any(FLAKE_NET_CALL.search(code[k]) for k in range(max(0, i - 2), min(len(code), i + 3)))
-        strings = [m for m in re.findall(r'"(?:[^"\\]|\\.)*"', raw[i]) if "://" not in m]
-        if FLAKE_BIND_LITERAL.search(raw[i]) or (near and any(FLAKE_LOCAL_ADDR.search(m) for m in strings)):
-            ok = any(FLAKE_OK.search(com[k]) for k in range(max(0, i - 3), i + 1))
-            flake_row(rows_add, "p2", i, raw[i].strip(), ok)
-
-
-def flake_port_calls(code, com, raw, pickers, rows_add):
-    """Callers of a port-picking fn (rule p1): each one hands the caller a port another process can take."""
-    for i, line in enumerate(code):
-        for name in pickers:
-            if re.search(rf"(?<!fn )\b{name}\(\)", line):
-                ok = any(FLAKE_OK.search(com[k]) for k in range(max(0, i - 3), i + 1))
-                flake_row(rows_add, "p1", i, raw[i].strip(), ok)
-
-
-# Matchers that only a locator, page or response takes: `expect(dialog).toHaveCount(0)` on a variable is a
-# web-first assertion that waits by itself, never a value read once.
-FLAKE_WEB_FIRST = re.compile(
-    r"\)\s*\.(?:not\.)?(?:toHave(?:Count|Text|Attribute|Class|CSS|Id|JSProperty|Value|Values|Title|URL|Role|AccessibleName|AccessibleDescription)"
-    r"|toBe(?:Visible|Hidden|Checked|Enabled|Disabled|Editable|Focused|Attached|InViewport)|toContain(?:Text|Class)|toMatchAriaSnapshot|toBeOK)\b"
-)
-
-
-def expect_argument(text):
-    """The text of an `expect(...)` argument, up to its closing parenthesis (or the end of the line)."""
-    depth = 1
-    for k, ch in enumerate(text):
-        depth += (ch == "(") - (ch == ")")
-        if depth == 0:
-            return text[:k]
-    return text
-
-
-def flake_e2e(lines, rows_add):
-    """Rule o2 in ui/e2e: a read of the page kept in a variable and asserted once (`const box = (await loc.boundingBox())!`,
-    then `expect(box.width)`: a non-null assertion says "there is a box now"; a plain `const n = await read` only counts for `expect(n)` itself). A reason on the line that reads into a variable covers every `expect` of that variable.
-    The inline `expect(await read)` is ESLint's (`ui/eslint.config.js`, an error), not this scan's."""
-    awaited = {}  # variable -> (whether that line carries a reason, whether an expect on any use of it counts)
-
-    def reasoned(i):
-        for k in range(max(0, i - 3), i + 1):
-            if FLAKE_OK.search(lines[k]):
-                return True
-        prev = lines[i - 1] if i else ""
-        return bool(re.search(r"eslint-disable-next-line\s+no-restricted-syntax\s+--\s+\S", prev))
-
-    for i, line in enumerate(lines):
-        if line.strip().startswith("//"):
-            continue
-        m = re.search(r"\b(?:const|let)\s+(\w+)\s*=\s*\(?\s*await\s+(.*)", line)
-        if m and FLAKE_PAGE_READ.search(m.group(2)):
-            awaited[m.group(1)] = (reasoned(i), bool(re.search(r"\)\s*!\s*;?\s*$", line)))
-        if re.search(r"^\s*(?:async\s+)?function\b|^\s*test\(", line):
-            awaited.clear()
-        for em in re.finditer(r"(?<![.\w])expect\((?!\s*\.)", line):
-            argument = expect_argument(line[em.end():])
-            first = re.match(r"\s*(\w+)\s*(?:,|$)", argument)  # `expect(n)` or `expect(n, "message")`
-            used = [first.group(1)] if first and first.group(1) in awaited else []
-            if not used:  # `expect(box.width)`: only a read of the non-null form counts
-                used = [v for v in re.findall(r"(?<![.\w])(\w+)", re.sub(r"`[^`]*`|\"[^\"]*\"|'[^']*'", "", argument)) if v in awaited and awaited[v][1]]
-            if used and not FLAKE_WEB_FIRST.search(line[em.end():]):
-                flake_row(rows_add, "o2", i, line.strip(), reasoned(i) or awaited[used[0]][0])
-
-
-def flake_summary(rows):
-    """Per rule: sites, sites with no reason, the fix the error text names."""
-    out = []
-    for rule, fix in FLAKE_FIX.items():
-        sites = sum(1 for r in rows if r[0] == f"flake-{rule}")
-        bare = sum(1 for r in rows if r[0] == f"flake-{rule}-unreasoned")
-        out.append((rule, sites, bare, "failing" if rule in FLAKE_FAILING else "counted", fix))
-    return out
-
-
 def counts(rows):
     c = Counter(f"{k}.{ctx}" for k, ctx, _, _ in rows)
     return dict(sorted(c.items()))
 
-
-SELF_TEST = r'''
-fn a() {
-    // SAFETY: fine
-    unsafe { x() };
-    let s = "unsafe { not code }";
-    unsafe { y() };
-    let v = foo.unwrap(); // TODO later
-    // FIXME(ana): tracked
-    // HACK see #12
-    // prose that mentions TODO in passing
-    let p = r"C:\";
-    unsafe { z() };
-}
-fn d(tx: Tx, unused: u8) {
-    let _ = tx.send(1);
-    // the receiver may be gone
-    let _ = tx.send(2);
-    let _ = unused;
-    let _guard = tx.lock();
-}
-#[allow(clippy::foo)]
-fn b() {}
-#[expect(dead_code, reason = "kept")]
-fn c() {}
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn t() { let _ = 1; }
-    #[test]
-    fn u() { assert!(true); x.unwrap(); }
-    #[tokio::test]
-    async fn bare_sleep() {
-        a().await;
-        tokio::time::sleep(Duration::from_millis(5)).await;
-        assert!(true);
-    }
-    #[tokio::test]
-    async fn explained_sleep() {
-        // Absence window: nothing may arrive.
-        tokio::time::sleep(Duration::from_millis(5)).await;
-        assert!(true);
-    }
-    #[tokio::test(start_paused = true)]
-    async fn virtual_sleep() {
-        tokio::time::sleep(Duration::from_millis(5)).await;
-        assert!(true);
-    }
-    #[tokio::test]
-    async fn multi_line_signature(
-        x: u8,
-    ) {
-        tokio::time::sleep(Duration::from_millis(5)).await;
-        assert!(true);
-    }
-    #[tokio::test]
-    async fn polled_sleep() {
-        // flake-ok: the fixture of a polled sleep
-        while !ids.iter().all(|p| {
-            seen(p)
-        }) {
-            assert!(now() < deadline);
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-    }
-}
-'''
-
-
-SELF_TEST_YAML = r'''
-jobs:
-  a:
-    steps:
-      - run: |
-          # shellcheck disable=SC2086 # one word per browser
-          npx playwright install-deps $browsers
-          # a reason on the line above
-          # shellcheck disable=SC2086
-          npx playwright install $browsers
-          # shellcheck disable=SC2086
-          npx playwright install $browsers
-'''
-
-
-FLAKE_FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "flake-fixtures")
-FLAKE_HOST = "crates/puddle-host/tests/fake_host.rs"
-FLAKE_STORE = "crates/puddle-certs/tests/windows_store.rs"
-FLAKE_LAB = "crates/puddle-e2e/src/lab/"
-FLAKE_SPEC = "ui/e2e/x.spec.ts"
-
-
-def kit_self_test():
-    """The kit may be a dev-dependency (also per target) and a normal dependency of a test-only crate; a
-    product crate listing it under [dependencies] or [build-dependencies], renamed or per target, fails."""
-    import tempfile
-    manifests = {
-        "crates/dev/Cargo.toml": '[dev-dependencies]\npuddle-test-kit = { workspace = true }\n[target.\'cfg(unix)\'.dev-dependencies]\npuddle-test-kit = { workspace = true }\n',
-        "crates/puddle-e2e/Cargo.toml": '[dependencies]\npuddle-test-kit = { workspace = true }\n',
-        "crates/prod/Cargo.toml": '[dependencies]\npuddle-test-kit = { workspace = true }\n',
-        "crates/buildscript/Cargo.toml": '[build-dependencies]\nkit = { package = "puddle-test-kit", path = "../x" }\n',
-        "crates/pertarget/Cargo.toml": '[target.\'cfg(windows)\'.dependencies]\npuddle-test-kit = { workspace = true }\n',
-    }
-    with tempfile.TemporaryDirectory() as d:
-        for name, text in manifests.items():
-            os.makedirs(os.path.dirname(os.path.join(d, name)))
-            with open(os.path.join(d, name), "w", encoding="utf-8") as h:
-                h.write(text)
-        flagged = sorted(r[2].split(":")[0] for r in scan(d) if r[0] == "noreason")
-    want = ["crates/buildscript/Cargo.toml", "crates/pertarget/Cargo.toml", "crates/prod/Cargo.toml"]
-    return [] if flagged == want else [f"flagged {flagged}, wanted {want}"]
-
-
-ROOT_CASES = {
-    "forbid": "#![forbid(unsafe_code)]\n",
-    "cfg_forbid": "#![cfg_attr(not(windows), forbid(unsafe_code))]\n",
-    "expect": '#![expect(\n    unsafe_code,\n    reason = "FFI to libc"\n)]\n',
-    "expect_empty_reason": '#![expect(unsafe_code, reason = "")]\n',
-    "expect_no_reason": "#![expect(unsafe_code)]\n",
-    "deny_only": "#![deny(unsafe_code)]\n",
-    "commented": "// #![forbid(unsafe_code)]\n",
-    "in_string": 'const S: &str = "#![forbid(unsafe_code)]";\n',
-    "other_attr": "#![warn(missing_docs)]\n",
-    "bare": "pub fn f() {}\n",
-}
-ROOT_BAD = {"expect_empty_reason", "expect_no_reason", "deny_only", "commented", "in_string", "other_attr", "bare"}
-
-
-def root_self_test():
-    """The rule fails for a root without the attribute and passes once the attribute is there: each bad
-    case is flagged, then the same crate with `#![forbid(unsafe_code)]` added is not; a main.rs and a
-    nested module file are read as the rule says."""
-    import tempfile
-    problems = []
-    with tempfile.TemporaryDirectory() as d:
-        for name, text in ROOT_CASES.items():
-            os.makedirs(os.path.join(d, f"crates/{name}/src"))
-            with open(os.path.join(d, f"crates/{name}/src/lib.rs"), "w", encoding="utf-8") as h:
-                h.write(text + "pub fn f() {}\n")
-        # Bin targets and build scripts: a bad and a good one each (a crate whose lib.rs is fine).
-        for crate, attr in (("binbad", ""), ("bingood", "#![forbid(unsafe_code)]\n")):
-            os.makedirs(os.path.join(d, f"crates/{crate}/src/bin"))
-            for rel in ("src/lib.rs", "src/bin/tool.rs", "build.rs"):
-                with open(os.path.join(d, f"crates/{crate}/{rel}"), "w", encoding="utf-8") as h:
-                    h.write("#![forbid(unsafe_code)]\nfn main() {}\n" if rel == "src/lib.rs" else attr + "fn main() {}\n")
-        flagged_files = {r[2].split(":")[0] for r in scan(d) if r[0] == "no-forbid"}
-        if {f for f in flagged_files if f.startswith(("crates/binbad/", "crates/bingood/"))} != {
-                "crates/binbad/src/bin/tool.rs", "crates/binbad/build.rs"}:
-            problems.append(f"bin/build.rs rule flagged {sorted(flagged_files)}")
-        os.makedirs(os.path.join(d, "crates/bin/src"))
-        with open(os.path.join(d, "crates/bin/src/main.rs"), "w", encoding="utf-8") as h:
-            h.write("fn main() {}\n")
-        with open(os.path.join(d, "crates/bin/src/other.rs"), "w", encoding="utf-8") as h:
-            h.write("pub fn g() {}\n")
-        flagged = {r[2].split("/")[1] for r in scan(d) if r[0] == "no-forbid"}
-        want = ROOT_BAD | {"bin", "binbad"}
-        if flagged != want:
-            problems.append(f"crate root rule flagged {sorted(flagged)}, want {sorted(want)}")
-        for name in want:
-            for fname in ("lib.rs", "main.rs"):
-                path = os.path.join(d, f"crates/{name}/src/{fname}")
-                if os.path.exists(path):
-                    with open(path, encoding="utf-8") as h:
-                        body = h.read()
-                    with open(path, "w", encoding="utf-8") as h:
-                        h.write("#![forbid(unsafe_code)]\n" + body)
-        for rel in ("src/bin/tool.rs", "build.rs"):
-            path = os.path.join(d, f"crates/binbad/{rel}")
-            with open(path, encoding="utf-8") as h:
-                body = h.read()
-            with open(path, "w", encoding="utf-8") as h:
-                h.write("#![forbid(unsafe_code)]\n" + body)
-        after = [r for r in scan(d) if r[0] == "no-forbid" or "crate root" in r[3]]
-        if after:
-            problems.append(f"crate root rule still flags after the fix: {after}")
-    return problems
-
-
-def inline_test_self_test():
-    """Every inline `#[cfg(test)] mod` block is flagged, even a 3 line one, and the message names the
-    sibling form; a sibling declaration, its file of any size and a module without `#[cfg(test)]` are not."""
-    import tempfile
-
-    def inline(name, n):
-        body = "".join(f"    fn t{k}() {{}}\n" for k in range(n))
-        return f"pub fn f() {{}}\n\n#[cfg(test)]\nmod {name} {{\n{body}}}\n"
-
-    cases = {
-        "big": inline("tests", 900), "small": inline("tests", 1),
-        "helper": inline("memory", 3).replace("mod memory", "pub(crate) mod memory"),
-        "plain": inline("tests", 5).replace("#[cfg(test)]\n", ""),
-        "sibling": "pub fn f() {}\n\n#[cfg(test)]\nmod tests;\n",
-    }
-    problems = []
-    with tempfile.TemporaryDirectory() as d:
-        os.makedirs(os.path.join(d, "crates/x/src/sibling"))
-        for name, text in cases.items():
-            with open(os.path.join(d, f"crates/x/src/{name}.rs"), "w", encoding="utf-8") as h:
-                h.write(text)
-        with open(os.path.join(d, "crates/x/src/lib.rs"), "w", encoding="utf-8") as h:
-            h.write("#![forbid(unsafe_code)]\n")
-        with open(os.path.join(d, "crates/x/src/sibling/tests.rs"), "w", encoding="utf-8") as h:
-            h.write("#[test]\nfn t() { assert!(true); }\n" + "".join(f"fn h{k}() {{}}\n" for k in range(900)))
-        rows = [r for r in scan(d) if r[0] == "noreason" and "inline `mod" in r[3]]
-        files = sorted(r[2].split(":")[0] for r in rows)
-        want = ["crates/x/src/big.rs", "crates/x/src/helper.rs", "crates/x/src/small.rs"]
-        if files != want:
-            problems.append(f"inline test block rule flagged {files}, want {want}")
-        elif any("sibling" not in r[3] or ".rs`" not in r[3] for r in rows):
-            problems.append(f"the message does not name the sibling form: {rows[0][3]}")
-    return problems
-
-
-def flake_self_test():
-    """Replay the original code of fixed flakes (scripts/flake-fixtures/, `.txt` so no gate scans them as
-    code): each rule must flag the code that flaked, pass the fix where the fix leaves the shape
-    behind, and accept a written reason. Returns the failures."""
-    import tempfile
-    failures = []
-
-    def read(name):
-        with open(os.path.join(FLAKE_FIXTURES, name), encoding="utf-8") as h:
-            return h.read()
-
-    def reasoned(text, needle):
-        out = []
-        for line in text.split("\n"):
-            if needle in line:
-                out.append("// flake-ok: the measured margin is 10x")
-            out.append(line)
-        return "\n".join(out)
-
-    def run(files):
-        with tempfile.TemporaryDirectory() as d:
-            for rel, text in files.items():
-                os.makedirs(os.path.dirname(os.path.join(d, rel)), exist_ok=True)
-                with open(os.path.join(d, rel), "w", encoding="utf-8") as h:
-                    h.write(text)
-            return scan(d)
-
-    def expect(label, rows, rule, sites, bare):
-        got = (sum(1 for r in rows if r[0] == f"flake-{rule}"), sum(1 for r in rows if r[0] == f"flake-{rule}-unreasoned"))
-        if got != (sites, bare):
-            failures.append(f"{label}: flake-{rule} sites/unreasoned {got}, want {(sites, bare)}")
-
-    def case(label, rule, files, sites, bare):
-        expect(label, run(files), rule, sites, bare)
-
-    case("o1 original", "o1", {FLAKE_HOST: read("o1-sign-in-event.bad.rs.txt")}, 1, 1)
-    case("o1 fix", "o1", {FLAKE_HOST: read("o1-sign-in-event.good.rs.txt")}, 0, 0)
-    case("o1 outside tests", "o1", {"crates/x/src/lib.rs": "fn f() { while let Ok(e) = rx.try_recv() { use_it(e); } }\n"}, 0, 0)
-    case("o1 reasoned", "o1", {FLAKE_HOST: reasoned(read("o1-sign-in-event.bad.rs.txt"), "events.try_recv()")}, 1, 0)
-    case("w1 original", "w1", {FLAKE_HOST: read("w1-wait-helper.bad.rs.txt")}, 1, 1)
-    w1_rows = [r for r in run({FLAKE_HOST: read("w1-wait-helper.bad.rs.txt")}) if r[0] == "flake-w1"]
-    if not (w1_rows and w1_rows[0][3].startswith("no-bound ")):
-        failures.append(f"w1 original: the row must say the helper has no bound: {w1_rows}")
-    case("w1 not a wait name", "w1", {FLAKE_HOST: "async fn settle(what: &str, within: Duration) {}\n"}, 0, 0)
-    case("w1 in production code", "w1", {"crates/x/src/lib.rs": read("w1-wait-helper.bad.rs.txt")}, 0, 0)
-    case("w1 reasoned", "w1", {FLAKE_HOST: reasoned(read("w1-wait-helper.bad.rs.txt"), "async fn eventually")}, 1, 0)
-    kit_wait = ("async fn wait_for_rows(store: &Store, count: usize) -> Vec<Row> {\n"
-                "    eventually(\"rows\", Duration::from_secs(5), || store.rows().filter(|r| r.len() >= count)).await\n}\n")
-    case("w1 delegates to the kit", "w1", {FLAKE_HOST: kit_wait}, 0, 0)
-    case("w1 names the kit only in a comment", "w1", {FLAKE_HOST: kit_wait.replace("    eventually(", "    // eventually(\n    loop_until(")}, 1, 1)
-    case("w1 in the kit", "w1", {"crates/puddle-test-kit/tests/wait.rs": read("w1-wait-helper.bad.rs.txt")}, 0, 0)
-    spin = read("w3-sleep-loop.bad.rs.txt")
-    case("w3 original", "w3", {FLAKE_HOST: spin}, 1, 1)
-    case("w3 reasoned", "w3", {FLAKE_HOST: reasoned(spin, "for _ in")}, 1, 0)
-    case("w3 in production code", "w3", {"crates/x/src/lib.rs": spin}, 0, 0)
-    case("w3 in the kit", "w3", {"crates/puddle-test-kit/src/wait.rs": spin}, 0, 0)
-    case("w3 a loop that never pauses", "w3", {FLAKE_HOST: spin.replace("tokio::time::sleep(Duration::from_millis(10)).await;", "step();")}, 0, 0)
-    case("w3 a while loop that yields", "w3", {FLAKE_HOST: "async fn t() {\n    while !done() {\n        tokio::task::yield_now().await;\n    }\n}\n"}, 1, 1)
-    case("w3 virtual time", "w3", {FLAKE_HOST: spin.replace("tokio::time::sleep(Duration::from_millis(10))", "tokio::time::advance(STEP)")}, 0, 0)
-    case("w3 a loop that yields a value", "w3", {FLAKE_HOST: "async fn t() {\n    let link = loop {\n        if let Some(l) = get() {\n            break l;\n        }\n        sleep(D).await;\n    };\n}\n"}, 1, 1)
-    case("w3 only the inner loop counts", "w3", {FLAKE_HOST: "async fn t() {\n    for _ in 0..3 {\n        loop {\n            sleep(D).await;\n        }\n    }\n}\n"}, 1, 1)
-    case("w2 original", "w2", {FLAKE_STORE: read("w2-store-lock.bad.rs.txt")}, 1, 1)
-    case("w2 fix", "w2", {FLAKE_STORE: read("w2-store-lock.good.rs.txt")}, 0, 0)
-    case("n1 original", "n1", {FLAKE_STORE: read("n1-clock-name.bad.rs.txt")}, 2, 2)
-    case("n1 tempfile", "n1", {FLAKE_STORE: "fn t() { let dir = tempfile::tempdir().unwrap(); let file = dir.path().join(\"a.cer\"); }\n"}, 0, 0)
-    mod_rs, call_bad, call_good = FLAKE_LAB + "mod.rs", FLAKE_LAB + "interceptor.rs", FLAKE_LAB + "interceptor.rs"
-    case("p1 original", "p1", {mod_rs: read("p1-free-port.bad.rs.txt"), call_bad: read("p1-free-port-call.bad.rs.txt")}, 2, 2)
-    case("p1 fix", "p1", {mod_rs: reasoned(read("p1-free-port.bad.rs.txt"), "pub fn free_port"), call_good: read("p1-free-port-call.good.rs.txt")}, 1, 0)
-    case("p1 a picker that keeps its listener is not one", "p1", {mod_rs: "pub fn serve() -> u16 {\n    let l = TcpListener::bind((LOCAL, 0)).unwrap();\n    let port = l.local_addr().unwrap().port();\n    tokio::spawn(async move { l.accept().await });\n    port\n}\n"}, 0, 0)
-    case("p1 a held listener is not one", "p1", {mod_rs: "fn t() { let listener = TcpListener::bind((LOCAL, 0)).unwrap(); let port = listener.local_addr().unwrap().port(); }\n"}, 0, 0)
-    dropped, held = read("p1-dropped-listener.bad.rs.txt"), read("p1-dropped-listener.good.rs.txt")
-    case("p1 a dead port made by a dropped listener", "p1", {FLAKE_HOST: dropped}, 2, 2)
-    case("p1 a dead port held for the test", "p1", {FLAKE_HOST: held}, 0, 0)
-    case("p1 a dropped listener reasoned", "p1", {FLAKE_HOST: reasoned(reasoned(dropped, "let closed"), "let gone")}, 2, 0)
-    case("p3 original", "p3", {FLAKE_HOST: read("p3-refused-connect.bad.rs.txt")}, 2, 2)
-    case("p3 fix", "p3", {FLAKE_HOST: read("p3-refused-connect.good.rs.txt")}, 0, 0)
-    case("p3 reasoned", "p3", {FLAKE_HOST: reasoned(read("p3-refused-connect.bad.rs.txt"), "TcpStream::connect")}, 2, 0)
-    case("p3 in production code", "p3", {"crates/x/src/lib.rs": read("p3-refused-connect.bad.rs.txt")}, 0, 0)
-    case("a1 original", "a1", {"crates/puddle-e2e/tests/proxy_agent_store.rs": read("a1-positional-zip.bad.rs.txt")}, 1, 1)
-    case("a1 fix", "a1", {"crates/puddle-e2e/tests/proxy_agent_store.rs": read("a1-positional-zip.good.rs.txt")}, 0, 0)
-    store = "crates/puddle-store/tests/events_and_audit_query.rs"
-    case("t1 original", "t1", {store: read("t1-wall-clock-bar.bad.rs.txt")}, 1, 1)
-    case("t1 fix keeps the bar", "t1", {store: read("t1-wall-clock-bar.good.rs.txt")}, 1, 1)
-    case("t1 a deadline loop is not a bar", "t1", {store: "fn t() { assert!(start.elapsed() < Duration::from_secs(1) || Instant::now() < deadline, \"late\"); }\n"}, 0, 0)
-    case("t1 a CPU-time bar is not a wall-clock bar", "t1", {store: "fn t() { let (_, cpu) = cpu_time(|| work());\nassert!(cpu < Duration::from_millis(100), \"{cpu:?}\"); }\n"}, 0, 0)
-    case("t1 a cpu-named variable not from cpu_time stays", "t1", {store: "fn t() { let cpu = start.elapsed(); assert!(cpu < Duration::from_millis(100), \"{cpu:?}\"); }\n"}, 1, 1)
-    case("t1 a cpu bar does not excuse a wall-clock half", "t1", {store: "fn t() { let ((), cpu) = cpu_time(|| w()); assert!(start.elapsed() < Duration::from_secs(1) && cpu < Duration::from_millis(100)); }\n"}, 1, 1)
-    case("t1 a bar on a variable not named cpu stays", "t1", {store: "fn t() { let took = start.elapsed(); assert!(took < Duration::from_millis(100), \"{took:?}\"); }\n"}, 1, 1)
-    case("t1 reasoned", "t1", {store: reasoned(read("t1-wall-clock-bar.good.rs.txt"), "assert!(best")}, 1, 0)
-    vm_test = "crates/puddle-host/tests/vm_x.rs"
-    case("d1 original", "d1", {vm_test: read("d1-fake-site.bad.rs.txt")}, 1, 1)
-    case("d1 fix", "d1", {vm_test: read("d1-fake-site.good.rs.txt")}, 0, 0)
-    case("d1 reasoned", "d1", {vm_test: reasoned(read("d1-fake-site.bad.rs.txt"), "const SITE")}, 1, 0)
-    case("d1 example.com", "d1", {vm_test: 'use vm_support::web_internet;\nfn t() { run("curl https://api.example.com/"); }\n'}, 1, 1)
-    case("d1 not a reserved name", "d1", {vm_test: 'use vm_support::web_internet;\nfn t() { run("curl https://notexample.com/ https://contest.org/ me@example.org"); }\n'}, 0, 0)
-    case("d1 a .invalid name that has test as a label is not reserved", "d1", {vm_test: 'use vm_support::web_internet;\nfn t() { run("curl https://api.test.invalid/ x.example.invalid"); }\n'}, 0, 0)
-    case("d1 a file name that ends in .test.rs is not a name", "d1", {vm_test: 'use vm_support::web_internet;\nconst F: &str = "tests/site.test.rs";\n'}, 0, 0)
-    case("d1 a name with a port or a trailing dot is one", "d1", {vm_test: 'use vm_support::web_internet;\nfn t() { run("curl http://site.test:8443/ http://other.example./"); }\n'}, 1, 1)
-    case("d1 a test with a fake resolver", "d1", {"crates/puddle-proxy/tests/x.rs": 'fn t() { let n = "site.test"; }\n'}, 0, 0)
-    case("d1 in production code", "d1", {"crates/x/src/lib.rs": 'use SystemResolver;\nconst DOC: &str = "site.test";\n'}, 0, 0)
-    case("o2 variable", "o2", {FLAKE_SPEC: read("o2-density-measure.bad.ts.txt")}, 1, 1)
-    case("o2 poll", "o2", {FLAKE_SPEC: read("o2-density-measure.good.ts.txt")}, 0, 0)
-    case("o2 focus", "o2", {FLAKE_SPEC: read("o2-focus-read.bad.ts.txt")}, 1, 1)
-    # `expect(await read)` is ESLint's (an error in ui/eslint.config.js, proved by ui/scripts/flake-eslint.test.ts): the scan skips it.
-    one_shot = 'test("x", async ({ page }) => {\n  expect(await measure(page, "main select")).toBeNull();\n});\n'
-    case("o2 inline is ESLint's, not the scan's", "o2", {FLAKE_SPEC: one_shot}, 0, 0)
-    held = 'test("x", async ({ page }) => {\n  const dialog = await openDialog(page);\n  await expect(dialog).toHaveCount(0);\n  await expect(dialog).not.toBeVisible();\n});\n'
-    case("o2 a locator in a variable is a web-first assertion", "o2", {FLAKE_SPEC: held}, 0, 0)
-    value = 'test("x", async ({ page }) => {\n  const n = await page.locator("li").count();\n  expect(n).toBeGreaterThan(0);\n  expect(n).toBeLessThan(9);\n});\n'
-    case("o2 a count in a variable is read once per expect", "o2", {FLAKE_SPEC: value}, 2, 2)
-    kept = 'test("x", async ({ page }) => {\n  const box = (await page.locator("li").boundingBox())!;\n  expect(box.width).toBeGreaterThanOrEqual(24);\n  expect(box.x + box.width).toBeLessThanOrEqual(90);\n});\n'
-    case("o2 a non-null read in parentheses, asserted by property", "o2", {FLAKE_SPEC: kept}, 2, 2)
-    case("o2 a reason on a parenthesised read covers its expects", "o2", {FLAKE_SPEC: kept.replace("  const box", "  // flake-ok: laid out by the time the dialog opened\n  const box")}, 2, 0)
-    case("o2 a poll of the box passes", "o2", {FLAKE_SPEC: 'test("x", async ({ page }) => {\n  await expect.poll(async () => (await page.locator("li").boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(24);\n});\n'}, 0, 0)
-    case("o2 a parenthesised read inside a retry block is not kept", "o2", {FLAKE_SPEC: 'test("x", async ({ page }) => {\n  await expect(async () => {\n    const t = (await page.locator("li").textContent()) ?? "";\n    expect(t.length).toBe(3);\n  }).toPass();\n});\n'}, 0, 0)
-    case("o2 a variable named only in the message is not read", "o2", {FLAKE_SPEC: kept.replace("expect(box.width)", 'expect(24, "the box width")')}, 1, 1)
-    case("o2 a plain read asserted by property is not counted", "o2", {FLAKE_SPEC: 'test("x", async ({ page }) => {\n  const box = await page.locator("li").boundingBox();\n  expect(box?.width).toBe(3);\n});\n'}, 0, 0)
-    case("o2 a reason on the read covers its expects", "o2", {FLAKE_SPEC: value.replace("  const n", "  // flake-ok: the list is complete\n  const n")}, 2, 0)
-
-    f1 = "crates/puddle-store/tests/store_paths.rs"
-    f1_bad = read("f1-posix-path.bad.rs.txt")
-    case("f1 original", "f1", {f1: f1_bad}, 2, 2)
-    case("f1 reasoned", "f1", {f1: reasoned(reasoned(f1_bad, "PathBuf::from"), "Path::new")}, 2, 0)
-    case("f1 a tempdir joined portably", "f1", {f1: 'fn t() { let dir = tempfile::tempdir().unwrap(); let file = dir.path().join("config.toml"); }\n'}, 0, 0)
-    case("f1 a guest path stays a string", "f1", {f1: 'fn t() { sandbox.write("/tmp/leaf.pem", bytes); run("cat /home/dev/.rc"); }\n'}, 0, 0)
-    case("f1 a URL path is not a host path", "f1", {f1: 'fn t() { let u = Url::parse("https://x.test/tmp/a").unwrap(); let p = PathBuf::from(u.path()); }\n'}, 0, 0)
-    case("f1 a hand-joined path", "f1", {f1: 'fn t() { let file = format!("{dir}/{name}.toml"); }\n'}, 1, 1)
-    case("f1 a hand-joined image name is not a path", "f1", {f1: 'fn t() { let image = format!("{REGISTRY}/{REPO}:1"); }\n'}, 0, 0)
-    case("f1 in production code", "f1", {"crates/x/src/lib.rs": f1_bad}, 0, 0)
-    case("f1 a comment", "f1", {f1: '// Path::new("/tmp/x")\nfn t() {}\n'}, 0, 0)
-
-    def bans(src):
-        return sorted({r[0] for r in run({"crates/x/src/lib.rs": "#![forbid(unsafe_code)]\n" + src}) if r[0].startswith("ban-")})
-    if bans('#[derive(Deserialize)]\n#[serde(untagged)]\nenum E { A(u8), B(String) }\n') != ["ban-untagged"]:
-        failures.append("ban-untagged: a bare #[serde(untagged)] must be flagged")
-    if bans('#[serde(rename_all = "snake_case", untagged)]\nenum E { A }\n') != ["ban-untagged"]:
-        failures.append("ban-untagged: untagged among other serde arguments must be flagged")
-    if bans('#[serde(tag = "kind")]\nenum E { A }\n// #[serde(untagged)]\nconst S: &str = "#[serde(untagged)]";\n'):
-        failures.append("ban-untagged: a tagged enum, a comment and a string are not sites")
-    if bans('enum E {\n    #[error("Bad {0}")]\n    A(u8),\n}\n') != ["ban-error-capital"]:
-        failures.append("ban-error-capital: a capital first letter must be flagged")
-    if bans('enum E {\n    #[error("bad {0}.")]\n    A(u8),\n}\n') != ["ban-error-period"]:
-        failures.append("ban-error-period: a trailing period must be flagged")
-    if bans('enum E {\n    #[error("bad {0}: {1}")]\n    A(u8, String),\n    #[error("{0}")]\n    B(String),\n    #[error("see a.b. later")]\n    C,\n}\n'):
-        failures.append("ban-error: lower-case messages, `{0}` and a mid-text period are not sites")
-    if not any(r[0] == "noreason" for r in run({"crates/x/src/lib.rs": "#![forbid(unsafe_code)]\n#[serde(untagged)]\nenum E { A }\n"})):
-        failures.append("ban-untagged: a site must add a noreason row so --missing fails")
-    def sinks(files):
-        return sorted(r[2] for r in run(files) if r[0] == "ban-html-sink")
-    sink_svelte, sink_ts = read("ban-html-sink.bad.svelte.txt"), read("ban-html-sink.bad.ts.txt")
-    if len(sinks({"ui/src/lib/A.svelte": sink_svelte})) != 1:
-        failures.append("ban-html-sink: `{@html` in a .svelte file must be flagged")
-    all_sinks = ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "setHTMLUnsafe",
-                 "createContextualFragment", "parseFromString", "srcdoc")
-    for sink in all_sinks:
-        hits = [ln for ln in sink_ts.split("\n") if sink in ln]
-        if len(hits) != 1 or len(sinks({"ui/src/lib/a.ts": sink_ts})) != len(all_sinks):
-            failures.append(f"ban-html-sink: the fixture must trip {sink} once and all {len(all_sinks)} sinks in all: {hits}")
-        only = "\n".join(ln for ln in sink_ts.split("\n") if sink not in ln or ln.lstrip().startswith("//"))
-        if len(sinks({"ui/src/lib/a.ts": only})) != len(all_sinks) - 1:
-            failures.append(f"ban-html-sink: {sink} was not flagged on its own")
-    if sinks({"ui/src/lib/A.svelte": read("ban-html-sink.good.svelte.txt")}):
-        failures.append("ban-html-sink: text interpolation, a component and a comment are not sinks")
-    for rel in ("ui/src/lib/a.test.ts", "ui/src/lib/a.spec.ts", "ui/src/lib/api/schema.d.ts", "ui/e2e/a.spec.ts", "crates/x/src/lib.rs"):
-        if sinks({rel: sink_ts}):
-            failures.append(f"ban-html-sink: {rel} is out of scope")
-    if not any(r[0] == "noreason" and "HTML injection sink" in r[3] for r in run({"ui/src/lib/A.svelte": sink_svelte})):
-        failures.append("ban-html-sink: a site must add a noreason row that names the fix so --missing fails")
-    p2_bad, p2_good = read("p2-fixed-port.bad.rs.txt"), read("p2-fixed-port.good.rs.txt")
-    case("p2 original", "p2", {"crates/x/tests/p.rs": p2_bad}, 3, 3)
-    case("p2 fix: port 0, a fake authority and URL, a log line stay out; a reasoned literal counts once", "p2", {"crates/x/tests/p.rs": p2_good}, 1, 0)
-    case("p2 in production code", "p2", {"crates/x/src/lib.rs": p2_bad}, 0, 0)
-    e1_bad, e1_good = read("e1-script-write.bad.rs.txt"), read("e1-script-write.good.rs.txt")
-    case("e1 original: a write then set_permissions or chmod", "e1", {"crates/x/tests/e.rs": e1_bad}, 2, 2)
-    case("e1 fix: the kit helper, a folder, a 0o644 file stay out; a reasoned site counts once", "e1", {"crates/x/tests/e.rs": e1_good}, 1, 0)
-    case("e1 in production code", "e1", {"crates/x/src/lib.rs": e1_bad}, 0, 0)
-    s1_bad, s1_good = read("s1-child-stdin-write.bad.rs.txt"), read("s1-child-stdin-write.good.rs.txt")
-    case("s1 original: a one-line chain, a split chain, a variable taken from stdin", "s1", {"crates/x/tests/s.rs": s1_bad}, 3, 3)
-    case("s1 fix: feed_stdin, a discarded result, a socket or file stay out; a reasoned site counts once", "s1", {"crates/x/tests/s.rs": s1_good}, 1, 0)
-    case("s1 in production code", "s1", {"crates/x/src/lib.rs": s1_bad}, 0, 0)
-    case("p2 in a cfg(test) module", "p2", {"crates/x/src/lib.rs": "#[cfg(test)]\nmod t {\n    fn f() { let l = TcpListener::bind(\"127.0.0.1:8080\"); }\n}\n"}, 1, 1)
-
-    # A counted rule adds no `noreason` row; a rule flipped to failing adds one that opens with its fix.
-    bad = {rule: {v["as"]: read(v["fixture"])} for rule, v in FLAKE_RULES.items()}
-    for rule, files in bad.items():
-        was_failing = rule in FLAKE_FAILING
-        FLAKE_FAILING.discard(rule)
-        if any(r[0] == "noreason" and r[3].startswith(f"flake-{rule}:") for r in run(files)):
-            failures.append(f"{rule}: a counted rule must not add a noreason row")
-        FLAKE_FAILING.add(rule)
-        try:
-            miss = [r for r in run(files) if r[0] == "noreason" and r[3].startswith(f"flake-{rule}:")]
-        finally:
-            if not was_failing:
-                FLAKE_FAILING.discard(rule)
-        if not miss or not all(r[3].startswith(f"flake-{rule}: {FLAKE_FIX[rule]} | ") for r in miss):
-            failures.append(f"{rule}: a failing rule adds noreason rows that open with the whole fix text: {miss}")
-    for label, text in (("an unknown status", "status: maybe\nfixture: a\nas: b\nfix: c\n"), ("a missing key", "status: failing\n"), ("a repeated key", "status: failing\nstatus: counted\nfixture: a\nas: b\nfix: c\n")):
-        with tempfile.TemporaryDirectory() as d:
-            with open(os.path.join(d, "q1.rule"), "w", encoding="utf-8") as h:
-                h.write(text)
-            try:
-                load_flake_rules(d)
-                failures.append(f"rule file with {label} was accepted")
-            except SystemExit:
-                pass
-    return failures
-
-
 def self_test():
-    import tempfile
-    with tempfile.TemporaryDirectory() as d:
-        os.makedirs(os.path.join(d, "crates/x/src"))
-        with open(os.path.join(d, "crates/x/src/lib.rs"), "w") as h:
-            h.write("#![forbid(unsafe_code)]\n" + SELF_TEST)
-        os.makedirs(os.path.join(d, ".github/workflows"))
-        with open(os.path.join(d, ".github/workflows/ci.yml"), "w") as h:
-            h.write(SELF_TEST_YAML)
-        # A local `npm test` leaves ui/coverage/ (gitignored); its HTML report carries bare eslint-disable lines.
-        os.makedirs(os.path.join(d, "ui/coverage/lcov-report"))
-        with open(os.path.join(d, "ui/coverage/lcov-report/prettify.js"), "w") as h:
-            h.write("/* eslint-disable */\n")
-        rows = scan(d)
-        if any(r[2].startswith("ui/coverage/") for r in rows):
-            print("self-test FAIL generated ui/coverage was scanned")
-            return 1
-        got = counts(rows)
-        # The flagged directive is the bare one in the workflow, on its own line.
-        flagged = [r[2] for r in rows if r[0] == "noreason" and r[2].startswith(".github/")]
-        if flagged != [".github/workflows/ci.yml:11"]:
-            print("self-test FAIL workflow noreason rows", flagged)
-            return 1
-    bad_kit = kit_self_test()
-    if bad_kit:
-        print("self-test FAIL test kit dependency:\n  " + "\n  ".join(bad_kit))
-        return 1
-    bad_root = root_self_test()
-    if bad_root:
-        print("self-test FAIL crate roots:\n  " + "\n  ".join(bad_root))
-        return 1
-    bad_inline = inline_test_self_test()
-    if bad_inline:
-        print("self-test FAIL inline test blocks:\n  " + "\n  ".join(bad_inline))
-        return 1
-    bad_flake = flake_self_test()
-    if bad_flake:
-        print("self-test FAIL flake rules:\n  " + "\n  ".join(bad_flake))
-        return 1
-    want = {
-        "shellcheck-disable.any": 3, "noreason.any": 2,
-        "unsafe-block.prod": 3, "unwrap.prod": 1, "unwrap.test": 1,
-        "allow-attr.prod": 1, "expect-attr.prod": 1,
-        "test-no-assert.test": 1, "marker-todo.any": 1, "marker-fixme.any": 1, "marker-hack.any": 1,
-        "noreason.prod": 4, "let-underscore.prod": 3, "let-underscore-uncommented.prod": 1,
-        "sleep.test": 5, "sleep-fixed.test": 3, "sleep-fixed-uncommented.test": 2, "noreason.test": 3,
-        "inline-test-block.test": 1,
-        "flake-w3.test": 1,
-    }
-    bad = {k: (got.get(k), v) for k, v in want.items() if got.get(k) != v}
-    extra = {k: v for k, v in got.items() if k not in want}
-    if bad or extra:
-        print("self-test FAIL", bad, extra)
-        return 1
-    print("self-test pass")
-    return 0
+    return load_sibling("quality_gate_selftest").self_test(sys.modules[__name__])
 
 
 def main(argv):

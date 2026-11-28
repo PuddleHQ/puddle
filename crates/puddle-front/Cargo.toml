@@ -20,6 +20,7 @@ hyper = { workspace = true }
 hyper-util = { workspace = true }
 puddle-agent-proto = { workspace = true }
 puddle-fs = { workspace = true }
+puddle-ipc = { workspace = true }
 puddle-netpolicy = { workspace = true }
 puddle-ports = { workspace = true }
 puddle-types = { workspace = true }

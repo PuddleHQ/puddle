@@ -518,6 +518,13 @@ impl Effective {
         self.switch("headless") == Some(true)
     }
 
+    /// Whether a log filter was set, by a flag, the environment or the config file: the settings
+    /// screen then leaves the level alone.
+    #[must_use]
+    pub fn log_is_set(&self) -> bool {
+        self.values.contains_key("log")
+    }
+
     /// The log filter, `info` when none was set.
     #[must_use]
     pub fn log_filter(&self) -> ScopedFilter {
@@ -629,7 +636,7 @@ fn flag_or_env(
         value: raw.to_string_lossy().into_owned(),
         why: why.to_owned(),
     };
-    let text = raw.to_str().ok_or_else(|| invalid("not valid Unicode"))?;
+    let text = raw.to_str().ok_or_else(|| invalid("UTF-8 text"))?;
     let value = spec.kind.parse_text(text).map_err(invalid)?;
     Ok(Some((absolute(value, cwd), Source::Environment(spec.env))))
 }

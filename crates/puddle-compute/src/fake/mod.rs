@@ -50,24 +50,27 @@
 //! # }
 //! ```
 
+mod controls;
 mod exec;
 mod guest_probes;
+mod sandbox;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use puddle_types::{
-    CpuCount, GuestEnv, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus,
+    CpuCount, GuestEnv, GuestPath, ImageRef, MemoryMib, SandboxName, VolumeName, WorkspaceStatus,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub use self::exec::{ExecContext, ExecHandler, FsError};
 use self::exec::{Files, builtin};
+pub use self::sandbox::FakeSandbox;
 use crate::{
     Capabilities, ComputeError, DiskSize, ExecOutput, ExecRequest, ImageConfig, MountKind,
-    RootDiskGrowth, RootDiskUse, Runtime, Sandbox, SandboxInfo, SandboxSpec, SshStream, VolumeInfo,
-    VolumeSpec,
+    PullProgress, PullReport, RootDiskGrowth, RootDiskUse, Runtime, Sandbox, SandboxInfo,
+    SandboxSpec, SshStream, VolumeInfo, VolumeSpec,
 };
 
 /// The identification line the fake SSH server sends.
@@ -100,6 +103,8 @@ pub enum Op {
     List,
     /// [`Runtime::remove`].
     Remove,
+    /// [`Runtime::kill`].
+    Kill,
     /// [`Runtime::stale_dirs`].
     StaleDirs,
     /// [`Runtime::remove_stale_dir`].
@@ -245,7 +250,7 @@ impl SandboxRecord {
             MEMINFO.to_owned(),
             format!("MemTotal:       {kib} kB\n").into_bytes(),
         );
-        let last = self.spec.cpus.unwrap_or(1).saturating_sub(1);
+        let last = self.spec.cpus.map_or(1, CpuCount::get).saturating_sub(1);
         let online = if last == 0 {
             "0\n".to_owned()
         } else {
@@ -280,6 +285,8 @@ struct State {
     terminals: bool,
     /// [`FakeRuntime::set_live_root_grow`] turned off: a running sandbox grows at its next boot.
     no_live_root_grow: bool,
+    /// [`FakeRuntime::script_pull`]: what every pull reports to its caller before it answers.
+    pull_script: Vec<PullProgress>,
     /// [`FakeRuntime::wait_in_every_call`]: each call waits once before it answers.
     waits: bool,
 }
@@ -434,188 +441,6 @@ impl FakeRuntime {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Makes `image` pullable with `config`.
-    pub fn add_image(&self, image: &ImageRef, config: ImageConfig) {
-        self.lock().images.insert(image.to_string(), config);
-    }
-
-    /// Arms `fault` for calls of `op`. Faults are checked in the order they were added; the
-    /// first one that matches the call decides.
-    pub fn inject(&self, op: Op, fault: Fault) {
-        self.lock().faults.push((op, fault));
-    }
-
-    /// Disarms every fault.
-    pub fn clear_faults(&self) {
-        self.lock().faults.clear();
-    }
-
-    /// Every call so far, in order (including failed ones).
-    #[must_use]
-    pub fn calls(&self) -> Vec<Call> {
-        self.lock().calls.clone()
-    }
-
-    /// Makes every call wait once (its future is pending one time) before it answers, the way a
-    /// real runtime's calls wait for msb. A test can then drop the caller at each of its awaits.
-    pub fn wait_in_every_call(&self, on: bool) {
-        self.lock().waits = on;
-    }
-
-    /// The wait [`FakeRuntime::wait_in_every_call`] turns on.
-    async fn turn(&self) {
-        let waits = self.lock().waits;
-        if waits {
-            WaitOnce(false).await;
-        }
-    }
-
-    /// Makes every sandbox's `serve_ssh` an SSH server with a pseudo-terminal stand-in (see
-    /// [`pty`]) instead of the banner-only fake.
-    pub fn serve_terminals(&self) {
-        self.lock().terminals = true;
-    }
-
-    /// Adds a command handler, tried before earlier handlers and before the built-ins.
-    pub fn on_exec(&self, handler: impl ExecHandler) {
-        self.lock().handlers.insert(0, Arc::new(handler));
-    }
-
-    /// The vsock routes `name` was made with, so a test can speak to the host as its guest would.
-    /// Empty when there is no such sandbox.
-    #[must_use]
-    pub fn routes(&self, name: &SandboxName) -> Vec<crate::VsockRoute> {
-        self.lock()
-            .sandboxes
-            .get(name.as_str())
-            .map(|r| r.spec.routes.clone())
-            .unwrap_or_default()
-    }
-
-    /// The owned disks `name` was made with. Empty when there is no such sandbox.
-    #[must_use]
-    pub fn owned_disks(&self, name: &SandboxName) -> Vec<crate::OwnedDisk> {
-        self.lock()
-            .sandboxes
-            .get(name.as_str())
-            .map(|r| r.spec.owned_disks.clone())
-            .unwrap_or_default()
-    }
-
-    /// The root disk size `name` was made with: `None` when there is no such sandbox or its spec
-    /// named none (the runtime's default).
-    #[must_use]
-    pub fn root_disk_size(&self, name: &SandboxName) -> Option<DiskSize> {
-        self.lock()
-            .sandboxes
-            .get(name.as_str())
-            .and_then(|r| r.spec.root_disk)
-    }
-
-    /// The named volumes `name` was made with. Empty when there is no such sandbox.
-    #[must_use]
-    pub fn volume_mounts(&self, name: &SandboxName) -> Vec<crate::VolumeMount> {
-        self.lock()
-            .sandboxes
-            .get(name.as_str())
-            .map(|r| r.spec.volumes.clone())
-            .unwrap_or_default()
-    }
-
-    /// Simulates the VM dying: a running sandbox becomes `Crashed`. Returns whether it was
-    /// running.
-    #[must_use = "false means the sandbox wasn't running"]
-    pub fn crash(&self, name: &SandboxName) -> bool {
-        let mut state = self.lock();
-        match state.sandboxes.get_mut(name.as_str()) {
-            Some(r) if r.status == WorkspaceStatus::Running => {
-                r.status = WorkspaceStatus::Crashed;
-                true
-            }
-            _ => false,
-        }
-    }
-
-    /// Holds an existing sandbox in `status`, for the states the fake never enters by itself: a
-    /// VM that is still booting (`Starting`), stopping (`Draining`) or `Paused`. The VM keeps its
-    /// volumes, so it holds them like a running one; exec and `get` refuse until it runs again
-    /// ([`FakeRuntime::outlive_owner`]). Returns whether the sandbox exists.
-    #[must_use = "false means there is no such sandbox"]
-    pub fn set_status(&self, name: &SandboxName, status: WorkspaceStatus) -> bool {
-        let mut state = self.lock();
-        match state.sandboxes.get_mut(name.as_str()) {
-            Some(r) => {
-                r.status = status;
-                true
-            }
-            None => false,
-        }
-    }
-
-    /// Simulates a VM that outlives its dead owner: the sandbox runs, whatever its handle's
-    /// drop did (dropping a handle stops the fake VM, as in the SDK, but a killed process never
-    /// gets to drop it). Returns whether the sandbox exists.
-    #[must_use = "false means there is no such sandbox"]
-    pub fn outlive_owner(&self, name: &SandboxName) -> bool {
-        let mut state = self.lock();
-        match state.sandboxes.get_mut(name.as_str()) {
-            Some(r) => {
-                r.status = WorkspaceStatus::Running;
-                true
-            }
-            None => false,
-        }
-    }
-
-    /// Adds a sandbox Puddle didn't create (another tool's, or one without Puddle's owner label).
-    /// [`Runtime::list`] shows it with `puddle_owned: false`; no other operation sees it, so a
-    /// test can check through [`FakeRuntime::calls`] that nothing touched it. `name` need not be
-    /// a valid [`SandboxName`].
-    pub fn add_foreign_sandbox(&self, name: &str, status: WorkspaceStatus) {
-        self.lock().foreign.insert(name.to_owned(), status);
-    }
-
-    /// Adds a sandbox directory without a record, as a failed create leaves it or as
-    /// another tool might; `name` need not be a valid [`SandboxName`].
-    pub fn add_stale_dir(&self, name: &str) {
-        self.lock().stale_dirs.insert(name.to_owned());
-    }
-
-    /// Adds an empty volume under any name, including names that aren't a valid [`VolumeName`]
-    /// (another tool's volume).
-    pub fn add_foreign_volume(&self, name: &str, size: DiskSize) {
-        self.lock().volumes.insert(
-            name.to_owned(),
-            VolumeRecord {
-                size,
-                used: None,
-                files: Files::new(),
-            },
-        );
-    }
-
-    /// Sets what the volume `name` "takes on the host" from now on; the runtime reports it in
-    /// [`VolumeInfo::used`]. A volume that does not exist is left alone.
-    pub fn set_volume_used(&self, name: &VolumeName, used: DiskSize) {
-        if let Some(volume) = self.lock().volumes.get_mut(name.as_str()) {
-            volume.used = Some(used);
-        }
-    }
-
-    /// Sets how full the root disk of sandbox `name` "is" from now on; the runtime reports it in
-    /// [`SandboxInfo::root_disk`]. A sandbox that does not exist is left alone.
-    pub fn set_root_disk_use(&self, name: &SandboxName, size: DiskSize, used: DiskSize) {
-        if let Some(record) = self.lock().sandboxes.get_mut(name.as_str()) {
-            record.root_disk = Some(RootDiskUse { size, used });
-        }
-    }
-
-    /// Whether a running sandbox grows its root disk live (the default). Off, it answers
-    /// [`RootDiskGrowth::NextStart`] and grows at its next boot, as msb does on Windows.
-    pub fn set_live_root_grow(&self, live: bool) {
-        self.lock().no_live_root_grow = !live;
-    }
-
     fn handle(&self, name: &SandboxName, boot: u64, owned: bool) -> FakeSandbox {
         FakeSandbox {
             runtime: self.clone(),
@@ -624,12 +449,6 @@ impl FakeRuntime {
             owned,
             forced: AtomicBool::new(false),
         }
-    }
-
-    /// Makes the next stop of `name` time out gracefully and end the VM by force, as msb does
-    /// after 30 seconds: the stop returns `Ok` and [`Sandbox::stopped_by_force`] says `true`.
-    pub fn force_next_stop(&self, name: &SandboxName) {
-        self.lock().force_stop.insert(name.to_string());
     }
 }
 
@@ -657,6 +476,18 @@ impl Runtime for FakeRuntime {
                 image: image.to_string(),
                 reason: "manifest unknown".into(),
             })
+    }
+
+    async fn pull_image_reporting<'a>(
+        &'a self,
+        image: &'a ImageRef,
+        report: PullReport<'a>,
+    ) -> Result<ImageConfig, ComputeError> {
+        let script = self.lock().pull_script.clone();
+        for step in script {
+            report(step);
+        }
+        self.pull_image(image).await
     }
 
     async fn create(&self, spec: SandboxSpec) -> Result<FakeSandbox, ComputeError> {
@@ -827,7 +658,7 @@ impl Runtime for FakeRuntime {
                 .ok_or_else(|| ComputeError::NotFound {
                     sandbox: name.to_string(),
                 })?;
-        record.spec.cpus = Some(cpus.get());
+        record.spec.cpus = Some(cpus);
         Ok(())
     }
 
@@ -904,6 +735,7 @@ impl Runtime for FakeRuntime {
                 puddle_owned: true,
                 root_disk: r.root_disk,
                 routes: r.spec.routes.clone(),
+                volume_mounts: r.spec.volumes.iter().map(|v| v.guest.clone()).collect(),
             })
             .chain(state.foreign.iter().map(|(name, status)| SandboxInfo {
                 name: name.clone(),
@@ -911,6 +743,7 @@ impl Runtime for FakeRuntime {
                 puddle_owned: false,
                 root_disk: None,
                 routes: Vec::new(),
+                volume_mounts: Vec::new(),
             }))
             .collect();
         out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -932,6 +765,23 @@ impl Runtime for FakeRuntime {
             }),
             Some(_) => {
                 state.sandboxes.remove(name.as_str());
+                Ok(())
+            }
+        }
+    }
+
+    async fn kill(&self, name: &SandboxName) -> Result<(), ComputeError> {
+        self.turn().await;
+        let mut state = self.lock();
+        state.enter(Op::Kill, Some(name.as_str()), None)?;
+        match state.sandboxes.get_mut(name.as_str()) {
+            None => Err(ComputeError::NotFound {
+                sandbox: name.to_string(),
+            }),
+            Some(r) => {
+                if !r.status.is_down() {
+                    r.status = WorkspaceStatus::Crashed;
+                }
                 Ok(())
             }
         }
@@ -1022,157 +872,6 @@ impl Runtime for FakeRuntime {
     }
 }
 
-/// A handle to a sandbox in a [`FakeRuntime`].
-#[derive(Debug)]
-pub struct FakeSandbox {
-    runtime: FakeRuntime,
-    name: SandboxName,
-    boot: u64,
-    owned: bool,
-    forced: AtomicBool,
-}
-
-impl FakeSandbox {
-    /// Checks that this handle's boot is the running one, for exec and SSH.
-    fn check_running(&self, state: &State, op: &'static str) -> Result<(), ComputeError> {
-        let r = state
-            .sandboxes
-            .get(self.name.as_str())
-            .ok_or_else(|| ComputeError::NotFound {
-                sandbox: self.name.to_string(),
-            })?;
-        if r.status != WorkspaceStatus::Running {
-            return Err(ComputeError::InvalidState {
-                sandbox: self.name.to_string(),
-                op,
-                status: r.status,
-            });
-        }
-        if r.boot != self.boot {
-            return Err(ComputeError::StaleHandle {
-                sandbox: self.name.to_string(),
-            });
-        }
-        Ok(())
-    }
-
-    fn run(&self, state: &mut State, request: &ExecRequest) -> Result<ExecOutput, ComputeError> {
-        let handlers = state.handlers.clone();
-        let State {
-            sandboxes, volumes, ..
-        } = state;
-        let record =
-            sandboxes
-                .get_mut(self.name.as_str())
-                .ok_or_else(|| ComputeError::NotFound {
-                    sandbox: self.name.to_string(),
-                })?;
-        let mut env = record.booted_env.clone();
-        env.extend(&request.env);
-        let mut ctx = ExecContext {
-            sandbox: &self.name,
-            env,
-            spec: &record.spec,
-            root: &mut record.files,
-            volumes,
-        };
-        if let Some(output) = handlers.iter().find_map(|h| h.handle(&mut ctx, request)) {
-            return Ok(output);
-        }
-        builtin(&mut ctx, request)
-    }
-}
-
-impl Sandbox for FakeSandbox {
-    fn name(&self) -> &SandboxName {
-        &self.name
-    }
-
-    fn owns_lifecycle(&self) -> bool {
-        self.owned
-    }
-
-    fn stopped_by_force(&self) -> bool {
-        self.forced.load(Ordering::Relaxed)
-    }
-
-    async fn status(&self) -> Result<WorkspaceStatus, ComputeError> {
-        self.runtime.turn().await;
-        let mut state = self.runtime.lock();
-        state.enter(Op::Status, Some(self.name.as_str()), None)?;
-        state
-            .sandboxes
-            .get(self.name.as_str())
-            .map(|r| r.status)
-            .ok_or_else(|| ComputeError::NotFound {
-                sandbox: self.name.to_string(),
-            })
-    }
-
-    async fn stop(&self) -> Result<(), ComputeError> {
-        self.runtime.turn().await;
-        let mut state = self.runtime.lock();
-        state.enter(Op::Stop, Some(self.name.as_str()), None)?;
-        let r =
-            state
-                .sandboxes
-                .get_mut(self.name.as_str())
-                .ok_or_else(|| ComputeError::NotFound {
-                    sandbox: self.name.to_string(),
-                })?;
-        if r.status.is_down() {
-            return Ok(());
-        }
-        if r.boot != self.boot {
-            return Err(ComputeError::StaleHandle {
-                sandbox: self.name.to_string(),
-            });
-        }
-        r.status = WorkspaceStatus::Stopped;
-        let forced = state.force_stop.remove(self.name.as_str());
-        self.forced.store(forced, Ordering::Relaxed);
-        Ok(())
-    }
-
-    async fn exec(&self, request: ExecRequest) -> Result<ExecOutput, ComputeError> {
-        self.runtime.turn().await;
-        let mut state = self.runtime.lock();
-        let detail = std::iter::once(request.program.as_str())
-            .chain(request.args.iter().map(String::as_str))
-            .collect::<Vec<_>>()
-            .join(" ");
-        state.enter(Op::Exec, Some(self.name.as_str()), Some(detail))?;
-        self.check_running(&state, "exec")?;
-        self.run(&mut state, &request)
-    }
-
-    async fn serve_ssh<S: SshStream>(&self, mut stream: S) -> Result<(), ComputeError> {
-        self.runtime.turn().await;
-        {
-            let mut state = self.runtime.lock();
-            state.enter(Op::ServeSsh, Some(self.name.as_str()), None)?;
-            self.check_running(&state, "serve ssh for")?;
-        }
-        let io = |e: std::io::Error| ComputeError::Runtime {
-            op: "serve ssh",
-            message: e.to_string(),
-        };
-        if self.runtime.lock().terminals {
-            return pty::serve(stream)
-                .await
-                .map_err(|message| ComputeError::Runtime {
-                    op: "serve ssh",
-                    message,
-                });
-        }
-        stream.write_all(SSH_BANNER.as_bytes()).await.map_err(io)?;
-        stream.flush().await.map_err(io)?;
-        let mut sink = [0_u8; 4096];
-        while stream.read(&mut sink).await.map_err(io)? > 0 {}
-        Ok(())
-    }
-}
-
 /// A future that is pending once, asking to be polled again at once, then ready.
 struct WaitOnce(bool);
 
@@ -1189,23 +888,6 @@ impl Future for WaitOnce {
         self.0 = true;
         cx.waker().wake_by_ref();
         std::task::Poll::Pending
-    }
-}
-
-impl Drop for FakeSandbox {
-    /// Like the SDK (msb 0.7.7): dropping an owning handle shuts the VM down; the record says
-    /// `Stopped`.
-    fn drop(&mut self) {
-        if !self.owned {
-            return;
-        }
-        let mut state = self.runtime.lock();
-        if let Some(r) = state.sandboxes.get_mut(self.name.as_str())
-            && r.boot == self.boot
-            && r.status == WorkspaceStatus::Running
-        {
-            r.status = WorkspaceStatus::Stopped;
-        }
     }
 }
 

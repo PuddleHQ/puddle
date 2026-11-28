@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { beforeEach, describe, expect, it } from "vitest";
-import { NO_FILTER, type Filter } from "#lib/audit/model.ts";
+import { NO_FILTER, type Filter } from "#lib/audit/filter.ts";
 import { FakeAudit, connection } from "#lib/testing/fake-audit.ts";
 import { FakeSource } from "#lib/testing/fake-inbox.ts";
 import { AuditStore } from "./audit.svelte.ts";
@@ -186,6 +186,29 @@ describe("reading the log", () => {
       { id: "w-api", label: "api" },
       { id: "w-web-shop", label: "web-shop" },
     ]);
+  });
+});
+
+describe("counting a filter", () => {
+  it("counts what a filter would show without changing the shown rows", async () => {
+    fill(3);
+    const store = make();
+    expect(await store.count(ALL)).toEqual({ count: 3, more: false });
+    expect(store.entries).toEqual([]);
+  });
+  it("says there are more when one page does not hold them", async () => {
+    fill(250);
+    const store = make();
+    const result = await store.count(ALL);
+    expect(result?.more).toBe(true);
+    expect(result?.count).toBe(200);
+  });
+  it("answers null when the log cannot be read", async () => {
+    const store = make();
+    api.failNext = 500;
+    expect(await store.count(ALL)).toBeNull();
+    api.down = true;
+    expect(await store.count(ALL)).toBeNull();
   });
 });
 

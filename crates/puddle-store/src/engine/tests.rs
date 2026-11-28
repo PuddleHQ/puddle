@@ -56,6 +56,17 @@ fn winner(set: &RuleIndex, workspace: &str, h: &str) -> Option<i64> {
 }
 
 #[test]
+fn an_ip_rule_decides_both_spellings_of_the_address() {
+    let deny_v4 = index(vec![rule(1, None, "10.0.0.2", Effect::Deny)]);
+    assert_eq!(winner(&deny_v4, "a", "10.0.0.2"), Some(1));
+    assert_eq!(winner(&deny_v4, "a", "::ffff:10.0.0.2"), Some(1));
+    let deny_mapped = index(vec![rule(2, None, "::ffff:10.0.0.3", Effect::Deny)]);
+    assert_eq!(winner(&deny_mapped, "a", "10.0.0.3"), Some(2));
+    assert_eq!(winner(&deny_mapped, "a", "::ffff:10.0.0.3"), Some(2));
+    assert_eq!(winner(&deny_v4, "a", "10.0.0.9"), None);
+}
+
+#[test]
 fn r01_empty_rule_set_decides_nothing() {
     let set = RuleIndex::default();
     assert_eq!(set.rules().len(), 0);
@@ -941,7 +952,10 @@ fn arb_index() -> impl Strategy<Value = RuleIndex> {
             owners.insert(sb("b"), UserId::from_stored(user));
         }
         let user_of = |scope: &Scope, user: i64| match scope.workspace() {
-            Some(w) => owners.get(w).copied().unwrap_or(UserId::from_stored(user)),
+            Some(w) => owners
+                .get(w)
+                .copied()
+                .unwrap_or_else(|| UserId::from_stored(user)),
             None => UserId::from_stored(user),
         };
         let rules = rules
@@ -1063,9 +1077,9 @@ proptest! {
                 switches.insert(*u, *set, None, *on);
             }
         }
-        for ((set, w), on) in &index.switches.workspace {
-            if let Some(user) = user {
-                switches.insert(user, *set, Some(w.clone()), *on);
+        for ((u, set, w), on) in &index.switches.workspace {
+            if Some(*u) == user {
+                switches.insert(*u, *set, Some(w.clone()), *on);
             }
         }
         let alone = RuleIndex::new(
@@ -1225,4 +1239,22 @@ fn a_hidden_built_in_set_decides_nothing_even_when_its_entries_are_shared() {
             )
             .is_none()
     );
+}
+
+#[test]
+fn a_workspace_switch_belongs_to_the_user_who_set_it() {
+    let (first, second) = (UserId::OWNER, UserId::from_stored(2));
+    let set = RuleSetId::BuiltIn("github");
+    let workspace = sb("a");
+    let mut switches = Switches::default();
+    switches.insert(first, set, Some(workspace.clone()), true);
+    switches.insert(second, set, Some(workspace.clone()), false);
+    assert!(switches.is_on(first, set, &workspace));
+    assert!(!switches.is_on(second, set, &workspace));
+    assert_eq!(
+        switches.overrides(first, set),
+        vec![(workspace.clone(), true)]
+    );
+    assert_eq!(switches.overrides(second, set), vec![(workspace, false)]);
+    assert_eq!(switches.overrides(UserId::from_stored(3), set), Vec::new());
 }

@@ -19,6 +19,9 @@
 #            CI clone fetches every branch, so in CI this would fail every pull request on any one
 #            branch's finding; nothing runs it by default.
 #
+# PUDDLE_SECRETS_REPORT=<path> also writes gitleaks' JSON report there (secrets redacted); the nightly audit
+# (.github/workflows/secrets-audit.yml, ci/secrets-audit-issue.sh) reads file, line, rule and commit from it.
+#
 # --self-test proves the gate works, on throwaway repositories with the real configuration: a
 # real-shaped token fails, a listed fake fixture passes, a real-shaped token in the fixture's
 # own file still fails, a canary outside the listed paths fails, and each scope sees exactly the
@@ -89,7 +92,7 @@ log_opts() {
 
 scan() { # <repo dir> <scope> <diff base>: exit 1 when gitleaks reports a finding (it prints each one, secret redacted)
     opts=$(log_opts "$1" "$2" "${3:-}")
-    gitleaks git --no-banner --verbose --redact --no-color --exit-code 1 --config "$root/.gitleaks.toml" ${opts:+"--log-opts=$opts"} "$1"
+    gitleaks git --no-banner --verbose --redact --no-color --exit-code 1 --config "$root/.gitleaks.toml" ${PUDDLE_SECRETS_REPORT:+--report-format json --report-path "$PUDDLE_SECRETS_REPORT"} ${opts:+"--log-opts=$opts"} "$1"
 }
 
 # scan_commit <repo dir> <sha>: scan that one commit under the .gitleaks.toml it holds itself (not
@@ -176,6 +179,11 @@ expect fail other-token-in-log-canary-file crates/puddle-proxy/tests/terminate_s
 expect fail log-canary-token-outside-listed-path src/app.rs "const T: &str = \"$canary_token\";"
 expect fail token-in-listed-file crates/puddle-proxy/tests/integration/route.rs "let t = \"$token\";"
 expect fail canary-outside-listed-paths src/lib.rs '    password: "CANARY-s3cret".into(),'
+# The history-only entry for the old app errors e2e fixture is anchored by commit id AND path: a
+# fresh commit holding a token-shaped value at that very path, or the old shape elsewhere, still fails.
+hex="9f3a7c1e5b2d48a6"; hex="$hex$hex$hex$hex"
+expect fail history-only-entry-not-reusable-at-its-path ui/e2e/app-errors.spec.ts "const apiKey = \"$hex\";"
+expect fail history-only-entry-not-reusable-at-another-path ui/e2e/other.spec.ts "const apiKey = \"$hex\";"
 
 # Canary and allowlist entry in one commit. The fixture config lists the canary token for its path.
 canary_config() { # <with|without>: a minimal config, with the allowlist entry or without it

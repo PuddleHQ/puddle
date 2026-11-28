@@ -79,7 +79,8 @@ impl StreamingService<Msg> for BidiEcho {
         Box::pin(async move {
             let inbound = request.into_inner();
             let outbound = inbound.map(|item| item.map(|m| msg(&format!("echo {}", m.text))));
-            Ok(Response::new(Box::pin(outbound) as Self::ResponseStream))
+            let outbound: Self::ResponseStream = Box::pin(outbound);
+            Ok(Response::new(outbound))
         })
     }
 }
@@ -287,7 +288,16 @@ async fn bidirectional_streaming_is_not_buffered() {
     }
     drop(tx);
     assert!(inbound.message().await.unwrap().is_none());
-    assert!(inbound.trailers().await.unwrap().is_some());
+    let trailers = inbound
+        .trailers()
+        .await
+        .unwrap()
+        .expect("the stream ends with trailers");
+    assert_eq!(
+        trailers.get("grpc-status").map(|v| v.to_str().unwrap()),
+        Some("0"),
+        "{trailers:?}"
+    );
 }
 
 fn tokio_stream_from(

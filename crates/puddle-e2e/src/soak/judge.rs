@@ -23,7 +23,8 @@ pub enum Severity {
 /// One rule of the judge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Check {
-    /// RSS or handles grew by more than 30 % between hour 1 and the end of the active period.
+    /// RSS or handles grew by more than 30 % between hour 1 (a later process's own hour 1) and the
+    /// end of the active period.
     Leak,
     /// RSS, handles or threads kept rising over the idle night, beyond the measured noise.
     IdleGrowth,
@@ -37,10 +38,12 @@ pub enum Check {
     WalSize,
     /// The database grew out of line with the number of records.
     DbGrowth,
+    /// The machine's commit charge came within 5 % of its commit limit (Windows).
+    CommitCharge,
 }
 
 /// Every rule.
-pub const ALL: [Check; 7] = [
+pub const ALL: [Check; 8] = [
     Check::Leak,
     Check::IdleGrowth,
     Check::ApiLatency,
@@ -48,6 +51,7 @@ pub const ALL: [Check; 7] = [
     Check::W4Failures,
     Check::WalSize,
     Check::DbGrowth,
+    Check::CommitCharge,
 ];
 
 /// The timeline of a run, in UTC epoch seconds.
@@ -57,6 +61,13 @@ pub struct Schedule {
     pub start: u64,
     /// How long the loops run; the idle night follows.
     pub active_secs: u64,
+    /// How long the idle night lasts. The morning round after it loads the program again, so
+    /// the trend is read over the night only.
+    pub idle_secs: u64,
+    /// Seconds of one playbook hour: 3600 for the real day, less for a compressed run. Every
+    /// window the playbook names in hours ("hour 1", "after hour 4", "in any hour") is read in
+    /// these; the 10 minutes of the SSE line stay real minutes (the page's silence is real time).
+    pub hour: u64,
 }
 
 impl Schedule {
@@ -66,11 +77,22 @@ impl Schedule {
         Self {
             start,
             active_secs: 8 * HOUR,
+            idle_secs: 4 * HOUR,
+            hour: HOUR,
         }
     }
 
     const fn active_end(self) -> u64 {
         self.start + self.active_secs
+    }
+
+    const fn night_end(self) -> u64 {
+        self.active_end() + self.idle_secs
+    }
+
+    /// Width of the windows "hour 1" and "hour 8" are read from: a quarter of an hour.
+    const fn level_window(self) -> u64 {
+        self.hour / 4
     }
 }
 
@@ -120,6 +142,7 @@ pub fn judge_only(series: &Series, schedule: Schedule, checks: &[Check]) -> Vec<
             Check::W4Failures => w4_failures(series, schedule, &mut out),
             Check::WalSize => wal_size(series, &mut out),
             Check::DbGrowth => db_growth(series, schedule, &mut out),
+            Check::CommitCharge => commit_charge(series, &mut out),
         }
     }
     out
@@ -172,12 +195,9 @@ fn mean(v: &[f64]) -> Option<f64> {
 
 /// Samples needed in a comparison window before a level counts as measured.
 const MIN_WINDOW_SAMPLES: usize = 3;
-/// Width of the windows "hour 1" and "hour 8" are read from.
-const LEVEL_WINDOW: u64 = HOUR / 4;
-
-/// The level around `centre_from..centre_from + LEVEL_WINDOW`: the median of the samples there.
-fn level(points: &[(u64, f64)], from: u64) -> Option<f64> {
-    let v = values_in(points, from, from + LEVEL_WINDOW);
+/// The level in `from..from + window`: the median of the samples there.
+fn level(points: &[(u64, f64)], from: u64, window: u64) -> Option<f64> {
+    let v = values_in(points, from, from + window);
     (v.len() >= MIN_WINDOW_SAMPLES).then(|| median(v)).flatten()
 }
 
@@ -185,8 +205,16 @@ fn leak(series: &Series, sched: Schedule, out: &mut Vec<Finding>) {
     for field in [".rss_kb", ".handles"] {
         for metric in proc_metrics(series, field) {
             let pts = series.points(metric);
-            let early = level(pts, sched.start + HOUR);
-            let late = level(pts, sched.active_end().saturating_sub(LEVEL_WINDOW));
+            let w = sched.level_window();
+            // A process started later in the day (Puddle restarted) is read from its own hour 1.
+            let born = pts.first().map_or(sched.start, |p| p.0).max(sched.start);
+            let late_from = sched.active_end().saturating_sub(w);
+            let early_from = born + sched.hour;
+            if early_from + w > late_from {
+                continue;
+            }
+            let early = level(pts, early_from, w);
+            let late = level(pts, late_from, w);
             let (Some(early), Some(late)) = (early, late) else {
                 continue;
             };
@@ -254,7 +282,7 @@ fn idle_growth(series: &Series, sched: Schedule, out: &mut Vec<Finding>) {
                 .points(metric)
                 .iter()
                 .copied()
-                .filter(|&(t, _)| t >= sched.active_end())
+                .filter(|&(t, _)| (sched.active_end()..=sched.night_end()).contains(&t))
                 .collect();
             if idle.len() < MIN_IDLE_SAMPLES {
                 continue;
@@ -278,16 +306,16 @@ fn idle_growth(series: &Series, sched: Schedule, out: &mut Vec<Finding>) {
 fn api_latency(series: &Series, sched: Schedule, out: &mut Vec<Finding>) {
     for metric in series.metrics("api.", ".ms") {
         let pts = series.points(metric);
-        let Some(base) = p95(values_in(pts, sched.start, sched.start + HOUR)) else {
+        let Some(base) = p95(values_in(pts, sched.start, sched.start + sched.hour)) else {
             continue;
         };
         if base >= 100.0 {
             continue;
         }
         let last = pts.last().map_or(0, |&(t, _)| t);
-        let mut from = sched.start + 4 * HOUR;
+        let mut from = sched.start + 4 * sched.hour;
         while from <= last {
-            if let Some(p) = p95(values_in(pts, from, from + HOUR))
+            if let Some(p) = p95(values_in(pts, from, from + sched.hour))
                 && p > 500.0
             {
                 find(
@@ -297,12 +325,12 @@ fn api_latency(series: &Series, sched: Schedule, out: &mut Vec<Finding>) {
                     metric,
                     format!(
                         "p95 {p} ms in hour {} against {base} ms at hour 0 (lines: 500 and 100)",
-                        (from - sched.start) / HOUR
+                        (from - sched.start) / sched.hour
                     ),
                 );
                 break;
             }
-            from += HOUR;
+            from += sched.hour;
         }
     }
 }
@@ -337,8 +365,8 @@ fn sse_silence(series: &Series, sched: Schedule, out: &mut Vec<Finding>) {
             "sse.age_s",
             format!(
                 "no event for {age} s at {}:{:02} into the run and no reconnect; the page would stop updating silently",
-                t.saturating_sub(sched.start) / HOUR,
-                t.saturating_sub(sched.start) % HOUR / 60
+                t.saturating_sub(sched.start) / sched.hour,
+                t.saturating_sub(sched.start) % sched.hour * 60 / sched.hour
             ),
         );
     }
@@ -349,7 +377,7 @@ fn w4_failures(series: &Series, sched: Schedule, out: &mut Vec<Finding>) {
     let end = sched.active_end();
     let mut from = sched.start;
     while from < end {
-        let v = values_in(pts, from, (from + HOUR).min(end));
+        let v = values_in(pts, from, (from + sched.hour).min(end));
         if let Some(m) = mean(&v)
             && m > 0.01
         {
@@ -361,11 +389,11 @@ fn w4_failures(series: &Series, sched: Schedule, out: &mut Vec<Finding>) {
                 format!(
                     "{:.1} % failed in hour {} (line: 1 %)",
                     m * 100.0,
-                    (from - sched.start) / HOUR
+                    (from - sched.start) / sched.hour
                 ),
             );
         }
-        from += HOUR;
+        from += sched.hour;
     }
     let night: Vec<f64> = values_in(pts, end, u64::MAX);
     if let Some(&worst) = night.iter().max_by(|a, b| a.total_cmp(b))
@@ -406,17 +434,18 @@ fn wal_size(series: &Series, out: &mut Vec<Finding>) {
 const DB_BYTES_PER_RECORD: f64 = 8.0 * KIB;
 
 fn db_growth(series: &Series, sched: Schedule, out: &mut Vec<Finding>) {
-    let from = sched.start + HOUR;
-    let to = sched.active_end().saturating_sub(LEVEL_WINDOW);
+    let w = sched.level_window();
+    let from = sched.start + sched.hour;
+    let to = sched.active_end().saturating_sub(w);
     let (Some(db0), Some(db1)) = (
-        level(series.points("file.db.bytes"), from),
-        level(series.points("file.db.bytes"), to),
+        level(series.points("file.db.bytes"), from, w),
+        level(series.points("file.db.bytes"), to, w),
     ) else {
         return;
     };
     let (Some(n0), Some(n1)) = (
-        level(series.points("count.audit"), from),
-        level(series.points("count.audit"), to),
+        level(series.points("count.audit"), from, w),
+        level(series.points("count.audit"), to, w),
     ) else {
         return;
     };
@@ -435,6 +464,36 @@ fn db_growth(series: &Series, sched: Schedule, out: &mut Vec<Finding>) {
             "file.db.bytes",
             format!(
                 "grew {grown} bytes for {added} records; the line is {DB_BYTES_PER_RECORD} per record, or 10 % with no new records"
+            ),
+        );
+    }
+}
+
+/// The share of the commit limit the playbook stops the loops at.
+const COMMIT_LINE: f64 = 0.95;
+
+fn commit_charge(series: &Series, out: &mut Vec<Finding>) {
+    let limits = series.points("host.commit_limit_kb");
+    let worst = series
+        .points("host.commit_kb")
+        .iter()
+        .filter_map(|&(t, kb)| {
+            let &(_, limit) = limits.iter().find(|&&(lt, _)| lt == t)?;
+            (limit > 0.0).then_some((t, kb / limit))
+        })
+        .max_by(|a, b| a.1.total_cmp(&b.1));
+    if let Some((_, share)) = worst
+        && share >= COMMIT_LINE
+    {
+        find(
+            out,
+            Severity::Major,
+            Check::CommitCharge,
+            "host.commit_kb",
+            format!(
+                "the commit charge reached {:.1} % of the commit limit (line: {:.0} %)",
+                share * 100.0,
+                COMMIT_LINE * 100.0
             ),
         );
     }

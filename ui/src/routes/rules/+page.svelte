@@ -58,6 +58,7 @@
   let addDialog = $state<{
     clear: () => void;
     intoSet: (set: number) => void;
+    prefill: (host: string, workspaceId: string | null) => void;
     edit: (rule: Rule) => void;
   }>();
   let draft = $state<NewRule | null>(null);
@@ -99,6 +100,12 @@
     );
     if (named !== null && /^\d+$/.test(named)) {
       selectedRequestRule = Number(named);
+    }
+    const query = new URLSearchParams(window.location.search);
+    const newHost = query.get("new-rule");
+    if (newHost !== null && newHost !== "") {
+      addDialog?.prefill(newHost, query.get("workspace"));
+      addOpen = true;
     }
     const stop = store.start();
     const stopSets = ruleSets.start();
@@ -464,16 +471,17 @@
 <style>
   .head {
     display: flex;
+    /* The button drops below the words when the line is too narrow; squeezed beside them it shrinks
+       under its label, which spills out of the box and widens the page. */
+    flex-wrap: wrap;
     justify-content: space-between;
     align-items: flex-start;
     gap: var(--space-4);
     margin-bottom: var(--space-4);
   }
-  h1 {
-    font-size: var(--text-xl);
-  }
-  h1:focus {
-    outline: none;
+  .head > :first-child {
+    flex: 1 1 20rem;
+    min-width: 0;
   }
   .sub,
   .muted,
@@ -482,7 +490,7 @@
     color: var(--color-text-muted);
   }
   .sub {
-    max-width: 52rem;
+    max-width: var(--page-reading-width);
   }
   .filters {
     display: flex;
@@ -504,12 +512,9 @@
     margin-bottom: var(--space-2);
     font-size: var(--text-sm);
   }
+  /* An empty screen is plain words on the page, not a box. */
   .empty {
-    padding: var(--space-6);
-    max-width: 64rem;
-    background: var(--color-surface);
-    border: 1px solid var(--color-border-subtle);
-    border-radius: var(--radius-md);
+    padding-block: var(--space-4);
   }
   .empty h2,
   .empty p {

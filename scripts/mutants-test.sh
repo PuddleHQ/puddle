@@ -11,6 +11,8 @@ set -eu
 # commands at the real one.
 for v in $(git rev-parse --local-env-vars); do unset "$v"; done
 here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck disable=SC1091 # the helper sits in scripts/
+. "$here/test-fail.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 cd "$tmp"
@@ -44,7 +46,6 @@ export CARGO="$tmp/fake-cargo" FAKE_RUNS="$tmp/runs" MUTANTS_OUT="$tmp/out"
 : >"$FAKE_RUNS"
 sweep() { scripts/mutants.sh sweep --cache "$tmp/cache" "$@" 2>&1; }
 runs() { wc -l <"$FAKE_RUNS" | tr -d ' '; }
-fail() { echo "mutants-test: FAIL: $1" >&2; exit 1; }
 
 sweep >/dev/null
 [ "$(runs)" = 1 ] || fail "first sweep must run"
@@ -300,4 +301,21 @@ TMPDIR="$tmp/callers-tmp" MUTANTS_FREE_GB=1000 scripts/mutants.sh sweep >/dev/nu
 : >"$FAKE_TMPS.test"
 env -u TMPDIR -u PUDDLE_TEST_TMPDIR MUTANTS_FREE_GB=1000 scripts/mutants.sh sweep >/dev/null 2>&1
 [ "$(cat "$FAKE_TMPS.test")" = unset ] || fail "with no TMPDIR given, no PUDDLE_TEST_TMPDIR is set, got $(cat "$FAKE_TMPS.test")"
+# A failed or empty `cargo tree` must never give a key without the crate source: --key refuses, a sweep runs the crate uncached and records nothing.
+cat >bad-cargo <<'F'
+#!/bin/sh
+case $1 in
+tree) [ -z "${FAKE_TREE_EMPTY:-}" ] && exit 101; echo "other v0.0.0" ;;
+*) exec "$FAKE_GOOD_CARGO" "$@" ;;
+esac
+F
+chmod +x bad-cargo
+export FAKE_GOOD_CARGO="$tmp/fake-cargo"
+for empty in '' 1; do
+    FAKE_TREE_EMPTY=$empty CARGO="$tmp/bad-cargo" scripts/mutants.sh --key puddle-a >/dev/null 2>&1 && fail "--key must refuse when cargo tree fails or lists no workspace crate"
+    : >"$FAKE_RUNS"
+    FAKE_TREE_EMPTY=$empty CARGO="$tmp/bad-cargo" scripts/mutants.sh sweep --crate puddle-a --cache "$tmp/cache-badtree$empty" >/dev/null 2>&1
+    [ "$(runs)" = 1 ] || fail "a sweep with no usable cargo tree must still run the crate"
+    [ -z "$(ls "$tmp/cache-badtree$empty" 2>/dev/null)" ] || fail "a sweep with no usable cargo tree must not record a passing run"
+done
 echo "mutants-test: ok"

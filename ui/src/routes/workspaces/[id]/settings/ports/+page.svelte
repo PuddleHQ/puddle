@@ -177,24 +177,29 @@
                       class="btn"
                       disabled={busy}
                       aria-label="Stop forwarding {row.guest_port}"
-                      onclick={() => onStop(row)}>Stop</button
+                      onclick={() => onStop(row)}
                     >
+                      Stop
+                    </button>
                   {:else}
                     <button
                       type="button"
                       class="btn"
                       disabled={busy || !store.running}
                       aria-label="Forward {row.guest_port}"
-                      onclick={() => onForward(row, false)}>Forward</button
+                      onclick={() => onForward(row, false)}
                     >
+                      Forward
+                    </button>
                     <button
                       type="button"
                       class="btn"
                       disabled={busy || !store.running}
                       aria-label="Forward and keep {row.guest_port}"
                       onclick={() => onForward(row, true)}
-                      >Forward and keep</button
                     >
+                      Forward and keep
+                    </button>
                   {/if}
                 </td>
               </tr>
@@ -232,12 +237,12 @@
           bind:value={otherHost}
         />
       </div>
-      <label class="choice"
-        ><input type="checkbox" bind:checked={otherKeep} />Keep it</label
-      >
-      <button type="submit" class="btn" disabled={busy || !store.running}
-        >Forward</button
-      >
+      <label class="choice">
+        <input type="checkbox" bind:checked={otherKeep} />Keep it
+      </label>
+      <button type="submit" class="btn" disabled={busy || !store.running}>
+        Forward
+      </button>
       {#if !store.running}
         <span class="why">Start the workspace to forward a port.</span>
       {/if}
@@ -254,10 +259,10 @@
 
 <style>
   section {
+    max-width: var(--page-reading-width);
     display: grid;
     gap: var(--space-3);
     margin-bottom: var(--space-6);
-    max-width: 60rem;
   }
   h2 {
     font-size: var(--text-lg);

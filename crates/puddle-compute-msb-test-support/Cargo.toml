@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[package]
+name = "puddle-compute-msb-test-support"
+description = "Rigs the puddle-compute-msb VM tests share (the adapter on the harness's msb home, the mount attack and its judge); dev-dependency only, never part of the product"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+puddle-compute = { workspace = true, features = ["contract"] }
+puddle-compute-msb = { workspace = true }
+puddle-ipc = { workspace = true }
+puddle-types = { workspace = true }
+puddle-vm-tests = { workspace = true }
+sha2 = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "rt", "sync", "time"] }
+tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true

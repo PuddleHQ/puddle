@@ -12,7 +12,7 @@
   import { workspaceActions as actions } from "#lib/stores/workspace-actions.svelte.ts";
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
   import { tabHref } from "#lib/workspaces/tabs.ts";
-  import { canStart } from "#lib/workspaces/model.ts";
+  import { allows } from "#lib/workspaces/model.ts";
   import type { TerminalSession } from "#lib/terminal/session.svelte.ts";
   import "#lib/theme/controls.css";
 
@@ -118,10 +118,12 @@
         <button
           type="button"
           class="btn primary"
-          disabled={!canStart(workspace)}
-          onclick={startAndOpen}>Start and open a terminal</button
+          disabled={!allows(workspace, "start")}
+          onclick={startAndOpen}
         >
-        {#if !canStart(workspace)}
+          Start and open a terminal
+        </button>
+        {#if !allows(workspace, "start")}
           <p class="why">{workspace.name} cannot start right now.</p>
         {/if}
       </div>
@@ -150,11 +152,11 @@
             >
               <span aria-hidden="true">{session.label}</span>
               {#if session.bell}<Bell aria-hidden="true" size={14} />{/if}
-              <span class="visually-hidden" id="{fid}-state-{session.number}"
-                >{session.bell ? "Bell rang. " : ""}{session.state === "ended"
+              <span class="visually-hidden" id="{fid}-state-{session.number}">
+                {session.bell ? "Bell rang. " : ""}{session.state === "ended"
                   ? "Ended."
-                  : ""}</span
-              >
+                  : ""}
+              </span>
             </button>
           {/each}
         </div>
@@ -214,16 +216,22 @@
               <p>{shown.end.line}</p>
               {#if shown.end.detail}<p class="muted">{shown.end.detail}</p>{/if}
               {#if shown.end.action === "restart"}
-                <button type="button" class="btn" onclick={() => restart(shown)}
-                  >Restart</button
+                <button
+                  type="button"
+                  class="btn"
+                  onclick={() => restart(shown)}
                 >
+                  Restart
+                </button>
               {:else if shown.end.action === "start" && !usable}
                 <button
                   type="button"
                   class="btn"
-                  disabled={!canStart(workspace)}
-                  onclick={() => actions.start(workspace)}>Start</button
+                  disabled={!allows(workspace, "start")}
+                  onclick={() => actions.start(workspace)}
                 >
+                  Start
+                </button>
               {:else if shown.end.action === "overview"}
                 <a class="btn" href={tabHref(workspace.id, "")}>Overview</a>
               {:else}
@@ -231,8 +239,10 @@
                   type="button"
                   class="btn"
                   disabled={!usable || limit !== null}
-                  onclick={add}>New terminal</button
+                  onclick={add}
                 >
+                  New terminal
+                </button>
               {/if}
             </div>
           {/if}
@@ -253,7 +263,6 @@
     display: grid;
     gap: var(--space-3);
     margin-bottom: var(--space-6);
-    max-width: 80rem;
     min-width: 0;
   }
   h2 {

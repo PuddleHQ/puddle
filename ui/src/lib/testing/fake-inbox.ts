@@ -20,8 +20,10 @@ export function request(id: number, over: Partial<Req> = {}): Req {
     decided_by: null,
     rule_id: null,
     rule_set: null,
+    program: null,
     blocked_by: null,
     company_signal: null,
+    exact_only: false,
     ...over,
   };
 }
@@ -33,6 +35,7 @@ export class FakeInbox {
   down = false;
   /** What the service says about its per-workspace list limit. */
   openLimit = 1000;
+  allowedToday = 0;
   /** Status for the next decision (`approve`/`deny`), then back to success. */
   nextDecisionStatus: number | null = null;
   rules: components["schemas"]["Rule"][] = [];
@@ -74,6 +77,8 @@ export class FakeInbox {
           requests,
         })),
         open_limit: this.openLimit,
+        allowed_today: this.allowedToday,
+        since: 0,
       });
     }
     throw new Error(`unexpected GET ${path}`);

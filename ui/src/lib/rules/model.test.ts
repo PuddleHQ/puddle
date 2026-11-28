@@ -13,7 +13,6 @@ import {
   patternLabel,
   ruleName,
   scopeLabel,
-  sentence,
   view,
   workspaceNameError,
   workspacesIn,
@@ -157,11 +156,6 @@ describe("helpers", () => {
     expect(workspaceNameError("a")).toBeNull();
     for (const bad of ["Shop", "-a", "a-", "a b", "a".repeat(64), "a.b"])
       expect(workspaceNameError(bad), bad).not.toBeNull();
-  });
-  it("shows the API's lower-case messages as sentences", () => {
-    expect(sentence("invalid pattern")).toBe("Invalid pattern.");
-    expect(sentence("Already.")).toBe("Already.");
-    expect(sentence("  ")).toBe("");
   });
 });
 

@@ -16,6 +16,9 @@ use crate::api::ApiReply;
 /// repeat up to an hour.
 const MIN_WAIT_MS: u64 = 60_000;
 const MAX_WAIT_MS: u64 = 60 * 60_000;
+/// The longest a host's own reset time is believed: GitHub's primary limit resets within the
+/// hour, so a reset further away than this is a wrong clock or a bad value, not a real wait.
+const MAX_RESET_MS: u64 = 3 * 60 * 60_000;
 /// How much of a host's own message is kept.
 const MESSAGE_CHARS: usize = 200;
 
@@ -69,6 +72,14 @@ pub(crate) fn message_of(reply: &ApiReply) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
+/// A host's reset time held to at least a second and at most [`MAX_RESET_MS`] past `now_ms`.
+pub(crate) fn bounded_reset(until_ms: u64, now_ms: u64) -> u64 {
+    until_ms.clamp(
+        now_ms.saturating_add(1000),
+        now_ms.saturating_add(MAX_RESET_MS),
+    )
+}
+
 /// A successful GitHub answer that used up the hour's budget: nothing more is asked until it
 /// resets.
 pub(crate) fn github_spent(reply: &ApiReply) -> Option<u64> {
@@ -93,7 +104,7 @@ pub(crate) fn github(reply: &ApiReply, now_ms: u64, strikes: u32) -> Verdict {
             }
             if let Some(until) = github_spent(reply) {
                 return Verdict::Limited {
-                    until_ms: until.max(now_ms.saturating_add(1000)),
+                    until_ms: bounded_reset(until, now_ms),
                     primary: true,
                 };
             }
@@ -117,7 +128,9 @@ fn limited(now_ms: u64, wait_ms: u64, primary: bool) -> Verdict {
 }
 
 /// Azure DevOps' answer to one request. It answers a bad or expired token with its sign-in page
-/// (`203`, or a redirect, or a `200` of HTML) rather than `401`, so those count as rejected.
+/// (`203`, or a redirect, or a `200` of HTML) rather than `401`, so those count as rejected. A
+/// `203` or `200` page that is not Azure's (a company proxy's block or sign-in page) says nothing
+/// about the token: it is an answer Puddle has no rule for.
 pub(crate) fn azure(reply: &ApiReply, now_ms: u64, strikes: u32) -> Verdict {
     if let Some(seconds) = number(reply, "retry-after")
         && reply.status >= 400
@@ -126,12 +139,21 @@ pub(crate) fn azure(reply: &ApiReply, now_ms: u64, strikes: u32) -> Verdict {
     }
     match reply.status {
         200 if is_json(reply) => Verdict::Ok,
-        200 | 203 | 301 | 302 | 303 | 307 | 308 | 401 => Verdict::Rejected,
+        200 | 203 if looks_like_azure_sign_in(reply) => Verdict::Rejected,
+        200 | 203 => Verdict::Other(reply.status),
+        301 | 302 | 303 | 307 | 308 | 401 => Verdict::Rejected,
         403 => Verdict::Forbidden(message_of(reply)),
         404 => Verdict::NotFound,
         429 => limited(now_ms, backoff_ms(strikes), false),
         other => Verdict::Other(other),
     }
+}
+
+/// Whether a page is Azure DevOps' sign-in page: it names the service and asks to sign in.
+fn looks_like_azure_sign_in(reply: &ApiReply) -> bool {
+    let head = reply.body.chunks(16 * 1024).next().unwrap_or_default();
+    let page = String::from_utf8_lossy(head).to_ascii_lowercase();
+    page.contains("sign in") && (page.contains("azure devops") || page.contains("visualstudio.com"))
 }
 
 fn is_json(reply: &ApiReply) -> bool {

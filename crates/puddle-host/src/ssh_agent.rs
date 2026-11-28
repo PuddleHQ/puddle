@@ -84,6 +84,11 @@ const REFUSAL_RECORD_EVERY: Duration = Duration::from_secs(60);
 /// Most distinct refusals remembered for that rule.
 const REFUSALS_REMEMBERED: usize = 256;
 
+/// What the refusal throttle counts as one refusal: the workspace, the host named and the kind of
+/// refusal. The values inside a refusal (flags, request type, a message) come from the guest, so
+/// they are not part of it.
+type RefusalKey = (WorkspaceId, String, std::mem::Discriminant<Refusal>);
+
 /// The first-use question and the audit record of the filtered agent, both kept in the
 /// store: the question is a row the inbox shows, and the user's answer is a row change the waiting
 /// login polls for, so an answer from the UI, the API or the command line all reach it alike.
@@ -92,7 +97,7 @@ pub(crate) struct StoreGate {
     wait: Duration,
     poll: Duration,
     refusal_every: Duration,
-    refused: Mutex<HashMap<(WorkspaceId, String), Instant>>,
+    refused: Mutex<HashMap<RefusalKey, Instant>>,
 }
 
 impl StoreGate {
@@ -136,13 +141,17 @@ impl StoreGate {
     }
 
     /// Whether this refusal is new enough to write down.
-    fn worth_recording(&self, workspace: &WorkspaceId, cause: String) -> bool {
+    fn worth_recording(&self, workspace: &WorkspaceId, host: &str, why: &Refusal) -> bool {
         let now = Instant::now();
         let mut seen = self.refused.lock().unwrap_or_else(PoisonError::into_inner);
         if seen.len() >= REFUSALS_REMEMBERED {
             seen.retain(|_, at| now.duration_since(*at) < self.refusal_every);
         }
-        let key = (workspace.clone(), cause);
+        let key = (
+            workspace.clone(),
+            host.to_owned(),
+            std::mem::discriminant(why),
+        );
         // A table still full of refusals of the last minute is a flood: nothing more is
         // remembered or written until it drains, so the cap is a cap.
         if seen.len() >= REFUSALS_REMEMBERED && !seen.contains_key(&key) {
@@ -195,7 +204,7 @@ impl AgentGate for StoreGate {
         };
         let deadline = Instant::now() + self.wait;
         loop {
-            match self.store.ssh_agent_ask(id) {
+            match self.store.ssh_agent_ask(workspace, id) {
                 Ok(Some(ask)) if ask.state.allows() => return Ok(()),
                 Ok(Some(ask)) if ask.state != puddle_store::SshAgentAskState::Requested => {
                     return Err(Disapproval::Denied);
@@ -230,8 +239,8 @@ impl AgentGate for StoreGate {
             // Every ssh without a session bind lists keys first; that is no event.
             Outcome::Refused(Refusal::NotBound) | Outcome::Bound(_) | Outcome::Listed(_) => {}
             Outcome::Refused(why) => {
-                let detail = format!("refused for {host}: {why}");
-                if self.worth_recording(workspace, detail.clone()) {
+                if self.worth_recording(workspace, host, why) {
+                    let detail = format!("refused for {host}: {why}");
                     self.note(workspace, WorkspaceOpKind::SshAgentRefused, false, detail);
                 }
             }

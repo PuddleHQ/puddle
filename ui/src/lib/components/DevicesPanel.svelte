@@ -83,18 +83,20 @@
       {#each store.devices as device (device.id)}
         <li>
           <span class="name">{device.name}</span>
-          {#if device.current}<span class="tag">This browser</span>{/if}
-          <span class="muted" title={absoluteTime(device.last_seen_at)}
-            >last used {relativeTime(device.last_seen_at, Date.now())}</span
-          >
+          {#if device.current}<span class="meta">This browser</span>{/if}
+          <span class="muted" title={absoluteTime(device.last_seen_at)}>
+            last used {relativeTime(device.last_seen_at, Date.now())}
+          </span>
           <button
             type="button"
             class="btn"
             aria-label="Sign out {device.name}{device.current
               ? ' (this browser)'
               : ''}"
-            onclick={() => revoke(device)}>Sign out</button
+            onclick={() => revoke(device)}
           >
+            Sign out
+          </button>
         </li>
       {/each}
     </ul>
@@ -138,12 +140,12 @@
       <div class="row">
         <button type="submit" class="btn primary">Change password</button>
         <span aria-live="polite">
-          {#if changed}<span class="saved"
-              >Changed. Your other browsers are signed out.</span
-            >{/if}
-          {#if passwordProblem}<span class="error" role="alert"
-              >{passwordProblem}</span
-            >{/if}
+          {#if changed}<span class="saved">
+              Changed. Your other browsers are signed out.
+            </span>{/if}
+          {#if passwordProblem}<span class="error" role="alert">
+              {passwordProblem}
+            </span>{/if}
         </span>
       </div>
     </form>
@@ -183,12 +185,6 @@
   }
   .name {
     font-weight: 600;
-  }
-  .tag {
-    padding: 0 var(--space-2);
-    border: 1px solid var(--color-border-subtle);
-    border-radius: var(--radius-pill);
-    font-size: var(--text-sm);
   }
   form,
   .fields {

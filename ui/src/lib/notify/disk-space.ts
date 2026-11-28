@@ -39,7 +39,7 @@ export class DiskSpaceNotices {
           ? `${left} Free space now: a build or a tool in a workspace can stop halfway when the drive is full.`
           : `${left} Delete workspaces you no longer use and files you do not need before it runs out.`,
       link: {
-        href: "/settings/workspaces#set-disk-warn",
+        href: "/settings/this-computer#set-disk-warn",
         label: "Disk space settings",
       },
     });

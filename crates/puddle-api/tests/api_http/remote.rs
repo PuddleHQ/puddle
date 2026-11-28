@@ -11,8 +11,8 @@ use std::time::{Duration, SystemTime};
 
 use puddle_api::{
     ApiConfig, ApiServer, ApiToken, EventHub, MemorySettings, NameResolver, NetworkEndpoint,
-    NetworkListener, PublicHost, Remote, RemoteServing, RunningApi, Services, SettingsRepo,
-    TlsIdentity, UiAssets, UiFile,
+    NetworkListener, PublicHost, Remote, RemoteServing, RunningApi, Services, TlsIdentity,
+    UiAssets, UiFile,
 };
 use puddle_netpolicy::{EndpointKind, OwnAddresses, PuddleEndpoints};
 use puddle_store::{Limits, ManualClock, Store};
@@ -94,7 +94,7 @@ async fn bind_with(config: ApiConfig, table: Table) -> Bound {
     let store = Arc::new(Store::open_in_memory(clock.clone(), Limits::default()).unwrap());
     let services = Services::new(
         store,
-        Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>,
+        Arc::new(MemorySettings::default()),
         Arc::new(EventHub::default()),
         clock,
     )
@@ -678,7 +678,7 @@ async fn a_network_listener_with_an_unusable_certificate_does_not_bind() {
     let clock = Arc::new(ManualClock::new(START_MS));
     let services = Services::new(
         Arc::new(Store::open_in_memory(clock.clone(), Limits::default()).unwrap()),
-        Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>,
+        Arc::new(MemorySettings::default()),
         Arc::new(EventHub::default()),
         clock,
     );
@@ -728,7 +728,7 @@ async fn a_network_listener_on_a_taken_port_says_so() {
     let clock = Arc::new(ManualClock::new(START_MS));
     let services = Services::new(
         Arc::new(Store::open_in_memory(clock.clone(), Limits::default()).unwrap()),
-        Arc::new(MemorySettings::default()) as Arc<dyn SettingsRepo>,
+        Arc::new(MemorySettings::default()),
         Arc::new(EventHub::default()),
         clock,
     );

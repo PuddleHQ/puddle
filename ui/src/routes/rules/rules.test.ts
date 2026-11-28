@@ -1,72 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
-  cleanup,
   fireEvent,
   render,
   screen,
   waitFor,
   within,
 } from "@testing-library/svelte";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-const h = await vi.hoisted(async () => {
-  const fakes = await import("#lib/testing/fake-rules.ts");
-  const inbox = await import("#lib/testing/fake-inbox.ts");
-  const sets = await import("#lib/testing/fake-rule-sets.ts");
-  const requestRules = await import("#lib/testing/fake-request-rules.ts");
-  return {
-    requestApi: new requestRules.FakeRequestRules(),
-    requestRule: requestRules.requestRule,
-    api: new fakes.FakeRules(),
-    setsApi: new sets.FakeRuleSets(),
-    source: new inbox.FakeSource(),
-    rule: fakes.rule,
-    builtIn: sets.builtIn,
-    mine: sets.mine,
-    systemHost: sets.systemHost,
-  };
-});
+vi.mock("#lib/stores/rule-sets.svelte.ts", async (original) =>
+  (await import("./rules-harness.ts")).ruleSetsMock(await original()),
+);
+vi.mock("#lib/stores/request-rules.svelte.ts", async (original) =>
+  (await import("./rules-harness.ts")).requestRulesMock(await original()),
+);
+vi.mock("#lib/stores/rules.svelte.ts", async (original) =>
+  (await import("./rules-harness.ts")).rulesMock(await original()),
+);
 
-vi.mock("#lib/stores/rule-sets.svelte.ts", async (original) => {
-  const mod =
-    await original<typeof import("#lib/stores/rule-sets.svelte.ts")>();
-  return {
-    ...mod,
-    ruleSets: new mod.RuleSetsStore({
-      api: h.setsApi as never,
-      source: h.source,
-      pollMs: 60_000,
-    }),
-  };
-});
-
-vi.mock("#lib/stores/request-rules.svelte.ts", async (original) => {
-  const mod =
-    await original<typeof import("#lib/stores/request-rules.svelte.ts")>();
-  return {
-    ...mod,
-    requestRulesStore: new mod.RequestRulesStore({
-      api: h.requestApi as never,
-      source: h.source,
-      pollMs: 60_000,
-    }),
-  };
-});
-
-vi.mock("#lib/stores/rules.svelte.ts", async (original) => {
-  const mod = await original<typeof import("#lib/stores/rules.svelte.ts")>();
-  return {
-    ...mod,
-    rulesStore: new mod.RulesStore({
-      api: h.api as never,
-      source: h.source,
-      pollMs: 60_000,
-    }),
-  };
-});
-
-import { ruleSets } from "#lib/stores/rule-sets.svelte.ts";
-import { requestRulesStore } from "#lib/stores/request-rules.svelte.ts";
 import { rulesStore } from "#lib/stores/rules.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
 import RulesPage from "./+page.svelte";
@@ -74,88 +25,21 @@ import { expectNoIdsShown } from "#lib/testing/no-ids.ts";
 import { workspaces } from "#lib/stores/workspaces.svelte.ts";
 import { workspace as fakeWorkspace } from "#lib/testing/fake-workspaces.ts";
 import { chooseWorkspace } from "#lib/testing/choose-workspace.ts";
+import { h } from "./rules-harness.ts";
+import {
+  choose,
+  hosts,
+  installReset,
+  loaded,
+  rows,
+  seed,
+  warmUp,
+} from "./rules-setup.ts";
 
-const {
-  api,
-  setsApi,
-  source,
-  rule,
-  builtIn,
-  mine,
-  systemHost,
-  requestApi,
-  requestRule,
-} = h;
+const { api, setsApi, source, rule, builtIn } = h;
 
-beforeEach(() => {
-  api.rules = [];
-  api.calls = [];
-  api.bodies = [];
-  api.down = false;
-  api.refuse = null;
-  rulesStore.rules = [];
-  rulesStore.status = "loading";
-  requestApi.rules = [];
-  requestApi.calls = [];
-  requestApi.bodies = [];
-  requestApi.down = false;
-  requestApi.refuse = null;
-  requestRulesStore.rules = [];
-  requestRulesStore.status = "loading";
-  setsApi.sets = [];
-  setsApi.system = [];
-  setsApi.calls = [];
-  setsApi.bodies = [];
-  setsApi.down = false;
-  ruleSets.sets = [];
-  ruleSets.system = [];
-  ruleSets.status = "loading";
-  for (const t of [...toasts.items]) toasts.dismiss(t.id);
-});
-afterEach(cleanup);
-
-function seed() {
-  api.rules = [
-    rule(1, { pattern: "registry.npmjs.org", created_at: 100 }),
-    rule(2, {
-      pattern: ".github.com",
-      pattern_kind: "suffix",
-      scope: { type: "workspace", workspace: "shop" as never },
-      effect: "deny",
-      created_at: 200,
-    }),
-    rule(3, {
-      pattern: "old.example.com",
-      expires_at: Date.now() - 60_000,
-      created_at: 300,
-    }),
-  ];
-}
-
-const rows = () => screen.getAllByRole("row").slice(1);
-const hosts = () =>
-  rows().map((r) => within(r).getAllByRole("cell")[0]!.textContent?.trim());
-
-async function loaded() {
-  render(RulesPage);
-  await waitFor(() => expect(rulesStore.status).toBe("ready"));
-}
-
-/** Opens the row menu of the rule an item name points at ("Delete rule: <rule>") and picks that item. */
-async function choose(item: string | RegExp) {
-  const source = typeof item === "string" ? item : item.source;
-  const found = /^\^?(?:Edit rule|Change expiry|Delete rule)(?:: (.*))?$/.exec(
-    source,
-  );
-  const rest = found?.[1] ?? "";
-  const trigger = screen.getByRole("button", {
-    name: new RegExp(
-      `^More about ${typeof item === "string" ? rest.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : rest}`,
-    ),
-  });
-  await fireEvent.keyDown(trigger, { key: "Enter" });
-  await fireEvent.click(await screen.findByRole("menuitem", { name: item }));
-}
+installReset();
+await warmUp();
 
 describe("workspace ids", () => {
   it("stay behind the names in the table, the filter and the add form", async () => {
@@ -230,7 +114,7 @@ describe("the list", () => {
     await loaded();
     expect(hosts()).toEqual([
       "old.example.com",
-      "*.github.com and subdomains",
+      "*.github.com",
       "registry.npmjs.org",
     ]);
     const old = rows()[0]!;
@@ -250,7 +134,7 @@ describe("the list", () => {
     seed();
     await loaded();
     await fireEvent.click(screen.getByRole("button", { name: "Sort by host" }));
-    expect(hosts()[0]).toBe("*.github.com and subdomains");
+    expect(hosts()[0]).toBe("*.github.com");
     expect(screen.getByRole("columnheader", { name: /Host/ })).toHaveAttribute(
       "aria-sort",
       "ascending",
@@ -387,7 +271,7 @@ describe("adding", () => {
     expect(toasts.items[0]?.message).toBe(
       "Added: deny *.example.org for workspace shop.",
     );
-    expect(hosts()).toContain("*.example.org and subdomains");
+    expect(hosts()).toContain("*.example.org");
   });
   it("checks the form before asking the server", async () => {
     const dialog = await open();
@@ -529,7 +413,9 @@ describe("editing a rule in place", () => {
     expect(within(dialog).getByLabelText("Host")).toHaveValue("*.github.com");
     expect(within(dialog).getByLabelText("Deny")).toBeChecked();
     expect(within(dialog).getByLabelText("One workspace")).toBeChecked();
-    expect(within(dialog).getByLabelText("Workspace")).toHaveValue("shop");
+    expect(
+      within(dialog).getByRole("combobox", { name: "Workspace" }),
+    ).toHaveValue("shop");
     expect(within(dialog).getByLabelText("Expires")).toHaveDisplayValue(
       /^Unchanged/,
     );
@@ -555,7 +441,7 @@ describe("editing a rule in place", () => {
       "Saved: allow api.github.com for workspace shop.",
     );
     expect(hosts()).toContain("api.github.com");
-    expect(hosts()).not.toContain("*.github.com and subdomains");
+    expect(hosts()).not.toContain("*.github.com");
     expect(rows()).toHaveLength(3);
   });
 
@@ -828,284 +714,5 @@ describe("live", () => {
     } finally {
       vi.useRealTimers();
     }
-  });
-});
-
-describe("rule sets and System managed (rules spec §7)", () => {
-  async function withSets() {
-    setsApi.sets = [
-      builtIn("github", { name: "GitHub" }),
-      mine(4, {
-        name: "Client X",
-        entries: [
-          {
-            pattern: "x.example",
-            pattern_kind: "exact",
-            effect: "deny",
-            note: "",
-            enabled: true,
-            rule_id: 9,
-            expires_at: null,
-            precedence: 5,
-          },
-        ],
-      }),
-    ];
-    setsApi.system = [systemHost("open-vsx.org")];
-    api.rules = [
-      rule(1, { pattern: "mine.example" }),
-      rule(9, { pattern: "x.example", scope: { type: "set", set: 4 } }),
-    ];
-    await loaded();
-    await waitFor(() => expect(ruleSets.status).toBe("ready"));
-  }
-  const section = (name: string) =>
-    screen.getByRole("region", { name }) as HTMLElement;
-
-  it("keeps a set's entries out of your rules and shows them under the set", async () => {
-    await withSets();
-    const table = screen.getAllByRole("table")[0]!;
-    expect(within(table).getByText("mine.example")).toBeInTheDocument();
-    expect(within(table).queryByText("x.example")).not.toBeInTheDocument();
-    expect(
-      screen.getByText("1 rule", { selector: ".count" }),
-    ).toBeInTheDocument();
-    const sets = section("Rule sets");
-    const card = within(sets).getByRole("article", { name: "Client X" });
-    expect(within(card).getByText("x.example")).toBeInTheDocument();
-    const system = section("System managed");
-    expect(within(system).getByText("open-vsx.org")).toBeInTheDocument();
-    expect(
-      within(system).getByText(/bundled code-server/, { selector: "b" }),
-    ).toBeInTheDocument();
-  });
-
-  it("asks before turning a set on for every workspace", async () => {
-    await withSets();
-    const card = within(section("Rule sets")).getByRole("article", {
-      name: "GitHub",
-    });
-    await fireEvent.click(
-      within(card).getByRole("switch", { name: "On for every workspace" }),
-    );
-    const confirm = await screen.findByRole("alertdialog", {
-      name: "Turn on for every workspace?",
-    });
-    await fireEvent.click(
-      within(confirm).getByRole("button", { name: "Turn on everywhere" }),
-    );
-    await waitFor(() =>
-      expect(setsApi.calls).toContain("PUT /api/rule-sets/{id}/switch"),
-    );
-    expect(setsApi.bodies.at(-1)).toEqual({ workspace: null, enabled: true });
-  });
-
-  it("refuses a rule into a set that was deleted while the form was open", async () => {
-    await withSets();
-    await fireEvent.click(
-      screen.getAllByRole("button", { name: "Add rule" })[0]!,
-    );
-    const dialog = await screen.findByRole("dialog", { name: "Add a rule" });
-    await fireEvent.click(
-      within(dialog).getByRole("radio", { name: /In rule set Client X/ }),
-    );
-    setsApi.sets = [];
-    await ruleSets.refresh();
-    await fireEvent.input(within(dialog).getByLabelText("Host"), {
-      target: { value: "y.example" },
-    });
-    await fireEvent.click(
-      within(dialog).getByRole("button", { name: "Add rule" }),
-    );
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "That rule set no longer exists.",
-    );
-    expect(api.calls).not.toContain("POST /api/rules");
-  });
-
-  it("adds an entry into a set and deletes one", async () => {
-    await withSets();
-    const card = within(section("Rule sets")).getByRole("article", {
-      name: "Client X",
-    });
-    await fireEvent.click(
-      within(card).getByRole("button", { name: "Add entry" }),
-    );
-    const dialog = await screen.findByRole("dialog", { name: "Add a rule" });
-    expect(
-      within(dialog).getByRole("radio", { name: /In rule set Client X/ }),
-    ).toBeChecked();
-    await fireEvent.input(within(dialog).getByLabelText("Host"), {
-      target: { value: "y.example" },
-    });
-    await fireEvent.click(
-      within(dialog).getByRole("button", { name: "Add rule" }),
-    );
-    // The set is on for every workspace, so it asks first.
-    const confirm = await screen.findByRole("alertdialog");
-    expect(confirm).toHaveTextContent(
-      "Allow y.example in rule set Client X, which is on for every workspace",
-    );
-    await fireEvent.click(
-      within(confirm).getByRole("button", { name: "Allow in every workspace" }),
-    );
-    await waitFor(() =>
-      expect(api.bodies.at(-1)).toMatchObject({
-        pattern: "y.example",
-        scope: { type: "set", set: 4 },
-      }),
-    );
-    // Or choose the set in a plain Add rule.
-    await fireEvent.click(
-      screen.getAllByRole("button", { name: "Add rule" })[0]!,
-    );
-    const plain = await screen.findByRole("dialog", { name: "Add a rule" });
-    await fireEvent.click(
-      within(plain).getByRole("radio", { name: /In rule set Client X/ }),
-    );
-    expect(
-      within(plain).getByRole("radio", { name: /In rule set Client X/ }),
-    ).toBeChecked();
-    await fireEvent.click(
-      within(plain).getByRole("button", { name: "Cancel" }),
-    );
-    await fireEvent.click(
-      within(card).getByRole("button", {
-        name: "Delete x.example from Client X",
-      }),
-    );
-    await waitFor(() => expect(api.calls).toContain("DELETE /api/rules/{id}"));
-  });
-
-  it("moves a rule into a set by editing it, and the set shows it afterwards", async () => {
-    await withSets();
-    const readsBefore = setsApi.calls.length;
-    await choose("Edit rule: allow mine.example for every workspace");
-    const dialog = await screen.findByRole("dialog", { name: "Edit rule" });
-    await fireEvent.click(
-      within(dialog).getByRole("radio", { name: /In rule set Client X/ }),
-    );
-    await fireEvent.click(
-      within(dialog).getByRole("button", { name: "Save rule" }),
-    );
-    // The rule was already for every workspace and so is the set: nothing to ask.
-    await waitFor(() =>
-      expect(api.bodies.at(-1)).toMatchObject({
-        pattern: "mine.example",
-        scope: { type: "set", set: 4 },
-      }),
-    );
-    expect(api.calls).toContain("PUT /api/rules/{id}");
-    await waitFor(() =>
-      expect(setsApi.calls.length).toBeGreaterThan(readsBefore),
-    );
-    await waitFor(() =>
-      expect(toasts.items.at(-1)?.message).toBe(
-        "Saved: allow mine.example in a rule set.",
-      ),
-    );
-  });
-});
-
-describe("method and path rules", () => {
-  const section = () => screen.getByRole("region", { name: "Method and path" });
-
-  it("sits on the rules screen with what a rule does, and an empty state", async () => {
-    render(RulesPage);
-    const region = await screen.findByRole("region", {
-      name: "Method and path",
-    });
-    expect(region).toHaveTextContent("only refuses");
-    expect(region).toHaveTextContent("decrypts the host");
-    expect(
-      await within(region).findByText(/No rules on method and path yet/),
-    ).toBeInTheDocument();
-  });
-
-  it("selects the rule the address names, as the Activity screen links to it", async () => {
-    Element.prototype.scrollIntoView = vi.fn();
-    window.history.replaceState({}, "", "/rules?request-rule=2");
-    requestApi.rules = [requestRule(1), requestRule(2)];
-    render(RulesPage);
-    await waitFor(() => expect(requestRulesStore.status).toBe("ready"));
-    const rows = within(section()).getAllByRole("row").slice(1);
-    await waitFor(() =>
-      expect(rows[1]).toHaveAttribute("aria-current", "true"),
-    );
-    expect(rows[0]).not.toHaveAttribute("aria-current");
-    window.history.replaceState({}, "", "/rules");
-  });
-
-  it("ignores a rule named in the address that is not a number", async () => {
-    window.history.replaceState({}, "", "/rules?request-rule=abc");
-    requestApi.rules = [requestRule(1)];
-    render(RulesPage);
-    await waitFor(() => expect(requestRulesStore.status).toBe("ready"));
-    expect(within(section()).getAllByRole("row")[1]).not.toHaveAttribute(
-      "aria-current",
-    );
-    window.history.replaceState({}, "", "/rules");
-  });
-
-  it("lists the rules and deletes one after asking", async () => {
-    requestApi.rules = [
-      requestRule(1, {
-        host: "api.example.com",
-        methods: ["DELETE", "PUT"],
-        path: "/repos/**",
-      }),
-    ];
-    render(RulesPage);
-    await waitFor(() => expect(requestRulesStore.status).toBe("ready"));
-    expect(section()).toHaveTextContent("DELETE, PUT");
-    await fireEvent.click(
-      within(section()).getByRole("button", { name: /^Delete rule: refuse/ }),
-    );
-    await fireEvent.click(
-      await screen.findByRole("button", { name: "Delete rule" }),
-    );
-    await waitFor(() =>
-      expect(requestApi.calls).toContain("DELETE /api/request-rules/{id} 1"),
-    );
-    expect(
-      await within(section()).findByText(/No rules on method and path yet/),
-    ).toBeInTheDocument();
-  });
-
-  it("switches a rule off and on with a toast", async () => {
-    requestApi.rules = [requestRule(1, { host: "api.example.com" })];
-    render(RulesPage);
-    await waitFor(() => expect(requestRulesStore.status).toBe("ready"));
-    const toggle = within(section()).getByRole("switch", {
-      name: /^Rule on: refuse/,
-    });
-    await fireEvent.click(toggle);
-    await waitFor(() => expect(toggle).not.toBeChecked());
-    expect(requestApi.calls).toContain("PUT /api/request-rules/{id}/enabled 1");
-    expect(toasts.items.at(-1)?.message).toMatch(/is off\.$/);
-    await fireEvent.click(toggle);
-    await waitFor(() => expect(toggle).toBeChecked());
-    expect(toasts.items.at(-1)?.message).toMatch(/is on\.$/);
-  });
-
-  it("says why when a switch is refused", async () => {
-    requestApi.rules = [requestRule(1)];
-    render(RulesPage);
-    await waitFor(() => expect(requestRulesStore.status).toBe("ready"));
-    requestApi.refuse = { status: 500, message: "x" };
-    await fireEvent.click(
-      within(section()).getByRole("switch", { name: /^Rule on: refuse/ }),
-    );
-    await waitFor(() => expect(toasts.items.at(-1)?.message).toBe("X."));
-  });
-
-  it("reads a rule that was added elsewhere when the event arrives", async () => {
-    render(RulesPage);
-    await waitFor(() => expect(requestRulesStore.status).toBe("ready"));
-    requestApi.rules = [requestRule(2, { host: "late.example.com" })];
-    source.emit({ type: "request_rules_changed" });
-    expect(
-      await within(section()).findByText("late.example.com"),
-    ).toBeInTheDocument();
   });
 });

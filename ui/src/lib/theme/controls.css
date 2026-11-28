@@ -18,6 +18,10 @@
   line-height: 1.25;
   text-decoration: none;
   cursor: pointer;
+  /* A button is one line: its label never breaks, not even inside a word. */
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 .btn:hover {
   background: var(--color-surface-raised);
@@ -79,6 +83,23 @@
   font-family: var(--font-mono);
 }
 
+/* A small fact about a thing (off, built in, a source): plain muted words. A pill is for one thing
+   only, a live state (Running, Stopped, Waiting, Allowed, Denied). */
+.meta {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+.meta.warn {
+  color: var(--color-warning);
+}
+/* A fact that holds a sentence or a string the user typed (a URL, a host, a path): it wraps, and
+   breaks inside a word when it has to, so a narrow page never scrolls sideways for it. */
+.meta.wrap {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 /* The modal shared by the confirm dialog and the form dialogs. */
 .confirm-overlay {
   position: fixed;
@@ -106,6 +127,7 @@
 .confirm-title {
   margin: 0;
   font-size: var(--text-lg);
+  font-weight: 600;
 }
 .confirm-detail {
   color: var(--color-text-muted);

@@ -171,11 +171,13 @@ fn the_known_hosts_file_is_a_merge_of_one_block_and_refuses_what_is_not_host_key
     assert!(matches!(f.apply(), puddle_types::ApplyKind::Merge(_)));
     assert_eq!(
         text(&f),
-        format!("# puddle: begin\n{lines}\n# puddle: end\n")
+        format!(
+            "# puddle: begin\n# managed by Puddle; hand edits between these markers are overwritten\n{lines}\n# puddle: end\n"
+        )
     );
     for bad in ["", "# a comment", "a ssh-rsa A\n\nb ssh-rsa B"] {
         let err = ssh_known_hosts_file(bad).unwrap_err();
-        assert!(matches!(err, ConfigError::GuestPath { .. }), "{bad:?}");
+        assert!(matches!(err, ConfigError::Content { .. }), "{bad:?}");
     }
 }
 
@@ -199,6 +201,7 @@ fn the_agent_path_is_one_shell_word_in_the_proxy_command() {
             ..ProxySettings::default()
         };
         let err = guest_proxy_config(&settings, &[]).unwrap_err();
+        assert!(matches!(err, ConfigError::Content { .. }), "{bad}: {err}");
         assert!(err.to_string().contains("ProxyCommand"), "{bad}: {err}");
     }
 }
@@ -236,6 +239,7 @@ fn the_ssh_agent_socket_is_named_to_every_client_and_to_ssh_only_when_it_is_on()
             ..ProxySettings::default()
         };
         let err = guest_proxy_config(&settings, &[]).unwrap_err();
+        assert!(matches!(err, ConfigError::Content { .. }), "{bad}: {err}");
         assert!(err.to_string().contains("IdentityAgent"), "{bad}: {err}");
     }
 }
@@ -456,6 +460,14 @@ fn image_dirs_move_the_per_user_files() {
     let c = guest_proxy_config(&ProxySettings::default(), &env).unwrap();
     file_at(&c, "/opt/gradle-home/init.d/puddle-proxy.gradle");
     file_at(&c, "/etc/docker-cli/config.json");
+    // Outside the session user's home, both belong to that user all the same.
+    assert!(file_at(&c, "/opt/gradle-home/init.d/puddle-proxy.gradle").session_owned());
+    assert!(file_at(&c, "/etc/docker-cli/config.json").session_owned());
+    for f in &c.files {
+        let per_user = f.path().as_str().starts_with("/opt/gradle-home")
+            || f.path().as_str().starts_with("/etc/docker-cli");
+        assert_eq!(f.session_owned(), per_user, "{:?}", f.path());
+    }
 
     // Unusable values (relative, `..`, the root) fall back to the home.
     for bad in ["relative", "/a/../b", "/", "/trailing/"] {

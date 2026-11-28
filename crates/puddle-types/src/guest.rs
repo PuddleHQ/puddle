@@ -113,8 +113,8 @@ macro_rules! guest_path {
 ///
 /// ```
 /// use puddle_types::GuestPath;
-/// let p = GuestPath::new("/workspaces/acme/src").unwrap();
-/// assert!(p.is_within(&GuestPath::new("/workspaces/acme").unwrap()));
+/// let p = GuestPath::new("/workspace/src").unwrap();
+/// assert!(p.is_within(&GuestPath::new("/workspace").unwrap()));
 /// assert!(GuestPath::new("/workspaces/../etc").is_err());
 /// assert!(GuestPath::new("relative").is_err());
 /// ```
@@ -281,14 +281,17 @@ pub struct GuestFile {
     mode: u32,
     #[serde(default)]
     apply: ApplyKind,
+    #[serde(default)]
+    session_owned: bool,
 }
 
 impl fmt::Debug for GuestFile {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // No bit set for group or others: an owner-only secret.
+        let owner_only = self.mode.trailing_zeros() >= 6;
         let mut shown = f.debug_struct("GuestFile");
         shown.field("path", &self.path);
-        // No bit set for group or others: an owner-only secret.
-        if self.mode.trailing_zeros() >= 6 {
+        if owner_only {
             shown.field(
                 "contents",
                 &format_args!("<{} bytes, owner-only>", self.contents.len()),
@@ -296,10 +299,21 @@ impl fmt::Debug for GuestFile {
         } else {
             shown.field("contents", &self.contents);
         }
-        shown
-            .field("mode", &self.mode)
-            .field("apply", &self.apply)
-            .finish()
+        shown.field("mode", &self.mode);
+        shown.field("session_owned", &self.session_owned);
+        match &self.apply {
+            // A merge spec holds the values of the keys it owns, as private as the contents.
+            ApplyKind::Merge(spec) if owner_only => shown.field(
+                "apply",
+                &format_args!(
+                    "Merge {{ format: {:?}, keys: {:?}, values hidden }}",
+                    spec.format(),
+                    spec.keys()
+                ),
+            ),
+            apply => shown.field("apply", apply),
+        };
+        shown.finish()
     }
 }
 
@@ -334,6 +348,7 @@ impl GuestFile {
             contents,
             mode: Self::DEFAULT_MODE,
             apply: ApplyKind::Replace,
+            session_owned: false,
         }
     }
 
@@ -354,6 +369,7 @@ impl GuestFile {
             contents: spec.fresh(),
             mode: Self::DEFAULT_MODE,
             apply: ApplyKind::Merge(spec),
+            session_owned: false,
         }
     }
 
@@ -371,6 +387,7 @@ impl GuestFile {
             contents: Vec::new(),
             mode: Self::DEFAULT_MODE,
             apply: ApplyKind::Keep,
+            session_owned: false,
         }
     }
 
@@ -379,6 +396,28 @@ impl GuestFile {
     pub fn with_mode(mut self, mode: FileMode) -> Self {
         self.mode = mode.bits();
         self
+    }
+
+    /// The same file, and the directories the hook makes for it, belonging to the session user
+    /// even outside that user's home (a path an image env variable moved there). Below the
+    /// home they always do.
+    ///
+    /// ```
+    /// use puddle_types::{GuestFile, GuestPath};
+    /// let f = GuestFile::new(GuestPath::new("/opt/gradle/init.d/a.gradle").unwrap(), Vec::new())
+    ///     .with_session_owner();
+    /// assert!(f.session_owned());
+    /// ```
+    #[must_use]
+    pub fn with_session_owner(mut self) -> Self {
+        self.session_owned = true;
+        self
+    }
+
+    /// Whether the file belongs to the session user wherever it is.
+    #[must_use]
+    pub fn session_owned(&self) -> bool {
+        self.session_owned
     }
 
     /// Where the file goes in the guest.
@@ -468,6 +507,30 @@ impl GuestEnv {
     /// The variables, sorted by name.
     pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
         self.0.iter().map(|(k, v)| (k.as_str(), v.as_str()))
+    }
+
+    /// The sudoers line that keeps the variables whose names `keep` accepts under `sudo`, whose
+    /// `env_reset` drops the rest. Every sudoers file Puddle writes for a guest takes its
+    /// keep-list from here.
+    ///
+    /// ```
+    /// use puddle_types::GuestEnv;
+    /// let mut env = GuestEnv::new();
+    /// env.set("A", "1").unwrap();
+    /// env.set("B_C", "2").unwrap();
+    /// assert_eq!(env.sudo_keep_line(|_| true), "Defaults env_keep += \"A B_C\"\n");
+    /// assert_eq!(env.sudo_keep_line(|n| n.starts_with('B')), "Defaults env_keep += \"B_C\"\n");
+    /// ```
+    #[must_use]
+    pub fn sudo_keep_line(&self, keep: impl Fn(&str) -> bool) -> String {
+        let names = self
+            .0
+            .keys()
+            .map(String::as_str)
+            .filter(|name| keep(name))
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("Defaults env_keep += \"{names}\"\n")
     }
 
     /// How many variables are set.

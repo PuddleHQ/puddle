@@ -56,9 +56,9 @@ fn a_workspaces_sandbox_has_its_name_and_helper_sandboxes_have_none_of_a_workspa
     let sandbox = w.sandbox_name();
     assert_eq!(sandbox.as_str(), "acme");
     assert_eq!(sandbox.workspace_id(), Some(w));
-    // A helper sandbox's name is valid as a sandbox name; a reserved one is no workspace's.
+    // A helper sandbox's name is valid as a sandbox name, and no workspace's; neither is a reserved one.
     let helper = SandboxName::new("m--acme").unwrap();
-    assert_eq!(helper.workspace_id().unwrap().as_str(), "m--acme");
+    assert_eq!(helper.workspace_id(), None);
     let reserved = SandboxName::new("tauri").unwrap();
     assert_eq!(reserved.workspace_id(), None);
     let err = SandboxName::new("Acme").unwrap_err();
@@ -75,6 +75,17 @@ fn reserved_workspace_names_are_no_workspace_id_either() {
         assert!(err.reason().contains("reserved"), "{err}");
     }
     assert!(WorkspaceId::new("tauri-app").is_ok());
+}
+
+#[test]
+fn a_maintenance_sandbox_name_is_no_workspace_id() {
+    let err = WorkspaceId::new("m--acme").unwrap_err();
+    assert_eq!(err.what(), "workspace id");
+    assert!(err.reason().contains("maintenance"), "{err}");
+    // Only the prefix is refused, not a name that merely starts with an m.
+    for ok in ["m-acme", "m", "mm--acme", "acme-m--x"] {
+        assert!(WorkspaceId::new(ok).is_ok(), "{ok}");
+    }
 }
 
 #[test]

@@ -20,6 +20,7 @@ puddle-compute = { path = "crates/puddle-compute" }
 puddle-proxy = { path = "crates/puddle-proxy" }
 puddle-store = { path = "crates/puddle-store" }
 puddle-api = { path = "crates/puddle-api" }
+puddle-services = { path = "crates/puddle-services" }
 puddle-boot = { path = "crates/puddle-boot" }
 puddle-agent = { path = "crates/puddle-agent" }
 puddle-agent-proto = { path = "crates/puddle-agent-proto" }
@@ -57,6 +58,10 @@ puddle-process = { path = "crates/puddle-process" }
 puddle-test-kit = { path = "crates/puddle-test-kit" }
 # Dev-dependency only, like the kit: the rigs the puddle-proxy integration tests share.
 puddle-proxy-test-support = { path = "crates/puddle-proxy-test-support" }
+# Dev-dependency only: the rigs the puddle-host integration tests share (API client, VM host harness).
+puddle-host-test-support = { path = "crates/puddle-host-test-support" }
+# Dev-dependency only: the VM rigs of the puddle-compute-msb tests.
+puddle-compute-msb-test-support = { path = "crates/puddle-compute-msb-test-support" }
 
 # External
 # msb SDK from Puddle's fork, tag `v<release>-puddle.N`. The SDK and the bundled runtime
@@ -70,11 +75,15 @@ puddle-proxy-test-support = { path = "crates/puddle-proxy-test-support" }
 # required even without guest networking: without it the SDK's launch config lacks `sandbox_slot`
 # and a release msb refuses it ("missing field `sandbox_slot`"). `ssh` for the in-process
 # SSH server.
-microsandbox = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.7", default-features = false, features = ["local", "net", "ssh"] }
+microsandbox = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.8", default-features = false, features = ["local", "net", "ssh"] }
 # The SDK's image crate: the SDK has no public "pull without creating" call.
-microsandbox-image = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.7", default-features = false }
+microsandbox-image = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.8", default-features = false }
+# The registry client msb pulls with: the pull error is matched on its typed variants (a refused connect); the same release msb pins.
+oci-client = { version = "0.18", default-features = false }
+# Builds a real connect failure for the pull error tests; the same release oci-client pulls in.
+reqwest = { version = "0.13", default-features = false }
 # Only for building the SDK's boot error in tests.
-microsandbox-runtime = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.7", default-features = false }
+microsandbox-runtime = { git = "https://github.com/PuddleHQ/microsandbox", tag = "v0.7.12-puddle.8", default-features = false }
 object = { version = "0.41", default-features = false }
 serde = { version = "1.0.228", default-features = false, features = ["std", "derive"] }
 serde_json = "1.0.149"
@@ -118,7 +127,7 @@ tokio-yamux = { version = "0.3.20", default-features = false, features = ["tokio
 futures-util = { version = "0.3.31", default-features = false, features = ["std"] }
 libc = "0.2.172"
 # Interface listing for the guest agent (getifaddrs, if_nametoindex) without hand-written FFI.
-nix = { version = "0.31.3", default-features = false, features = ["net", "signal"] }
+nix = { version = "0.32.0", default-features = false, features = ["net", "signal"] }
 rustix = { version = "1.1.5", default-features = false, features = ["std", "process"] }
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "std"] }
 getrandom = "0.4"
@@ -226,6 +235,7 @@ unsafe_code = "deny" # each crate root also says #![forbid(unsafe_code)] unless 
 missing_docs = "warn"
 unreachable_pub = "warn"
 unused_qualifications = "warn"
+trivial_casts = "warn"
 rust_2018_idioms = { level = "warn", priority = -1 }
 
 [workspace.lints.clippy]
@@ -247,6 +257,15 @@ undocumented_unsafe_blocks = "warn"
 unimplemented = "warn"
 unwrap_used = "warn"
 wildcard_dependencies = "warn"
+# Idiom audit lints that keep the cleaned-up shapes cleaned up.
+redundant_clone = "warn"
+or_fun_call = "warn"
+use_self = "warn"
+needless_raw_strings = "warn"
+str_to_string = "warn"
+string_add = "warn"
+needless_collect = "warn"
+significant_drop_in_scrutinee = "warn"
 # clippy.toml names std::env::temp_dir: make a test's files with `tempfile`, or say why in an
 # #[expect(clippy::disallowed_methods, reason = "...")] (scripts/flake-lints-test.sh proves the rule fires).
 disallowed_methods = "deny"
@@ -255,7 +274,7 @@ disallowed_methods = "deny"
 # workspace), so its libkrun, russh and imago forks are repeated here, pinned to the commits the
 # fork tag's Cargo.lock pins (a branch would follow later pushes, which the tag's msb wasn't built
 # with). libkrun: PuddleHQ/libkrun tag `msb_krun-v0.1.42-puddle.2` (msb_krun 0.1.42 + fixes); russh:
-# PuddleHQ/russh tag `v0.65.2-puddle.1` (russh 0.65.2, which carries the agent-lock and host-key-order security fixes, + the peer-close fix).
+# PuddleHQ/russh tag `v0.65.2-puddle.2` (russh 0.65.2, which carries the agent-lock and host-key-order security fixes, + the peer-close fixes).
 [patch.crates-io]
 msb_krun = { git = "https://github.com/PuddleHQ/libkrun", tag = "msb_krun-v0.1.42-puddle.2" }
 msb_krun_arch = { git = "https://github.com/PuddleHQ/libkrun", tag = "msb_krun-v0.1.42-puddle.2" }
@@ -268,7 +287,7 @@ msb_krun_polly = { git = "https://github.com/PuddleHQ/libkrun", tag = "msb_krun-
 msb_krun_smbios = { git = "https://github.com/PuddleHQ/libkrun", tag = "msb_krun-v0.1.42-puddle.2" }
 msb_krun_utils = { git = "https://github.com/PuddleHQ/libkrun", tag = "msb_krun-v0.1.42-puddle.2" }
 msb_krun_vmm = { git = "https://github.com/PuddleHQ/libkrun", tag = "msb_krun-v0.1.42-puddle.2" }
-russh = { git = "https://github.com/PuddleHQ/russh", tag = "v0.65.2-puddle.1" }
+russh = { git = "https://github.com/PuddleHQ/russh", tag = "v0.65.2-puddle.2" }
 # msb-imago: PuddleHQ/imago `puddle` (File::sync() calls fdatasync, so a guest flush no longer commits the
 # host journal for the image mtime).
 msb-imago = { git = "https://github.com/PuddleHQ/imago", rev = "e528d65caf49ed0e117eb29ffae1d9e6efc95d25" }
@@ -283,6 +302,12 @@ tokio-yamux = { path = "vendor/tokio-yamux" }
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+# The soak workflow runs an optimised `puddle` with the dormant `serve` feature on. It is a test
+# build, never shipped, so it has its own profile: ci/check-dormant-release.sh keeps `--release`
+# builds free of dormant features.
+[profile.soak]
+inherits = "release"
 
 [profile.dev.package.libsqlite3-sys]
 opt-level = 3

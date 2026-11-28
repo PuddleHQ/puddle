@@ -6,9 +6,9 @@ use crate::git_hosts::Authors;
 use crate::op_error::OpError;
 use std::sync::{Arc, PoisonError};
 
-use puddle_api::WorkspaceRecord;
 use puddle_boot::GatedSandbox;
 use puddle_compute::{ComputeError, Runtime, Sandbox as _};
+use puddle_services::workspaces::WorkspaceRecord;
 use puddle_store::{Actor, NewWorkspaceOp, WorkspaceOpKind, WorkspaceOpOutcome};
 use puddle_types::{Event, EventSink, GuestEnv, Problem, WorkspaceId, WorkspaceStep};
 
@@ -16,6 +16,7 @@ use puddle_workspace::Layout;
 
 use super::{GuestState, HostWorkspaces, problem_key, with_leftovers};
 use crate::boot::GuestInputs;
+use puddle_lifecycle::Lifecycle;
 
 /// Which run of the boot hook a report comes from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,9 +87,11 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             session_user: guest.session_user,
             ssh_agent: guest.ssh_agent,
             mise: guest.mise.as_ref(),
+            older_mount: guest.older_mount.as_ref(),
+            label: &guest.label,
         };
         let (plan, _) = kit.plan(&guest.image, &inputs)?;
-        let report = kit.hook().run(gated.ungated(), &plan).await?;
+        let report = kit.hook().run(gated, &plan).await?;
         self.settle_after_hook(name, &report, Some(&guest.authors), HookRun::Rewrite);
         Ok(report)
     }
@@ -102,13 +105,6 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             self.inner.events.emit(Event::WorkspaceShellInitRestored {
                 workspace: name.clone(),
             });
-        }
-    }
-
-    /// Looks at every running workspace again (after events were missed).
-    pub(crate) async fn all_git_changed(&self) {
-        for name in self.inner.injection.running_workspaces() {
-            self.git_changed(&name).await;
         }
     }
 
@@ -466,7 +462,8 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
     }
 
     /// After a boot: Puddle's directory and stale locks on the volume, the notice and check for the
-    /// shell init, the SSH endpoint, and the handle the lifecycle stops at exit.
+    /// shell init and the SSH endpoint. The lifecycle has the sandbox's handle since the boot
+    /// ([`LifecycleKeeper`]).
     pub(super) async fn settle(&self, record: &WorkspaceRecord) -> Result<(), OpError> {
         let inner = &self.inner;
         let (id, name) = (&record.id, &record.id);
@@ -490,15 +487,9 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
             .get(name)
             .and_then(|live| live.guest.as_ref().map(|guest| guest.authors.clone()));
         self.settle_after_hook(name, gated.boot_report(), authors.as_ref(), HookRun::Boot);
-        let root = Layout::new(id)?.mount().clone();
+        let root = Layout::new()?.mount().clone();
         self.check_start_folder(name, &gated, &root, record.start_folder.as_ref())
             .await;
-        let mount = Layout::new(id)?.mount().clone();
-        let handle = inner.runtime.get(&name.sandbox_name()).await?;
-        inner
-            .lifecycle
-            .manage(handle, vec![mount])
-            .or(Err(OpError::ShuttingDown))?;
         // Direct SSH is off unless the user allowed it: then there is no endpoint to connect to
         // and no ssh config entry, however the guest behaves.
         if self.direct_ssh_allowed(name) {
@@ -518,5 +509,45 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         // From here ports can be forwarded, and the pinned forwards come back.
         self.inner.ports.started(name).await;
         Ok(())
+    }
+}
+
+/// Hands the handle that owns a sandbox to the lifecycle the moment the runtime has made or
+/// started it, before the boot hook runs in it. The workspace goes on with a handle that does not
+/// own the VM, so ending its operation (a shutdown past the grace period) leaves the VM to the
+/// lifecycle, which trims and stops it like any running one.
+pub(super) struct LifecycleKeeper<'a, R: Runtime> {
+    pub(super) runtime: &'a R,
+    pub(super) lifecycle: &'a Lifecycle<R>,
+    /// Told the workspace waits for its agent once the VM is up (the boot hook runs next).
+    pub(super) events: &'a dyn EventSink,
+    pub(super) workspace: &'a WorkspaceId,
+}
+
+impl<R: Runtime> puddle_boot::Keeper<R::Sandbox> for LifecycleKeeper<'_, R> {
+    async fn keep(&self, owning: R::Sandbox) -> Result<R::Sandbox, (R::Sandbox, String)> {
+        // At shutdown the workspace mount is trimmed.
+        let mount = match Layout::new() {
+            Ok(layout) => layout.mount().clone(),
+            Err(e) => return Err((owning, e.to_string())),
+        };
+        let borrowed = match self.runtime.get(owning.name()).await {
+            Ok(handle) => handle,
+            Err(e) => return Err((owning, e.to_string())),
+        };
+        match self.lifecycle.manage(owning, vec![mount]) {
+            Ok(_) => {
+                self.events.emit(Event::WorkspaceProgress {
+                    workspace: self.workspace.clone(),
+                    step: WorkspaceStep::WaitingForAgent,
+                    detail: None,
+                    repository: None,
+                    bytes_done: None,
+                    bytes_total: None,
+                });
+                Ok(borrowed)
+            }
+            Err(owning) => Err((owning, OpError::ShuttingDown.to_string())),
+        }
     }
 }

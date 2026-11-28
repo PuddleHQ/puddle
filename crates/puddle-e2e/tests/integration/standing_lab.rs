@@ -9,10 +9,10 @@
 
 use std::net::SocketAddr;
 use std::path::Path;
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::time::Duration;
 
-use puddle_test_kit::{MAX_WAIT, accepts, eventually_blocking};
+use puddle_test_kit::{MAX_WAIT, ProcessGuard, accepts, eventually_blocking};
 
 fn lab() -> Command {
     Command::new(env!("CARGO_BIN_EXE_puddle-lab"))
@@ -62,7 +62,7 @@ fn listening(port: u64) -> bool {
 }
 
 /// Starts the program with `args`, waits for its info file and returns the child and the info.
-fn start(args: &[&str], dir: &Path, stop_file: bool) -> (Child, serde_json::Value) {
+fn start(args: &[&str], dir: &Path, stop_file: bool) -> (ProcessGuard, serde_json::Value) {
     let info = dir.join("lab.json");
     let mut command = lab();
     command.args(args).arg("--info").arg(&info);
@@ -70,6 +70,8 @@ fn start(args: &[&str], dir: &Path, stop_file: bool) -> (Child, serde_json::Valu
         command.arg("--stop").arg(dir.join("stop"));
     }
     let child = command.stderr(Stdio::null()).spawn().unwrap();
+    let stop = stop_file.then(|| dir.join("stop"));
+    let child = ProcessGuard::new(child, stop);
     let text = eventually_blocking("the lab writes its info file", MAX_WAIT, || {
         std::fs::read_to_string(&info).ok()
     });
@@ -358,7 +360,7 @@ fn a_termination_signal_stops_the_lab_cleanly() {
     let port = info["ntlm"]["port"].as_u64().unwrap();
     assert!(listening(port));
     let sent = Command::new("kill")
-        .args(["-TERM", &child.id().to_string()])
+        .args(["-TERM", &child.child().id().to_string()])
         .status()
         .unwrap();
     assert!(sent.success());
@@ -368,4 +370,116 @@ fn a_termination_signal_stops_the_lab_cleanly() {
         Duration::from_secs(30),
         || !listening(port),
     );
+}
+
+/// A `docker` that only keeps books: `run` records the container name in `containers` (and, when
+/// `listening` is set, writes the `cache.log` line of a Squid that listens, though nothing does),
+/// `rm -f` forgets it. The lab runs it as it would the real one.
+#[cfg(unix)]
+fn fake_docker(dir: &Path, listening: bool) -> (std::path::PathBuf, std::path::PathBuf) {
+    let bin = dir.join("bin");
+    let state = dir.join("containers");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&state).unwrap();
+    let listen = if listening {
+        r#"echo "Accepting HTTP Socket connections at conn3 local=127.0.0.1:1" > "$mount/cache.log""#
+    } else {
+        ":"
+    };
+    let script = format!(
+        r#"#!/bin/sh
+case "$1" in
+  run)
+    shift
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --name) name="$2"; shift ;;
+        -v) mount="${{2%%:*}}"; shift ;;
+      esac
+      shift
+    done
+    echo "$name" > "{state}/$name"
+    {listen}
+    ;;
+  rm) for last; do :; done; rm -f "{state}/$last" ;;
+  inspect) echo true ;;
+esac
+"#,
+        state = state.display()
+    );
+    puddle_test_kit::write_executable(&bin.join("docker"), &script);
+    (bin, state)
+}
+
+#[cfg(unix)]
+fn self_test_in_docker_mode(bin: &Path) -> Command {
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let mut command = lab();
+    command
+        .args(["--self-test", "--squid"])
+        .env("PATH", path)
+        .env("PUDDLE_SQUID_DOCKER", "fake/squid")
+        .env_remove("PUDDLE_SQUID_BIN");
+    command
+}
+
+#[cfg(unix)]
+fn containers(state: &Path) -> usize {
+    std::fs::read_dir(state).unwrap().count()
+}
+
+#[cfg(unix)]
+#[test]
+fn a_docker_squid_the_host_cannot_reach_fails_at_once_and_names_host_networking() {
+    let dir = tempfile::tempdir().unwrap();
+    let (bin, state) = fake_docker(dir.path(), true);
+    let begun = std::time::Instant::now();
+    let output = self_test_in_docker_mode(&bin).output().unwrap();
+    let text = stderr(&output);
+    assert!(!output.status.success(), "{text}");
+    assert!(
+        text.contains("Docker Desktop needs host networking") && text.contains("PUDDLE_SQUID_BIN"),
+        "{text}"
+    );
+    // flake-ok: the bar is half the 60 s wait that was the bug; a loaded machine slows a start by seconds, not by half a minute.
+    assert!(
+        begun.elapsed() < Duration::from_secs(30),
+        "the start waited {:?}",
+        begun.elapsed()
+    );
+    assert_eq!(
+        containers(&state),
+        0,
+        "the failed start removes its container"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_self_test_stopped_by_a_signal_removes_the_containers_it_started() {
+    for signal in ["-TERM", "-INT"] {
+        let dir = tempfile::tempdir().unwrap();
+        let (bin, state) = fake_docker(dir.path(), false);
+        let mut child = ProcessGuard::new(
+            self_test_in_docker_mode(&bin)
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+            None,
+        );
+        eventually_blocking("the self-test starts its container", MAX_WAIT, || {
+            (containers(&state) == 1).then_some(())
+        });
+        let sent = Command::new("kill")
+            .args([signal, &child.child().id().to_string()])
+            .status()
+            .unwrap();
+        assert!(sent.success());
+        assert!(!child.wait().unwrap().success());
+        assert_eq!(containers(&state), 0, "{signal} left a container");
+    }
 }

@@ -415,3 +415,71 @@ fn a_company_signal_code_is_its_wire_name() {
         assert_eq!(wire, signal.code());
     }
 }
+
+#[test]
+fn a_protocol_is_its_wire_name_and_an_ssh_line_carries_it() {
+    for protocol in [ConnectionProtocol::Http, ConnectionProtocol::Ssh] {
+        assert_eq!(serde_json::to_value(protocol).unwrap(), protocol.as_str());
+    }
+    assert_eq!(ConnectionProtocol::Http.as_str(), "http");
+    assert_eq!(ConnectionProtocol::Ssh.as_str(), "ssh");
+    assert_eq!(
+        HttpRequestLine::new("GET", "/a").protocol(),
+        ConnectionProtocol::Http
+    );
+    let line = HttpRequestLine::ssh("git-receive-pack", "/o/r.git");
+    assert_eq!(line.protocol(), ConnectionProtocol::Ssh);
+    assert_eq!(line.method(), "git-receive-pack");
+    assert_eq!(line.path(), "/o/r.git");
+}
+
+#[test]
+fn an_ssh_line_has_no_git_operation_even_when_the_repository_is_named_like_one() {
+    for path in ["/o/git-receive-pack", "/o/git-upload-pack", "/o/r.git"] {
+        let line = HttpRequestLine::ssh("git-upload-pack", path);
+        assert_eq!(line.git_operation(), None, "{path}");
+    }
+    assert_eq!(
+        HttpRequestLine::new("POST", "/o/r.git/git-receive-pack").git_operation(),
+        Some(GitOperation::Push)
+    );
+}
+
+#[test]
+fn git_smart_http_targets_name_their_operation() {
+    let op = GitOperation::of_target;
+    assert_eq!(
+        op("/a/b.git/info/refs?service=git-receive-pack"),
+        Some(GitOperation::Push)
+    );
+    assert_eq!(
+        op("http://h.example/a/b.git/info/refs?x=1&service=git-upload-pack"),
+        Some(GitOperation::Fetch)
+    );
+    assert_eq!(op("/a/b.git/git-receive-pack"), Some(GitOperation::Push));
+    assert_eq!(op("/a/b.git/git-upload-pack"), Some(GitOperation::Fetch));
+    // Not Git smart HTTP, or no service named.
+    assert_eq!(op("/a/b.git/info/refs"), None);
+    assert_eq!(op("/a/b.git/info/refs?service=other"), None);
+    assert_eq!(op("/x?service=git-receive-pack"), None);
+    assert_eq!(op("/git-receive-pack/readme"), None);
+    assert_eq!(HttpRequestLine::new("GET", "/").git_operation(), None);
+}
+
+#[test]
+fn a_git_operation_has_the_stored_name() {
+    assert_eq!(GitOperation::Push.as_str(), "push");
+    assert_eq!(GitOperation::Fetch.as_str(), "fetch");
+}
+
+#[test]
+fn a_request_line_reports_the_git_operation_of_its_target() {
+    assert_eq!(
+        HttpRequestLine::new("POST", "/a/b.git/git-receive-pack").git_operation(),
+        Some(GitOperation::Push)
+    );
+    assert_eq!(
+        HttpRequestLine::new("GET", "/a/b.git/info/refs?service=git-upload-pack").git_operation(),
+        Some(GitOperation::Fetch)
+    );
+}

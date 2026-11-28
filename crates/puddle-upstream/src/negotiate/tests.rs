@@ -81,10 +81,8 @@ impl TokenSource for Source {
 
 fn auth(source: Source) -> (NegotiateAuth, Arc<Source>) {
     let source = Arc::new(source);
-    (
-        NegotiateAuth::new(Arc::clone(&source) as Arc<dyn TokenSource>),
-        source,
-    )
+    let shared: Arc<dyn TokenSource> = source.clone();
+    (NegotiateAuth::new(shared), source)
 }
 
 fn proxy() -> ProxyAddr {

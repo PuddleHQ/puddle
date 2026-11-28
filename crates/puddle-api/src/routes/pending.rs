@@ -11,13 +11,13 @@ use puddle_store::{Actor, PendingRow, PendingState, ScopeChoice};
 use puddle_types::{Host, LocalCategory, PendingId, WorkspaceId};
 use serde::Deserialize;
 
-use crate::ApiErrorBody;
 use crate::authz::{self, Action, Principal, ResourceRef};
-use crate::error::{ApiError, blocking};
 use crate::extract::{Path, Query};
 use crate::routes::AppState;
 use crate::routes::settings::{load_global, load_workspace};
-use crate::wire::{
+use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, blocking};
+use puddle_services::wire::{
     DecisionOutcome, DecisionRequest, Effect, Inbox, InboxGroup, PendingList, PendingRequest,
 };
 
@@ -99,7 +99,7 @@ pub(super) async fn present(
             let host = row.host.clone();
             let mut request = PendingRequest::from_store(row)?;
             request.blocked_by = blocked.get(&id).copied();
-            if request.state == crate::wire::PendingState::Requested {
+            if request.state == puddle_services::wire::PendingState::Requested {
                 request.company_signal = company_signal(&host, signals).map(str::to_owned);
             }
             Ok(request)
@@ -151,9 +151,12 @@ pub(crate) async fn inbox(
             requests: present(&state, group.rows).await?,
         });
     }
+    let (allowed_today, since) = state.store.allowed_today(principal.user);
     Ok(Json(Inbox {
         groups: out,
         open_limit: state.store.max_open_rows(),
+        allowed_today,
+        since,
     }))
 }
 
@@ -170,10 +173,11 @@ pub(crate) async fn inbox(
 )]
 pub(crate) async fn get_pending(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<i64>,
 ) -> Result<Json<PendingRequest>, ApiError> {
     let store = state.store.clone();
-    let row = blocking(move || Ok(store.pending(PendingId(id))?)).await?;
+    let row = blocking(move || Ok(store.as_user(principal.user).pending(PendingId(id))?)).await?;
     Ok(Json(present(&state, vec![row]).await?.remove(0)))
 }
 
@@ -246,9 +250,11 @@ async fn decide(
         .await?;
     }
     let decided = blocking(move || {
-        Ok(state
-            .store
-            .resolve_pending(PendingId(id), &resolution, Actor::Api)?)
+        Ok(state.store.as_user(principal.user).resolve_pending(
+            PendingId(id),
+            &resolution,
+            Actor::Api,
+        )?)
     })
     .await?;
     Ok(Json(DecisionOutcome::from_store(decided)?))

@@ -12,6 +12,8 @@
 #
 # Outputs (each `true` or `false`; a job is skipped only on an explicit `false`, except the `defer_` outputs, which skip it only on an explicit `true`):
 #   ci_rust   the full Rust and repository gates of ci.yml (false: only the light lint job)
+#   msvc      the cross-checked Windows clippy job (`msvc` in ci.yml): ci_rust, except in the light CI mode, where it
+#             follows win_rust (a change to a crate or a fixture), so a Windows-only lint error shows on the pull request
 #   win_rust  windows clippy and tests
 #   ui        the UI gates on both systems
 #   vm        the VM build and test jobs of vm-linux and vm-windows (false: no changed path can reach a VM
@@ -49,7 +51,7 @@
 #
 # Light CI mode: with the repository variable PUDDLE_LIGHT_CI set to `on`, a pull request to develop
 # and a merge queue run run only the unit tier: every heavy output (ci_rust, win_rust, ui, vm) is
-# `false`, so the Rust, UI, msvc, Windows and VM jobs skip and the result jobs accept it, and `unit`
+# `false` (`msvc` takes win_rust's answer, so the cross-checked Windows clippy still runs when a crate or fixture changed), so the Rust, UI, Windows and VM jobs skip and the result jobs accept it, and `unit`
 # and `unit_ui` take the values ci_rust and ui would have had. ci.yml's `light` job (the typos, spdx,
 # ShellCheck, standalone, quality and secrets gates) runs because ci_rust is false. The full set then runs by
 # hand (`workflow_dispatch`, every output true) and on every push to develop (ci.yml). A file list
@@ -73,7 +75,9 @@
 #   always   everything runs: manifests and lockfile, toolchain, lint and tool config, workflows and
 #            actions, ci/, scripts/ (except the three data files), the two UI scripts the Rust
 #            diff-coverage and ratchet gates run, the shared VM test crate, the API contract and the
-#            TypeScript types made from it, the notices inputs, a repo-url data file the UI tests read
+#            TypeScript types made from it, the notices inputs, a repo-url data file the UI tests read, and the two files outside
+#            crates/ that Rust tests include (docs/serve.md, ui/src/lib/settings/model.ts; ci/scope-test.sh
+#            fails when a test includes another such path the rules do not run the Rust gates for)
 #   gate     the coverage baseline, diff-coverage exclusions and standalone allowlist: read by the
 #            Linux Rust gates and the UI gate only
 #   fixture  ui/e2e/fixtures/: UI test data that the Rust fixture server includes
@@ -118,7 +122,7 @@ path_class() {
     scripts/diff-coverage-exclusions.txt | scripts/diff-coverage-exclusions/*.txt | scripts/coverage-baseline.json | scripts/standalone-allow.txt)
         echo gate ;;
     scripts/* | ui/scripts/diff-coverage.ts | ui/scripts/coverage-ratchet.ts | crates/puddle-vm-tests/* | crates/puddle-api/openapi/* | crates/puddle-store/tests/data/repo-urls.json | \
-        ui/src/lib/api/schema.d.ts | ui/package-lock.json | ui/THIRD-PARTY-NOTICES.txt)
+        docs/serve.md | ui/src/lib/settings/model.ts | ui/src/lib/api/schema.d.ts | ui/package-lock.json | ui/THIRD-PARTY-NOTICES.txt)
         echo always ;;
     ui/e2e/fixtures/*) echo fixture ;;
     ui/*) echo ui ;;
@@ -154,7 +158,7 @@ vm_unrelated() {
 }
 
 full_outputs() {
-    printf 'ci_rust=true\nwin_rust=true\nui=true\nvm=true\ndefer_vm_windows=false\ndefer_win_ui=false\ndefer_win_clippy=false\ndefer_linux_webkit=false\nlight=false\nunit=false\nunit_ui=false\nclass=full\n'
+    printf 'ci_rust=true\nmsvc=true\nwin_rust=true\nui=true\nvm=true\ndefer_vm_windows=false\ndefer_win_ui=false\ndefer_win_clippy=false\ndefer_linux_webkit=false\nlight=false\nunit=false\nunit_ui=false\nclass=full\n'
 }
 
 # Nightly tier: the repository variable PUDDLE_TIER is exactly `on` and this is a merge queue run.
@@ -235,11 +239,12 @@ light_ci_mode() {
 
 # stdin: classify's outputs. stdout: the light CI mode's: the unit tier takes the Rust and UI answers, every heavy job skips.
 light_ci() {
-    local line ci_rust=true ui=true
+    local line ci_rust=true win_rust=true ui=true
     local -a lines=()
     while IFS= read -r line; do
         case $line in
         ci_rust=*) ci_rust=${line#*=} ;;
+        win_rust=*) win_rust=${line#*=} ;;
         ui=*) ui=${line#*=} ;;
         esac
         lines+=("$line")
@@ -247,6 +252,7 @@ light_ci() {
     for line in "${lines[@]}"; do
         case $line in
         ci_rust=* | win_rust=* | ui=* | vm=*) echo "${line%%=*}=false" ;;
+        msvc=*) echo "msvc=$win_rust" ;;
         unit=*) echo "unit=$ci_rust" ;;
         unit_ui=*) echo "unit_ui=$ui" ;;
         *) echo "$line" ;;
@@ -305,8 +311,8 @@ classify() {
         case "$esc" in *" clippy "*) ;; *) d_clip=true ;; esac
         case "$esc" in *" webkit "*) ;; *) d_wk=true ;; esac
     fi
-    printf 'ci_rust=%s\nwin_rust=%s\nui=%s\nvm=%s\ndefer_vm_windows=%s\ndefer_win_ui=%s\ndefer_win_clippy=%s\ndefer_linux_webkit=%s\nlight=false\nunit=false\nunit_ui=false\nclass=%s\n' \
-        "$ci_rust" "$win_rust" "$uib" "$vmb" "$d_vm" "$d_ui" "$d_clip" "$d_wk" "$class"
+    printf 'ci_rust=%s\nmsvc=%s\nwin_rust=%s\nui=%s\nvm=%s\ndefer_vm_windows=%s\ndefer_win_ui=%s\ndefer_win_clippy=%s\ndefer_linux_webkit=%s\nlight=false\nunit=false\nunit_ui=false\nclass=%s\n' \
+        "$ci_rust" "$ci_rust" "$win_rust" "$uib" "$vmb" "$d_vm" "$d_ui" "$d_clip" "$d_wk" "$class"
 }
 
 # The changed paths of this pull request (renames give both names), from the GitHub API. Prints
@@ -492,9 +498,9 @@ main() {
     full-steps) shift; full_steps "$@" ;;
     "")
         out=$(scope) || out=$(full_outputs)
-        # Anything but the twelve keys (or a lost one) means something broke: run everything.
-        out=$(grep -E '^(ci_rust|win_rust|ui|vm|defer_vm_windows|defer_win_ui|defer_win_clippy|defer_linux_webkit|light|unit|unit_ui|class)=' <<<"$out")
-        [ "$(grep -c . <<<"$out")" = 12 ] || out=$(full_outputs)
+        # Anything but the thirteen keys (or a lost one) means something broke: run everything.
+        out=$(grep -E '^(ci_rust|msvc|win_rust|ui|vm|defer_vm_windows|defer_win_ui|defer_win_clippy|defer_linux_webkit|light|unit|unit_ui|class)=' <<<"$out")
+        [ "$(grep -c . <<<"$out")" = 13 ] || out=$(full_outputs)
         echo "$out"
         [ -z "${GITHUB_OUTPUT:-}" ] || echo "$out" >>"$GITHUB_OUTPUT"
         [ -z "${GITHUB_STEP_SUMMARY:-}" ] || {

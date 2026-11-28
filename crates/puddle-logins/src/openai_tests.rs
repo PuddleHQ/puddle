@@ -3,37 +3,19 @@
 //! the token exchange that trades the identity token for an API key answers in the same
 //! `access_token` field as the login does.
 
-use std::sync::Arc;
-
-use base64::Engine as _;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use puddle_proxy::ExchangeRewriter as _;
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 
 use crate::profile::{OPENAI, Role, Scope, Slot};
+use crate::test_rig::{Rig, answered, claims_of, host, jwt, rig_for};
 use crate::vault::Vault;
-use crate::widened_tests::{Rig, answered, host, rig_for};
 
 static PROFILES: [crate::profile::Profile; 1] = [OPENAI];
 
 const REFRESH: &str = "rt_CANARY0openai0refresh.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const API_KEY: &str =
     "sk-proj-CANARY0openai0api0key0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-
-fn jwt(claims: &Value, signature_len: usize) -> String {
-    format!(
-        "{}.{}.{}",
-        URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256","typ":"JWT"}"#),
-        URL_SAFE_NO_PAD.encode(claims.to_string()),
-        "S".repeat(signature_len),
-    )
-}
-
-fn claims_of(token: &str) -> Value {
-    let payload = token.split('.').nth(1).unwrap();
-    serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).unwrap()).unwrap()
-}
 
 fn id_token() -> String {
     jwt(
@@ -51,13 +33,10 @@ async fn exchange(rig: &Rig, body: &Value) -> Value {
 }
 
 fn kept(rig: &Rig, role: Role) -> Option<(String, String)> {
-    Vault::new(
-        Arc::clone(&rig.store) as _,
-        &WorkspaceId::new("alpha").unwrap(),
-    )
-    .read(&OPENAI, role)
-    .unwrap()
-    .map(|saved| (saved.stand_in.clone(), saved.real.to_string()))
+    Vault::new(rig.store.clone(), &WorkspaceId::new("alpha").unwrap())
+        .read(&OPENAI, role)
+        .unwrap()
+        .map(|saved| (saved.stand_in.clone(), saved.real.to_string()))
 }
 
 #[test]

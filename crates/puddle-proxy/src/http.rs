@@ -6,10 +6,9 @@
 //! Everything here parses guest input, so it never trusts a length, never buffers more than
 //! [`MAX_HEAD`], and refuses ambiguous framing instead of guessing.
 
-use std::fmt::Write as _;
 use std::io;
 
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt};
 
 /// Largest request head (request line plus headers). Larger heads get `431`, so a guest can't
 /// grow the proxy's memory.
@@ -45,14 +44,15 @@ impl Head {
 }
 
 /// Why a head was refused.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum HeadError {
     /// The connection closed before a request line.
     Empty,
     /// Over [`MAX_HEAD`] bytes or [`MAX_HEADERS`] lines: `431`.
     TooLarge,
-    /// Malformed: `400`, with the reason.
-    Bad(&'static str),
+    /// Malformed: `400`, with the reason and, when the request line was well-formed, its method
+    /// and target, so the refusal can name where the guest was going.
+    Bad(&'static str, Option<(String, String)>),
 }
 
 /// Reads the request head. Never buffers more than [`MAX_HEAD`] bytes, whatever the guest sends.
@@ -73,7 +73,7 @@ pub(crate) async fn read_head<R: AsyncBufRead + Unpin>(
             return Ok(Err(if lines.is_empty() {
                 HeadError::Empty
             } else {
-                HeadError::Bad("head ended early")
+                HeadError::Bad("head ended early", None)
             }));
         }
         if n > budget {
@@ -81,16 +81,16 @@ pub(crate) async fn read_head<R: AsyncBufRead + Unpin>(
         }
         budget -= n;
         if !buf.ends_with(b"\n") {
-            return Ok(Err(HeadError::Bad("head ended early")));
+            return Ok(Err(HeadError::Bad("head ended early", None)));
         }
         let Ok(line) = String::from_utf8(buf) else {
-            return Ok(Err(HeadError::Bad("non-UTF-8 head")));
+            return Ok(Err(HeadError::Bad("non-UTF-8 head", None)));
         };
         let line = line
             .strip_suffix('\n')
             .map_or(line.as_str(), |l| l.strip_suffix('\r').unwrap_or(l));
         if line.bytes().any(|b| b == 0x7f || (b < 0x20 && b != b'\t')) {
-            return Ok(Err(HeadError::Bad("control character in head")));
+            return Ok(Err(HeadError::Bad("control character in head", None)));
         }
         if line.is_empty() {
             if lines.is_empty() {
@@ -110,16 +110,22 @@ pub(crate) async fn read_head<R: AsyncBufRead + Unpin>(
     let (Some(method), Some(uri), Some(version), None) =
         (parts.next(), parts.next(), parts.next(), parts.next())
     else {
-        return Ok(Err(HeadError::Bad("malformed request line")));
+        return Ok(Err(HeadError::Bad("malformed request line", None)));
     };
     if method.is_empty() || uri.is_empty() || !method.bytes().all(is_tchar) {
-        return Ok(Err(HeadError::Bad("malformed request line")));
+        return Ok(Err(HeadError::Bad("malformed request line", None)));
     }
     if version != "HTTP/1.1" && version != "HTTP/1.0" {
-        return Ok(Err(HeadError::Bad("unsupported HTTP version")));
+        return Ok(Err(HeadError::Bad(
+            "unsupported HTTP version",
+            Some((method.to_owned(), uri.to_owned())),
+        )));
     }
     if headers.iter().any(|h| !valid_header_line(h)) {
-        return Ok(Err(HeadError::Bad("malformed header line")));
+        return Ok(Err(HeadError::Bad(
+            "malformed header line",
+            Some((method.to_owned(), uri.to_owned())),
+        )));
     }
     Ok(Ok(Head {
         method: method.to_owned(),
@@ -284,53 +290,6 @@ pub(crate) fn body_framing(headers: &[String]) -> Result<Body, &'static str> {
     Ok(Body::Chunked)
 }
 
-/// Copies exactly one request body from `r` to `w`, so bytes after it (a pipelined second
-/// request) are never forwarded.
-pub(crate) async fn copy_body<R, W>(r: &mut R, w: &mut W, body: Body) -> io::Result<()>
-where
-    R: AsyncBufRead + Unpin,
-    W: AsyncWrite + Unpin,
-{
-    match body {
-        Body::None => Ok(()),
-        Body::Length(n) => copy_exact(r, w, n, "body shorter than Content-Length").await,
-        Body::Chunked => loop {
-            let line = read_line_limited(r, MAX_CHUNK_LINE).await?;
-            w.write_all(&line).await?;
-            let size = chunk_size(&line)?;
-            if size == 0 {
-                // Trailer section, up to the empty line.
-                loop {
-                    let t = read_line_limited(r, MAX_TRAILER_LINE).await?;
-                    w.write_all(&t).await?;
-                    if t == b"\r\n" || t == b"\n" {
-                        return Ok(());
-                    }
-                }
-            }
-            copy_exact(r, w, size, "chunk cut short").await?;
-            let crlf = read_line_limited(r, 2).await?;
-            if crlf != b"\r\n" && crlf != b"\n" {
-                return Err(invalid("chunk not followed by CRLF"));
-            }
-            w.write_all(&crlf).await?;
-        },
-    }
-}
-
-async fn copy_exact<R, W>(r: &mut R, w: &mut W, n: u64, short: &'static str) -> io::Result<()>
-where
-    R: AsyncBufRead + Unpin,
-    W: AsyncWrite + Unpin,
-{
-    let copied = tokio::io::copy(&mut (&mut *r).take(n), w).await?;
-    if copied == n {
-        Ok(())
-    } else {
-        Err(io::Error::new(io::ErrorKind::UnexpectedEof, short))
-    }
-}
-
 /// The size in a chunk-size line (`1a;ext=1\r\n`).
 pub(crate) fn chunk_size(line: &[u8]) -> io::Result<u64> {
     let text = std::str::from_utf8(line).map_err(|_| invalid("bad chunk size"))?;
@@ -359,58 +318,6 @@ pub(crate) async fn read_line_limited<R: AsyncBufRead + Unpin>(
     } else {
         Err(invalid("line too long or cut short"))
     }
-}
-
-/// Request headers a proxy never forwards (RFC 9110 §7.6.1), plus `Host` (replaced) and the
-/// proxy's own credentials.
-const HOP_BY_HOP: [&str; 8] = [
-    "connection",
-    "keep-alive",
-    "proxy-connection",
-    "proxy-authorization",
-    "proxy-authenticate",
-    "host",
-    "te",
-    "upgrade",
-];
-
-/// The head sent upstream for a plain-HTTP request. Hop-by-hop and proxy headers and Puddle's
-/// own header names are dropped, `Host` is replaced by the checked target (RFC 9112 §3.2.2: a proxy ignores the client's `Host`
-/// for an absolute-form target), and `Connection: close` ends the upstream connection after this
-/// one request, so nothing on it goes unchecked.
-pub(crate) fn upstream_head(
-    head: &Head,
-    target: &str,
-    host_header: &str,
-    proxy_authorization: Option<&str>,
-) -> String {
-    let mut hop: Vec<String> = HOP_BY_HOP.iter().map(|h| (*h).to_owned()).collect();
-    for h in &head.headers {
-        if header_name(h) == "connection" {
-            hop.extend(
-                header_value(h)
-                    .split(',')
-                    .map(|v| v.trim().to_ascii_lowercase()),
-            );
-        }
-    }
-    let mut out = format!("{} {target} {}\r\n", head.method, head.version);
-    // writing into a `String` cannot fail
-    let _ = write!(out, "Host: {host_header}\r\n");
-    if let Some(value) = proxy_authorization {
-        // writing into a `String` cannot fail
-        let _ = write!(out, "Proxy-Authorization: {value}\r\n");
-    }
-    for h in &head.headers {
-        let name = header_name(h);
-        if !hop.contains(&name) && !name.starts_with(crate::terminate::request::PROXY_HEADER_PREFIX)
-        {
-            out.push_str(h);
-            out.push_str("\r\n");
-        }
-    }
-    out.push_str("Connection: close\r\n\r\n");
-    out
 }
 
 #[cfg(test)]

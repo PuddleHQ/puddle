@@ -22,7 +22,9 @@ use puddle_workspace::{
 };
 
 use crate::common;
-use common::{command, git, hostile_checkout, hostile_commands_that_ran, shells, volume};
+use common::{
+    command, git, hostile_checkout, hostile_commands_that_ran, promisor_checkout, shells, volume,
+};
 
 fn id() -> WorkspaceId {
     WorkspaceId::new("acme").unwrap()
@@ -55,7 +57,7 @@ async fn sandbox_answering(
 /// Runs `script` (a listing or the delete check) with `shell` on `host_root` instead of the guest's
 /// mount point.
 fn run_script(shell: &str, script: &str, r: &ExecRequest, host_root: &Path) -> ExecOutput {
-    assert_eq!(r.args.get(3).map(String::as_str), Some("/workspaces/acme"));
+    assert_eq!(r.args.get(3).map(String::as_str), Some("/workspace"));
     let out = command(shell)
         .args(["-c", script, "puddle-script"])
         .arg(host_root)
@@ -218,6 +220,23 @@ async fn a_checkout_s_config_cannot_make_the_listing_run_a_program() {
             panic!("{shell}: {found:?}");
         };
         assert!(evil.dirty && evil.head.is_some(), "{shell}: {evil:?}");
+    }
+}
+
+/// A partial clone's missing object is not fetched by running the program its remote names.
+#[tokio::test]
+async fn a_promisor_remote_cannot_make_the_listing_run_a_program() {
+    for shell in shells() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vol = tmp.path().join("vol");
+        let markers = promisor_checkout(tmp.path(), &vol);
+        let found = list(shell, &vol).await;
+        assert!(!markers.join("ran").exists(), "{shell}: the uploadpack ran");
+        let [lazy] = found.checkouts.as_slice() else {
+            panic!("{shell}: {found:?}");
+        };
+        let why = lazy.unreadable.as_deref().unwrap_or_default();
+        assert!(why.contains("git status failed"), "{shell}: {lazy:?}");
     }
 }
 
@@ -535,20 +554,12 @@ async fn a_hostile_guest_listing_is_refused_whole() {
 #[tokio::test]
 async fn a_listing_that_fails_says_why_and_shows_nothing() {
     let g = sandbox_answering(|r| {
-        (r.program == "sh" && r.args.get(1).map(String::as_str) == Some(CHECKOUTS_SH)).then(|| {
-            ExecOutput::new(
-                3,
-                b"E\t.\tcannot enter /workspaces/acme\n".to_vec(),
-                Vec::new(),
-            )
-        })
+        (r.program == "sh" && r.args.get(1).map(String::as_str) == Some(CHECKOUTS_SH))
+            .then(|| ExecOutput::new(3, b"E\t.\tcannot enter /workspace\n".to_vec(), Vec::new()))
     })
     .await;
     let err = g.w.list_checkouts(&g.sb, &id()).await.unwrap_err();
-    assert!(
-        err.to_string().contains("cannot enter /workspaces/acme"),
-        "{err}"
-    );
+    assert!(err.to_string().contains("cannot enter /workspace"), "{err}");
 }
 
 #[tokio::test]
@@ -563,7 +574,7 @@ async fn something_on_the_volume_is_found_whatever_it_is() {
         if r.program != "sh" || r.args.get(2).map(String::as_str) != Some("puddle-exists") {
             return None;
         }
-        let name = r.args.get(3)?.strip_prefix("/workspaces/acme/")?;
+        let name = r.args.get(3)?.strip_prefix("/workspace/")?;
         let out = command("sh")
             .args(["-c", r.args.get(1)?, "puddle-exists"])
             .arg(root.join(name))
@@ -604,6 +615,25 @@ async fn not_knowing_whether_a_folder_is_there_is_an_error_not_a_no() {
     assert!(
         err.to_string()
             .contains("looking for api exited 2: sh: input/output error"),
+        "{err}"
+    );
+}
+
+/// A listing longer than the exec output cap is refused by name: it must not be read as a short
+/// one (a cut after a whole record would otherwise look like fewer checkouts).
+#[tokio::test]
+async fn a_listing_cut_by_the_output_cap_is_refused_and_says_so() {
+    let g = sandbox_answering(|r| {
+        (r.program == "sh" && r.args.get(1).map(String::as_str) == Some(CHECKOUTS_SH)).then(|| {
+            let mut out = String::from("D\n");
+            out.insert_str(0, &"x".repeat(2 * ExecRequest::DEFAULT_MAX_OUTPUT));
+            ExecOutput::new(0, out, "")
+        })
+    })
+    .await;
+    let err = g.w.list_checkouts(&g.sb, &id()).await.unwrap_err();
+    assert!(
+        matches!(err, WorkspaceError::Checkouts { .. }) && err.to_string().contains("cut"),
         "{err}"
     );
 }

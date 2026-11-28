@@ -27,12 +27,12 @@ pub(crate) struct SetEntry {
     pub effect: Effect,
 }
 
-/// Which rule sets are switched on where (R-37): an override per workspace, a value for every
+/// Which rule sets are switched on where (R-37): an override per user and workspace, a value for every
 /// workspace of one user, and the set's own default, in that order.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Switches {
     global: HashMap<(UserId, RuleSetId), bool>,
-    workspace: HashMap<(RuleSetId, WorkspaceId), bool>,
+    workspace: HashMap<(UserId, RuleSetId, WorkspaceId), bool>,
     /// Built-in entries a user switched off (R-65), by the user, the set and the entry's pattern.
     off_entries: HashSet<(UserId, RuleSetId, String)>,
 }
@@ -48,7 +48,7 @@ impl Switches {
     ) {
         match workspace {
             Some(workspace) => {
-                self.workspace.insert((set, workspace), enabled);
+                self.workspace.insert((user, set, workspace), enabled);
             }
             None => {
                 self.global.insert((user, set), enabled);
@@ -74,13 +74,13 @@ impl Switches {
         self.global.get(&(user, set)).copied()
     }
 
-    /// The workspaces that override `set`, sorted by name.
-    fn overrides(&self, set: RuleSetId) -> Vec<(WorkspaceId, bool)> {
+    /// The workspaces that `user` overrides `set` for, sorted by name.
+    fn overrides(&self, user: UserId, set: RuleSetId) -> Vec<(WorkspaceId, bool)> {
         let mut out: Vec<_> = self
             .workspace
             .iter()
-            .filter(|((s, _), _)| *s == set)
-            .map(|((_, workspace), on)| (workspace.clone(), *on))
+            .filter(|((u, s, _), _)| *u == user && *s == set)
+            .map(|((_, _, workspace), on)| (workspace.clone(), *on))
             .collect();
         out.sort_by(|a, b| a.0.cmp(&b.0));
         out
@@ -89,7 +89,7 @@ impl Switches {
     /// Whether `set` is on for `workspace`, which belongs to `user`.
     fn is_on(&self, user: UserId, set: RuleSetId, workspace: &WorkspaceId) -> bool {
         self.workspace
-            .get(&(set, workspace.clone()))
+            .get(&(user, set, workspace.clone()))
             .or_else(|| self.global.get(&(user, set)))
             .copied()
             .unwrap_or_else(|| default_on(set))
@@ -227,7 +227,10 @@ fn index_pattern(
     position: usize,
 ) {
     match pattern {
-        Pattern::Exact(host) => exact.entry(host.to_string()).or_default().push(position),
+        Pattern::Exact(host) => exact
+            .entry(host.folded().to_string())
+            .or_default()
+            .push(position),
         Pattern::Suffix(s) => suffix
             .entry(s.base().as_str().to_owned())
             .or_default()
@@ -241,7 +244,11 @@ fn positions<'a>(
     suffix: &'a HashMap<String, Vec<usize>>,
     host: &Host,
 ) -> impl Iterator<Item = usize> + 'a {
-    let exact_hits = exact.get(&host.to_string()).into_iter().flatten().copied();
+    let exact_hits = exact
+        .get(&host.folded().to_string())
+        .into_iter()
+        .flatten()
+        .copied();
     let suffixes: Vec<usize> = match host {
         Host::Name(name) => {
             let text = name.as_str();
@@ -365,11 +372,7 @@ impl RuleIndex {
 
     /// `user`'s workspaces that override `set`, sorted by name.
     pub(crate) fn overrides(&self, user: UserId, set: RuleSetId) -> Vec<(WorkspaceId, bool)> {
-        self.switches
-            .overrides(set)
-            .into_iter()
-            .filter(|(workspace, _)| self.owner_of(workspace) == Some(user))
-            .collect()
+        self.switches.overrides(user, set)
     }
 
     /// Every rule row, expired ones included until the sweeper removes them.

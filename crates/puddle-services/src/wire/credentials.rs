@@ -1,0 +1,231 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! What the identities screens ask the host about credentials: the
+//! accounts already signed in on this computer, whether Puddle can read one now, a pasted token
+//! (write-only), and signing in on a click. No response carries a secret value, and the one request
+//! that carries one never echoes it.
+
+use puddle_secrets::{
+    DiscoveredAccount, HostName, Listing, OrgName, Secret, SignInStart, SourceError, SourceSpec,
+    TokenScope,
+};
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+
+use super::environment::SecretText;
+use super::identities::CredentialSource;
+use crate::error::ApiError;
+
+/// Which listing found an account.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FoundVia {
+    /// The GitHub CLI (`gh auth status`).
+    Gh,
+    /// Git Credential Manager's GitHub accounts.
+    GcmGithub,
+    /// Git Credential Manager's Azure DevOps accounts.
+    GcmAzureRepos,
+}
+
+impl FoundVia {
+    /// Builds the wire form from the listing.
+    #[must_use]
+    pub fn from_listing(listing: Listing) -> Self {
+        match listing {
+            Listing::GhAuthStatus => Self::Gh,
+            Listing::GcmGithub => Self::GcmGithub,
+            // `Listing` grows with the Azure CLI; an unknown listing is shown as the nearest one.
+            _ => Self::GcmAzureRepos,
+        }
+    }
+}
+
+/// An account that is already signed in on this computer. Names only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct FoundAccount {
+    /// Which tool knows it.
+    pub via: FoundVia,
+    /// The Git host.
+    pub host: String,
+    /// The account.
+    pub account: String,
+    /// The Azure DevOps organisation the account is bound to, when the listing says.
+    #[schema(required = true)]
+    pub org: Option<String>,
+    /// False when the tool lists the account but its token no longer works.
+    pub signed_in: bool,
+}
+
+impl FoundAccount {
+    /// Builds the wire form from the discovered.
+    pub fn from_discovered(account: &DiscoveredAccount) -> Self {
+        Self {
+            via: FoundVia::from_listing(account.via),
+            host: account.host.to_string(),
+            account: account.account.to_string(),
+            org: account.org.as_ref().map(ToString::to_string),
+            signed_in: account.signed_in,
+        }
+    }
+}
+
+/// A listing that could not run, so its accounts are missing from the list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct FoundProblem {
+    /// Which tool.
+    pub via: FoundVia,
+    /// Why, in words ("gh is not installed or not on PATH").
+    pub message: String,
+}
+
+/// What Puddle found signed in on this computer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct FoundAccounts {
+    /// The accounts, without duplicates.
+    pub accounts: Vec<FoundAccount>,
+    /// The listings that could not run.
+    pub problems: Vec<FoundProblem>,
+}
+
+/// A credential to try.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CheckRequest {
+    /// Where its value comes from.
+    pub source: CredentialSource,
+}
+
+/// Whether Puddle can read a credential's value now. Never the value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct CheckResult {
+    /// True when the source gave a value.
+    pub readable: bool,
+    /// Why not, in words; `null` when it is readable.
+    #[schema(required = true)]
+    pub problem: Option<String>,
+    /// True when the way out is for Puddle to start a sign-in. The Azure CLI never is: the user
+    /// signs in to it in a terminal (see `fix_step`).
+    pub needs_sign_in: bool,
+    /// The exact step the user takes to fix it, when there is one (install `az`, run
+    /// `az login --tenant <tenant>`); `null` otherwise.
+    #[schema(required = true)]
+    pub fix_step: Option<String>,
+}
+
+impl CheckResult {
+    /// The result of a credential that read fine.
+    #[must_use]
+    pub const fn readable() -> Self {
+        Self {
+            readable: true,
+            problem: None,
+            needs_sign_in: false,
+            fix_step: None,
+        }
+    }
+
+    /// Builds the wire form from the error.
+    #[must_use]
+    pub fn from_error(source: &SourceSpec, err: &SourceError) -> Self {
+        Self {
+            readable: false,
+            problem: Some(source_problem(err)),
+            needs_sign_in: err.needs_sign_in() && !matches!(source, SourceSpec::AzCli { .. }),
+            fix_step: puddle_secrets::fix_step(source, err),
+        }
+    }
+}
+
+/// A source's refusal in words the user can act on.
+#[must_use]
+pub fn source_problem(err: &SourceError) -> String {
+    match err {
+        SourceError::NotSignedIn => "not signed in, or the sign-in has expired".to_owned(),
+        SourceError::Timeout(tool) => format!(
+            "{} did not answer in time; it may be waiting for a sign-in",
+            tool.name()
+        ),
+        other => other.to_string(),
+    }
+}
+
+/// A token the user pasted. It is kept in the operating system's credential store under Puddle's
+/// own name and never read back through the API.
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct StoreTokenRequest {
+    /// The Git host the token is for.
+    pub host: String,
+    /// The organisation, for tokens that belong to one (Azure DevOps).
+    #[serde(default)]
+    #[schema(required = false)]
+    pub org: Option<String>,
+    /// The token. Write-only.
+    #[schema(value_type = String, format = Password, write_only)]
+    pub token: SecretText,
+}
+
+impl StoreTokenRequest {
+    /// What the token is for, and the token.
+    ///
+    /// # Errors
+    /// An invalid-request [`ApiError`] (422) when a value is not valid.
+    pub fn into_parts(self) -> Result<(TokenScope, Secret), ApiError> {
+        let host = HostName::new(self.host).map_err(|_| ApiError::invalid("not a valid host"))?;
+        let org = self
+            .org
+            .map(OrgName::new)
+            .transpose()
+            .map_err(|_| ApiError::invalid("not a valid organisation"))?;
+        Ok((TokenScope { host, org }, self.token.0))
+    }
+}
+
+impl std::fmt::Debug for StoreTokenRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StoreTokenRequest")
+            .field("host", &self.host)
+            .field("org", &self.org)
+            .field("token", &"<redacted>")
+            .finish()
+    }
+}
+
+/// Where a stored token went: the source to put in a credential.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct StoredToken {
+    /// A `stored` source naming the new entry.
+    pub source: CredentialSource,
+}
+
+/// A sign-in to start.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SignInRequest {
+    /// The credential to sign in to.
+    pub source: CredentialSource,
+}
+
+/// What the user does to finish a sign-in Puddle started. Poll the credential's check to learn
+/// when it worked; Puddle ends a sign-in nobody finished after five minutes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct SignInStarted {
+    /// The one-time code to type at `url`; `null` when the tool opens its own window.
+    #[schema(required = true)]
+    pub code: Option<String>,
+    /// Where to type it; `null` when the tool opens its own window.
+    #[schema(required = true)]
+    pub url: Option<String>,
+}
+
+impl From<SignInStart> for SignInStarted {
+    fn from(start: SignInStart) -> Self {
+        Self {
+            code: start.code,
+            url: start.url,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;

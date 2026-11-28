@@ -61,26 +61,30 @@ fn paths(folders: &[&str]) -> Vec<PathBuf> {
 #[test]
 fn the_request_takes_a_folder_and_an_optional_report_flag() {
     assert_eq!(
-        Request::parse(&["/workspaces/a"]),
+        Request::parse(&["/workspace"]),
         Ok(Request {
-            root: PathBuf::from("/workspaces/a"),
+            root: PathBuf::from("/workspace"),
             report_only: false
         })
     );
-    let report = Request::parse(&["/workspaces/a", "--missing"]).unwrap();
+    let report = Request::parse(&["/workspace", "--missing"]).unwrap();
     assert!(report.report_only);
     assert_eq!(
         report.binary(),
-        Path::new("/workspaces/a").join(".puddle/mise/bin/mise")
+        Path::new("/workspace").join(".puddle/mise/bin/mise")
     );
     for bad in [
         &[][..],
         &[""],
-        &["/workspaces/a", "--all"],
+        &["/workspace", "--all"],
         &["", "--missing"],
         &["a", "--missing", "x"],
     ] {
-        assert_eq!(Request::parse(bad), Err(USAGE.to_owned()), "{bad:?}");
+        assert_eq!(
+            Request::parse(bad),
+            Err(UsageError::Shape(USAGE)),
+            "{bad:?}"
+        );
     }
 }
 

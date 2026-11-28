@@ -40,19 +40,17 @@ fn builders_fill_the_fields() {
     env.set("A", "1").unwrap();
     let s = base()
         .with_memory(MemoryMib::MIN)
-        .with_cpus(2)
+        .with_cpus(CpuCount::new(2).unwrap())
         .with_env(&env)
         .with_route(VsockRoute::new(5000, "/run/p.sock"))
         .with_file_mount(FileMount::read_only("/h/boot.sh", p("/puddle/boot.sh")))
-        .with_volume(
-            VolumeMount::named(v("ws-a"), p("/workspaces/a")).ensure_size(DiskSize::mib(64)),
-        )
+        .with_volume(VolumeMount::named(v("ws-a"), p("/workspace")).ensure_size(DiskSize::mib(64)))
         .with_owned_disk(OwnedDisk {
             guest: p("/var/lib/docker"),
             size: DiskSize::gib(1),
         });
     assert_eq!(s.memory, MemoryMib::MIN);
-    assert_eq!(s.cpus, Some(2));
+    assert_eq!(s.cpus, Some(CpuCount::new(2).unwrap()));
     assert_eq!(s.env.get("A"), Some("1"));
     assert_eq!(s.routes[0].guest_port, 5000);
     assert_eq!(s.file_mounts[0].host, PathBuf::from("/h/boot.sh"));
@@ -142,14 +140,14 @@ fn a_checkout_dir_that_is_a_link_or_no_directory_is_refused() {
     std::os::unix::fs::symlink(&real, linked.join(".git")).unwrap();
     assert_eq!(
         check_checkout_dir(&linked.join(".git")),
-        Err("is a link".into())
+        Err(CheckoutDirRefusal::Link)
     );
     let socket = tmp.path().join("b");
     std::fs::create_dir_all(&socket).unwrap();
     let _listener = std::os::unix::net::UnixListener::bind(socket.join(".git")).unwrap();
     assert_eq!(
         check_checkout_dir(&socket.join(".git")),
-        Err("is not a directory".into())
+        Err(CheckoutDirRefusal::NotDirectory)
     );
 }
 
@@ -186,7 +184,6 @@ fn validate_rejects_double_volumes_zero_sizes_and_zero_cpus() {
         size: DiskSize::mib(0),
     });
     assert!(reason(&zero_owned).contains("size 0"));
-    assert!(reason(&base().with_cpus(0)).contains("cpus"));
     assert!(reason(&base().with_root_disk(DiskSize::mib(0))).contains("root disk"));
 }
 

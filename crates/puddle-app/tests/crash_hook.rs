@@ -22,7 +22,7 @@ struct Hook {
 impl Hook {
     fn take() -> Self {
         // Poison from a failed test is irrelevant: the guard resets the hook.
-        Hook {
+        Self {
             _lock: HOOK_LOCK
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner),

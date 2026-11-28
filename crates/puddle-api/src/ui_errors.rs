@@ -15,7 +15,7 @@ use std::sync::{Mutex, PoisonError};
 
 use puddle_store::UserId;
 
-use crate::wire::{UiError, UiErrorList, UiErrorReport};
+use puddle_services::wire::{UiError, UiErrorList, UiErrorReport};
 
 /// The most errors kept, for all users together; the oldest make room.
 pub(crate) const KEEP: usize = 50;
@@ -180,7 +180,16 @@ pub(crate) fn scrub_line(line: &str) -> String {
             out.push(String::new());
             continue;
         }
-        let this = std::mem::replace(&mut next, Next::Plain);
+        let this = if next == Next::Rest {
+            Next::Rest
+        } else {
+            std::mem::replace(&mut next, Next::Plain)
+        };
+        if this == Next::Rest {
+            // The rest of a cookie header: every pair is a secret, not only the first.
+            out.push(replace_core(word, |_| true));
+            continue;
+        }
         if this == Next::Value || (this == Next::Credential && looks_like_credential(word)) {
             out.push(replace_core(word, |_| true));
             continue;
@@ -197,7 +206,16 @@ pub(crate) fn scrub_line(line: &str) -> String {
             continue;
         }
         if ends_with_secret_name(word) || after_name {
-            next = Next::Value;
+            let name = if after_name {
+                out.iter().rev().find(|w| !w.is_empty()).map_or(word, |w| w)
+            } else {
+                word
+            };
+            next = if is_cookie_name(name) {
+                Next::Rest
+            } else {
+                Next::Value
+            };
         } else if is_auth_scheme(trim_punctuation(word)) {
             next = Next::Credential;
         }
@@ -214,6 +232,8 @@ pub(crate) fn scrub_line(line: &str) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Next {
     Plain,
+    /// Every word to the end of the line: a cookie header holds several `name=value` pairs.
+    Rest,
     /// The value of a name that says secret (`password: x`): replaced whatever it is.
     Value,
     /// What follows a scheme word (`Bearer x`, `token x`): replaced when it looks like a
@@ -312,6 +332,13 @@ fn secret_assignment(word: &str) -> Option<(&str, &str)> {
 /// Whether `word` is a name that says secret and ends in `=` or `:`, so the next word is its value.
 fn ends_with_secret_name(word: &str) -> bool {
     (word.ends_with(':') || word.ends_with('=')) && is_secret_name(word)
+}
+
+/// Whether `name` is the cookie header (`Cookie:`, `Set-Cookie:`), whose value is a list of pairs.
+fn is_cookie_name(name: &str) -> bool {
+    name_parts(trim_punctuation(name.trim_end_matches('=')))
+        .iter()
+        .any(|part| part == "cookie")
 }
 
 fn is_secret_name(name: &str) -> bool {

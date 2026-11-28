@@ -23,6 +23,22 @@ function connection(): { url: string; token: string } {
   };
 }
 
+/**
+ * A host name as the app draws it: split into bold and plain parts, a port after it. Matches the
+ * whole text of one name (a port is allowed), never a part of a longer one. `:text-is` cannot do
+ * this: it does not match an element whose text is spread over child elements.
+ */
+export function hostName(scope: Page | Locator, host: string): Locator {
+  if (host.includes("'")) throw new Error(`host name with a quote: ${host}`);
+  const text = "normalize-space(.)";
+  const rest = `substring-after(${text}, '${host}:')`;
+  const isHost = `${text} = '${host}'`;
+  const hasPort = `starts-with(${text}, '${host}:') and ${rest} != '' and translate(${rest}, '0123456789', '') = ''`;
+  return scope.locator(
+    `xpath=.//span[contains(concat(' ', normalize-space(@class), ' '), ' host ')][${isHost} or (${hasPort})]`,
+  );
+}
+
 /** What the desktop shell's init script does: hand the page the token before the app starts. */
 /** What the host says about CPUs: the computer's cores, its maximum and its default count. */
 export async function cpuLimits(
@@ -157,6 +173,23 @@ export const AXE_SCAN_ALLOWANCE_MS = 30_000;
 export const CONVERGE_WAIT_MS = 20_000;
 
 /**
+ * Waits until the row is on screen. A request that arrives while the Inbox is open waits behind the
+ * "N new requests" line (it never moves a row under the pointer), so the line is clicked whenever it is
+ * there; an empty list draws the arrival at once and has no line.
+ */
+export async function showArrived(
+  page: Page,
+  row: Locator,
+  timeout: number = CONVERGE_WAIT_MS,
+): Promise<void> {
+  const line = page.getByRole("button", { name: /new requests?$/ });
+  await expect(async () => {
+    if ((await line.count()) > 0) await line.click({ timeout: 1000 });
+    await expect(row).toBeVisible({ timeout: 1000 });
+  }).toPass({ timeout });
+}
+
+/**
  * The wait after the API restarts: the page's event stream reconnects after 1, 2, 5 and 10 s of backoff
  * at most (18 s in all) and then refetches, so a shorter wait would fail on the backoff alone.
  */
@@ -242,6 +275,55 @@ export async function overflow(
       }
     }
     return { by: root.scrollWidth - width, culprits };
+  });
+}
+
+/**
+ * Makes every user-supplied string in the API's GET answers (a host, a URL, a path, a repository
+ * name) 120 characters longer, with no space to break at. Call it before the page loads.
+ */
+export async function lengthenUserStrings(page: Page): Promise<void> {
+  const LONG = `-${"long".repeat(30)}`;
+  const USER_STRINGS = new Set([
+    "host",
+    "url",
+    "remote_url",
+    "full_name",
+    "path",
+    "reason",
+    "label",
+    "title",
+    "route",
+  ]);
+
+  function lengthened(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map(lengthened);
+    if (value === null || typeof value !== "object") return value;
+    return Object.fromEntries(
+      Object.entries(value).map(([key, field]) => [
+        key,
+        typeof field === "string" && USER_STRINGS.has(key)
+          ? `${field}${LONG}`
+          : lengthened(field),
+      ]),
+    );
+  }
+  await page.route("**/api/**", async (rest) => {
+    const wants = rest.request().headers()["accept"] ?? "";
+    if (
+      rest.request().method() !== "GET" ||
+      wants.includes("text/event-stream")
+    ) {
+      return rest.continue();
+    }
+    // A request the page abandoned (it navigated away) has nothing left to answer.
+    await (async () => {
+      const response = await rest.fetch();
+      const type = response.headers()["content-type"] ?? "";
+      if (!type.includes("json")) return rest.fulfill({ response });
+      const body: unknown = await response.json();
+      return rest.fulfill({ response, json: lengthened(body) });
+    })().catch(() => undefined);
   });
 }
 

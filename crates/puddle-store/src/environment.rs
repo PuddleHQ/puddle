@@ -9,12 +9,16 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
-use puddle_secrets::StoredId;
+use puddle_types::StoredId;
 use puddle_types::{QueryName, WorkspaceId};
 use serde::{Deserialize, Serialize};
 
 use crate::error::StoreError;
 use crate::pattern::Pattern;
+
+/// Why the caller's stand-in minting failed; the store wraps its message once, into
+/// [`StoreError::EnvInvalid`].
+pub type MintError = Box<dyn std::error::Error + Send + Sync>;
 
 /// The longest variable name.
 pub const MAX_NAME_LEN: usize = 64;
@@ -276,8 +280,7 @@ impl From<SecretHost> for String {
     }
 }
 
-/// Where in a request the proxy swaps a secret's stand-in for its real value (credentials spec
-/// §9). Anywhere else the stand-in goes out unchanged. The query name is the type the proxy uses.
+/// Where in a request the proxy swaps a secret's stand-in for its real value. Anywhere else the stand-in goes out unchanged. The query name is the type the proxy uses.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum SecretPlace {
     /// The values of request headers: what almost every tool uses.

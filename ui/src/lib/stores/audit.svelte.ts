@@ -14,10 +14,9 @@ import {
   NO_FILTER,
   PAGE_SIZE,
   toQuery,
-  type AuditEntry,
-  type AuditRecord,
   type Filter,
-} from "#lib/audit/model.ts";
+} from "#lib/audit/filter.ts";
+import type { AuditEntry, AuditRecord } from "#lib/audit/model.ts";
 import { live, type LiveSource } from "./live.svelte.ts";
 import { readFailure, SERVICE_DOWN } from "./read-failure.ts";
 
@@ -132,6 +131,23 @@ export class AuditStore {
     if (this.#from === undefined) delete query.from;
     else query.from = this.#from;
     return query;
+  }
+
+  /** How many records a filter would show, up to one page (`more`: at least that many); `null` when unreadable. Changes nothing. */
+  async count(
+    filter: Filter,
+  ): Promise<{ count: number; more: boolean } | null> {
+    try {
+      const { data } = await this.#api.GET("/api/audit", {
+        params: {
+          query: { ...toQuery(filter, this.#now()), limit: PAGE_SIZE },
+        },
+      });
+      if (!data) return null;
+      return { count: data.entries.length, more: data.next_before !== null };
+    } catch {
+      return null;
+    }
   }
 
   /** Reads the next older page. Several calls at once read one page. */

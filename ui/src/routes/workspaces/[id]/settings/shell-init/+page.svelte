@@ -96,8 +96,10 @@
         <button
           type="button"
           class="btn"
-          onclick={() => (store.restored = false)}>Dismiss</button
+          onclick={() => (store.restored = false)}
         >
+          Dismiss
+        </button>
       </div>
     {/if}
     {#if stale}
@@ -106,9 +108,9 @@
           The saved script changed while you were editing. Your edits are kept
           until you load it.
         </p>
-        <button type="button" class="btn" onclick={() => (edit = null)}
-          >Load the saved script</button
-        >
+        <button type="button" class="btn" onclick={() => (edit = null)}>
+          Load the saved script
+        </button>
       </div>
     {/if}
 
@@ -143,8 +145,10 @@
         <button
           type="submit"
           class="btn primary"
-          disabled={busy || !dirty || text === ""}>Save</button
+          disabled={busy || !dirty || text === ""}
         >
+          Save
+        </button>
         {#if dirty}
           <button
             type="button"
@@ -153,16 +157,20 @@
             onclick={() => {
               edit = null;
               problem = null;
-            }}>Discard changes</button
+            }}
           >
+            Discard changes
+          </button>
         {/if}
         {#if view.saved}
           <button
             type="button"
             class="btn deny"
             disabled={busy}
-            onclick={remove}>Remove the script</button
+            onclick={remove}
           >
+            Remove the script
+          </button>
         {/if}
       </div>
     </form>
@@ -175,10 +183,10 @@
 
 <style>
   section {
+    max-width: var(--page-reading-width);
     display: grid;
     gap: var(--space-3);
     margin-bottom: var(--space-6);
-    max-width: 60rem;
   }
   h2 {
     font-size: var(--text-lg);

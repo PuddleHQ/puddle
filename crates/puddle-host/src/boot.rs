@@ -3,10 +3,9 @@
 //! and trust configuration.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex};
 
 use puddle_agent_proto::editor::{EditorServer, MicrosoftOptions, ServerKind};
-use puddle_api::StartFolder;
 use puddle_boot::{
     BootHook, BootPlan, GitIdentity, with_boot_mounts, with_code_server_mount, write_assets,
 };
@@ -19,12 +18,13 @@ use puddle_guest_env::{
 };
 use puddle_ipc::{IpcError, IpcRoot};
 use puddle_proxy::{Proxy, Route};
+use puddle_services::workspaces::StartFolder;
 use puddle_settings::MiseMode;
 use puddle_store::Store;
 use puddle_types::{
     GuestEnv, GuestFile, GuestPath, ImageRef, MemoryMib, SessionUser, WorkspaceId, guest_path,
 };
-use puddle_workspace::{Layout, WORKSPACES_ROOT};
+use puddle_workspace::Layout;
 
 use crate::dev_cert::GuestCertSource;
 use crate::git_hosts::{Authors, SshListing};
@@ -37,6 +37,20 @@ pub(crate) enum BootInputError {
     /// The egress route's endpoint could not be opened.
     #[error(transparent)]
     Route(#[from] IpcError),
+    /// The workspace's stable route is not available (another process holds the name).
+    #[error(
+        "the route of workspace {workspace} is not available ({source}); starting it with another \
+         route would make its sandbox again and drop what was installed outside its volume, so it \
+         is not started: close what holds the name (another Puddle, or a program using the same \
+         endpoint) and start it again"
+    )]
+    RouteUnavailable {
+        /// The workspace.
+        workspace: WorkspaceId,
+        /// Why the endpoint could not be bound.
+        #[source]
+        source: IpcError,
+    },
     /// The session user's home is not a guest path.
     #[error(transparent)]
     Home(#[from] puddle_types::ValidationError),
@@ -97,6 +111,18 @@ fn docker_disk() -> OwnedDisk {
     }
 }
 
+/// The stable endpoint of `workspace`, or why it cannot be had.
+fn stable_listener(
+    ipc: &IpcRoot,
+    workspace: &WorkspaceId,
+) -> Result<puddle_ipc::Listener, BootInputError> {
+    ipc.listen_named(workspace.as_str())
+        .map_err(|source| BootInputError::RouteUnavailable {
+            workspace: workspace.clone(),
+            source,
+        })
+}
+
 /// The pieces shared by every sandbox of this host.
 pub(crate) struct BootKit {
     proxy: Arc<Proxy>,
@@ -105,7 +131,7 @@ pub(crate) struct BootKit {
     assets: Vec<FileMount>,
     agent: PathBuf,
     /// The code-server release as the guests mount it (inside the guest share), when bundled.
-    code_server: Option<PathBuf>,
+    code_server: Option<CodeServer>,
     roots: CorporateRoots,
     git: Option<GitIdentity>,
     shell_init: Copies,
@@ -156,24 +182,30 @@ pub(crate) struct GuestInputs<'a> {
     pub(crate) ssh_agent: bool,
     /// The managed mise layer, when it is on for this workspace.
     pub(crate) mise: Option<&'a MiseLayer>,
+    /// The boot step that binds the volume at its mount point in a sandbox an older Puddle made
+    /// with the volume elsewhere; it runs before every other step.
+    pub(crate) older_mount: Option<&'a GuestFile>,
+    /// The workspace's name, which an interactive bash prompt shows instead of the guest's host
+    /// name (the id).
+    pub(crate) label: &'a str,
 }
 
 /// Where the managed mise layer lives in one workspace and what it may trust.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MiseLayer {
-    /// `/workspaces/<id>/.puddle/mise`.
+    /// `/workspace/.puddle/mise`.
     pub(crate) dir: GuestPath,
     /// The workspace's volume when the repository's own code is trusted (`repo_code`).
     pub(crate) trusted: Option<GuestPath>,
 }
 
 impl MiseLayer {
-    /// The layer of workspace `id` for `mode`; `None` while the layer is off.
-    pub(crate) fn of(id: &WorkspaceId, mode: MiseMode) -> Result<Option<Self>, BootInputError> {
+    /// The layer for `mode`; `None` while the layer is off.
+    pub(crate) fn of(mode: MiseMode) -> Result<Option<Self>, BootInputError> {
         let MiseMode::On { trust } = mode else {
             return Ok(None);
         };
-        let layout = Layout::new(id)?;
+        let layout = Layout::new()?;
         Ok(Some(Self {
             dir: layout.mise_dir()?,
             trusted: trust.then(|| layout.mount().clone()),
@@ -209,18 +241,17 @@ impl BootKit {
         let code_server = guest
             .code_server
             .as_deref()
-            .map(|release| install_code_server(release, &dir))
+            .map(|release| CodeServer::begin(release, &dir))
             .transpose()
             .map_err(|e| HostError::GuestFiles(format!("install code-server: {e}")))?;
-        // Stable routes keep every sandbox across a restart of this process. Without them (the
-        // runtime folder is unusable) the routes are random again, and a restart rebuilds sandboxes.
-        let ipc = match IpcRoot::stable(state_dir) {
-            Ok(root) => root,
-            Err(e) => {
-                tracing::warn!(error = %e, "no stable sandbox routes: a restart of Puddle will make every sandbox again");
-                IpcRoot::new().map_err(|e| HostError::GuestFiles(e.to_string()))?
-            }
-        };
+        // Stable routes keep every sandbox across a restart of this process. Without them the
+        // routes would be random and a restart would rebuild every sandbox and drop its root
+        // disk, so Puddle does not start (the error names the folder or file to look at).
+        let ipc = IpcRoot::stable(state_dir).map_err(|e| {
+            let cause =
+                std::error::Error::source(&e).map_or_else(String::new, |c| format!(": {c}"));
+            HostError::GuestFiles(format!("no stable sandbox routes: {e}{cause}"))
+        })?;
         Ok(Self {
             proxy,
             ipc,
@@ -259,17 +290,11 @@ impl BootKit {
 
     /// Starts the egress route of `workspace`: an owner-only endpoint served by the shared proxy,
     /// the same one at every run of Puddle, so a sandbox made by an earlier run finds its route
-    /// where its spec says. A name that cannot be had (taken by another process, no stable root)
-    /// gets a random endpoint instead: that route is not the one an older sandbox has, so such a
-    /// sandbox is made again. It lives as long as the returned [`Route`].
+    /// where its spec says. A name that cannot be had (taken by another process) is an error: a
+    /// random endpoint would make the sandbox again and drop its root disk (installed tools, home
+    /// folder), so the start is refused instead. It lives as long as the returned [`Route`].
     pub(crate) fn route(&self, workspace: &WorkspaceId) -> Result<Route, BootInputError> {
-        let listener = match self.ipc.listen_named(workspace.as_str()) {
-            Ok(listener) => listener,
-            Err(e) => {
-                tracing::warn!(%workspace, error = %e, "the workspace's stable route is not available, so it gets a random one");
-                self.ipc.listen()?
-            }
-        };
+        let listener = stable_listener(&self.ipc, workspace)?;
         Ok(self.proxy.serve_route(listener, workspace.clone()))
     }
 
@@ -316,7 +341,7 @@ impl BootKit {
             .map(|layer| {
                 mise_config(&MiseSettings {
                     dir: layer.dir.clone(),
-                    ceiling: GuestPath::new(WORKSPACES_ROOT)?,
+                    ceiling: GuestPath::new("/")?,
                     trusted: layer.trusted.clone(),
                     image_path: image_env
                         .iter()
@@ -337,10 +362,14 @@ impl BootKit {
             .files(trust.guest_files())
             .files(mise.map(|m| m.files).unwrap_or_default())
             .file(shell_init::loader())
+            .file(puddle_boot::prompt_name_file(guest.label))
             .file(puddle_boot::start_folder_file(
                 guest.root,
                 &crate::editor_file::start_path(guest.root, guest.start_folder),
             ));
+        if let Some(step) = guest.older_mount {
+            builder = builder.file(step.clone()).step(step.path().clone());
+        }
         if let Some(file) = guest.editor_file {
             builder = builder.file(file.clone());
         }
@@ -392,8 +421,19 @@ impl BootKit {
             .with_owned_disk(docker_disk());
         let spec = with_boot_mounts(spec, self.assets.clone(), Some(&self.agent));
         match &self.code_server {
-            Some(release) => with_code_server_mount(spec, release),
+            Some(release) => with_code_server_mount(spec, &release.path),
             None => spec,
+        }
+    }
+
+    /// Waits until the code-server release is in place for the guests to mount (at once when
+    /// this host bundles none or the folder was complete). A sandbox's spec names the folder, so
+    /// a start waits here before it makes one; the host itself does not wait, because the copy
+    /// can take minutes on a slow disk and the API has to be up before that.
+    pub(crate) async fn code_server_ready(&self) -> Result<(), HostError> {
+        match &self.code_server {
+            Some(server) => server.ready().await,
+            None => Ok(()),
         }
     }
 
@@ -410,7 +450,7 @@ impl BootKit {
         if self.code_server.is_none() && kind == ServerKind::CodeServer {
             return Ok(None);
         }
-        let layout = Layout::new(id)?;
+        let layout = Layout::new()?;
         let data = layout.puddle_dir()?;
         let mount = layout.mount().to_string();
         let mut server = match kind {
@@ -452,7 +492,22 @@ const CODE_SERVER_DIR: &str = "code-server";
 /// the host starts, before any sandbox of this run exists (one host runs per data folder, and the
 /// sandboxes of an earlier run are stopped). Files are hard-linked where the folders share a disk,
 /// else copied.
+#[cfg(test)]
 fn install_code_server(release: &Path, dir: &Path) -> std::io::Result<PathBuf> {
+    let (target, copy) = begin_code_server_install(release, dir)?;
+    if let Some(copy) = copy {
+        copy.run()?;
+    }
+    Ok(target)
+}
+
+/// The cheap half of [`install_code_server`]: the release's version is checked, the old layout
+/// goes, and the answer is where the release will be and the copy that still has to run (none
+/// when the folder is complete for this release).
+fn begin_code_server_install(
+    release: &Path,
+    dir: &Path,
+) -> std::io::Result<(PathBuf, Option<CodeServerCopy>)> {
     let manifest = std::fs::read_to_string(release.join("code-server.json"))?;
     serde_json::from_str::<serde_json::Value>(&manifest)
         .ok()
@@ -468,20 +523,140 @@ fn install_code_server(release: &Path, dir: &Path) -> std::io::Result<PathBuf> {
     remove_legacy_releases(dir);
     let done = target.join(INSTALLED_MARKER);
     if std::fs::read_to_string(&done).is_ok_and(|installed| installed == manifest) {
-        return Ok(target);
+        return Ok((target, None));
     }
-    let partial = dir.join(format!("{CODE_SERVER_DIR}.partial"));
-    if partial.exists() {
-        std::fs::remove_dir_all(&partial)?;
+    let copy = CodeServerCopy {
+        release: release.to_path_buf(),
+        partial: dir.join(format!("{CODE_SERVER_DIR}.partial")),
+        target: target.clone(),
+        manifest,
+    };
+    Ok((target, Some(copy)))
+}
+
+/// The slow half of the install: the release's files into the guest share.
+struct CodeServerCopy {
+    release: PathBuf,
+    partial: PathBuf,
+    target: PathBuf,
+    manifest: String,
+}
+
+impl CodeServerCopy {
+    fn run(self) -> std::io::Result<()> {
+        if self.partial.exists() {
+            std::fs::remove_dir_all(&self.partial)?;
+        }
+        tracing::info!(from = %self.release.display(), to = %self.target.display(), "installing code-server for the guests");
+        let started = std::time::Instant::now();
+        link_or_copy_tree(&self.release, &self.partial, &|from, to| {
+            std::fs::hard_link(from, to)
+        })?;
+        std::fs::write(self.partial.join(INSTALLED_MARKER), &self.manifest)?;
+        if self.target.exists() {
+            std::fs::remove_dir_all(&self.target)?;
+        }
+        std::fs::rename(&self.partial, &self.target)?;
+        tracing::info!(
+            elapsed_ms = started.elapsed().as_millis(),
+            "code-server installed for the guests"
+        );
+        Ok(())
     }
-    tracing::info!(from = %release.display(), to = %target.display(), "installing code-server for the guests");
-    link_or_copy_tree(release, &partial, &|from, to| std::fs::hard_link(from, to))?;
-    std::fs::write(partial.join(INSTALLED_MARKER), &manifest)?;
-    if target.exists() {
-        std::fs::remove_dir_all(&target)?;
+}
+
+/// The code-server release as the guests mount it, and whether its copy has finished.
+struct CodeServer {
+    path: PathBuf,
+    /// `None` when the folder was complete at the start.
+    installing: Option<Arc<Install>>,
+}
+
+/// How a copy ended; the error is shared because every waiting start reports it.
+type Outcome = Result<(), Arc<std::io::Error>>;
+
+/// The outcome of a copy running on its own thread, and the signal that it ended.
+#[derive(Default)]
+struct Install {
+    outcome: Mutex<Option<Outcome>>,
+    ended: Condvar,
+}
+
+impl Install {
+    fn finish(&self, outcome: Outcome) {
+        *self
+            .outcome
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(outcome);
+        self.ended.notify_all();
     }
-    std::fs::rename(&partial, &target)?;
-    Ok(target)
+
+    fn wait(&self) -> Outcome {
+        let mut outcome = self
+            .outcome
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        loop {
+            if let Some(done) = outcome.as_ref() {
+                return done.clone();
+            }
+            outcome = self
+                .ended
+                .wait(outcome)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+    }
+
+    fn outcome(&self) -> Option<Outcome> {
+        self.outcome
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+}
+
+impl CodeServer {
+    /// Checks the release and starts its copy on a thread of its own, so the host does not
+    /// wait for it.
+    fn begin(release: &Path, dir: &Path) -> std::io::Result<Self> {
+        let (path, copy) = begin_code_server_install(release, dir)?;
+        let installing = copy.map(|copy| {
+            let install = Arc::new(Install::default());
+            let ended = install.clone();
+            let spawned = std::thread::Builder::new()
+                .name("code-server-install".into())
+                .spawn({
+                    let ended = ended.clone();
+                    move || {
+                        let outcome = copy.run().map_err(Arc::new);
+                        if let Err(reason) = &outcome {
+                            tracing::error!(%reason, "code-server could not be installed for the guests");
+                        }
+                        ended.finish(outcome);
+                    }
+                });
+            if let Err(e) = spawned {
+                ended.finish(Err(Arc::new(e)));
+            }
+            install
+        });
+        Ok(Self { path, installing })
+    }
+
+    async fn ready(&self) -> Result<(), HostError> {
+        let Some(install) = &self.installing else {
+            return Ok(());
+        };
+        let outcome = if let Some(done) = install.outcome() {
+            done
+        } else {
+            let install = install.clone();
+            tokio::task::spawn_blocking(move || install.wait())
+                .await
+                .unwrap_or_else(|e| Err(Arc::new(std::io::Error::other(e))))
+        };
+        outcome.map_err(|e| HostError::GuestFiles(format!("install code-server: {e}")))
+    }
 }
 
 /// Removes what earlier versions of Puddle left below `dir`: the `code-server-<version>` folders

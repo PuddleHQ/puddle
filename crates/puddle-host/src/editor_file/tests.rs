@@ -3,7 +3,7 @@ use super::*;
 use puddle_types::Merged;
 
 fn root() -> GuestPath {
-    GuestPath::new("/workspaces/shop").unwrap()
+    GuestPath::new("/workspace").unwrap()
 }
 
 fn dirs(names: &[&str]) -> Vec<CheckoutDir> {
@@ -23,11 +23,11 @@ fn paths(f: &[(GuestPath, Option<&str>)]) -> Vec<String> {
 
 #[test]
 fn the_start_folder_or_the_root_is_where_terminals_land() {
-    assert_eq!(start_path(&root(), None).as_str(), "/workspaces/shop");
+    assert_eq!(start_path(&root(), None).as_str(), "/workspace");
     let sub = StartFolder::parse("web/src").unwrap();
     assert_eq!(
         start_path(&root(), Some(&sub)).as_str(),
-        "/workspaces/shop/web/src"
+        "/workspace/web/src"
     );
 }
 
@@ -50,26 +50,26 @@ fn the_list_comes_first_then_the_others_by_name_and_the_root_only_with_loose_fil
     assert_eq!(
         paths(&folders),
         [
-            "/workspaces/shop/web",
-            "/workspaces/shop/api",
-            "/workspaces/shop/docs",
-            "/workspaces/shop/tools",
-            "/workspaces/shop"
+            "/workspace/web",
+            "/workspace/api",
+            "/workspace/docs",
+            "/workspace/tools",
+            "/workspace"
         ]
     );
     assert_eq!(folders.last().unwrap().1, Some(ROOT_LABEL));
     let tidy = multi_root_folders(&root(), None, &found(&["b", "a"], false), &[]).unwrap();
-    assert_eq!(paths(&tidy), ["/workspaces/shop/a", "/workspaces/shop/b"]);
+    assert_eq!(paths(&tidy), ["/workspace/a", "/workspace/b"]);
 }
 
 #[test]
 fn the_file_owns_folders_and_keeps_every_other_key_and_comment() {
     let folders = multi_root_folders(&root(), None, &found(&["a", "b"], false), &[]).unwrap();
     let id = WorkspaceId::new("shop").unwrap();
-    let file = workspace_file(&root(), &id, &folders).unwrap();
+    let file = workspace_file(&root(), &id, "Shop", &folders).unwrap();
     assert_eq!(
         file.path().as_str(),
-        "/workspaces/shop/.puddle/editor/shop.code-workspace"
+        "/workspace/.puddle/editor/shop.code-workspace"
     );
     assert_eq!(file.mode(), 0o644);
     let puddle_types::ApplyKind::Merge(spec) = file.apply() else {
@@ -85,10 +85,24 @@ fn the_file_owns_folders_and_keeps_every_other_key_and_comment() {
         "{out}"
     );
     assert!(
-        !out.contains("/old")
-            && out.contains("/workspaces/shop/a")
-            && out.contains("/workspaces/shop/b"),
+        !out.contains("/old") && out.contains("/workspace/a") && out.contains("/workspace/b"),
         "{out}"
+    );
+    // The title carries the display name, and the user's other settings stay.
+    assert!(
+        out.contains("\"window.title\": \"${dirty}${activeEditorShort}${separator}Shop${separator}${appName}\""),
+        "{out}"
+    );
+    // A name the editor would read as a variable keeps the default title.
+    let plain = workspace_file(&root(), &id, "a${b}", &folders).unwrap();
+    let puddle_types::ApplyKind::Merge(plain) = plain.apply() else {
+        panic!("a merged file")
+    };
+    assert!(
+        plain
+            .keys()
+            .iter()
+            .all(|k| k != &["settings", "window.title"])
     );
     // A file that cannot be parsed is refused, and the hook leaves it as it is.
     assert!(spec.apply(Some(b"{ not json"), &[]).is_err());
@@ -152,6 +166,6 @@ fn the_file_has_one_place_per_workspace() {
     let id = WorkspaceId::new("shop").unwrap();
     assert_eq!(
         workspace_file_path(&root(), &id).unwrap().as_str(),
-        "/workspaces/shop/.puddle/editor/shop.code-workspace"
+        "/workspace/.puddle/editor/shop.code-workspace"
     );
 }

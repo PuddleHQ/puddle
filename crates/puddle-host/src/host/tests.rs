@@ -10,6 +10,7 @@ use puddle_types::{Event, LocalCategory};
 use serde_json::json;
 
 use super::egress::{announce_renewals, distribution_points};
+use super::reconcile::reconcile_problems;
 use super::*;
 
 fn name() -> WorkspaceId {
@@ -170,4 +171,33 @@ fn the_distribution_points_come_from_the_synced_roots_and_only_from_them() {
     assert!(points.covers(&host("pki.corp.example"), 80, "GET", "/root.crl"));
     assert!(!points.covers(&host("old.corp.example"), 80, "GET", "/x.crl"));
     assert!(distribution_points(&CorporateRoots::default()).is_empty());
+}
+
+#[test]
+fn sandboxes_ended_by_force_at_start_are_a_problem_that_names_them() {
+    let sandbox = |n: &str| puddle_types::SandboxName::new(n).unwrap();
+    let mut report = puddle_lifecycle::ReconcileReport::default();
+    assert_eq!(reconcile_problems(&report), []);
+
+    report.forced = vec![sandbox("acme")];
+    let problems = reconcile_problems(&report);
+    assert_eq!(problems.len(), 1);
+    assert_eq!(problems[0].key, "reconcile-forced-sandboxes");
+    assert_eq!(
+        problems[0].title,
+        "Puddle had to end 1 sandbox by force that an earlier run left running"
+    );
+    assert!(problems[0].detail.starts_with("acme. "), "{problems:?}");
+    assert!(problems[0].detail.contains("may be lost"), "{problems:?}");
+
+    report.forced = vec![sandbox("acme"), sandbox("beta")];
+    let problems = reconcile_problems(&report);
+    assert_eq!(
+        problems[0].title,
+        "Puddle had to end 2 sandboxes by force that an earlier run left running"
+    );
+    assert!(
+        problems[0].detail.starts_with("acme, beta. "),
+        "{problems:?}"
+    );
 }

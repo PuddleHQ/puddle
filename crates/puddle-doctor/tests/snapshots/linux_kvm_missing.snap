@@ -1,13 +1,20 @@
 puddle doctor (puddle 0.1.0, linux x86_64)
 
 info  CPU virtualization  this Linux runs in a virtual machine (Microsoft Hv); see Hypervisor
+      impact: This computer is a virtual machine, so workspaces need its host to pass CPU
+              virtualization through.
+      remedy: Turn on nested virtualization for this virtual machine on its host.
 FAIL  Hypervisor          no /dev/kvm
-      fix:  Load KVM for your CPU (sudo modprobe kvm_intel, or kvm_amd). In a virtual machine,
-            turn on nested virtualization on its host first.
-      from: /dev/kvm: No such file or directory (os error 2)
+      impact: Puddle can't start any workspace: KVM isn't available.
+      remedy: Load KVM for your CPU (`sudo modprobe kvm_intel` or `kvm_amd`).
+      fix:    Load KVM for your CPU (sudo modprobe kvm_intel, or kvm_amd). In a virtual machine,
+              turn on nested virtualization on its host first.
+      from:   /dev/kvm: No such file or directory (os error 2)
 ok    Bundled runtime     msb 0.7.7-puddle.2 (/opt/puddle/runtime/msb)
 ok    Runtime starts      msb 0.7.7-puddle.2 (0.0 s)
 skip  Test boot           not checked: no usable hypervisor
+      impact: Not checked, so Puddle can't tell yet whether a workspace can start here.
+      remedy: Fix any problem above, then check again.
 ok    Disk space          120 GB free on the drive that holds Puddle's data (/home/dev/.local/share/puddle)
 ok    Disk encryption     data drive encrypted (BitLocker); swap /dev/dm-1 encrypted (BitLocker)
 ok    SSH agent           the agent on /run/user/1000/agent.sock holds 1 key (ed25519: 1)

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The compute-plane traits ([`puddle_compute::Runtime`], [`puddle_compute::Sandbox`]) over the
-//! msb SDK from Puddle's fork tag (`microsandbox`, git tag `v0.7.7-puddle.N` in the root `Cargo.toml`).
+//! msb SDK from Puddle's fork tag (`microsandbox`, git tag `v<release>-puddle.N`, the pin in the root `Cargo.toml`).
 //!
 //! Everything above the compute plane codes against the traits; this crate is the only one that
 //! talks to the SDK. [`MsbRuntime::open`] takes an [`MsbConfig`] (private msb home, the runtime

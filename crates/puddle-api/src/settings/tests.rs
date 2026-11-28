@@ -36,3 +36,9 @@ fn memory_settings_keep_what_was_saved() {
         "settings storage failed: disk full"
     );
 }
+
+#[test]
+fn a_failing_settings_store_is_an_internal_error() {
+    let err = ApiError::from(SettingsRepoError::new("disk full"));
+    assert_eq!(err.code(), puddle_services::ErrorCode::Internal);
+}

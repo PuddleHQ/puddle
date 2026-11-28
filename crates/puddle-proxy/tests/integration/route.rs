@@ -23,8 +23,8 @@ use puddle_proxy::testing::{
 };
 use puddle_proxy::{AddressCheck, AddressVerdict, Proxy, ProxyConfig, Route};
 use puddle_types::{
-    BlockReason, CompanySignal, ConnectionDecision, ConnectionEvent, ConnectionReason, Host,
-    LocalCategory, NullSink, PendingId, RefusedReason, WorkspaceId,
+    BlockReason, CompanySignal, ConnectionDecision, ConnectionEvent, ConnectionOutcome,
+    ConnectionReason, Host, LocalCategory, NullSink, PendingId, RefusedReason, WorkspaceId,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
@@ -450,6 +450,71 @@ async fn a_connection_is_open_until_its_record_is_written() {
     );
 }
 
+/// The agent session ends while a tunnel is open: the proxy aborts the tunnel's task mid-splice,
+/// and the connection still leaves its one record, with what had passed and the decision made.
+#[tokio::test]
+async fn a_tunnel_cut_with_its_agent_session_is_still_recorded() {
+    let echo = echo_server().await;
+    let rig = Rig::with_resolver(
+        &ProxyConfig::default(),
+        StaticResolver::new().with("echo.test", &[LOCAL]),
+    );
+    let rule = rig.policy.allow(&host("echo.test"));
+    let mut guest = rig.guest().await;
+    let head = format!(
+        "CONNECT echo.test:{0} HTTP/1.1\r\nHost: echo.test:{0}\r\n\r\n",
+        echo.port()
+    );
+    let mut stream = guest.stream().await;
+    stream.write_all(head.as_bytes()).await.unwrap();
+    let mut reader = BufReader::new(stream);
+    assert_eq!(status(&mut reader).await.unwrap(), 200);
+    reader.get_mut().write_all(b"ping").await.unwrap();
+    let mut back = [0u8; 4];
+    reader.read_exact(&mut back).await.unwrap();
+    assert!(rig.log.events().is_empty(), "the tunnel is still open");
+
+    // The session dies with the tunnel open: no shutdown, no close.
+    drop(reader);
+    drop(guest);
+
+    let events = rig.events(1).await;
+    // Nothing else follows: at zero open connections every record is already written.
+    puddle_test_kit::eventually(
+        "the cut connection is closed",
+        Duration::from_secs(10),
+        || rig.proxy.open_guest_streams() == 0,
+    )
+    .await;
+    assert_eq!(rig.log.events().len(), 1, "one record per connection");
+    let event = &events[0];
+    assert_eq!(
+        (event.host.to_string(), event.port),
+        ("echo.test".to_owned(), echo.port())
+    );
+    assert_eq!(
+        (
+            event.decision,
+            event.reason,
+            event.rule_id,
+            event.outcome,
+            event.resolved_ip
+        ),
+        (
+            ConnectionDecision::Allow,
+            ConnectionReason::Rule,
+            Some(rule),
+            Some(ConnectionOutcome::Connected),
+            Some(LOCAL)
+        )
+    );
+    let established = "HTTP/1.1 200 Connection Established\r\n\r\n".len() as u64;
+    assert_eq!(
+        (event.bytes_up, event.bytes_down),
+        (head.len() as u64 + 4, established + 4)
+    );
+}
+
 #[tokio::test]
 async fn refusals_carry_decision_headers_and_end_cleanly() {
     let rig = Rig::new(&ProxyConfig::default());
@@ -493,6 +558,31 @@ async fn refusals_carry_decision_headers_and_end_cleanly() {
         .parse()
         .unwrap();
     assert_eq!(rig.policy.pending()[0].id, PendingId(id));
+}
+
+/// The program the agent names on a `CONNECT` reaches the policy with the request; a copy that
+/// is not the first, or a name with nothing usable in it, does not.
+#[tokio::test]
+async fn the_program_named_on_a_connect_reaches_the_policy() {
+    let rig = Rig::new(&ProxyConfig::default());
+    let mut guest = rig.guest().await;
+    for head in [
+        "CONNECT named.test:443 HTTP/1.1\r\nx-puddle-program: pip\r\nx-puddle-program: sh\r\n\r\n",
+        "CONNECT unnamed.test:443 HTTP/1.1\r\nx-puddle-program: /\r\n\r\n",
+    ] {
+        let mut stream = guest.stream().await;
+        stream.write_all(head.as_bytes()).await.unwrap();
+        let mut reader = BufReader::new(stream);
+        let (code, _) = response_head(&mut reader).await.unwrap();
+        assert_eq!(code, 403);
+    }
+    let programs: Vec<Option<String>> = rig
+        .policy
+        .pending()
+        .into_iter()
+        .map(|p| p.program.map(|p| p.to_string()))
+        .collect();
+    assert_eq!(programs, vec![Some("pip".to_owned()), None]);
 }
 
 #[tokio::test]
@@ -950,7 +1040,7 @@ async fn a_cloud_metadata_destination_is_refused_naming_its_toggle_and_waits_for
         assert_eq!(header_value(&headers, "x-puddle-pending"), None, "{target}");
         let body = String::from_utf8(read_all(&mut reader).await.unwrap()).unwrap();
         assert!(
-            body.contains("'metadata' (cloud metadata)") && body.contains("toggle is off"),
+            body.contains("turn on 'Cloud metadata'") && body.contains("toggle is off"),
             "{target}: {body}"
         );
     }
@@ -1589,7 +1679,7 @@ impl AgentReports for KeptReports {
 struct Watched {
     link: std::sync::Mutex<Option<(WorkspaceId, puddle_agent_proto::forward::GuestLink)>>,
     ports: std::sync::Mutex<Vec<(WorkspaceId, Vec<u16>)>>,
-    ended: std::sync::Mutex<Vec<WorkspaceId>>,
+    ended: std::sync::Mutex<Vec<(WorkspaceId, puddle_agent_proto::host::SessionId)>>,
 }
 
 impl puddle_agent_proto::host::GuestWatcher for Watched {
@@ -1601,8 +1691,11 @@ impl puddle_agent_proto::host::GuestWatcher for Watched {
         self.ports.lock().unwrap().push((workspace.clone(), ports));
     }
 
-    fn session_ended(&self, workspace: &WorkspaceId) {
-        self.ended.lock().unwrap().push(workspace.clone());
+    fn session_ended(&self, workspace: &WorkspaceId, session: puddle_agent_proto::host::SessionId) {
+        self.ended
+            .lock()
+            .unwrap()
+            .push((workspace.clone(), session));
     }
 }
 
@@ -1686,8 +1779,8 @@ async fn the_guest_watcher_gets_the_link_and_the_ports_of_the_routes_workspace()
         *watched.ports.lock().unwrap(),
         [(workspace("box"), vec![3000, 8080])]
     );
-    let linked = watched.link.lock().unwrap().take().map(|(name, _)| name);
-    assert_eq!(linked, Some(workspace("box")));
+    let (linked, link) = watched.link.lock().unwrap().take().unwrap();
+    assert_eq!(linked, workspace("box"));
 
     // The session ends with the guest's connection, and the watcher hears of it.
     drop(control);
@@ -1698,7 +1791,54 @@ async fn the_guest_watcher_gets_the_link_and_the_ports_of_the_routes_workspace()
         || !watched.ended.lock().unwrap().is_empty(),
     )
     .await;
-    assert_eq!(*watched.ended.lock().unwrap(), [workspace("box")]);
+    // It names the session whose link the watcher was given.
+    assert_eq!(
+        *watched.ended.lock().unwrap(),
+        [(workspace("box"), link.session())]
+    );
+}
+
+#[tokio::test]
+async fn the_end_of_one_of_two_sessions_names_that_session_only() {
+    use puddle_agent_proto::AgentMessage;
+    use puddle_agent_proto::control::PREAMBLE;
+    let watched = Arc::new(Watched::default());
+    let proxy = Arc::new(
+        Proxy::new(Arc::new(StaticPolicy::new()), Arc::new(NullSink))
+            .with_guest_watcher(watched.clone()),
+    );
+    let root = IpcRoot::new().unwrap();
+    let route = proxy.serve_route(root.listen().unwrap(), workspace("box"));
+    let mut hello = Vec::new();
+    for _ in 0..2 {
+        let mut guest = Guest::connect(&route).await;
+        let mut control = guest.stream().await;
+        control.write_all(PREAMBLE).await.unwrap();
+        control
+            .write_all(&AgentMessage::hello().to_line().unwrap())
+            .await
+            .unwrap();
+        control.flush().await.unwrap();
+        let (_, link) = puddle_test_kit::eventually(
+            "the agent session started",
+            Duration::from_secs(5),
+            || watched.link.lock().unwrap().clone(),
+        )
+        .await;
+        hello.push((guest, control, link.session()));
+        *watched.link.lock().unwrap() = None;
+    }
+    let (first_guest, first_control, first) = hello.remove(0);
+    assert_ne!(first, hello[0].2);
+    drop(first_control);
+    drop(first_guest);
+    puddle_test_kit::eventually(
+        "the end of the first session arrived",
+        Duration::from_secs(5),
+        || !watched.ended.lock().unwrap().is_empty(),
+    )
+    .await;
+    assert_eq!(*watched.ended.lock().unwrap(), [(workspace("box"), first)]);
 }
 
 #[tokio::test]
@@ -1726,7 +1866,11 @@ async fn stopping_a_route_reports_the_end_of_each_session_it_cuts_off() {
     .await;
     // The guest stays connected: the route's stop is what ends the session.
     route.shutdown().await;
-    assert_eq!(*watched.ended.lock().unwrap(), [workspace("box")]);
+    let (_, link) = watched.link.lock().unwrap().take().unwrap();
+    assert_eq!(
+        *watched.ended.lock().unwrap(),
+        [(workspace("box"), link.session())]
+    );
     drop(control);
 }
 

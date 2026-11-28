@@ -37,13 +37,21 @@ fn store() -> (Arc<ManualClock>, Store, Arc<Seen>) {
     let seen = Arc::new(Seen::default());
     let store = Store::open_in_memory(clock.clone(), Limits::default())
         .unwrap()
-        .with_events(Arc::clone(&seen) as Arc<dyn EventSink>);
+        .with_events(seen.clone());
+    for name in ["a", "b"] {
+        store.set_workspace_owner(&ws(name), UserId::OWNER).unwrap();
+    }
     (clock, store, seen)
 }
 
 const KEY: &str = "SHA256:abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ";
 
 fn open(store: &Store, workspace: &str, host: &str) -> i64 {
+    if store.workspace_owner(&ws(workspace)).unwrap().is_none() {
+        store
+            .set_workspace_owner(&ws(workspace), UserId::OWNER)
+            .unwrap();
+    }
     match store
         .start_ssh_agent_ask(&ws(workspace), host, KEY, "ssh-ed25519")
         .unwrap()
@@ -65,7 +73,9 @@ fn the_first_request_opens_one_question_that_later_requests_join() {
         0,
         "a second request changes nothing to show"
     );
-    let asks = store.open_ssh_agent_asks(None, None).unwrap();
+    let asks = store
+        .open_ssh_agent_asks_every_user(&AllUsers::new(), None)
+        .unwrap();
     assert_eq!(asks.len(), 1);
     assert_eq!(asks[0].attempts, 2);
     assert_eq!(asks[0].first_seen, 1_000);
@@ -81,13 +91,22 @@ fn once_lets_the_waiting_requests_sign_and_leaves_no_grant() {
     let id = open(&store, "a", "h.example.com");
     seen.asks_changed();
     let ask = store
+        .as_user(UserId::OWNER)
         .answer_ssh_agent_ask(&ws("a"), id, SshAgentAnswer::Once, Actor::Ui)
         .unwrap();
     assert_eq!(ask.state, SshAgentAskState::AllowedOnce);
     assert!(ask.state.allows());
     assert_eq!(seen.asks_changed(), 1);
-    assert_eq!(store.ssh_agent_ask(id).unwrap().unwrap().state, ask.state);
-    assert_eq!(store.open_ssh_agent_asks(None, None).unwrap(), []);
+    assert_eq!(
+        store.ssh_agent_ask(&ws("a"), id).unwrap().unwrap().state,
+        ask.state
+    );
+    assert_eq!(
+        store
+            .open_ssh_agent_asks_every_user(&AllUsers::new(), None)
+            .unwrap(),
+        []
+    );
     assert_ne!(
         open(&store, "a", "h.example.com"),
         id,
@@ -100,6 +119,7 @@ fn deny_lets_nothing_sign() {
     let (_, store, _) = store();
     let id = open(&store, "a", "h.example.com");
     let ask = store
+        .as_user(UserId::OWNER)
         .answer_ssh_agent_ask(&ws("a"), id, SshAgentAnswer::Deny, Actor::Cli)
         .unwrap();
     assert_eq!(ask.state, SshAgentAskState::Denied);
@@ -116,10 +136,12 @@ fn run_and_always_grants_answer_later_requests_until_they_end() {
     let (_, store, _) = store();
     let run = open(&store, "a", "run.example.com");
     store
+        .as_user(UserId::OWNER)
         .answer_ssh_agent_ask(&ws("a"), run, SshAgentAnswer::Run, Actor::Ui)
         .unwrap();
     let always = open(&store, "a", "always.example.com");
     store
+        .as_user(UserId::OWNER)
         .answer_ssh_agent_ask(&ws("a"), always, SshAgentAnswer::Always, Actor::Ui)
         .unwrap();
     let granted = |host: &str| {
@@ -155,6 +177,7 @@ fn clearing_every_run_grant_leaves_the_always_ones() {
     ] {
         let id = open(&store, "a", host);
         store
+            .as_user(UserId::OWNER)
             .answer_ssh_agent_ask(&ws("a"), id, answer, Actor::Ui)
             .unwrap();
     }
@@ -172,14 +195,30 @@ fn clearing_every_run_grant_leaves_the_always_ones() {
 fn an_answer_is_final_and_belongs_to_one_workspace() {
     let (_, store, _) = store();
     let id = open(&store, "a", "h.example.com");
-    let wrong = store.answer_ssh_agent_ask(&ws("b"), id, SshAgentAnswer::Once, Actor::Ui);
+    let wrong = store.as_user(UserId::OWNER).answer_ssh_agent_ask(
+        &ws("b"),
+        id,
+        SshAgentAnswer::Once,
+        Actor::Ui,
+    );
     assert!(matches!(wrong, Err(StoreError::UnknownSshAgentAsk(n)) if n == id));
-    let missing = store.answer_ssh_agent_ask(&ws("a"), id + 99, SshAgentAnswer::Once, Actor::Ui);
+    let missing = store.as_user(UserId::OWNER).answer_ssh_agent_ask(
+        &ws("a"),
+        id + 99,
+        SshAgentAnswer::Once,
+        Actor::Ui,
+    );
     assert!(matches!(missing, Err(StoreError::UnknownSshAgentAsk(_))));
     store
+        .as_user(UserId::OWNER)
         .answer_ssh_agent_ask(&ws("a"), id, SshAgentAnswer::Deny, Actor::Ui)
         .unwrap();
-    let again = store.answer_ssh_agent_ask(&ws("a"), id, SshAgentAnswer::Always, Actor::Ui);
+    let again = store.as_user(UserId::OWNER).answer_ssh_agent_ask(
+        &ws("a"),
+        id,
+        SshAgentAnswer::Always,
+        Actor::Ui,
+    );
     assert!(
         matches!(
             again,
@@ -197,6 +236,7 @@ fn an_answer_is_written_to_the_audit_log_with_who_gave_it() {
     let (_, store, _) = store();
     let id = open(&store, "a", "h.example.com");
     store
+        .as_user(UserId::OWNER)
         .answer_ssh_agent_ask(&ws("a"), id, SshAgentAnswer::Always, Actor::Cli)
         .unwrap();
     let line = store
@@ -222,6 +262,7 @@ fn turning_the_agent_off_for_a_host_drops_its_grants_and_open_questions() {
         .unwrap();
     let granted = open(&store, "a", "h.example.com");
     store
+        .as_user(UserId::OWNER)
         .answer_ssh_agent_ask(&ws("a"), granted, SshAgentAnswer::Always, Actor::Ui)
         .unwrap();
     let waiting = store
@@ -235,7 +276,12 @@ fn turning_the_agent_off_for_a_host_drops_its_grants_and_open_questions() {
             .unwrap()
     );
     assert_eq!(seen.asks_changed(), 1);
-    assert_eq!(store.open_ssh_agent_asks(None, None).unwrap(), []);
+    assert_eq!(
+        store
+            .open_ssh_agent_asks_every_user(&AllUsers::new(), None)
+            .unwrap(),
+        []
+    );
     assert_ne!(
         store
             .start_ssh_agent_ask(&ws("a"), "h.example.com", KEY, "ssh-ed25519")
@@ -249,11 +295,17 @@ fn deleting_a_workspace_removes_its_questions_and_grants() {
     let (_, store, _) = store();
     let id = open(&store, "a", "h.example.com");
     store
+        .as_user(UserId::OWNER)
         .answer_ssh_agent_ask(&ws("a"), id, SshAgentAnswer::Always, Actor::Ui)
         .unwrap();
     open(&store, "a", "other.example.com");
     store.delete_workspace(&ws("a")).unwrap();
-    assert_eq!(store.open_ssh_agent_asks(None, None).unwrap(), []);
+    assert_eq!(
+        store
+            .open_ssh_agent_asks_every_user(&AllUsers::new(), None)
+            .unwrap(),
+        []
+    );
     assert_ne!(open(&store, "a", "h.example.com"), 0);
 }
 
@@ -277,22 +329,49 @@ fn decided_questions_are_pruned_after_an_hour() {
     let (clock, store, _) = store();
     let id = open(&store, "a", "h.example.com");
     store
+        .as_user(UserId::OWNER)
         .answer_ssh_agent_ask(&ws("a"), id, SshAgentAnswer::Once, Actor::Ui)
         .unwrap();
     clock.advance(DECIDED_KEPT_MS - 1);
     open(&store, "a", "x.example.com");
-    assert!(store.ssh_agent_ask(id).unwrap().is_some());
+    assert!(store.ssh_agent_ask(&ws("a"), id).unwrap().is_some());
     clock.advance(2);
     open(&store, "a", "y.example.com");
-    assert!(store.ssh_agent_ask(id).unwrap().is_none());
+    assert!(store.ssh_agent_ask(&ws("a"), id).unwrap().is_none());
 }
 
 #[test]
 fn a_user_sees_only_the_questions_of_their_own_workspaces() {
     let (_, store, _) = store();
-    open(&store, "a", "h.example.com");
-    let nobody = UserId::from_stored(999);
-    assert_eq!(store.open_ssh_agent_asks(Some(nobody), None).unwrap(), []);
+    let ann = store
+        .admin_add_user(UserId::OWNER, &crate::UserName::new("ann").unwrap())
+        .unwrap()
+        .id;
+    store.set_workspace_owner(&ws("c"), ann).unwrap();
+    let mine = open(&store, "a", "h.example.com");
+    let hers = open(&store, "c", "h.example.com");
+    let ids = |user: UserId, workspace: Option<&WorkspaceId>| -> Vec<i64> {
+        let mut ids: Vec<i64> = store
+            .as_user(user)
+            .open_ssh_agent_asks(workspace)
+            .unwrap()
+            .iter()
+            .map(|ask| ask.id)
+            .collect();
+        ids.sort_unstable();
+        ids
+    };
+    assert_eq!(ids(UserId::OWNER, None), [mine]);
+    assert_eq!(ids(ann, None), [hers]);
+    assert_eq!(ids(ann, Some(&ws("a"))), Vec::<i64>::new());
+    assert_eq!(ids(UserId::from_stored(999), None), Vec::<i64>::new());
+    assert_eq!(
+        store
+            .open_ssh_agent_asks_every_user(&AllUsers::new(), None)
+            .unwrap()
+            .len(),
+        2
+    );
 }
 
 #[test]
@@ -304,12 +383,19 @@ fn ending_a_run_drops_its_open_questions_and_tells_the_ui_once_per_workspace() {
     seen.asks_changed();
     store.end_ssh_agent_run(Some(&ws("a"))).unwrap();
     assert_eq!(seen.asks_changed(), 1);
-    let left = store.open_ssh_agent_asks(None, None).unwrap();
+    let left = store
+        .open_ssh_agent_asks_every_user(&AllUsers::new(), None)
+        .unwrap();
     assert_eq!(left.len(), 1);
     assert_eq!(left[0].workspace, ws("b"));
     store.end_ssh_agent_run(None).unwrap();
     assert_eq!(seen.asks_changed(), 1);
-    assert_eq!(store.open_ssh_agent_asks(None, None).unwrap(), []);
+    assert_eq!(
+        store
+            .open_ssh_agent_asks_every_user(&AllUsers::new(), None)
+            .unwrap(),
+        []
+    );
     store.end_ssh_agent_run(None).unwrap();
     assert_eq!(seen.asks_changed(), 0, "nothing was waiting");
 }
@@ -334,11 +420,16 @@ fn an_answer_whose_audit_record_cannot_be_written_is_not_given() {
     let id = open(&store, "a", "h.example.com");
     store.fail_audit_writes("workspace_op");
 
-    let failed = store.answer_ssh_agent_ask(&ws("a"), id, SshAgentAnswer::Always, Actor::Ui);
+    let failed = store.as_user(UserId::OWNER).answer_ssh_agent_ask(
+        &ws("a"),
+        id,
+        SshAgentAnswer::Always,
+        Actor::Ui,
+    );
 
     assert!(matches!(failed, Err(StoreError::Database(_))), "{failed:?}");
     store.audit_writes_work_again();
-    let ask = store.ssh_agent_ask(id).unwrap().unwrap();
+    let ask = store.ssh_agent_ask(&ws("a"), id).unwrap().unwrap();
     assert_eq!(
         ask.state,
         SshAgentAskState::Requested,
@@ -386,15 +477,23 @@ fn a_store_that_cannot_count_the_open_questions_opens_none() {
 fn an_answer_returns_the_question_as_stored_with_the_time_it_was_decided() {
     let (clock, store, _) = store();
     let id = open(&store, "a", "h.example.com");
-    assert_eq!(store.ssh_agent_ask(id).unwrap().unwrap().decided_at, None);
+    assert_eq!(
+        store
+            .ssh_agent_ask(&ws("a"), id)
+            .unwrap()
+            .unwrap()
+            .decided_at,
+        None
+    );
     clock.advance(5_000);
 
     let ask = store
+        .as_user(UserId::OWNER)
         .answer_ssh_agent_ask(&ws("a"), id, SshAgentAnswer::Once, Actor::Ui)
         .unwrap();
 
     assert!(ask.decided_at.is_some());
-    assert_eq!(store.ssh_agent_ask(id).unwrap().unwrap(), ask);
+    assert_eq!(store.ssh_agent_ask(&ws("a"), id).unwrap().unwrap(), ask);
 }
 
 #[test]
@@ -416,4 +515,35 @@ fn breaking_the_database_through_the_testing_helper_makes_writes_fail() {
 fn breaking_the_database_with_refused_sql_panics() {
     let (_, store, _) = store();
     crate::testing::break_database(&store, "DROP TABLE no_such_table");
+}
+
+#[test]
+fn a_question_of_a_workspace_with_no_user_is_answered_by_nobody() {
+    let (_, store, _) = store();
+    let id = open(&store, "loose", "h.example.com");
+    // A damaged database: the workspace lost its user row after the question was asked.
+    crate::testing::break_database(
+        &store,
+        "DELETE FROM workspace_owners WHERE workspace_id = 'loose'",
+    );
+
+    let answered = store.as_user(UserId::OWNER).answer_ssh_agent_ask(
+        &ws("loose"),
+        id,
+        SshAgentAnswer::Once,
+        Actor::Ui,
+    );
+
+    assert!(
+        matches!(answered, Err(StoreError::UnknownSshAgentAsk(got)) if got == id),
+        "{answered:?}"
+    );
+    assert_eq!(
+        store
+            .ssh_agent_ask(&ws("loose"), id)
+            .unwrap()
+            .unwrap()
+            .state,
+        SshAgentAskState::Requested
+    );
 }

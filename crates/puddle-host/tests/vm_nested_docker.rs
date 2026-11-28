@@ -13,8 +13,8 @@
 //! Which workload needs which rule is part of the bar: the two sites are allowed up front, and the
 //! container-to-container traffic of the bridge and of Compose must make no inbox row and no audit
 //! line, because it never leaves the guest.
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::time::Duration;
 

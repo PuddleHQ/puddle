@@ -30,8 +30,8 @@
     reason = "VM test: a failed step fails the test; what the guest said goes to the log"
 )]
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 use std::time::Duration;
 
@@ -193,6 +193,7 @@ async fn vm_capture_reaches_what_a_rule_allows_with_no_proxy_setting_and_refuses
     let id = wait_for_row(&vm, &workspace, "1.1.1.1").await;
     vm.host
         .store()
+        .as_user(puddle_store::UserId::OWNER)
         .resolve_pending(id, &Resolution::allow(), Actor::Cli)
         .unwrap();
     let approved = direct("retry").await;
@@ -280,7 +281,7 @@ async fn vm_capture_reaches_what_a_rule_allows_with_no_proxy_setting_and_refuses
 async fn vm_capture_survives_a_root_that_deletes_the_rules() {
     let kit = PackageKit::open(
         Flavour::Apt,
-        puddle_api::DEFAULT_IMAGE,
+        puddle_services::workspaces::DEFAULT_IMAGE,
         "nftables",
         "deb.debian.org and security.debian.org",
     );
@@ -415,7 +416,7 @@ async fn vm_capture_apt_update_works_with_no_proxy_file_and_no_proxy_setting() {
 async fn vm_capture_python_urllib_and_pip_work_with_an_empty_environment() {
     let kit = PackageKit::open(
         Flavour::Apt,
-        puddle_api::DEFAULT_IMAGE,
+        puddle_services::workspaces::DEFAULT_IMAGE,
         "python3 python3-pip",
         "deb.debian.org and security.debian.org",
     );
@@ -577,6 +578,7 @@ async fn refused_then_approved(
     let id = wait_for_row(vm, workspace, site).await;
     vm.host
         .store()
+        .as_user(puddle_store::UserId::OWNER)
         .resolve_pending(id, &Resolution::allow(), Actor::Cli)
         .unwrap();
     let approved = as_agent(vm, workspace, &fetch).await.1;

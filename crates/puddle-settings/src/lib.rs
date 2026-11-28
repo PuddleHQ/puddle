@@ -75,8 +75,8 @@ pub use consent::{Consent, ConsentKind, Consents, TermsVersion, UnixMillis};
 pub use disk_space::{DiskSpaceLimits, FreeGb};
 pub use document::{Loaded, SettingsError};
 pub use editor::{
-    ColourTheme, EditorFontSize, EditorLayer, EffectiveEditor, ExtensionId, Keybindings,
-    MAX_EXTENSIONS,
+    ColourTheme, CustomEditorSettings, EditorFontSize, EditorLayer, EffectiveEditor, ExtensionId,
+    Keybindings, MAX_EXTENSIONS,
 };
 pub use first_run::FirstRun;
 pub use global::{
@@ -89,7 +89,7 @@ pub use resolve::{
 };
 pub use values::{
     AppIconChoice, ClipboardRead, CloseBehaviour, DensityChoice, DiskWarningPercent, HexColour,
-    PaletteChoice, ReconnectionGrace, ServerChoice, ThemeChoice,
+    LogLevelChoice, PaletteChoice, ReconnectionGrace, ServerChoice, ThemeChoice,
 };
 pub use workspace::{
     MiseMode, WORKSPACE_SCHEMA_VERSION, WorkspaceSettings, WorkspaceTools, mise_mode,

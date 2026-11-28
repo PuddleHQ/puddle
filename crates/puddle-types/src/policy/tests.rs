@@ -109,6 +109,10 @@ impl Policy for AlwaysBlocked {
             reason: BlockReason::LocalAddress,
         })
     }
+
+    fn lookup(&self, _: &EgressRequest, _: SuffixAllows) -> Result<Option<Decision>, PolicyError> {
+        Ok(None)
+    }
 }
 
 #[test]
@@ -127,6 +131,12 @@ fn a_policy_without_ip_rules_finds_no_rule_on_lookup() {
         );
         assert_eq!(AlwaysBlocked.lookup(&request, suffix), Ok(None));
     }
+}
+
+#[test]
+fn a_policy_that_knows_no_names_has_none_for_a_workspace() {
+    let id = WorkspaceId::new("box").unwrap();
+    assert_eq!(AlwaysBlocked.workspace_name(&id), None);
 }
 
 #[test]

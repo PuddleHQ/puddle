@@ -480,7 +480,7 @@ fn arb_doc() -> impl Strategy<Value = (Value, String)> {
             let text = match style {
                 0 => v.to_string(),
                 1 => serde_json::to_string_pretty(&v).unwrap(),
-                _ => pretty(&v, "\t", "") + "\n",
+                _ => format!("{}\n", pretty(&v, "\t", "")),
             };
             (v, text)
         })

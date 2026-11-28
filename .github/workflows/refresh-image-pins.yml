@@ -2,8 +2,8 @@
 # Weekly refresh of the pinned default image (ci/image-pins.sh). The default workspace image, the maintenance image and the image
 # the VM tests boot are pinned by digest (`mcr.microsoft.com/devcontainers/base:debian@sha256:...`), so a registry change reaches
 # users only through a reviewed pull request. This job asks the registry what the tag points at now; when the digest moved it opens
-# ONE pull request, `build: refresh the pinned default image digest`, that goes through the merge queue like any other, so the VM
-# tests boot the new image before it merges. It never pushes to develop.
+# ONE pull request, `build: refresh the pinned default image digest`, and leaves auto-merge off: a person reviews what changed
+# upstream and merges it, and the merge queue runs the checks like for any other pull request. It never pushes to develop.
 #
 # A pull request opened or updated with the default GITHUB_TOKEN does not start the required checks (a GitHub rule against workflow
 # loops), so the job mints a short-lived installation token for the GitHub App that coverage-baseline.yml already uses
@@ -40,7 +40,7 @@ jobs:
     steps:
       - name: Token for the pull request app
         id: app-token
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         with:
           client-id: ${{ vars.COVERAGE_BASELINE_CLIENT_ID }}
           private-key: ${{ secrets.COVERAGE_BASELINE_APP_PRIVATE_KEY }}

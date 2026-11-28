@@ -17,7 +17,7 @@ use puddle_agent::config::{PortWatch, Target};
 use puddle_agent::{Agent, Config};
 use puddle_agent_proto::forward::GuestLink;
 use puddle_agent_proto::host::{
-    GuestStream, GuestWatcher, HostConfig, StreamHandler, serve_session,
+    GuestStream, GuestWatcher, HostConfig, SessionId, StreamHandler, serve_session,
 };
 use puddle_ipc::IpcRoot;
 use puddle_netpolicy::{EndpointKind, OwnAddresses, PuddleEndpoints};
@@ -133,7 +133,7 @@ impl StreamHandler for Route {
 async fn an_ended_agent_session_is_announced_by_workspace() {
     let rig = rig("ended").await;
     let mut ended = rig.ports.agent_sessions_ended();
-    GuestWatcher::session_ended(&rig.ports, &rig.workspace);
+    GuestWatcher::session_ended(&rig.ports, &rig.workspace, SessionId::next());
     assert_eq!(ended.next().await, rig.workspace);
 }
 
@@ -142,9 +142,36 @@ async fn a_reader_that_fell_behind_still_gets_a_name() {
     let rig = rig("behind").await;
     let mut ended = rig.ports.agent_sessions_ended();
     for _ in 0..200 {
-        GuestWatcher::session_ended(&rig.ports, &rig.workspace);
+        GuestWatcher::session_ended(&rig.ports, &rig.workspace, SessionId::next());
     }
     assert_eq!(ended.next().await, rig.workspace);
+}
+
+#[tokio::test]
+async fn the_end_of_the_session_that_gave_the_link_takes_the_link_away() {
+    let rig = rig("link-ended").await;
+    rig.started().await;
+    let link = rig
+        .ports
+        .guest_link_within(&rig.workspace, Duration::from_secs(5))
+        .await
+        .unwrap();
+    GuestWatcher::session_ended(&rig.ports, &rig.workspace, link.session());
+    assert!(rig.ports.guest_link(&rig.workspace).is_none());
+}
+
+#[tokio::test]
+async fn the_end_of_another_session_leaves_the_link_alone() {
+    let rig = rig("link-kept").await;
+    rig.started().await;
+    let link = rig
+        .ports
+        .guest_link_within(&rig.workspace, Duration::from_secs(5))
+        .await
+        .unwrap();
+    GuestWatcher::session_ended(&rig.ports, &rig.workspace, SessionId::next());
+    let kept = rig.ports.guest_link(&rig.workspace).unwrap();
+    assert_eq!(kept.session(), link.session());
 }
 
 struct Rig {
@@ -204,6 +231,7 @@ fn rig_without_agent(tag: &str, tweak: impl FnOnce(Ports) -> Ports) -> Rig {
                 let _ = serve_session(
                     conn,
                     route.workspace.clone(),
+                    SessionId::next(),
                     sink,
                     Arc::new(route),
                     HostConfig::default(),
@@ -1021,4 +1049,52 @@ async fn an_agent_that_says_hello_during_the_boot_of_a_restart_is_linked() {
         .guest_link_within(&rig.workspace, Duration::from_secs(5))
         .await;
     assert!(linked.is_ok(), "{:?}", linked.err());
+}
+
+#[tokio::test]
+async fn a_port_that_starts_listening_is_forwarded_on_its_own_and_closes_with_the_listener() {
+    let rig = rig_with("auto", Ports::with_auto_forward).await;
+    rig.started().await;
+    // What listens at the first report was there already: it is listed, not forwarded.
+    let before = puddle_test_kit::quiet_port();
+    rig.guest_listens(&[before]);
+    rig.row(before, |r| r.listening).await;
+    assert!(!accepts(local(before)));
+    // A port that starts later is forwarded to the same number on this computer.
+    let port = puddle_test_kit::quiet_port();
+    rig.guest_listens(&[before, port]);
+    let row = rig.row(port, |r| r.forwarded).await;
+    assert_eq!(row.host_port, Some(port));
+    assert!(!row.pinned);
+    assert!(accepts(local(port)));
+    // It closes with the listener.
+    rig.guest_listens(&[before]);
+    puddle_test_kit::eventually("the forward closes", Duration::from_secs(5), || {
+        if accepts(local(port)) {
+            Err("still open")
+        } else {
+            Ok(())
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_forward_the_user_stopped_is_not_opened_again_while_the_port_keeps_listening() {
+    let rig = rig_with("declined", Ports::with_auto_forward).await;
+    rig.started().await;
+    let before = puddle_test_kit::quiet_port();
+    rig.guest_listens(&[before]);
+    rig.row(before, |r| r.listening).await;
+    let port = puddle_test_kit::quiet_port();
+    rig.guest_listens(&[before, port]);
+    rig.row(port, |r| r.forwarded).await;
+    rig.ports.release(&rig.workspace, port).await.unwrap();
+    // Another report with the port still listening changes nothing.
+    let later = puddle_test_kit::quiet_port();
+    rig.guest_listens(&[before, port, later]);
+    rig.row(later, |r| r.listening).await;
+    // An absence window: nothing signals a forward that must not open, so wait past a few polls (20 ms).
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!accepts(local(port)));
 }

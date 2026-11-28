@@ -8,7 +8,7 @@
 
 use std::collections::BTreeMap;
 
-use puddle_api::wire::{
+use puddle_services::wire::{
     CredentialSource, DevCertificate, DoctorReport, FoundAccount, FoundVia, IdentityRequest,
     NetworkHealth, RepoListState, RepoNoteCode, RepoProblemCode, RepoRole, RepoVisibility,
     SignInStarted,
@@ -337,10 +337,10 @@ pub struct GitSeed {
     /// Its repository table.
     #[serde(default)]
     pub repos: Vec<GitRepoSeed>,
-    /// "Only push to listed repos"; on when left out.
+    /// "Only push to allowed repositories"; on when left out.
     #[serde(default)]
     pub only_push_listed: Option<bool>,
-    /// "Only pull from listed repos"; off when left out.
+    /// "Only pull from allowed repositories"; off when left out.
     #[serde(default)]
     pub only_pull_listed: Option<bool>,
 }
@@ -641,6 +641,9 @@ pub struct RequestSeed {
     /// First asked this long before now (ms).
     #[serde(default)]
     pub ago_ms: u64,
+    /// The program in the guest that asked, as the agent would name it; none when left out.
+    #[serde(default)]
+    pub program: Option<String>,
 }
 
 /// One `connection` audit record.

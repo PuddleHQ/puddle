@@ -566,6 +566,8 @@ async fn a_credential_for_a_port_puddle_never_decrypts_is_refused_and_an_old_one
 struct HeldRewrite {
     armed: AtomicBool,
     arrived: AtomicBool,
+    /// How many rewrites reached the gate.
+    started: AtomicUsize,
     ended: AtomicBool,
     release: tokio::sync::Notify,
 }
@@ -587,19 +589,22 @@ impl HeldRewrite {
         Arc::new(move |_| {
             let held = held.clone();
             Box::pin(async move {
+                held.started.fetch_add(1, Ordering::SeqCst);
                 let this_one = held.armed.swap(false, Ordering::SeqCst);
                 if this_one {
                     held.arrived.store(true, Ordering::SeqCst);
                     held.release.notified().await;
                 }
-                Box::new(RewriteEnd(this_one.then_some(held))) as Box<dyn Send>
+                let end: Box<dyn Send> = Box::new(RewriteEnd(this_one.then_some(held)));
+                end
             })
         })
     }
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_author_rewrite_that_runs_after_a_newer_change_applies_the_newest_settings() {
+async fn a_change_that_comes_while_an_author_rewrite_runs_waits_for_it_and_the_newest_settings_win()
+{
     let rig = Rig::named_ids();
     let held = Arc::new(HeldRewrite::default());
     *rig.rewrite_gate.lock().unwrap() = Some(held.gate());
@@ -621,6 +626,7 @@ async fn an_author_rewrite_that_runs_after_a_newer_change_applies_the_newest_set
         .unwrap();
 
     // The store announces each change itself. The rewrite for the attach starts first and waits at the gate.
+    let before = held.started.load(Ordering::SeqCst);
     held.armed.store(true, Ordering::SeqCst);
     host.store()
         .attach_identity(&name("acme"), old.id, None)
@@ -629,17 +635,28 @@ async fn an_author_rewrite_that_runs_after_a_newer_change_applies_the_newest_set
         held.arrived.load(Ordering::SeqCst)
     })
     .await;
-    // The detach comes after, and its rewrite runs through: nothing is left to rewrite or to say.
+    // The detach comes after: what the workspace decrypts follows at once, and its rewrite waits
+    // in the workspace's queue behind the held one.
     host.store().detach_identity(&name("acme"), old.id).unwrap();
     eventually("the detach ends the problem", APPLY, || {
         !has_problem(&host, "git-credentials:acme")
     })
     .await;
+    assert_eq!(
+        held.started.load(Ordering::SeqCst),
+        before + 1,
+        "a second rewrite of the workspace ran while the first waited"
+    );
 
-    // The attach rewrite now goes on, last. It must apply the settings as they are now.
+    // The attach rewrite now goes on and reads the settings as they are now; the detach's runs
+    // after it.
     held.release.notify_one();
     eventually("the attach rewrite ends", APPLY, || {
         held.ended.load(Ordering::SeqCst)
+    })
+    .await;
+    eventually("the detach rewrite ran", APPLY, || {
+        held.started.load(Ordering::SeqCst) == before + 2
     })
     .await;
     assert!(
@@ -652,7 +669,7 @@ async fn an_author_rewrite_that_runs_after_a_newer_change_applies_the_newest_set
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_author_rewrite_that_finds_its_workspace_stopped_in_the_meantime_writes_nothing() {
+async fn a_stop_waits_for_the_author_rewrite_that_holds_the_guest() {
     let rig = Rig::named_ids();
     let held = Arc::new(HeldRewrite::default());
     *rig.rewrite_gate.lock().unwrap() = Some(held.gate());
@@ -663,8 +680,7 @@ async fn an_author_rewrite_that_finds_its_workspace_stopped_in_the_meantime_writ
     let identity = make_identity(&api, "Ada", "github.com", &[]).await;
     let booted = rig.guest.boots();
 
-    // The attach's rewrite starts while the workspace runs and waits at the gate; the workspace
-    // is stopped before it looks at it.
+    // The attach's rewrite holds the guest and waits at the gate; a stop comes meanwhile.
     held.armed.store(true, Ordering::SeqCst);
     host.store()
         .attach_identity(&name("acme"), puddle_store::IdentityId(identity), None)
@@ -673,13 +689,28 @@ async fn an_author_rewrite_that_finds_its_workspace_stopped_in_the_meantime_writ
         held.arrived.load(Ordering::SeqCst)
     })
     .await;
-    stop_and_wait(&api, &mut events, "acme").await;
+    api.post("/api/workspaces/acme/stop", "").await;
+    // flake-ok: a negative check: the stop must not trim within this time while the rewrite holds
+    // the guest.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        !rig.guest.commands().contains(&"acme trim".to_owned()),
+        "the stop trimmed while a rewrite held the guest: {:?}",
+        rig.guest.commands()
+    );
+    // The rewrite goes on (here with nothing to change), then the stop.
     held.release.notify_one();
+    events.until(ended("acme"), Duration::from_secs(20)).await;
     eventually("the attach rewrite ends", APPLY, || {
         held.ended.load(Ordering::SeqCst)
     })
     .await;
-    assert_eq!(rig.guest.boots(), booted, "a stopped guest was written to");
+    // The rewrite wrote the new authors before the stop trimmed the guest, never after.
+    let commands = rig.guest.commands();
+    let trim = commands.iter().position(|c| c == "acme trim").unwrap();
+    let last_boot = commands.iter().rposition(|c| c == "acme boot").unwrap();
+    assert!(last_boot < trim, "{commands:?}");
+    assert_eq!(rig.guest.boots(), booted + 1, "the attach was not written");
     assert!(
         !has_problem(&host, "git-credentials:acme"),
         "{:?}",

@@ -32,8 +32,11 @@ async fn attach_opens_the_desktop_editor_through_the_launcher() {
     let attached = host
         .workspaces()
         .attach(
-            &WorkspaceId::new("acme").unwrap(),
-            puddle_api::AttachMode::Desktop,
+            &puddle_services::owned::OwnedWorkspace::for_test(
+                puddle_store::UserId::OWNER,
+                &WorkspaceId::new("acme").unwrap(),
+            ),
+            puddle_services::workspaces::AttachMode::Desktop,
         )
         .await
         .unwrap();
@@ -135,7 +138,7 @@ async fn a_browser_attach_gives_the_window_the_front_the_settings_and_a_way_to_t
     assert_eq!(host.editor_windows().connected(&acme), 0);
     // code-server asks for a password: the window reads it when it signs in, from the guest's file.
     // The agent may say hello after the window asked: the sign-in waits for it.
-    let Some(puddle_api::EditorSignIn::Form(login)) = target.login else {
+    let Some(puddle_services::workspaces::EditorSignIn::Form(login)) = target.login else {
         panic!("code-server signs in with its login form");
     };
     assert_eq!(login.password().await.unwrap(), "0".repeat(64));
@@ -147,6 +150,27 @@ async fn a_browser_attach_gives_the_window_the_front_the_settings_and_a_way_to_t
     events.until(ended("acme"), Duration::from_secs(20)).await;
     let err = login.password().await.unwrap_err().to_string();
     assert_eq!(err, "acme is not running; start it first");
+    host.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_window_that_cannot_sign_in_names_the_workspace_by_its_name_not_its_id() {
+    let rig = Rig::named_ids();
+    let host = rig.start().await;
+    let api = api(&host);
+    let mut events = api.events().await;
+    create_as(&api, &mut events, "Acme Web", "acme-web").await;
+    let _editor = editor_stand_in(&rig, "acme-web").await;
+    let target = browser_target(&rig, &api, "acme-web").await;
+    let Some(puddle_services::EditorSignIn::Form(login)) = target.login else {
+        panic!("code-server signs in with its login form");
+    };
+    api.post("/api/workspaces/acme-web/stop", "").await;
+    events
+        .until(ended("acme-web"), Duration::from_secs(20))
+        .await;
+    let err = login.password().await.unwrap_err().to_string();
+    assert_eq!(err, "Acme Web is not running; start it first");
     host.shutdown().await;
 }
 
@@ -286,7 +310,8 @@ async fn a_browser_attach_to_microsoft_s_server_gives_the_window_its_connection_
     let target = browser_target(&rig, &api, "acme").await;
     // The server's connection token is the guest's password file: the window carries it as a
     // cookie, and it is read only when the window asks.
-    let Some(puddle_api::EditorSignIn::ConnectionToken(token)) = target.login else {
+    let Some(puddle_services::workspaces::EditorSignIn::ConnectionToken(token)) = target.login
+    else {
         panic!("Microsoft's server signs in with its connection token");
     };
     assert_eq!(token.password().await.unwrap(), "0".repeat(64));

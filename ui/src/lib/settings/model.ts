@@ -119,6 +119,16 @@ export function parseDiskWarning(
   return { ok: true, percent };
 }
 
+export type LogLevel = NonNullable<Ui["log_level"]>;
+
+export const LOG_LEVEL_OPTIONS: { value: LogLevel; label: string }[] = [
+  { value: "error", label: "Errors only" },
+  { value: "warn", label: "Warnings" },
+  { value: "info", label: "Normal (default)" },
+  { value: "debug", label: "Debug: detail for each step" },
+  { value: "trace", label: "Trace: every step, very long" },
+];
+
 export const CLOSE_OPTIONS: { value: CloseBehaviour; label: string }[] = [
   { value: "tray", label: "Keep running in the tray" },
   { value: "quit", label: "Quit Puddle" },
@@ -143,6 +153,7 @@ export function bodyFrom(
   view: GlobalView,
   patch: {
     layer?: Partial<Layer>;
+    toggles?: Partial<NonNullable<Layer["local_toggles"]>>;
     server?: Partial<VsCodeServer>;
     ui?: Partial<Ui>;
     tools?: Partial<GlobalTools>;
@@ -150,7 +161,15 @@ export function bodyFrom(
   } = {},
 ): GlobalBody {
   return {
-    workspace_defaults: { ...view.workspace_defaults, ...patch.layer },
+    workspace_defaults: {
+      ...view.workspace_defaults,
+      ...patch.layer,
+      local_toggles: {
+        ...view.workspace_defaults.local_toggles,
+        ...patch.layer?.local_toggles,
+        ...patch.toggles,
+      },
+    },
     vscode_server: { ...view.vscode_server, ...patch.server },
     ui: { ...view.ui, ...patch.ui },
     tools: { ...view.tools, ...patch.tools },

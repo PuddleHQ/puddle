@@ -69,7 +69,10 @@ fn the_file_is_for_its_owner_only() {
 #[test]
 fn hex_round_trips_and_refuses_the_wrong_length() {
     let bytes: Vec<u8> = (0..32).collect();
-    assert_eq!(unhex(&hex(&bytes)).unwrap().to_vec(), bytes);
+    assert_eq!(
+        unhex(&puddle_types::hex_lower(&bytes)).unwrap().to_vec(),
+        bytes
+    );
     assert!(unhex("abcd").is_none());
     assert!(unhex(&"zz".repeat(32)).is_none());
     assert!(unhex(&"é".repeat(32)).is_none());

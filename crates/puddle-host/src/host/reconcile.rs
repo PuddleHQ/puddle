@@ -15,7 +15,7 @@ use crate::{HostConfig, HostError};
 /// those exist.
 pub(super) async fn inventory_of<R: Runtime>(
     runtime: &R,
-    stored: &[crate::files::Stored],
+    stored: &[crate::state_files::Stored],
 ) -> Result<Inventory, HostError> {
     let existing: BTreeSet<String> = runtime
         .list()
@@ -46,7 +46,7 @@ pub(super) async fn inventory_of<R: Runtime>(
 pub(super) async fn adopt_holders<R: Runtime>(
     runtime: &R,
     config: &HostConfig,
-    stored: &[crate::files::Stored],
+    stored: &[crate::state_files::Stored],
 ) -> Result<Workspaces, HostError> {
     let workspaces = Workspaces::new(config.workspaces.clone());
     let inventory = inventory_of(runtime, stored).await?;
@@ -59,7 +59,7 @@ pub(super) async fn adopt_holders<R: Runtime>(
 pub(super) async fn reconcile_with<R: Runtime>(
     runtime: &R,
     config: &HostConfig,
-    stored: &[crate::files::Stored],
+    stored: &[crate::state_files::Stored],
 ) -> Result<
     (
         puddle_lifecycle::ReconcileReport,
@@ -127,6 +127,22 @@ pub(super) fn reconcile_problems(report: &puddle_lifecycle::ReconcileReport) -> 
             format!(
                 "{}. Only their own root disks were discarded; workspace volumes are untouched. \
                  A workspace you start again gets a fresh sandbox on its volume.",
+                names.join(", ")
+            ),
+        ));
+    }
+    if !report.forced.is_empty() {
+        let names: Vec<_> = report.forced.iter().map(ToString::to_string).collect();
+        problems.push(Problem::new(
+            "reconcile-forced-sandboxes",
+            format!(
+                "Puddle had to end {} sandbox{} by force that an earlier run left running",
+                names.len(),
+                if names.len() == 1 { "" } else { "es" }
+            ),
+            format!(
+                "{}. They did not shut down in time, so what their guests had not yet written \
+                 to disk may be lost. Check the work in the affected workspaces.",
                 names.join(", ")
             ),
         ));

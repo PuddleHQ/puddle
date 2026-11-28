@@ -5,16 +5,25 @@
 # from the stock image that runs a command and is deleted, and an uninstall that leaves nothing
 # outside Puddle's own data folders (ci/msi-install-test.ps1). A runner without a usable hypervisor
 # skips the boot steps with a warning, except on a pull request, where that fails (as vm-windows). Not a required check: it runs on pull requests that
-# touch the installer (paths below), nightly on develop (skipped when this workflow already has a
+# touch the installer, the first-run pages or the scripts that walk them (paths below; develop's installed-app walk
+# was red for 5 days after a change to the pages that no pull request ran it for), nightly on develop (skipped when this workflow already has a
 # green run on the commit), and by hand. The MSI of the run is kept as an artifact.
 #
-# The `upgrade` job tests the upgrade a user makes, on a machine of its own: it installs the last
-# release's MSI (ci/fetch-baseline-msi.sh; while there is none, the MSI the newest green develop
-# run kept), makes a workspace and writes files to it, upgrades to this run's build, and checks that
-# the workspace starts with its files intact under the newer runtime (ci/msi-install-test.ps1
+# The `upgrade` job tests the upgrade a user makes, on a machine of its own: it installs a
+# release's MSI, once for every published release (the `baselines` job lists them; a user may skip
+# versions) (ci/fetch-baseline-msi.sh; while there is no release, the MSI the newest green develop
+# run kept; the dispatch input `baseline_run` names another run's), makes a workspace and writes files
+# to its volume and its root disk (the home folder, a file outside both that stands for an installed
+# package), upgrades to this run's build, and checks that the workspace starts with both intact (its
+# sandbox kept) under the newer runtime (ci/msi-install-test.ps1
 # -BaselineMsi), and that the state a user builds up (rules, a pending request, variables, a secret,
-# settings, an identity, a home file) is equal after it (crates/puddle-app/e2e/upgrade-state.mjs). The
-# dispatch input `plant_breakage` shows the job fails when a migration loses data.
+# settings, an identity, a file in the workspace folder) is equal after it (crates/puddle-app/e2e/upgrade-state.mjs). The
+# dispatch input `plant_breakage` shows the job fails when a migration loses data. The msi job installs
+# through the installer's own dialogs (UI Automation clicks them and logs their text, under 60 s), opens
+# Puddle from the Start menu shortcut ("Welcome to Puddle"), reads the refusal dialog of an upgrade over a
+# running Puddle, launches with --at-login (tray icon, no window) and uninstalls with a stopped workspace
+# (data and volume stay, a reinstall lists it with its files); the dispatch input `plant_footprint` shows
+# each of those checks fails on the breakage it guards against.
 #
 # The `usable` job is the "usable" bar (install, create, approve, edit, build, push) with no person: it installs the MSI
 # this run built, per user, starts the installed app, and drives its real window with Windows UI Automation, plus the REST API for what
@@ -48,6 +57,7 @@ on:
       - .github/workflows/msi.yml
       - ci/build-msi.sh
       - ci/msi-install-test.ps1
+      - ci/msi-install-test/**
       - ci/fetch-baseline-msi.sh
       - ci/fetch-tauri-cli.sh
       - ci/fetch-wix.sh
@@ -62,6 +72,7 @@ on:
       - crates/puddle-app/build.rs
       - crates/puddle-app/e2e/usable.mjs
       - crates/puddle-app/e2e/terminal-render.mjs
+      - crates/puddle-app/e2e/broken-page.mjs
       - crates/puddle-app/e2e/cdp.mjs
       - crates/puddle-app/e2e/uia.mjs
       - crates/puddle-app/e2e/uia.ps1
@@ -70,6 +81,8 @@ on:
       - crates/puddle-app/e2e/poll.mjs
       - crates/puddle-app/e2e/child-end.mjs
       - crates/puddle-app/e2e/desktop.ps1
+      - ui/src/lib/welcome/**
+      - ui/src/routes/welcome/**
       - ci/fetch-forgejo.sh
       - ci/forgejo.sha256
       - crates/puddle-e2e/src/lab/forgejo.rs
@@ -85,8 +98,16 @@ on:
         description: "Run only the usable job, on the MSI that this earlier run of the workflow kept (skips the build)"
         required: false
         default: ""
+      plant_footprint:
+        description: "Run the msi job's install test with a planted installer breakage (no-shortcut, wrong-shortcut-target, visible-at-login, data-lost, slow-install, no-refusal or kill-skipped) and expect it to fail: shows that each footprint check catches the breakage it guards against"
+        required: false
+        default: ""
+      baseline_run:
+        description: "Run the upgrade job from the MSI this earlier run of the workflow kept (kept 14 days) instead of the newest: an upgrade from a build before a guest layout change, such as 45515025599 (develop 45e31395, the volume still at /workspaces/<id>)"
+        required: false
+        default: ""
       plant_breakage:
-        description: "Run the upgrade job with a planted breakage (drop-table, empty-env or empty-pending) and expect it to fail: shows that the upgrade's state checks catch a migration that loses data"
+        description: "Run the upgrade job with a planted breakage (drop-table, empty-env, empty-pending or route-throws) and expect it to fail: shows that the upgrade's state checks catch a migration that loses data and a screen that throws"
         required: false
         default: ""
 
@@ -101,6 +122,8 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
+  # ci/build-msi.sh: while the workspace is 0.0.0, programs and MSIs of this workflow report 0.0.<run number>.
+  BUILD_NUMBER: ${{ github.run_number }}
 
 jobs:
   msi:
@@ -129,7 +152,7 @@ jobs:
         if: steps.changed.outputs.run == 'true'
         shell: bash
         run: rustup toolchain install && rustc --version
-      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
         if: steps.changed.outputs.run == 'true'
         with:
           tool: cargo-about@0.9.2
@@ -163,6 +186,9 @@ jobs:
       - name: UI build (the shell embeds it)
         if: steps.changed.outputs.run == 'true'
         shell: bash
+        env:
+          # A by-hand run planting `route-throws` builds the UI with its Activity screen throwing (ui/src/lib/plant.ts).
+          VITE_PUDDLE_PLANT_ROUTE_THROW: ${{ inputs.plant_breakage == 'route-throws' && 'activity' || '' }}
         run: cd ui && npm ci --ignore-scripts --no-audit --no-fund && npm run build
       - name: stage the runtime, code-server, agent and CLI
         if: steps.changed.outputs.run == 'true'
@@ -184,7 +210,7 @@ jobs:
         run: |
           # The folder Tauri reads is seeded from the cache or a retried download (ci/build-msi.sh, ci/fetch-wix.sh).
           export FETCH_CACHE_DIR="$HOME/wix-cache"
-          current=$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)
+          current=$(ci/build-msi.sh version)
           next=${current%.*}.$(( ${current##*.} + 1 ))
           echo "current=$current next=$next"
           ci/build-msi.sh bundle "$RUNNER_TEMP/msi-stage" "$RUNNER_TEMP/msi-out" "$current"
@@ -202,7 +228,26 @@ jobs:
       - name: install, start, boot a workspace, upgrade, uninstall
         if: steps.changed.outputs.run == 'true'
         shell: pwsh
-        run: ./ci/msi-install-test.ps1 -Msi $env:FIRST_MSI -UpgradeMsi $env:NEXT_MSI -LogDir "$env:RUNNER_TEMP\msi-logs"
+        # A healthy run takes 22 to 25 minutes here (the build before it takes 40 to 55 of the job's 90).
+        # Past 40 the step fails by its own name with the installer logs uploaded, not by the job limit
+        # or by hand, which reads as a hang.
+        timeout-minutes: 40
+        env:
+          PLANT_FOOTPRINT: ${{ inputs.plant_footprint }}
+        run: |
+          if (-not $env:PLANT_FOOTPRINT) {
+            ./ci/msi-install-test.ps1 -Msi $env:FIRST_MSI -UpgradeMsi $env:NEXT_MSI -LogDir "$env:RUNNER_TEMP\msi-logs"
+            return
+          }
+          # A by-hand run with one installer breakage planted: the step passes only when the test fails.
+          $failed = $false
+          try {
+            ./ci/msi-install-test.ps1 -Msi $env:FIRST_MSI -UpgradeMsi $env:NEXT_MSI -LogDir "$env:RUNNER_TEMP\msi-logs" -PlantFootprint $env:PLANT_FOOTPRINT
+          } catch {
+            $failed = $true
+            Write-Host "the planted breakage '$env:PLANT_FOOTPRINT' failed the install test, as it must: $_"
+          }
+          if (-not $failed) { throw "the planted breakage '$env:PLANT_FOOTPRINT' did not fail the install test" }
       - name: upload the MSI
         if: ${{ steps.changed.outputs.run == 'true' && !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -229,25 +274,52 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
-  upgrade:
-    name: upgrade (from the last release, a workspace with files)
+  # The releases the upgrade job starts from, one leg each: a user may skip versions, so every
+  # published release is a baseline, not the newest alone (`[""]` while there is none).
+  baselines:
+    name: upgrade baselines (every published release)
     needs: msi
-    # Runs although the install test failed: the MSIs are kept by then, and the two say different things.
     if: ${{ !cancelled() && needs.msi.outputs.run == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      tags: ${{ steps.list.outputs.tags }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: list
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "tags=$(ci/fetch-baseline-msi.sh --list)" >>"$GITHUB_OUTPUT"
+
+  upgrade:
+    name: upgrade (from ${{ matrix.baseline || 'the newest develop MSI' }}, a workspace with files)
+    needs: [msi, baselines]
+    # Runs although the install test failed: the MSIs are kept by then, and the two say different things.
+    if: ${{ !cancelled() && needs.msi.outputs.run == 'true' && needs.baselines.result == 'success' }}
     runs-on: windows-2025
     timeout-minutes: 60
+    strategy:
+      # One red release must not hide the others: each says whether that jump works.
+      fail-fast: false
+      matrix:
+        baseline: ${{ fromJSON(needs.baselines.outputs.tags) }}
     # `actions: read` to download the MSI an earlier run kept.
     permissions:
       contents: read
       actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: the MSI a user upgrades from (the last release)
+      - name: the MSI a user upgrades from (this leg's release)
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          BASELINE_RUN: ${{ inputs.baseline_run }}
+          BASELINE_TAG: ${{ matrix.baseline }}
         run: |
-          msi=$(ci/fetch-baseline-msi.sh "$RUNNER_TEMP/msi-baseline" | tail -n 1)
+          msi=$(ci/fetch-baseline-msi.sh "$RUNNER_TEMP/msi-baseline" "$BASELINE_TAG" | tail -n 1)
           echo "BASELINE_MSI=$(cygpath -w "$msi")" >>"$GITHUB_ENV"
       - name: this run's build, under the next package version
         id: next-msi
@@ -302,7 +374,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: puddle-msi-upgrade-logs
+          name: puddle-msi-upgrade-logs-${{ matrix.baseline || 'develop' }}
           path: ${{ runner.temp }}/msi-logs
           retention-days: 14
           if-no-files-found: ignore
@@ -453,6 +525,7 @@ jobs:
             ${{ runner.temp }}/usable-out/*.out
             ${{ runner.temp }}/usable-out/uia-tree-*.txt
             ${{ runner.temp }}/usable-out/terminal-render.json
+            ${{ runner.temp }}/usable-out/terminal-menu.json
             ${{ runner.temp }}/usable-out/forgejo-server.log
             ${{ runner.temp }}/usable-out/company-proxy.log
             ${{ runner.temp }}/usable-out/company-lab.out

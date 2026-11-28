@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 use flate2::read::GzDecoder;
 use tar::EntryType;
 
+use crate::cli::UsageError;
 use crate::download::{Fetch, sha256_of};
 
 /// The pins, one line per guest architecture: `<version> <asset> <sha256>`.
@@ -64,12 +65,12 @@ impl Request {
     /// # Errors
     ///
     /// The usage text when the arguments are not exactly one non-empty folder.
-    pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<Self, String> {
+    pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<Self, UsageError> {
         match args {
             [dir] if !dir.as_ref().is_empty() => Ok(Self {
                 dir: PathBuf::from(dir.as_ref()),
             }),
-            _ => Err(USAGE.to_owned()),
+            _ => Err(UsageError::Shape(USAGE)),
         }
     }
 }

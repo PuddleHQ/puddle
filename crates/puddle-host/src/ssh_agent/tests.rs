@@ -72,7 +72,7 @@ async fn the_agent_the_settings_name_is_asked_and_a_changed_setting_applies_to_t
         .save_global(serde_json::json!({"ui": {"ssh_agent_pipe": first}}))
         .unwrap();
     let host_agent = SettingsAgent {
-        settings: Some(settings.clone() as Arc<dyn SettingsRepo>),
+        settings: Some(settings.clone()),
         auth_sock: None,
     };
     let host_agent = Arc::new(host_agent);
@@ -131,10 +131,15 @@ mod gate {
         WorkspaceId::new(name).unwrap()
     }
 
+    /// A store whose workspaces "a" and "b" belong to a user: the writes refuse an unowned one.
     fn store() -> Arc<Store> {
-        Arc::new(
-            Store::open_in_memory(Arc::new(ManualClock::new(1_000)), Limits::default()).unwrap(),
-        )
+        let store =
+            Store::open_in_memory(Arc::new(ManualClock::new(1_000)), Limits::default()).unwrap();
+        // The workspaces the tests ask from are the owner's, who answers.
+        for name in ["a", "b"] {
+            puddle_store::testing::own(&store, &ws(name));
+        }
+        Arc::new(store)
     }
 
     /// A gate that waits up to `wait` and looks every millisecond.
@@ -156,8 +161,13 @@ mod gate {
             let mut waited = 0;
             // flake-ok: a fake user polling for the question the code under test opens.
             while waited < 5_000 {
-                if let Some(ask) = store.open_ssh_agent_asks(None, None).unwrap().first() {
+                if let Some(ask) = store
+                    .open_ssh_agent_asks_every_user(&puddle_store::testing::all_users(), None)
+                    .unwrap()
+                    .first()
+                {
                     store
+                        .as_user(puddle_store::UserId::OWNER)
                         .answer_ssh_agent_ask(&ask.workspace, ask.id, answer, Actor::Ui)
                         .unwrap();
                     return;
@@ -187,7 +197,7 @@ mod gate {
         assert_eq!(gate.approve(&ws("a"), "h.example.com", &key), Ok(()));
         user.join().unwrap();
         let ask = store
-            .ssh_agent_ask(1)
+            .ssh_agent_ask(&ws("a"), 1)
             .unwrap()
             .expect("the question is kept for a while");
         assert_eq!(ask.state, SshAgentAskState::AllowedOnce);
@@ -259,7 +269,12 @@ mod gate {
             Ok(()),
             "a standing yes asks nothing"
         );
-        assert_eq!(store.open_ssh_agent_asks(None, None).unwrap(), []);
+        assert_eq!(
+            store
+                .open_ssh_agent_asks_every_user(&puddle_store::testing::all_users(), None)
+                .unwrap(),
+            []
+        );
     }
 
     #[test]
@@ -271,13 +286,22 @@ mod gate {
             gate.approve(&ws("a"), "h.example.com", &key),
             Err(Disapproval::Unanswered)
         );
-        assert_eq!(store.open_ssh_agent_asks(None, None).unwrap().len(), 1);
+        assert_eq!(
+            store
+                .open_ssh_agent_asks_every_user(&puddle_store::testing::all_users(), None)
+                .unwrap()
+                .len(),
+            1
+        );
         assert_eq!(
             gate.approve(&ws("a"), "h.example.com", &key),
             Err(Disapproval::Unanswered)
         );
         assert_eq!(
-            store.open_ssh_agent_asks(None, None).unwrap()[0].attempts,
+            store
+                .open_ssh_agent_asks_every_user(&puddle_store::testing::all_users(), None)
+                .unwrap()[0]
+                .attempts,
             2,
             "the second try joined the question"
         );
@@ -297,7 +321,12 @@ mod gate {
             gate.approve(&ws("a"), "h.example.com", &key),
             Err(Disapproval::Unavailable)
         );
-        assert_eq!(store.open_ssh_agent_asks(None, None).unwrap(), []);
+        assert_eq!(
+            store
+                .open_ssh_agent_asks_every_user(&puddle_store::testing::all_users(), None)
+                .unwrap(),
+            []
+        );
     }
 
     #[test]
@@ -309,7 +338,11 @@ mod gate {
             let store = Arc::clone(&store);
             std::thread::spawn(move || {
                 // flake-ok: a fake failure, once the question the code under test opens is there.
-                while store.open_ssh_agent_asks(None, None).unwrap().is_empty() {
+                while store
+                    .open_ssh_agent_asks_every_user(&puddle_store::testing::all_users(), None)
+                    .unwrap()
+                    .is_empty()
+                {
                     std::thread::sleep(Duration::from_millis(1));
                 }
                 puddle_store::testing::break_database(
@@ -334,7 +367,11 @@ mod gate {
             let store = Arc::clone(&store);
             std::thread::spawn(move || {
                 // flake-ok: a fake stop, once the question the code under test opens is there.
-                while store.open_ssh_agent_asks(None, None).unwrap().is_empty() {
+                while store
+                    .open_ssh_agent_asks_every_user(&puddle_store::testing::all_users(), None)
+                    .unwrap()
+                    .is_empty()
+                {
                     std::thread::sleep(Duration::from_millis(1));
                 }
                 store.end_ssh_agent_run(Some(&ws("a"))).unwrap();
@@ -355,14 +392,20 @@ mod gate {
             gate.approve(&ws("a"), "h.example.com", b"junk"),
             Err(Disapproval::Unavailable)
         );
-        assert_eq!(store.open_ssh_agent_asks(None, None).unwrap(), []);
+        assert_eq!(
+            store
+                .open_ssh_agent_asks_every_user(&puddle_store::testing::all_users(), None)
+                .unwrap(),
+            []
+        );
     }
 
     #[test]
     fn a_new_gate_clears_what_an_earlier_run_left() {
         let store = store();
         let key = TestKey::ed25519(2).blob();
-        let first = gate(&store, Duration::from_millis(30), Duration::ZERO);
+        // The first gate waits for a real answer; 30 ms ran out under host load before the fake user polled.
+        let first = gate(&store, Duration::from_secs(5), Duration::ZERO);
         let user = answer_when_asked(&store, SshAgentAnswer::Run);
         assert_eq!(first.approve(&ws("a"), "h.example.com", &key), Ok(()));
         user.join().unwrap();
@@ -454,12 +497,31 @@ mod gate {
         for n in 0..(REFUSALS_REMEMBERED * 2) {
             gate.record(
                 &ws("a"),
-                Some("h"),
-                &Outcome::Refused(Refusal::UnknownFlags(u32::try_from(n).unwrap())),
+                Some(&format!("h{n}")),
+                &Outcome::Refused(Refusal::SshSig),
             );
         }
         let len = gate.refused.lock().unwrap().len();
         assert!(len <= REFUSALS_REMEMBERED, "{len}");
+    }
+
+    #[test]
+    fn refusals_of_one_kind_differing_only_in_guest_chosen_values_are_written_once() {
+        let store = store();
+        let gate = gate(&store, Duration::from_millis(30), Duration::from_secs(60));
+        for n in 0..300_u32 {
+            gate.record(
+                &ws("a"),
+                Some("h"),
+                &Outcome::Refused(Refusal::UnknownFlags(n)),
+            );
+        }
+        assert_eq!(
+            audit(&store).len(),
+            1,
+            "one row per workspace, host and kind"
+        );
+        assert_eq!(gate.refused.lock().unwrap().len(), 1);
     }
 
     #[test]
@@ -469,8 +531,8 @@ mod gate {
         for n in 0..(REFUSALS_REMEMBERED + 44) {
             gate.record(
                 &ws("a"),
-                Some("h"),
-                &Outcome::Refused(Refusal::UnknownFlags(u32::try_from(n).unwrap())),
+                Some(&format!("h{n}")),
+                &Outcome::Refused(Refusal::SshSig),
             );
         }
         let len = gate.refused.lock().unwrap().len();

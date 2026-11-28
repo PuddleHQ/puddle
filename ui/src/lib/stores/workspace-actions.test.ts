@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   FakeWorkspaces,
   cleanCheck,
@@ -12,6 +12,9 @@ import {
   settledMessage,
 } from "./workspace-actions.svelte.ts";
 import { WorkspaceStore } from "./workspaces.svelte.ts";
+
+const goto = vi.hoisted(() => vi.fn());
+vi.mock("$app/navigation", () => ({ goto }));
 
 let api: FakeWorkspaces;
 let store: WorkspaceStore;
@@ -184,6 +187,7 @@ describe("connecting", () => {
         font_size: null,
         extensions: null,
         keybindings: null,
+        settings: null,
       },
       clipboard_read: null,
       direct_ssh: null,
@@ -569,9 +573,17 @@ describe("deleting", () => {
 });
 
 describe("the rest", () => {
-  it("opens the create dialog", () => {
+  it("goes to the New workspace screen, with a repository when one is given", () => {
     actions.openCreate();
-    expect(actions.createOpen).toBe(true);
+    expect(goto).toHaveBeenLastCalledWith("/workspaces/new");
+    actions.openCreate({ url: "https://github.com/acme/web", identity: 3 });
+    expect(goto).toHaveBeenLastCalledWith(
+      "/workspaces/new?url=https%3A%2F%2Fgithub.com%2Facme%2Fweb&identity=3",
+    );
+    actions.openCreate({ url: "https://github.com/acme/web", identity: null });
+    expect(goto).toHaveBeenLastCalledWith(
+      "/workspaces/new?url=https%3A%2F%2Fgithub.com%2Facme%2Fweb",
+    );
   });
 
   it("dismisses a failure the user saw", () => {

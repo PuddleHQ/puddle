@@ -175,6 +175,21 @@ fn idle_noise_without_a_trend_is_quiet() {
 }
 
 #[test]
+fn the_morning_round_after_the_night_is_not_idle_growth() {
+    // Flat through the night, then the morning round loads the program: a step after hour 12.
+    let s = with_rss(|h| if h <= 12.0 { 100_000.0 } else { 118_000.0 });
+    let late = Schedule {
+        idle_secs: 4 * HOUR - 1800,
+        ..sched()
+    };
+    assert!(
+        judge(&s, late).iter().all(|f| f.check != Check::IdleGrowth),
+        "{:?}",
+        judge(&s, late)
+    );
+}
+
+#[test]
 fn a_600_ms_p95_after_hour_4_against_80_ms_at_hour_0_is_major() {
     let s = run(|s, t, h| {
         s.push(t, "api.workspaces.ms", if h < 4.0 { 80.0 } else { 600.0 });
@@ -387,4 +402,132 @@ fn a_silence_with_no_reconnect_series_at_all_counts_as_no_reconnect() {
     let f = judge(&s, sched());
     assert_eq!(f.len(), 1, "{f:?}");
     assert_eq!(f[0].check, Check::SseSilence);
+}
+
+/// The same day squeezed into 2 minutes an hour: every time of `with_rss`'s run scaled by `hour`
+/// over 3600, as a compressed soak samples it.
+fn squeezed(series: &Series, hour: u64) -> Series {
+    let mut out = Series::default();
+    for metric in series.metrics("", "") {
+        for &(t, v) in series.points(metric) {
+            out.push(START + (t - START) * hour / 3600, metric, v);
+        }
+    }
+    out
+}
+
+#[test]
+fn a_compressed_run_is_judged_in_its_own_hours() {
+    let hour = 120;
+    let s = squeezed(
+        &with_rss(|h| if h < 2.0 { 100_000.0 } else { 131_000.0 }),
+        hour,
+    );
+    let compressed = Schedule {
+        start: START,
+        active_secs: 8 * hour,
+        idle_secs: 4 * hour,
+        hour,
+    };
+    let found = judge(&s, compressed);
+    assert!(
+        found
+            .iter()
+            .any(|f| f.check == Check::Leak && f.severity == Severity::Major),
+        "{found:?}"
+    );
+    // Read in real hours the whole run sits before "hour 1", so nothing is found: the scale is
+    // what makes the leak visible.
+    assert_eq!(judge(&s, Schedule::day(START)), []);
+    let flat = squeezed(&with_rss(flat_rss), hour);
+    assert_eq!(judge(&flat, compressed), []);
+}
+
+#[test]
+fn a_server_restarted_at_hour_5_is_judged_from_its_own_hour_1() {
+    let s = run(|s, t, h| {
+        if h >= 5.0 {
+            let rss = if h < 7.0 { 100_000.0 } else { 131_000.0 };
+            s.push(t, "proc.puddle.200.rss_kb", rss);
+        }
+    });
+    let f = found_only_by(&s, Check::Leak, Severity::Major);
+    assert_eq!(f.subject, "proc.puddle.200.rss_kb");
+    let flat = run(|s, t, h| {
+        if h >= 5.0 {
+            s.push(t, "proc.puddle.200.rss_kb", 100_000.0);
+        }
+    });
+    assert_eq!(judge(&flat, sched()), []);
+}
+
+#[test]
+fn a_server_started_too_late_for_two_windows_is_not_judged() {
+    let s = run(|s, t, h| {
+        if h >= 7.0 {
+            s.push(
+                t,
+                "proc.puddle.300.rss_kb",
+                if h < 7.5 { 1.0 } else { 1000.0 },
+            );
+        }
+    });
+    assert_eq!(judge(&s, sched()), []);
+}
+
+/// The sampler of a Windows run: the Puddle processes carry the executable's name, with a dash.
+fn windows_run(handles: impl Fn(u64, f64) -> f64, commit_kb: impl Fn(f64) -> f64) -> Series {
+    run(|s, t, h| {
+        let i = (t - START) / STEP;
+        s.push(t, "proc.puddle-app.4120.rss_kb", 150_000.0);
+        s.push(t, "proc.puddle-app.4120.handles", handles(i, h));
+        s.push(t, "host.commit_limit_kb", 20_000_000.0);
+        s.push(t, "host.commit_kb", commit_kb(h));
+    })
+}
+
+#[test]
+fn a_windows_app_whose_handles_creep_up_through_the_idle_hour_is_major() {
+    // One more handle every sample from the end of the load on (a leaked handle per cycle).
+    let s = windows_run(
+        |i, h| {
+            if h < ACTIVE_END_H {
+                900.0
+            } else {
+                900.0 + f64::from(u32::try_from(i - 96).unwrap())
+            }
+        },
+        |_| 8_000_000.0,
+    );
+    let f = found_only_by(&s, Check::IdleGrowth, Severity::Major);
+    assert_eq!(f.subject, "proc.puddle-app.4120.handles");
+}
+
+#[test]
+fn windows_handle_counts_that_move_within_noise_through_the_idle_hour_are_quiet() {
+    let s = windows_run(|i, _| 900.0 + jitter(i, 3), |_| 8_000_000.0);
+    assert_eq!(judge(&s, sched()), []);
+}
+
+#[test]
+fn a_commit_charge_within_5_percent_of_the_limit_is_major() {
+    // 19.2 GB of 20 GB: 96 %, from hour 6 on.
+    let s = windows_run(
+        |_, _| 900.0,
+        |h| if h < 6.0 { 8_000_000.0 } else { 19_200_000.0 },
+    );
+    let f = found_only_by(&s, Check::CommitCharge, Severity::Major);
+    assert_eq!(f.subject, "host.commit_kb");
+}
+
+#[test]
+fn a_commit_charge_at_94_percent_of_the_limit_is_quiet() {
+    let s = windows_run(|_, _| 900.0, |_| 18_800_000.0);
+    assert_eq!(judge(&s, sched()), []);
+}
+
+#[test]
+fn a_run_with_no_commit_readings_has_no_commit_finding() {
+    // The Linux sampler writes no commit lines: the rule has nothing to read and says nothing.
+    assert_eq!(judge(&with_rss(flat_rss), sched()), []);
 }

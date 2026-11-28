@@ -4,8 +4,9 @@
 
 use std::sync::Arc;
 
-use puddle_api::wire::DevCertificate;
-use puddle_api::{ApiConfig, DevCertService, FakeDevCert, SettingsRepo};
+use puddle_api::{ApiConfig, SettingsRepo};
+use puddle_services::wire::DevCertificate;
+use puddle_services::{dev_cert::DevCertService, dev_cert::FakeDevCert};
 use serde_json::json;
 
 use crate::common::{START_MS, start, start_with_config_and_dev_cert, start_with_dev_cert};
@@ -17,7 +18,7 @@ async fn a_fresh_install_has_not_been_through_the_flow_and_reading_writes_nothin
     assert_eq!(reply.status, 200, "{}", reply.body);
     assert_eq!(
         reply.json(),
-        json!({"completed": false, "completed_at": null, "dev_certificate": "not_checked"})
+        json!({"completed": false, "completed_at": null, "step": null, "dev_certificate": "not_checked"})
     );
     assert_eq!(api.settings.load_global().unwrap(), None);
     api.running.shutdown().await;
@@ -32,7 +33,7 @@ async fn finishing_the_flow_stamps_the_time_and_is_kept_in_the_settings_document
     assert_eq!(reply.status, 200, "{}", reply.body);
     assert_eq!(
         reply.json(),
-        json!({"completed": true, "completed_at": START_MS, "dev_certificate": "not_checked"})
+        json!({"completed": true, "completed_at": START_MS, "step": null, "dev_certificate": "not_checked"})
     );
     assert_eq!(
         api.settings.load_global().unwrap().unwrap()["first_run"],
@@ -63,13 +64,65 @@ async fn the_flow_can_be_opened_again() {
         .await;
     assert_eq!(
         reply.json(),
-        json!({"completed": false, "completed_at": null, "dev_certificate": "not_checked"})
+        json!({"completed": false, "completed_at": null, "step": null, "dev_certificate": "not_checked"})
     );
     // Opening it again when it never ran changes nothing and writes nothing new.
     let again = api
         .send("PUT", "/api/first-run", Some(&json!({"completed": false})))
         .await;
     assert_eq!(again.json()["completed"], false);
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_step_the_person_left_on_is_kept_and_leaves_with_the_flow() {
+    let api = start().await;
+    let reply = api
+        .send(
+            "PUT",
+            "/api/first-run",
+            Some(&json!({"step": "interception"})),
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(reply.json()["step"], "interception");
+    assert_eq!(reply.json()["completed"], false);
+    assert_eq!(
+        api.settings.load_global().unwrap().unwrap()["first_run"],
+        json!({"step": "interception"})
+    );
+    assert_eq!(
+        api.get("/api/first-run").await.json()["step"],
+        "interception"
+    );
+    // Finishing clears it, and a later step report does not bring it back.
+    let done = api
+        .send("PUT", "/api/first-run", Some(&json!({"completed": true})))
+        .await;
+    assert_eq!(done.json()["step"], json!(null));
+    let late = api
+        .send("PUT", "/api/first-run", Some(&json!({"step": "look"})))
+        .await;
+    assert_eq!(late.json()["step"], json!(null));
+    assert_eq!(late.json()["completed"], true);
+    // Opening the flow again starts it from the first step.
+    api.send("PUT", "/api/first-run", Some(&json!({"step": "look"})))
+        .await;
+    let reopened = api
+        .send("PUT", "/api/first-run", Some(&json!({"completed": false})))
+        .await;
+    assert_eq!(reopened.json()["step"], json!(null));
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn an_unknown_step_is_refused() {
+    let api = start().await;
+    let reply = api
+        .send("PUT", "/api/first-run", Some(&json!({"step": "nowhere"})))
+        .await;
+    assert!(reply.status >= 400 && reply.status < 500, "{}", reply.body);
+    assert_eq!(api.settings.load_global().unwrap(), None);
     api.running.shutdown().await;
 }
 
@@ -94,8 +147,8 @@ async fn saving_other_settings_does_not_open_the_flow_again() {
 async fn a_body_that_is_not_the_request_is_refused() {
     let api = start().await;
     for body in [
-        json!({}),
         json!({"completed": "yes"}),
+        json!({"step": 3}),
         json!({"completed": true, "extra": 1}),
     ] {
         let reply = api.send("PUT", "/api/first-run", Some(&body)).await;
@@ -203,10 +256,10 @@ impl DevCertService for SlowTrust {
         DevCertificate::NeedsTrust
     }
 
-    fn trust(&self) -> puddle_api::wire::DevCertTrustResult {
+    fn trust(&self) -> puddle_services::wire::DevCertTrustResult {
         // Simulated slow confirmation, longer than the usual request limit under test.
         std::thread::sleep(self.0);
-        puddle_api::wire::DevCertTrustResult {
+        puddle_services::wire::DevCertTrustResult {
             dev_certificate: DevCertificate::Trusted,
             detail: None,
             waiting: false,

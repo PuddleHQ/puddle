@@ -86,70 +86,77 @@ fn now_ms() -> u64 {
 }
 
 /// Every probe the test repeats, in one list: (what it is, workspace, authority, what it meets).
+/// The port is not 443 on purpose: a rule covers every port (R-2), and a pending or deny answer at
+/// 443 comes inside the TLS tunnel after a `200`, which `connect` would read as an allow.
 fn probes() -> Vec<(&'static str, &'static str, &'static str, Meets)> {
     use Meets::{Allowed, Blocked, Pending};
     vec![
         (
             "exact rule, every workspace",
             "acme",
-            "exact.test:443",
+            "exact.test:8443",
             Allowed,
         ),
         (
             "exact rule, other workspace",
             "beta",
-            "exact.test:443",
+            "exact.test:8443",
             Allowed,
         ),
         (
             "exact rule does not widen",
             "acme",
-            "sub.exact.test:443",
+            "sub.exact.test:8443",
             Pending,
         ),
         (
             "suffix rule below",
             "acme",
-            "deep.under.suffix.test:443",
+            "deep.under.suffix.test:8443",
             Allowed,
         ),
         (
             "suffix rule, other workspace",
             "beta",
-            "deep.under.suffix.test:443",
+            "deep.under.suffix.test:8443",
             Pending,
         ),
         (
             "suffix rule not at the apex",
             "acme",
-            "suffix.test:443",
+            "suffix.test:8443",
             Pending,
         ),
         (
             "expiring rule still valid",
             "acme",
-            "later.test:443",
+            "later.test:8443",
             Allowed,
         ),
-        ("expired rule stays gone", "acme", "soon.test:443", Pending),
-        ("own set, on for acme", "acme", "own-set.test:443", Allowed),
-        ("own set, off for beta", "beta", "own-set.test:443", Pending),
+        ("expired rule stays gone", "acme", "soon.test:8443", Pending),
+        ("own set, on for acme", "acme", "own-set.test:8443", Allowed),
+        (
+            "own set, off for beta",
+            "beta",
+            "own-set.test:8443",
+            Pending,
+        ),
         (
             "own set's deny, on for acme",
             "acme",
-            "own-set-deny.test:443",
+            "own-set-deny.test:8443",
             Meets::Deny,
         ),
         (
             "built-in set, on for acme",
             "acme",
-            "github.com:443",
+            "github.com:8443",
             Allowed,
         ),
         (
             "built-in set, off for beta",
             "beta",
-            "github.com:443",
+            "github.com:8443",
             Pending,
         ),
         (
@@ -212,7 +219,7 @@ async fn every_rule_set_override_and_toggle_decides_the_same_after_a_full_restar
     )
     .await;
     assert_eq!(
-        connect(&rig, "acme", "soon.test:443").await,
+        connect(&rig, "acme", "soon.test:8443").await,
         Meets::Allowed,
         "the expiring rule allows before it expires"
     );

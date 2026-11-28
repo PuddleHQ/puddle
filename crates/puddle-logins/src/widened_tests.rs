@@ -4,16 +4,17 @@
 
 use std::sync::Arc;
 
-use puddle_proxy::{AnswerHead, ExchangeRewriter, Rewrite, StandIns, Want};
+use puddle_proxy::{ExchangeRewriter, StandIns};
 use puddle_secrets::{MemoryStore, SecretStore};
-use puddle_types::{Host, WorkspaceId};
-use serde_json::{Value, json};
+use puddle_types::WorkspaceId;
+use serde_json::json;
 
 use crate::profile::{
     Audience, Endpoint, Field, Keep, Method, Profile, Role, Scope, Slot, StandInKind, path_matches,
 };
+use crate::test_rig::{Notices, Rig, answered, host, rig_for};
 use crate::vault::{Vault, slot_id};
-use crate::{LoginNotices, Logins, Marker, Problem};
+use crate::{Logins, Marker};
 
 const ARM_REAL: &str = "eyARMCANARY0real0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const GRAPH_REAL: &str = "eyGRAPHCANARY0real0BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
@@ -59,68 +60,8 @@ static WIDE: [Profile; 1] = [Profile {
     api_hosts: &["api.wide.test"],
 }];
 
-pub(crate) struct Quiet;
-impl LoginNotices for Quiet {
-    fn problem(&self, _: &WorkspaceId, _: &Profile, _: Problem) {}
-}
-
-pub(crate) struct Rig {
-    pub(crate) logins: Logins,
-    pub(crate) store: Arc<MemoryStore>,
-    pub(crate) registry: Arc<StandIns>,
-}
-
 fn rig() -> Rig {
     rig_for(&WIDE)
-}
-
-pub(crate) fn rig_for(profiles: &'static [Profile]) -> Rig {
-    let registry = Arc::new(StandIns::new());
-    let store = Arc::new(MemoryStore::new());
-    let logins = Logins::new(
-        WorkspaceId::new("alpha").unwrap(),
-        true,
-        profiles,
-        Arc::clone(&registry),
-        Arc::clone(&store) as Arc<dyn SecretStore>,
-        Arc::new(Quiet),
-        Marker::none(),
-    );
-    Rig {
-        logins,
-        store,
-        registry,
-    }
-}
-
-pub(crate) fn host(name: &str) -> Host {
-    Host::parse_normalised(name).unwrap()
-}
-
-pub(crate) async fn answered(
-    rig: &Rig,
-    host_name: &str,
-    method: &str,
-    path: &str,
-    body: &Value,
-) -> Value {
-    let mut exchange = rig
-        .logins
-        .begin(&host(host_name), method, path)
-        .expect("the request is an exchange");
-    let bytes = serde_json::to_vec(body).unwrap();
-    let head = AnswerHead {
-        status: 200,
-        content_type: Some("application/json"),
-        content_encoding: None,
-        content_length: Some(bytes.len() as u64),
-    };
-    let answer = exchange.answer_mut().unwrap();
-    assert_eq!(answer.wants(&head), Want::Read);
-    let Rewrite::Replace(out) = answer.rewrite(&head, &bytes).await else {
-        panic!("captured");
-    };
-    serde_json::from_slice(&out).unwrap()
 }
 
 #[test]
@@ -209,10 +150,7 @@ async fn two_resources_of_one_role_get_a_stand_in_and_an_entry_each() {
         out["graph_token"].as_str().unwrap(),
     );
     assert_ne!(arm, graph);
-    let vault = Vault::new(
-        Arc::clone(&rig.store) as Arc<dyn SecretStore>,
-        &WorkspaceId::new("alpha").unwrap(),
-    );
+    let vault = Vault::new(rig.store.clone(), &WorkspaceId::new("alpha").unwrap());
     let arm_slot = Slot {
         role: Role::Access,
         resource: Some("arm"),
@@ -272,8 +210,7 @@ async fn forgetting_deletes_every_resources_entry() {
 
 #[test]
 fn slots_are_listed_once_each_and_a_role_with_two_resources_counts_once() {
-    let slots: Vec<Slot> = WIDE[0].slots().into_iter().map(|(slot, _)| slot).collect();
-    assert_eq!(slots.len(), 3);
+    assert_eq!(WIDE[0].slots().len(), 3);
     assert_eq!(WIDE[0].roles(), [Role::Access, Role::ApiKey]);
     assert_eq!(
         WIDE[0].slot_name_of(Slot {
@@ -310,8 +247,8 @@ fn builtin_rig() -> Logins {
         true,
         crate::builtin(),
         Arc::new(StandIns::new()),
-        Arc::new(MemoryStore::new()) as Arc<dyn SecretStore>,
-        Arc::new(Quiet),
+        Arc::new(MemoryStore::new()),
+        Arc::new(Notices::default()),
         Marker::none(),
     )
 }

@@ -5,6 +5,7 @@
 use std::path::Path;
 use std::time::Duration;
 
+use super::ProbeError;
 use crate::facts::{
     DataEncryption, DiskEncryptionFacts, ProcessOutcome, Protection, SwapArea, SwapFacts,
 };
@@ -18,32 +19,42 @@ pub(crate) fn disk_encryption(dir: Option<&Path>) -> DiskEncryptionFacts {
     DiskEncryptionFacts {
         data: dir.map_or(DataEncryption::NoFolder, |dir| DataEncryption::Volume {
             dir: dir.to_path_buf(),
-            protection: vault.unwrap_or_else(|why| Protection::Unknown { why }),
+            protection: vault.unwrap_or_else(|why| Protection::Unknown {
+                why: why.to_string(),
+            }),
         }),
         swap: match swap {
             Ok(text) => SwapFacts::Areas(vec![SwapArea {
                 name: "macOS swap".into(),
                 protection: swap_protection(&text),
             }]),
-            Err(why) => SwapFacts::Unreadable { why },
+            Err(why) => SwapFacts::Unreadable {
+                why: why.to_string(),
+            },
         },
     }
 }
 
-fn run(program: &str, args: &[&str]) -> Result<String, String> {
+fn run(program: &str, args: &[&str]) -> Result<String, ProbeError> {
     match launch::run(puddle_process::command(program).args(args), LIMIT) {
         ProcessOutcome::Exited {
             code: Some(0),
             stdout_first_line,
             ..
         } => Ok(stdout_first_line),
-        ProcessOutcome::Exited { code, .. } => Err(format!("{program} exited with {code:?}")),
-        ProcessOutcome::SpawnFailed { detail, .. } => {
-            Err(format!("{program} did not start: {detail}"))
-        }
-        ProcessOutcome::TimedOut { after } => {
-            Err(format!("{program} did not answer within {after:?}"))
-        }
+        ProcessOutcome::Exited { code, .. } => Err(ProbeError::Exited {
+            program: program.to_owned(),
+            code,
+            stderr: None,
+        }),
+        ProcessOutcome::SpawnFailed { detail, .. } => Err(ProbeError::NotStarted {
+            program: program.to_owned(),
+            detail,
+        }),
+        ProcessOutcome::TimedOut { after } => Err(ProbeError::TimedOut {
+            program: program.to_owned(),
+            after,
+        }),
     }
 }
 

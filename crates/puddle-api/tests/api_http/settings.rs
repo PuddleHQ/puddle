@@ -22,7 +22,7 @@ fn null_layer() -> Value {
         "direct_ssh": null,
         "capture_logins": null,
         "warn_foreign_credentials": null,
-        "editor": {"colour_theme": null, "font_size": null, "extensions": null, "keybindings": null}
+        "editor": {"colour_theme": null, "font_size": null, "extensions": null, "keybindings": null, "settings": null}
     })
 }
 
@@ -42,7 +42,7 @@ async fn fresh_settings_are_all_defaults_with_every_field_present() {
         json!({"theme": null, "density": null, "palette": null, "custom_accent": null, "custom_background": null,
                "custom_surface": null, "custom_text": null, "notifications": null, "sound": null, "close_behaviour": null,
                "minimize_to_tray": null, "app_icon": null, "notify_only_unfocused": null, "badge": null, "notify_oom": null, "notify_disk_full": null, "disk_warning_percent": null, "notify_unexpected_stop": null,
-               "confirm_global_rules": null, "inbox_shortcuts": null, "start_at_login": null, "notify_low_disk_space": null, "disk_warn_free_gb": null, "disk_fail_free_gb": null, "ssh_agent_pipe": null})
+               "confirm_global_rules": null, "inbox_shortcuts": null, "start_at_login": null, "notify_low_disk_space": null, "disk_warn_free_gb": null, "disk_fail_free_gb": null, "ssh_agent_pipe": null, "log_level": null})
     );
     assert_eq!(view["tools"], json!({"mise": null}));
     assert_eq!(view["unknown_fields"], json!([]));
@@ -60,7 +60,7 @@ async fn fresh_settings_are_all_defaults_with_every_field_present() {
         json!({"max_cpus": host.min(255), "host_cpus": host, "default_cpus": default_cpus})
     );
     assert_eq!(e["reconnection_grace"]["value"], 300);
-    assert_eq!(e["clipboard_read"]["value"], "ask");
+    assert_eq!(e["clipboard_read"]["value"], "allow");
     assert_eq!(e["local_toggles"]["metadata"]["value"], false);
     assert_eq!(
         e["local_toggles"]["company_network"],
@@ -336,6 +336,8 @@ async fn out_of_range_and_unknown_settings_are_refused() {
         json!({"workspace_defaults": {"editor": {"font_size": 7}}}),
         json!({"workspace_defaults": {"editor": {"extensions": ["not an id"]}}}),
         json!({"workspace_defaults": {"editor": {"keybindings": "{}"}}}),
+        json!({"workspace_defaults": {"editor": {"settings": "[]"}}}),
+        json!({"workspace_defaults": {"editor": {"settings": "{\"editor.fontSize\": 12}"}}}),
         json!({"workspace_defaults": {"editor": {"fonts": 1}}}),
         json!({"workspace_defaults": {"editor": {"extensions": (0..51).map(|n| format!("p.e{n}")).collect::<Vec<_>>()}}}),
         json!({"consents": {}}),
@@ -581,8 +583,8 @@ async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
     let body = json!({
         "vscode_server": {"server": "microsoft", "telemetry": false},
         "ui": {"theme": "dark", "density": "compact", "palette": "custom", "custom_accent": "#0A6A85", "custom_text": "#102030", "notifications": false, "sound": true, "close_behaviour": "quit",
-                "minimize_to_tray": true, "app_icon": "duck_night", "notify_only_unfocused": false, "badge": false, "notify_oom": false, "notify_disk_full": false, "disk_warning_percent": 90, "notify_unexpected_stop": false,
-                "confirm_global_rules": false, "inbox_shortcuts": false, "start_at_login": true, "notify_low_disk_space": false, "disk_warn_free_gb": 50, "disk_fail_free_gb": 10, "ssh_agent_pipe": " /run/agent.sock "}
+                "minimize_to_tray": true, "app_icon": "duck_front", "notify_only_unfocused": false, "badge": false, "notify_oom": false, "notify_disk_full": false, "disk_warning_percent": 90, "notify_unexpected_stop": false,
+                "confirm_global_rules": false, "inbox_shortcuts": false, "start_at_login": true, "notify_low_disk_space": false, "disk_warn_free_gb": 50, "disk_fail_free_gb": 10, "ssh_agent_pipe": " /run/agent.sock ", "log_level": "debug"}
     });
     let reply = api.send("PUT", "/api/settings", Some(&body)).await;
     assert_eq!(reply.status, 200, "{}", reply.body);
@@ -611,7 +613,8 @@ async fn microsoft_server_needs_consent_and_ui_prefs_are_stored() {
     assert_eq!(view["ui"]["disk_warn_free_gb"], 50);
     assert_eq!(view["ui"]["disk_fail_free_gb"], 10);
     assert_eq!(view["ui"]["ssh_agent_pipe"], "/run/agent.sock");
-    assert_eq!(view["ui"]["app_icon"], "duck_night");
+    assert_eq!(view["ui"]["log_level"], "debug");
+    assert_eq!(view["ui"]["app_icon"], "duck_front");
     let stored = api.settings.load_global().unwrap().unwrap();
     assert_eq!(stored["ui"]["theme"], "dark");
     assert_eq!(stored["vscode_server"]["server"], "microsoft");
@@ -894,6 +897,10 @@ async fn editor_defaults_resolve_field_by_field_with_their_source() {
     assert_eq!(
         editor["keybindings"],
         json!({"value": keys, "source": "global"})
+    );
+    assert_eq!(
+        editor["settings"],
+        json!({"value": null, "source": "default"})
     );
 
     let reply = api

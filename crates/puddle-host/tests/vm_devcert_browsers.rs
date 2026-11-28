@@ -18,8 +18,8 @@
     reason = "a VM test: a failed step fails the run; the browsers' output goes to stderr for the log"
 )]
 
-mod support;
-mod vm_support;
+use puddle_host_test_support::support;
+use puddle_host_test_support::vm_support;
 
 // The dialog answerer and the store helpers of the host-side test of the same certificate.
 #[expect(dead_code, reason = "this binary uses part of the helpers")]
@@ -50,14 +50,14 @@ impl GuestCertSource for FixedCert {
     }
 }
 
-impl puddle_api::DevCertService for FixedCert {
-    fn status(&self) -> puddle_api::wire::DevCertificate {
-        puddle_api::wire::DevCertificate::Unsupported
+impl puddle_services::dev_cert::DevCertService for FixedCert {
+    fn status(&self) -> puddle_services::wire::DevCertificate {
+        puddle_services::wire::DevCertificate::Unsupported
     }
 
-    fn trust(&self) -> puddle_api::wire::DevCertTrustResult {
-        puddle_api::wire::DevCertTrustResult {
-            dev_certificate: puddle_api::wire::DevCertificate::Unsupported,
+    fn trust(&self) -> puddle_services::wire::DevCertTrustResult {
+        puddle_services::wire::DevCertTrustResult {
+            dev_certificate: puddle_services::wire::DevCertificate::Unsupported,
             detail: None,
             waiting: false,
         }

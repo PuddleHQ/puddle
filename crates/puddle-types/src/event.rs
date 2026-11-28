@@ -124,6 +124,15 @@ pub enum Event {
         #[serde(default)]
         #[cfg_attr(feature = "openapi", schema(required = true))]
         repository: Option<CheckoutDir>,
+        /// Bytes done so far, for a step that counts them (downloading and unpacking the image);
+        /// `null` for every other step, and while the count is not known yet.
+        #[serde(default)]
+        #[cfg_attr(feature = "openapi", schema(required = true))]
+        bytes_done: Option<u64>,
+        /// Bytes in all, when `bytes_done` is set and the total is known; `null` otherwise.
+        #[serde(default)]
+        #[cfg_attr(feature = "openapi", schema(required = true))]
+        bytes_total: Option<u64>,
     },
     /// Puddle's install of a workspace's managed tools (mise) moved on. It runs in the background
     /// after a start, after a clone into the running workspace, and once more when the user allows
@@ -633,10 +642,15 @@ pub enum WorkspaceStep {
     PreparingVolume,
     /// Pulling the workspace's image.
     PullingImage,
+    /// Turning the downloaded image into the disk the workspace boots from.
+    UnpackingImage,
     /// Cloning the repository.
     Cloning,
     /// Booting the workspace's virtual machine.
     Starting,
+    /// The virtual machine is up; waiting for the agent inside it to answer and for the boot
+    /// script to finish.
+    WaitingForAgent,
     /// Bringing the checkouts in line with the volume after a boot.
     Syncing,
     /// Looking for work that is not on a remote.

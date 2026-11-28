@@ -35,13 +35,15 @@ const WRITE_LIMIT: Duration = Duration::from_secs(5);
 pub trait SshTarget: Send + Sync + 'static {
     /// What [`SshTarget::serve`] fails with.
     type Error: std::error::Error + Send + Sync + 'static;
+    /// Why a client is refused: its message is what the client is shown.
+    type Refusal: std::fmt::Display + Send + 'static;
 
     /// The name used in logs (the sandbox's).
     fn label(&self) -> String;
 
     /// Decides whether a new client is served, waiting while that isn't known yet. `Err` holds
     /// the reason the client is shown.
-    fn admit(&self) -> impl Future<Output = Result<(), String>> + Send;
+    fn admit(&self) -> impl Future<Output = Result<(), Self::Refusal>> + Send;
 
     /// Tells the owner that the endpoint, or one client's session, failed in a way the client
     /// can't be told about (the log has it too). `reason` is one sentence for the user. The
@@ -67,21 +69,19 @@ pub trait SshTarget: Send + Sync + 'static {
 
 impl<S: Sandbox> SshTarget for GatedSandbox<S> {
     type Error = GatedError;
+    type Refusal = GatedError;
 
     fn label(&self) -> String {
         self.name().to_string()
     }
 
-    async fn admit(&self) -> Result<(), String> {
+    async fn admit(&self) -> Result<(), GatedError> {
         self.gate()
             .wait_ready(BootHook::DEFAULT_READY_WAIT)
             .await
-            .map_err(|reason| {
-                GatedError::NotReady {
-                    sandbox: self.name().to_string(),
-                    reason,
-                }
-                .to_string()
+            .map_err(|reason| GatedError::NotReady {
+                sandbox: self.name().to_string(),
+                reason,
             })
     }
 
@@ -232,6 +232,7 @@ async fn session<T: SshTarget>(target: Arc<T>, mut conn: Connection, id: u64) {
         return;
     }
     if let Err(reason) = target.admit().await {
+        let reason = reason.to_string();
         info!(sandbox = %label, session = id, reason, "ssh client refused");
         let line = refusal_line(&reason);
         let written = tokio::time::timeout(WRITE_LIMIT, async {

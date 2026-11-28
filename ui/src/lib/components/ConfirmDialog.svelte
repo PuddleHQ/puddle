@@ -69,9 +69,9 @@
       </AlertDialog.Description>
       {#if error}<p class="confirm-error" role="alert">{error}</p>{/if}
       <div class="confirm-actions">
-        <AlertDialog.Cancel class="btn" bind:ref={cancelButton}
-          >Cancel</AlertDialog.Cancel
-        >
+        <AlertDialog.Cancel class="btn" bind:ref={cancelButton}>
+          Cancel
+        </AlertDialog.Cancel>
         <AlertDialog.Action
           class="btn {tone}"
           disabled={working}
@@ -79,8 +79,10 @@
             // Action does not close the dialog by itself, unlike Cancel.
             if (!holdOpen) open = false;
             onConfirm();
-          }}>{confirmLabel}</AlertDialog.Action
+          }}
         >
+          {confirmLabel}
+        </AlertDialog.Action>
       </div>
     </AlertDialog.Content>
   </AlertDialog.Portal>

@@ -28,12 +28,15 @@ fn store() -> (Store, Arc<Seen>) {
     let seen = Arc::new(Seen::default());
     let store = Store::open_in_memory(Arc::new(ManualClock::new(1)), Limits::default())
         .unwrap()
-        .with_events(Arc::clone(&seen) as Arc<dyn EventSink>);
+        .with_events(seen.clone());
     for name in ["a", "b", "off", "on", "other", "own", "shop"] {
         crate::testing::own(&store, &ws(name));
     }
     (store, seen)
 }
+
+/// How many workspaces [`store`] creates: a global change tells each one, whatever rows it has.
+const OWNED: usize = 7;
 
 fn changes(seen: &Seen) -> usize {
     seen.0
@@ -88,7 +91,7 @@ fn the_global_setting_is_an_unchosen_known_only_with_learning_on_until_saved() {
         store.interception_settings().unwrap().effective_mode(),
         InterceptionMode::AllExceptCurated
     );
-    assert_eq!(changes(&seen) - before, 1, "every workspace is told");
+    assert_eq!(changes(&seen) - before, OWNED, "every workspace is told");
 
     let seen_notice = InterceptionSettings {
         notice_seen: true,
@@ -97,7 +100,7 @@ fn the_global_setting_is_an_unchosen_known_only_with_learning_on_until_saved() {
     store.set_interception_settings(seen_notice).unwrap();
     assert_eq!(
         changes(&seen) - before,
-        1,
+        OWNED,
         "the notice flag changes nothing a workspace decrypts"
     );
     store
@@ -106,7 +109,7 @@ fn the_global_setting_is_an_unchosen_known_only_with_learning_on_until_saved() {
             ..seen_notice
         })
         .unwrap();
-    assert_eq!(changes(&seen) - before, 2);
+    assert_eq!(changes(&seen) - before, 2 * OWNED);
 }
 
 #[test]
@@ -149,7 +152,7 @@ fn never_decrypt_names_are_per_workspace_sorted_and_replaced_as_a_whole() {
 }
 
 #[test]
-fn the_global_list_tells_every_workspace_that_has_settings() {
+fn the_global_list_tells_every_workspace_even_one_with_no_settings_row() {
     let (store, seen) = store();
     store
         .set_workspace_mode(&ws("on"), Some(InterceptionMode::All))
@@ -162,7 +165,7 @@ fn the_global_list_tells_every_workspace_that_has_settings() {
         .set_global_never_decrypt(&strings(&["bank.example"]))
         .unwrap();
     assert_eq!(store.global_never_decrypt().unwrap(), ["bank.example"]);
-    assert_eq!(changes(&seen) - before, 2);
+    assert_eq!(changes(&seen) - before, OWNED);
     store.set_global_never_decrypt(&[]).unwrap();
     assert_eq!(store.global_never_decrypt().unwrap(), strings(&[]));
 }
@@ -183,11 +186,11 @@ fn the_learned_limits_are_twelve_hours_and_1024_until_saved_and_tell_the_workspa
     };
     store.set_learned_limits(mine).unwrap();
     assert_eq!(store.learned_limits().unwrap(), mine);
-    assert_eq!(changes(&seen) - before, 1, "the workspace the store knows");
+    assert_eq!(changes(&seen) - before, OWNED, "every workspace");
     store.set_learned_limits(mine).unwrap();
     assert_eq!(
         changes(&seen) - before,
-        1,
+        OWNED,
         "the same values are not a change"
     );
     store.set_learned_limits(built_in).unwrap();
@@ -296,4 +299,106 @@ fn adding_a_never_decrypt_name_keeps_the_others_and_stops_at_the_limit() {
         store.global_never_decrypt().unwrap(),
         strings(&["g.example"])
     );
+}
+
+#[test]
+fn a_workspace_patch_changes_only_the_parts_it_gives_and_returns_the_result() {
+    let (store, seen) = store();
+    store
+        .set_never_decrypt(&ws("a"), &strings(&["keep.example"]))
+        .unwrap();
+    let before = changes(&seen);
+    let got = store
+        .patch_workspace_interception(&ws("a"), Some(Some(InterceptionMode::All)), None)
+        .unwrap();
+    assert_eq!(got.mode, Some(InterceptionMode::All));
+    assert_eq!(got.never_decrypt, ["keep.example"], "names untouched");
+    assert_eq!(changes(&seen) - before, 1);
+
+    let got = store
+        .patch_workspace_interception(&ws("a"), None, Some(&strings(&["new.example"])))
+        .unwrap();
+    assert_eq!(got.mode, Some(InterceptionMode::All), "mode untouched");
+    assert_eq!(got.never_decrypt, ["new.example"]);
+    assert_eq!(changes(&seen) - before, 2);
+
+    let got = store
+        .patch_workspace_interception(&ws("a"), Some(None), Some(&[]))
+        .unwrap();
+    assert_eq!(got, WorkspaceInterception::default());
+    assert_eq!(changes(&seen) - before, 4, "each changed part tells once");
+
+    let got = store
+        .patch_workspace_interception(&ws("a"), None, None)
+        .unwrap();
+    assert_eq!(got, WorkspaceInterception::default());
+    assert_eq!(changes(&seen) - before, 4, "an empty patch is no change");
+}
+
+#[test]
+fn a_workspace_patch_that_fails_saves_neither_part() {
+    let (store, _) = store();
+    store.break_database("ALTER TABLE never_decrypt RENAME TO names_gone");
+    assert!(
+        store
+            .patch_workspace_interception(
+                &ws("a"),
+                Some(Some(InterceptionMode::All)),
+                Some(&strings(&["x.example"])),
+            )
+            .is_err()
+    );
+    store.break_database("ALTER TABLE names_gone RENAME TO never_decrypt");
+    assert_eq!(store.workspace_interception(&ws("a")).unwrap().mode, None);
+}
+
+#[test]
+fn a_settings_patch_changes_only_the_parts_it_gives() {
+    let (store, seen) = store();
+    store.set_workspace_mode(&ws("own"), None).unwrap();
+    let before = changes(&seen);
+    let got = store
+        .patch_interception_settings(None, Some(false), None)
+        .unwrap();
+    assert_eq!(
+        got,
+        InterceptionSettings {
+            mode: None,
+            learn_from_rejections: false,
+            notice_seen: false
+        }
+    );
+    assert_eq!(store.interception_settings().unwrap(), got);
+    assert_eq!(changes(&seen) - before, OWNED);
+
+    // Choosing a mode answers the notice, and keeps the learning switch another patch set.
+    let got = store
+        .patch_interception_settings(Some(InterceptionMode::All), None, None)
+        .unwrap();
+    assert_eq!(
+        got,
+        InterceptionSettings {
+            mode: Some(InterceptionMode::All),
+            learn_from_rejections: false,
+            notice_seen: true
+        }
+    );
+    assert_eq!(changes(&seen) - before, 2 * OWNED);
+
+    // An explicit notice answer wins over the mode's.
+    let got = store
+        .patch_interception_settings(Some(InterceptionMode::All), None, Some(false))
+        .unwrap();
+    assert!(!got.notice_seen);
+    assert_eq!(
+        changes(&seen) - before,
+        2 * OWNED,
+        "same mode and learning: no event"
+    );
+
+    let got = store
+        .patch_interception_settings(None, Some(true), Some(true))
+        .unwrap();
+    assert_eq!(got.mode, Some(InterceptionMode::All));
+    assert!(got.learn_from_rejections && got.notice_seen);
 }

@@ -6,10 +6,13 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use puddle_api::{FakeWorkspaces, WorkspaceService};
+use puddle_services::{fake_workspaces::FakeWorkspaces, workspaces::WorkspaceService};
 use serde_json::{Value, json};
 
-use super::sign_in::{Req, Site, access_token, pw, site_built};
+use super::sign_in::{Req, Site, access_token, pw, site_reaping};
+
+/// The reaper's timer in these tests, so a look that no notice caused comes soon.
+const REAP_EVERY: Duration = Duration::from_millis(10);
 
 const REPO: &str = "https://github.com/acme/api.git";
 
@@ -26,15 +29,15 @@ async fn admin_site(multi_user: bool) -> Admin {
 /// operation is still under way when the next look comes.
 async fn admin_site_slow(multi_user: bool, step_delay: Duration) -> Admin {
     let made: std::sync::Mutex<Option<Arc<FakeWorkspaces>>> = std::sync::Mutex::new(None);
-    let site = site_built(multi_user, |events, clock| {
+    let site = site_reaping(multi_user, REAP_EVERY, |events, clock| {
         let fake = Arc::new(FakeWorkspaces::with_options(
             events.clone(),
             clock.clone(),
-            Arc::new(puddle_api::FakeLauncher::new()),
+            Arc::new(puddle_services::fake_workspaces::FakeLauncher::new()),
             step_delay,
         ));
         *made.lock().unwrap() = Some(fake.clone());
-        Some(fake as Arc<dyn WorkspaceService>)
+        Some(fake)
     })
     .await;
     let workspaces = made.lock().unwrap().take().unwrap();
@@ -86,7 +89,7 @@ impl Admin {
 
     /// Waits until the background deletion has removed the user.
     async fn gone(&self, name: &str) {
-        // The reaper also looks on a 10 s timer, so a missed notice costs up to that.
+        // The reaper also looks on a timer (REAP_EVERY here), so a missed notice costs up to that.
         puddle_test_kit::eventually_async(
             &format!("{name} is removed"),
             Duration::from_secs(30),
@@ -226,11 +229,13 @@ async fn the_list_counts_workspaces_and_disk_and_never_names_them() {
     admin.workspaces.idle().await;
     let list = admin.listed().await;
     assert_eq!(list[0]["workspaces_running"].as_u64().unwrap(), 0);
+    // A create ends running.
     assert_eq!(
-        list[1]["workspaces_stopped"].as_u64().unwrap(),
+        list[1]["workspaces_running"].as_u64().unwrap(),
         2,
         "{list:?}"
     );
+    assert_eq!(list[1]["workspaces_stopped"].as_u64().unwrap(), 0);
     let stats = admin.owner("GET", "/api/admin/stats", None).await;
     assert_eq!(stats.status, 200, "{stats:?}");
     assert_eq!(stats.json()["users"], 2);
@@ -505,34 +510,30 @@ async fn a_deletion_whose_workspace_step_fails_is_finished_at_a_later_look() {
     admin.site.setup().await;
     let (ann, ann_id) = admin.user("Ann", pw("ann password three")).await;
     make_box(&admin, &ann, "ann-box").await;
-    let started = admin
-        .site
-        .send(
-            "POST",
-            "/api/workspaces/ann-box/start",
-            &Req::bearer(&ann),
-            None,
-        )
-        .await;
-    assert_eq!(started.status, 202, "{started:?}");
-    admin.workspaces.idle().await;
+    // A create ends running, so her box is up already.
     let mut others = Vec::new();
-    for name in ["Bob", "Cy", "Dee"] {
+    for name in ["Bob", "Cy", "Dee", "Eve"] {
         others.push((name, admin.user(name, pw("other password three")).await.1));
     }
 
     // The stop fails and later the delete fails: Ann stays as long as her box is left.
-    admin
-        .workspaces
-        .fail_next(puddle_api::Operation::Stopping, "the sandbox hangs");
+    admin.workspaces.fail_next(
+        puddle_services::workspaces::Operation::Stopping,
+        "the sandbox hangs",
+    );
     start_delete(&admin, ann_id, "Ann").await;
     admin.workspaces.idle().await;
-    admin
-        .workspaces
-        .fail_next(puddle_api::Operation::Deleting, "the volume is locked");
-    // Each further deletion makes the reaper look again (it also looks every few seconds).
+    admin.workspaces.fail_next(
+        puddle_services::workspaces::Operation::Deleting,
+        "the volume is locked",
+    );
+    // Ann needs four looks: the stop fails, the stop works, the delete fails, the delete works.
+    // A deletion started while a look runs only queues one more look, so two deletions in a row
+    // can share a look. Waiting until each other user is gone gives one look per deletion, and
+    // the one that follows Ann's own deletion is the first of the four.
     for (name, id) in others {
         start_delete(&admin, id, name).await;
+        admin.gone(name).await;
         admin.workspaces.idle().await;
     }
     admin.gone("Ann").await;
@@ -542,7 +543,7 @@ async fn a_deletion_whose_workspace_step_fails_is_finished_at_a_later_look() {
 
 #[tokio::test]
 async fn a_workspace_still_busy_is_left_alone_until_it_is_idle() {
-    let admin = admin_site_slow(true, Duration::from_millis(300)).await;
+    let admin = admin_site_slow(true, Duration::from_millis(30)).await;
     admin.site.setup().await;
     let (ann, ann_id) = admin.user("Ann", pw("ann password three")).await;
     let (_bob, bob_id) = admin.user("Bob", pw("bob password three")).await;
@@ -573,9 +574,10 @@ async fn a_workspace_that_refuses_its_stop_is_tried_again_at_a_later_look() {
     // A paused box counts as up but cannot be stopped: the stop is refused at once.
     let mut record = admin.workspaces.list().await.unwrap().remove(0);
     record.status = puddle_types::WorkspaceStatus::Paused;
-    admin
-        .workspaces
-        .seed(record.clone(), puddle_api::Unsaved::default());
+    admin.workspaces.seed(
+        record.clone(),
+        puddle_services::fake_workspaces::Unsaved::default(),
+    );
 
     start_delete(&admin, ann_id, "Ann").await;
     // An absence window: nothing signals that the reaper looked and left Ann, so give it time.
@@ -585,11 +587,181 @@ async fn a_workspace_that_refuses_its_stop_is_tried_again_at_a_later_look() {
     record.status = puddle_types::WorkspaceStatus::Stopped;
     admin
         .workspaces
-        .seed(record, puddle_api::Unsaved::default());
+        .seed(record, puddle_services::fake_workspaces::Unsaved::default());
     start_delete(&admin, bob_id, "Bob").await;
     admin.gone("Ann").await;
     admin.gone("Bob").await;
     admin.workspaces.idle().await;
     assert_eq!(admin.workspaces.list().await.unwrap(), Vec::new());
+    admin.site.running.shutdown().await;
+}
+
+/// One person of the three: the workspace, the rule's host and the id the API gave the workspace.
+struct Person<'a> {
+    name: &'a str,
+    workspace: &'a str,
+    host: &'a str,
+    token: &'a str,
+    id: String,
+}
+
+/// Three people on one install, each with a workspace, a rule and the records they make: nobody's
+/// Activity, workspace list or rules hold a word of another's, and one's id for another's
+/// workspace is answered exactly as an id nobody has, for the workspace, its audit and its rules.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one story: three people make things, then each reads and probes the others'"
+)]
+#[tokio::test]
+async fn three_users_see_nothing_of_each_other_and_a_foreign_id_is_an_unknown_one() {
+    let admin = admin_site(true).await;
+    admin.site.setup().await;
+    let (lee, _) = admin.user("Lee", pw("lee password three")).await;
+    let (ayo, _) = admin.user("Ayo", pw("ayo password three")).await;
+    let owner = admin.site.install_token.clone();
+    let loopback = admin.site.loopback_host();
+
+    // Each person's request goes in their own way: the owner as the desktop does, on loopback.
+    let mut people = [
+        Person {
+            name: "owner",
+            workspace: "morgan-tools",
+            host: "morgan-only.example",
+            token: &owner,
+            id: String::new(),
+        },
+        Person {
+            name: "lee",
+            workspace: "lee-api",
+            host: "lee-only.example",
+            token: &lee,
+            id: String::new(),
+        },
+        Person {
+            name: "ayo",
+            workspace: "ayo-web",
+            host: "ayo-only.example",
+            token: &ayo,
+            id: String::new(),
+        },
+    ];
+    let send = |person_token: String, method: &'static str, path: String, body: Option<Value>| {
+        let (admin, loopback, owner) = (&admin, loopback.clone(), owner.clone());
+        async move {
+            let req = if person_token == owner {
+                Req::bearer(&person_token).on(&loopback)
+            } else {
+                Req::bearer(&person_token)
+            };
+            let reply = admin.site.send(method, &path, &req, body.as_ref()).await;
+            (reply.status, reply.body)
+        }
+    };
+    for person in &mut people {
+        let (status, body) = send(
+            person.token.to_owned(),
+            "POST",
+            "/api/workspaces".to_owned(),
+            Some(json!({"name": person.workspace, "repositories": [{"url": REPO}]})),
+        )
+        .await;
+        assert_eq!(status, 202, "{}: {body}", person.name);
+        person.id = serde_json::from_str::<Value>(&body).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let (status, body) = send(
+            person.token.to_owned(),
+            "POST",
+            "/api/rules".to_owned(),
+            Some(json!({"scope": {"type": "global"}, "pattern": person.host, "effect": "allow"})),
+        )
+        .await;
+        assert_eq!(status, 201, "{}: {body}", person.name);
+    }
+    admin.workspaces.idle().await;
+
+    // S6a: what each reads holds their own (the control) and nothing of the other two.
+    for me in &people {
+        for path in ["/api/workspaces", "/api/audit?limit=500", "/api/rules"] {
+            let (status, body) = send(me.token.to_owned(), "GET", path.to_owned(), None).await;
+            assert_eq!(status, 200, "{} {path}: {body}", me.name);
+            let own = if path == "/api/workspaces" {
+                me.workspace
+            } else {
+                me.host
+            };
+            assert!(
+                body.contains(own),
+                "{} {path} lacks their own {own}: {body}",
+                me.name
+            );
+            for other in people.iter().filter(|o| o.name != me.name) {
+                for word in [other.workspace, other.host, other.id.as_str()] {
+                    assert!(
+                        !body.contains(word),
+                        "{} {path} holds {word} of {}: {body}",
+                        me.name,
+                        other.name
+                    );
+                }
+            }
+        }
+    }
+
+    // S6b: another's workspace id answers as an id nobody has.
+    let unknown = "nobody00";
+    for me in &people {
+        for other in people.iter().filter(|o| o.name != me.name) {
+            let rule_for = |workspace: &str| json!({"scope": {"type": "workspace", "workspace": workspace}, "pattern": "x.example", "effect": "allow"});
+            let probes: [fn(&str) -> String; 4] = [
+                |id| format!("/api/workspaces/{id}"),
+                |id| format!("/api/workspaces/{id}/delete-check"),
+                |id| format!("/api/audit?workspace={id}"),
+                |id| format!("/api/workspaces/{id}/interception"),
+            ];
+            for path in probes {
+                let method = "GET";
+                let theirs = send(me.token.to_owned(), method, path(&other.id), None).await;
+                let nobodys = send(me.token.to_owned(), method, path(unknown), None).await;
+                let same =
+                    |(status, body): (u16, String), id: &str| (status, body.replace(id, "ID"));
+                assert_eq!(
+                    same(theirs.clone(), &other.id),
+                    same(nobodys, unknown),
+                    "{} asking {method} {} for {}'s id",
+                    me.name,
+                    path("ID"),
+                    other.name
+                );
+                if !path("ID").starts_with("/api/audit") {
+                    assert_eq!(theirs.0, 404, "{}: {}", path("ID"), theirs.1);
+                }
+            }
+            let theirs = send(
+                me.token.to_owned(),
+                "POST",
+                "/api/rules".to_owned(),
+                Some(rule_for(&other.id)),
+            )
+            .await;
+            let nobodys = send(
+                me.token.to_owned(),
+                "POST",
+                "/api/rules".to_owned(),
+                Some(rule_for(unknown)),
+            )
+            .await;
+            assert_eq!(
+                theirs.0, 404,
+                "a rule for {}'s workspace: {}",
+                other.name, theirs.1
+            );
+            assert_eq!(
+                theirs.1.replace(&other.id, "ID"),
+                nobodys.1.replace(unknown, "ID")
+            );
+        }
+    }
     admin.site.running.shutdown().await;
 }

@@ -151,7 +151,7 @@ async fn ports_started(ports: &Ports, workspace: &WorkspaceId) {
     .await;
 }
 
-async fn front_for(rig: &Rig, endpoints: &PuddleEndpoints) -> (Front, tempfile::TempDir) {
+fn front_for(rig: &Rig, endpoints: &PuddleEndpoints) -> (Front, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let front = Front::bind(
         None,
@@ -159,7 +159,6 @@ async fn front_for(rig: &Rig, endpoints: &PuddleEndpoints) -> (Front, tempfile::
         Arc::new(PortsGuests::new(rig.ports.clone(), |_| Flavour::CodeServer)),
         Arc::new(FileHalves::new(dir.path())),
     )
-    .await
     .unwrap();
     (front, dir)
 }
@@ -225,7 +224,7 @@ fn spellings(port: u16) -> [String; 6] {
 #[tokio::test]
 async fn a_guest_cannot_dial_the_front_even_with_every_local_toggle_on() {
     let rig = rig().await;
-    let (front, _dir) = front_for(&rig, &rig.endpoints).await;
+    let (front, _dir) = front_for(&rig, &rig.endpoints);
 
     // Control: from outside the workspace the front reaches the editor server.
     let answer = from_outside(&front, &rig.workspace).await;
@@ -271,7 +270,7 @@ async fn negative_control_a_front_outside_the_registry_is_not_refused_as_a_puddl
     let rig = rig().await;
     // Bound against a registry the guard never reads: the one thing the real front does that
     // keeps the guest out is missing.
-    let (front, _dir) = front_for(&rig, &PuddleEndpoints::new()).await;
+    let (front, _dir) = front_for(&rig, &PuddleEndpoints::new());
     let authority = format!("127.0.0.1:{}", front.local_addr().port());
     let (_, headers) = connect_via(rig.agent.local_addr(), &authority)
         .await

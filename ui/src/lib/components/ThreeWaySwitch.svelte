@@ -32,8 +32,10 @@
       aria-pressed={segment.next === value}
       onclick={() => {
         if (segment.next !== value) onChange(segment.next);
-      }}>{segment.text}</button
+      }}
     >
+      {segment.text}
+    </button>
   {/each}
 </span>
 

@@ -54,9 +54,11 @@
         stays isolated from this computer. It is not your own VS Code.
         {#if server}{serverNote(server)}{/if}
         <a
-          href="/settings/editor-and-git#set-server"
-          onclick={() => (open = false)}>Change the server in Settings</a
-        >.
+          href="/settings/editor-server#set-server"
+          onclick={() => (open = false)}
+        >
+          Change the server in Settings
+        </a>.
       </p>
       {#if editorProblem}
         <EditorInstallNotice title={editorProblem.title} />
@@ -123,9 +125,9 @@
     </section>
 
     <div class="actions">
-      <button type="button" class="btn" onclick={() => (open = false)}
-        >Close</button
-      >
+      <button type="button" class="btn" onclick={() => (open = false)}>
+        Close
+      </button>
     </div>
   </div>
 </FormDialog>

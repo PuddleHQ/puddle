@@ -9,7 +9,7 @@ use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-use crate::common::{Api, STEP, start};
+use crate::common::{Api, START_MS, STEP, start};
 
 /// An open event stream and what has been read from it so far.
 pub(crate) struct Stream {
@@ -254,12 +254,16 @@ async fn rule_changes_reach_every_stream_even_a_filtered_one() {
         .await;
     assert_eq!(created.status, 201, "{}", created.body);
     let id = created.json()["id"].as_i64().unwrap();
-    api.send(
-        "PUT",
-        &format!("/api/rules/{id}/expiry"),
-        Some(&serde_json::json!({"expires_at": null})),
-    )
-    .await;
+    // The rule starts permanent, so a new expiry is a change; one that changes nothing
+    // announces nothing.
+    let expiry = api
+        .send(
+            "PUT",
+            &format!("/api/rules/{id}/expiry"),
+            Some(&serde_json::json!({"expires_at": START_MS + 60_000})),
+        )
+        .await;
+    assert_eq!(expiry.status, 200, "{}", expiry.body);
     assert_eq!(
         api.send("DELETE", &format!("/api/rules/{id}"), None)
             .await
@@ -296,5 +300,22 @@ async fn audit_appended_names_the_newest_record_so_a_client_can_read_on() {
     let page = api.get("/api/audit?limit=1").await.json();
     assert_eq!(page["entries"][0]["id"], id);
     assert_eq!(page["next_after"], id);
+    api.running.shutdown().await;
+}
+
+#[tokio::test]
+async fn an_idle_stream_gets_a_keep_alive_comment_within_twenty_seconds() {
+    let api = start().await;
+    let mut s = Stream::open(&api, "").await;
+    let mut chunk = [0u8; 4096];
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while !s.buf.contains("\n:") {
+            let n = s.tcp.read(&mut chunk).await.unwrap();
+            assert!(n > 0, "stream closed early: {}", s.buf);
+            s.buf.push_str(&String::from_utf8_lossy(&chunk[..n]));
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("no keep-alive in 20 s; read so far: {}", s.buf));
     api.running.shutdown().await;
 }

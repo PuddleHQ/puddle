@@ -95,8 +95,10 @@
               class="btn deny"
               disabled={busy}
               aria-label="Turn off the SSH agent for {entry.host}"
-              onclick={() => void turnOff(entry.host)}>Turn off</button
+              onclick={() => void turnOff(entry.host)}
             >
+              Turn off
+            </button>
           </li>
         {/each}
       </ul>
@@ -143,9 +145,9 @@
         <p class="error" id="{fid}-error" role="alert">{problem}</p>
       {/if}
       <div class="acts">
-        <button type="submit" class="btn primary" disabled={busy}
-          >Turn on</button
-        >
+        <button type="submit" class="btn primary" disabled={busy}>
+          Turn on
+        </button>
       </div>
     </form>
   </section>
@@ -157,10 +159,10 @@
 
 <style>
   section {
+    max-width: var(--page-reading-width);
     display: grid;
     gap: var(--space-3);
     margin-bottom: var(--space-6);
-    max-width: 60rem;
   }
   h2 {
     font-size: var(--text-lg);

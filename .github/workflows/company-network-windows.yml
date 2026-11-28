@@ -47,7 +47,7 @@ jobs:
         with:
           key: company-network-windows
           save-if: false
-      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
         with:
           tool: cargo-nextest@0.9.146
       - name: msb runtime (fork tag release assets; download, verify)
@@ -60,9 +60,24 @@ jobs:
       - name: guest agent (static musl build)
         shell: bash
         run: echo "PUDDLE_AGENT_BIN=$(cygpath -w "$PWD/$(ci/build-agent.sh --locked)")" >> "$GITHUB_ENV"
+      # The Windows chain test (vm_radar_company_network_windows_*) runs mitmproxy as the NTLM-demanding
+      # TLS interceptor; pinned with hashes in ci/lab/requirements.txt, as in windows.yml.
+      - name: mitmproxy for the corporate-lab fixtures
+        shell: bash
+        run: |
+          python3 -c 'import sys; assert sys.version_info >= (3, 12), sys.version'
+          python3 -m venv "$RUNNER_TEMP/lab-venv"
+          "$RUNNER_TEMP/lab-venv/Scripts/python.exe" -m pip install --retries 10 --timeout 60 --require-hashes --no-deps --quiet -r ci/lab/requirements.txt
+          "$RUNNER_TEMP/lab-venv/Scripts/mitmdump.exe" --version
+          echo "PUDDLE_MITMDUMP_BIN=$(cygpath -w "$RUNNER_TEMP/lab-venv/Scripts/mitmdump.exe")" >> "$GITHUB_ENV"
       - name: VM bars and the real-tool battery (toggle off, then on)
         shell: bash
         timeout-minutes: 50
+        env:
+          # The chain test puts a root in the runner user's store and a proxy in its Internet Settings,
+          # and fails (never skips) when the runner lacks mitmproxy or stops being a CI runner.
+          PUDDLE_REQUIRE_MITMPROXY: "1"
+          PUDDLE_REQUIRE_REGISTRY_TESTS: "1"
         run: |
           PUDDLE_VM_PREFIX="r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             cargo nextest run -p puddle-host --profile vm --locked --no-fail-fast \

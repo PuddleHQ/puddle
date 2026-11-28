@@ -225,7 +225,7 @@ fn copy_tree(from: &Path, to: &Path) -> Result<usize, BackupError> {
     Ok(copied)
 }
 
-/// Makes backups of one data folder for the API: [`puddle_api::BackupService`] over
+/// Makes backups of one data folder for the API: [`puddle_services::backup::BackupService`] over
 /// [`backup_archive`]. The copy runs on a blocking thread, since it reads and writes files and
 /// waits for the database.
 #[derive(Debug, Clone)]
@@ -239,17 +239,17 @@ impl DataFolderBackup {
     }
 }
 
-impl puddle_api::BackupService for DataFolderBackup {
+impl puddle_services::backup::BackupService for DataFolderBackup {
     fn create(
         &self,
     ) -> futures_util::future::BoxFuture<
         '_,
-        Result<puddle_api::BackupArchive, puddle_api::BackupServiceError>,
+        Result<puddle_services::backup::BackupArchive, puddle_services::backup::BackupServiceError>,
     > {
         let paths = self.paths.clone();
         Box::pin(async move {
             let archive = blocking(move || backup_archive(&paths)).await?;
-            Ok(puddle_api::BackupArchive::new(
+            Ok(puddle_services::backup::BackupArchive::new(
                 archive.size,
                 tokio::fs::File::from_std(archive.file),
             ))
@@ -260,11 +260,11 @@ impl puddle_api::BackupService for DataFolderBackup {
 /// Runs `job` on a blocking thread; a job that fails or panics is a failed backup that says why.
 async fn blocking<T: Send + 'static>(
     job: impl FnOnce() -> Result<T, BackupError> + Send + 'static,
-) -> Result<T, puddle_api::BackupServiceError> {
-    let made = tokio::task::spawn_blocking(job)
-        .await
-        .map_err(|e| puddle_api::BackupServiceError::Failed(format!("the backup stopped: {e}")))?;
-    made.map_err(|e| puddle_api::BackupServiceError::Failed(e.to_string()))
+) -> Result<T, puddle_services::backup::BackupServiceError> {
+    let made = tokio::task::spawn_blocking(job).await.map_err(|e| {
+        puddle_services::backup::BackupServiceError::Failed(format!("the backup stopped: {e}"))
+    })?;
+    made.map_err(|e| puddle_services::backup::BackupServiceError::Failed(e.to_string()))
 }
 
 /// A backup packed into one file: a gzip-compressed tar archive of the three parts at its top

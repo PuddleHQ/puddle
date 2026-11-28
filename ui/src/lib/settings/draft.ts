@@ -4,7 +4,6 @@
 import type { LocalCategory } from "#lib/decision/local-labels.ts";
 import {
   type GlobalTools,
-  type GlobalView,
   type Limits,
   type Layer,
   type Ui,
@@ -128,21 +127,15 @@ export function remaining(sent: Draft, now: Draft): Draft {
   };
 }
 
-/** The parts of the settings document a save replaces, built from the draft over the stored view. */
-export function savePatch(view: GlobalView, draft: Draft) {
-  const toggles = Object.keys(draft.toggles).length > 0;
+/**
+ * The parts of the settings document a save replaces, built from the draft. The changed
+ * categories travel as they are: `bodyFrom` adds them to the stored ones when the save is sent,
+ * since saves queue and the stored ones may have changed while this one waited.
+ */
+export function savePatch(draft: Draft) {
   return {
-    layer: {
-      ...draft.layer,
-      ...(toggles
-        ? {
-            local_toggles: {
-              ...view.workspace_defaults.local_toggles,
-              ...draft.toggles,
-            },
-          }
-        : {}),
-    },
+    layer: draft.layer,
+    toggles: draft.toggles,
     server: draft.server,
     ui: draft.ui,
     tools: draft.tools,

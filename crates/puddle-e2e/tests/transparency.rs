@@ -31,7 +31,7 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use h2::SendStream;
 use l2::stall::{Backoff, Gap, Progress, rcvq_drops};
-use l2::{LOCAL, allow, connect_via, echo_server, rig, round_trip};
+use l2::{LOCAL, allow, connect_via, echo_server, plain_round_trip, rig, round_trip};
 use puddle_e2e::l2;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
@@ -274,21 +274,15 @@ fn report(what: &str, through: &Transfer, plain: &Transfer, drops_before: u64) {
     );
 }
 
-/// A tool with more connections than any measured: 4 times pnpm's peak. Every connection sends
-/// 64 KiB and gets it back, all started together.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_thousand_and_24_parallel_connects_all_succeed_with_no_stall() {
-    const CONNECTIONS: usize = 1024;
-    raise_descriptors(CONNECTIONS as u64);
-    let rig = rig().await;
-    allow(&rig.store, "echo.test");
-    let echo = echo_server();
-    let authority = format!("echo.test:{}", echo.port());
-    let agent = rig.agent.local_addr();
+/// Runs `connections` round trips at once, `run(i)` each, and returns the slowest.
+async fn burst<F, Fut>(connections: usize, run: F) -> Duration
+where
+    F: Fn(usize) -> Fut,
+    Fut: Future<Output = io::Result<Duration>> + Send + 'static,
+{
     let mut set = tokio::task::JoinSet::new();
-    for i in 0..CONNECTIONS {
-        let authority = authority.clone();
-        set.spawn(async move { round_trip(agent, &authority, i).await });
+    for i in 0..connections {
+        set.spawn(run(i));
     }
     let results = tokio::time::timeout(Duration::from_secs(120), async {
         let mut out = Vec::new();
@@ -298,21 +292,50 @@ async fn a_thousand_and_24_parallel_connects_all_succeed_with_no_stall() {
         out
     })
     .await
-    .expect("1024 connections did not finish within 120 s");
+    .expect("the connections did not finish within 120 s");
     let failures: Vec<_> = results.iter().filter_map(|r| r.as_ref().err()).collect();
     assert!(
         failures.is_empty(),
-        "{} of {CONNECTIONS} failed: {:?}",
+        "{} of {connections} failed: {:?}",
         failures.len(),
         failures.first()
     );
-    let slowest = results
-        .iter()
-        .filter_map(|r| r.as_ref().ok())
-        .max()
-        .unwrap();
-    eprintln!("{CONNECTIONS} parallel CONNECT requests: slowest {slowest:?}");
-    assert!(*slowest < STALL, "slowest connection took {slowest:?}");
+    results.into_iter().filter_map(Result::ok).max().unwrap()
+}
+
+/// A tool with more connections than any measured: 4 times pnpm's peak. Every connection sends
+/// 64 KiB and gets it back, all started together.
+///
+/// The burst is timed twice in this run: straight to the echo server, then through the agent and
+/// the proxy. All 1024 share 4 worker threads, so on a busy host (a failure at load 65 to 85 took
+/// 5.8 s) even the plain burst is slow. The bound is therefore [`STALL`] on top of a multiple of
+/// what the plain burst took: a connect that waits out a dropped SYN (1 s, then 3 s more) or a
+/// stalled accept still breaks it on a quiet host, host load alone does not.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_thousand_and_24_parallel_connects_all_succeed_with_no_stall() {
+    const CONNECTIONS: usize = 1024;
+    // The proxy does four times the work of a plain connection (agent, proxy, a second socket).
+    const HOST_SHARE: u32 = 4;
+    raise_descriptors(CONNECTIONS as u64);
+    let rig = rig().await;
+    allow(&rig.store, "echo.test");
+    let echo = echo_server();
+    let authority = format!("echo.test:{}", echo.port());
+    let agent = rig.agent.local_addr();
+    let plain = burst(CONNECTIONS, |i| plain_round_trip(echo, i)).await;
+    let slowest = burst(CONNECTIONS, |i| {
+        let authority = authority.clone();
+        async move { round_trip(agent, &authority, i).await }
+    })
+    .await;
+    eprintln!(
+        "{CONNECTIONS} parallel CONNECT requests: slowest {slowest:?} (plain loopback {plain:?})"
+    );
+    let bound = STALL + HOST_SHARE * plain;
+    assert!(
+        slowest < bound,
+        "slowest connection took {slowest:?} through Puddle, {plain:?} plain; bound {bound:?}"
+    );
 }
 
 /// A response with `len` bytes of body, keep-alive.

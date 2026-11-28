@@ -12,12 +12,12 @@
 
 use std::process::ExitCode;
 
-use puddle_host::{HostPaths, MigrateOutcome, ResetOutcome, SecretSetup, StoreState, VaultStatus};
+use puddle_host::{MigrateOutcome, ResetOutcome, SecretSetup, StoreState, VaultStatus};
 use puddle_secrets::StoreKind;
 
 use crate::cli::{Command, UsageError};
-use crate::cmd::data_folder;
 use crate::cmd::serve::options::Flags;
+use crate::cmd::{CommandError, data_folder, data_folder_here};
 
 /// What `puddle secrets` should do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,20 +130,16 @@ pub fn run(args: &VaultAdminArgs) -> ExitCode {
     }
 }
 
-fn execute(args: &VaultAdminArgs) -> Result<Report, String> {
+fn execute(args: &VaultAdminArgs) -> Result<Report, CommandError> {
     execute_with(args, &SecretSetup::default())
 }
 
 /// [`execute`] with the setup given, so a test never reads this machine's key folder.
-fn execute_with(args: &VaultAdminArgs, setup: &SecretSetup) -> Result<Report, String> {
-    let data = match data_folder::configured_here(&args.flags).map_err(|e| e.to_string())? {
-        Some(dir) => dir,
-        None => puddle_fs::data_dir().map_err(|e| e.to_string())?,
-    };
-    let paths = HostPaths::new(data);
+fn execute_with(args: &VaultAdminArgs, setup: &SecretSetup) -> Result<Report, CommandError> {
+    let paths = data_folder_here(&args.flags)?;
     match args.action {
         Action::Status => {
-            let status = puddle_host::vault_status(&paths, setup).map_err(|e| e.to_string())?;
+            let status = puddle_host::vault_status(&paths, setup)?;
             Ok(Report {
                 ok: !matches!(
                     status.state,
@@ -153,16 +149,14 @@ fn execute_with(args: &VaultAdminArgs, setup: &SecretSetup) -> Result<Report, St
             })
         }
         Action::Migrate(to) => {
-            let outcome =
-                puddle_host::vault_migrate(&paths, setup, to).map_err(|e| e.to_string())?;
+            let outcome = puddle_host::vault_migrate(&paths, setup, to)?;
             Ok(Report {
                 ok: true,
                 text: migrate_text(outcome, to),
             })
         }
         Action::Reset { yes } => {
-            let outcome =
-                puddle_host::vault_reset(&paths, setup, yes).map_err(|e| e.to_string())?;
+            let outcome = puddle_host::vault_reset(&paths, setup, yes)?;
             Ok(Report {
                 ok: true,
                 text: reset_text(outcome),

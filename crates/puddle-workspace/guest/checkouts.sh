@@ -23,7 +23,11 @@
 # Exit status: 0 when the listing ran to the end, 3 when it could not run (the E line says why),
 # 4 when the image has no git (the E line says so; puddle-workspace reports it on its own).
 # Fields have control characters replaced by '?' and are cut at 500 characters.
+# shellcheck disable=SC2034,SC2154 # `repo` and `why` are shared with git-guard.sh, put in front of this text
 set -u
+
+# git-guard.sh (the git calls' guard: `g`, `read_filters`) comes in front of this text; it is not
+# a script of its own, so run this one through its Rust constant.
 
 limit=100
 
@@ -32,59 +36,9 @@ clean() {
     printf '%s' "$1" | tr '\000-\037\177' '?' | cut -c1-500
 }
 
-# Config in a checkout can name programs for git to run, and this script runs as root, so every
-# git call switches them off: fsmonitor; hooks (with no optional locks `status` writes no index,
-# so `post-index-change` has no cause to run either); signature checks in `log`; and each filter
-# driver the checkout's config or the config of a repository nested in it names (blanked, so its
-# clean or process program never runs; the -c settings reach the git that `status` starts in a
-# nested repository). Any owner is accepted (the checkout may belong to the session user, not
-# root). A file a filter would rewrite may then read as changed: more is reported, never less.
-tab=$(printf '\t')
-
-# The filter drivers named in the config of the repository in $1 and of those nested in it, at
-# most $2 levels down, one per line; a line starting with `!` says why one cannot be switched off.
-filter_names() {
-    git -c safe.directory='*' -c core.fsmonitor=false -C "$1" config --name-only \
-        --get-regexp '^filter\.' 2>/dev/null |
-        awk '/^filter\.[A-Za-z0-9._-]+\.[A-Za-z0-9-]+$/ { sub(/^filter\./, ""); sub(/\.[A-Za-z0-9-]+$/, ""); print; next }
-            { print "!the filter in config entry " $0 " has a name no setting can carry" }'
-    git -c safe.directory='*' -c core.fsmonitor=false -C "$1" ls-files --stage 2>/dev/null |
-        while IFS= read -r entry; do
-            case $entry in 160000\ *) ;; *) continue ;; esac
-            nested=${entry#*"$tab"}
-            case $nested in \"*)
-                echo "!the nested repository $nested has a name git quotes"
-                continue
-                ;;
-            esac
-            [ -e "$1/$nested/.git" ] || continue
-            if [ "$2" -le 0 ]; then
-                echo "!the repository $1/$nested is nested too deep to read its filters"
-                continue
-            fi
-            filter_names "$1/$nested" $(($2 - 1))
-        done
-}
-
-# Sets $filters to the filter drivers of checkout $1; fails, with the reason in $why, when one
-# cannot be switched off.
-read_filters() {
-    filters=$(filter_names "$1" 8 | awk '!seen[$0]++')
-    why=$(printf '%s\n' "$filters" | awk '/^!/ { print substr($0, 2); exit }')
-    [ -z "$why" ]
-}
-
-g() {
-    for f in $filters; do
-        set -- -c "filter.$f.clean=" -c "filter.$f.smudge=" -c "filter.$f.process=" \
-            -c "filter.$f.required=false" "$@"
-    done
-    git -c safe.directory='*' -c core.fsmonitor=false -c core.hooksPath=/dev/null \
-        -c log.showSignature=false --no-optional-locks -C "./$d" "$@"
-}
-
 # Prints the record of checkout $d.
 describe() {
+    repo="./$d"
     if ! read_filters "./$d"; then
         printf 'E\t%s\t%s\n' "$(clean "$d")" \
             "not read: $why, so git could run a program the checkout names; remove that filter from its git config"
@@ -107,7 +61,11 @@ describe() {
     branch=$(g symbolic-ref -q --short HEAD 2>/dev/null || true)
     head=$(g rev-parse -q --verify --short HEAD 2>/dev/null || true)
     dirty=0
-    if [ -n "$(g status --porcelain=v1 --untracked-files=normal 2>/dev/null | head -n 1)" ]; then
+    if ! state=$(g status --porcelain=v1 --untracked-files=normal 2>&1); then
+        printf 'E\t%s\t%s\n' "$(clean "$d")" "$(clean "git status failed: $state")"
+        return
+    fi
+    if [ -n "$state" ]; then
         dirty=1
     fi
     printf 'C\t%s\t%s\t%s\t%s\t%s\n' "$(clean "$d")" "$(clean "$remote")" "$(clean "$branch")" \

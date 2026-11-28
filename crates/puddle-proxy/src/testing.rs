@@ -14,7 +14,7 @@ use puddle_agent_proto::resolve::{Record, RecordType};
 
 use puddle_types::{
     ConnectionEvent, ConnectionLog, Decision, DomainName, EgressRequest, Host, PatternKind,
-    PendingId, PendingOutcome, Policy, PolicyError, RuleId, SuffixAllows, WorkspaceId,
+    PendingId, PendingOutcome, Policy, PolicyError, Program, RuleId, SuffixAllows, WorkspaceId,
 };
 
 use crate::destination::{AddressCheck, AddressVerdict, BoxFuture, Resolver};
@@ -35,6 +35,7 @@ struct State {
     next_id: i64,
     decisions: u64,
     unavailable: bool,
+    workspace_name: Option<String>,
 }
 
 /// One request that matched no rule.
@@ -52,6 +53,8 @@ pub struct PendingItem {
     pub attempts: u32,
     /// Whether it is still waiting.
     pub open: bool,
+    /// The program that asked first, as the agent named it.
+    pub program: Option<Program>,
 }
 
 impl StaticPolicy {
@@ -132,6 +135,11 @@ impl StaticPolicy {
         self.state().decisions
     }
 
+    /// Gives every workspace this name, as the store does for a named one.
+    pub fn set_workspace_name(&self, name: &str) {
+        self.state().workspace_name = Some(name.to_owned());
+    }
+
     /// Makes every later decision fail (or succeed again).
     pub fn set_unavailable(&self, unavailable: bool) {
         self.state().unavailable = unavailable;
@@ -139,6 +147,10 @@ impl StaticPolicy {
 }
 
 impl Policy for StaticPolicy {
+    fn workspace_name(&self, _: &WorkspaceId) -> Option<String> {
+        self.state().workspace_name.clone()
+    }
+
     fn decide(
         &self,
         request: &EgressRequest,
@@ -157,6 +169,9 @@ impl Policy for StaticPolicy {
         });
         if let Some(item) = open {
             item.attempts += 1;
+            if item.program.is_none() {
+                item.program.clone_from(&request.program);
+            }
             return Ok(Decision::Pending(PendingOutcome::Repeat(item.id)));
         }
         state.next_id += 1;
@@ -168,6 +183,7 @@ impl Policy for StaticPolicy {
             port: request.port,
             attempts: 1,
             open: true,
+            program: request.program.clone(),
         });
         Ok(Decision::Pending(PendingOutcome::New(id)))
     }

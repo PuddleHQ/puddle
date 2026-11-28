@@ -6,8 +6,8 @@
 # requests to main and on manual runs from develop, so a pull request to develop skips it. The jobs
 # run side by side, so the run takes as long as the slowest one instead of the sum: the tests are built once
 # (`test-build`, a nextest archive) and run on four runners (`tests`), the doc tests and the secret scan have a
-# job (`docs`), and the UI is split into Edge end-to-end (`ui-e2e`) and the rest (`ui-unit`). Two cache entries
-# (debug builds, clippy's check builds); only runs on develop save them. The release build has none.
+# job (`docs`), and the UI is split into Edge end-to-end (`ui-e2e`) and the rest (`ui-unit`). One cache entry
+# (debug builds); only runs on develop save it. Clippy and the release build have none.
 # A pull request runs only the jobs its changed files can affect (ci/scope.sh, the `scope` job):
 # no Rust, fixture or UI path skips clippy and tests, no UI-relevant path skips the UI job. Every
 # other trigger, and any doubt, runs everything; the result job accepts a skip only when `scope`
@@ -116,14 +116,15 @@ jobs:
         if: steps.changed.outputs.run == 'true'
         shell: bash
         run: rustup toolchain install && rustc --version
-      # Its own entry: check builds (rmeta) of the dependencies, so a pull request compiles only
-      # the workspace. Only develop saves it; cache-gc.yml deletes the superseded one.
+      # Restores nothing and saves nothing: its 1.4 GB entry pushed the repo's caches over GitHub's 10 GB save limit,
+      # which stops every new save. A cold run compiles the check builds of the dependencies. cache-gc.sh deletes
+      # any entry of this name left on develop.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         if: steps.changed.outputs.run == 'true'
         with:
           shared-key: windows-clippy
-          cache-on-failure: true
-          save-if: ${{ github.ref == 'refs/heads/develop' }}
+          lookup-only: true
+          save-if: false
       - name: clippy
         if: steps.changed.outputs.run == 'true'
         shell: bash
@@ -177,7 +178,7 @@ jobs:
           shared-key: windows
           cache-on-failure: true # a red build must not forfeit the dependencies
           save-if: ${{ github.ref == 'refs/heads/develop' }}
-      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
         if: steps.changed.outputs.run == 'true'
         with:
           tool: cargo-nextest@0.9.146
@@ -237,7 +238,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.test-build.outputs.run == 'true'
-      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
         if: needs.test-build.outputs.run == 'true'
         with:
           tool: cargo-nextest@0.9.146
@@ -315,6 +316,9 @@ jobs:
           # The queue stops at the first failure: the group is removed anyway, so the rest of the
           # run only delays the next group. A pull request and the nightly run every test.
           MAX_FAIL: ${{ github.event_name == 'merge_group' && '1' || '' }}
+          # A store-test call that outlives its limit writes a minidump of the hung process here (the step
+          # after the tests uploads it on failure). A native path: rundll32 gets it as an argument.
+          PUDDLE_HANG_DUMP_DIR: ${{ runner.temp }}\hang-dumps
         # The archive is unpacked into the checkout, where the build job's test binaries had their paths
         # (cargo bakes the workspace and binary paths into them). cargo-nextest runs directly, so the
         # rustup proxy never sets RUSTUP_TOOLCHAIN for the tests; the one that runs cargo (dev_override)
@@ -324,6 +328,7 @@ jobs:
           RUSTUP_TOOLCHAIN="$(sed -n 's/^channel *= *"\(.*\)".*/\1/p' rust-toolchain.toml)"
           [ -n "$RUSTUP_TOOLCHAIN" ] || { echo "no channel in rust-toolchain.toml"; exit 1; }
           export RUSTUP_TOOLCHAIN
+          mkdir -p "$(cygpath -u "$PUDDLE_HANG_DUMP_DIR")"
           # The tests' scratch directories go to the runner's D: drive. C: wrote 3000 small files in 2.6 to 4.5 s
           # against 0.3 to 0.6 s on D: (probe on all four runners), and a partition's test time was 47 to 72 s
           # with the default temp directory against 28 to 48 s with this one. lab-forgejo.yml does the same.
@@ -380,6 +385,14 @@ jobs:
           name: windows-test-results-${{ matrix.partition }}
           path: target/nextest/ci/junit.xml
           retention-days: 14
+          if-no-files-found: ignore
+      - name: upload hang dumps (red job)
+        if: ${{ failure() && needs.test-build.outputs.run == 'true' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-hang-dumps-${{ matrix.partition }}
+          path: ${{ runner.temp }}\hang-dumps
+          retention-days: 7
           if-no-files-found: ignore
       - name: Cancel the rest of the merge group
         if: ${{ failure() && github.event_name == 'merge_group' }}

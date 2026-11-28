@@ -32,13 +32,13 @@ const GENERATED: &str = "Written by Puddle at every boot; changes here are overw
 /// use puddle_guest_env::{MiseSettings, mise_config};
 /// use puddle_types::GuestPath;
 /// let settings = MiseSettings {
-///     dir: GuestPath::new("/workspaces/w/.puddle/mise").unwrap(),
-///     ceiling: GuestPath::new("/workspaces").unwrap(),
+///     dir: GuestPath::new("/workspace/.puddle/mise").unwrap(),
+///     ceiling: GuestPath::new("/").unwrap(),
 ///     trusted: None,
 ///     image_path: None,
 /// };
 /// let config = mise_config(&settings).unwrap();
-/// assert!(config.env.get("PATH").unwrap().starts_with("/workspaces/w/.puddle/mise/data/shims:"));
+/// assert!(config.env.get("PATH").unwrap().starts_with("/workspace/.puddle/mise/data/shims:"));
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MiseSettings {
@@ -115,20 +115,13 @@ pub fn mise_config(settings: &MiseSettings) -> Result<MiseConfig, ConfigError> {
 /// with a character that could end a sudoers string leaves `secure_path` alone: a bad line there
 /// would lock `sudo` for everyone.
 fn sudoers(env: &GuestEnv, path: &str) -> String {
-    let names: Vec<&str> = env
-        .iter()
-        .map(|(name, _)| name)
-        .filter(|name| name.starts_with("MISE_"))
-        .collect();
+    let keep = env.sudo_keep_line(|name| name.starts_with("MISE_"));
     let secure_path = if path.chars().all(is_plain_path_char) {
         format!("Defaults secure_path=\"{path}\"\n")
     } else {
         String::new()
     };
-    format!(
-        "# {GENERATED}\n# Keeps mise's variables under sudo.\nDefaults env_keep += \"{}\"\n{secure_path}",
-        names.join(" ")
-    )
+    format!("# {GENERATED}\n# Keeps mise's variables under sudo.\n{keep}{secure_path}")
 }
 
 fn is_plain_path_char(c: char) -> bool {

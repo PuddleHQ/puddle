@@ -10,8 +10,9 @@ fn workspace() -> WorkspaceId {
 
 #[test]
 fn no_left_file_is_no_notice() {
+    let no_files: &[(&str, &str)] = &[];
     assert_eq!(
-        merge_notices(&workspace(), "Acme shop", &[] as &[(&str, &str)]),
+        merge_notices(&workspace(), "Acme shop", no_files),
         Vec::<Problem>::new()
     );
 }

@@ -2,6 +2,8 @@
 //! Starting the host, serving the API, and the system checks.
 
 use super::*;
+use puddle_services::owned::OwnedWorkspace;
+use puddle_store::UserId;
 
 #[cfg(target_os = "linux")]
 #[test]
@@ -223,6 +225,7 @@ async fn the_daemon_serves_the_api_the_ui_and_the_event_stream() {
             "preparing_volume",
             "pulling_image",
             "starting",
+            "waiting_for_agent",
             "syncing",
             "cloning",
             "done"
@@ -424,24 +427,30 @@ async fn a_workspace_that_is_not_running_cannot_be_stopped_or_attached_to_and_an
     // So does the check that runs before a delete, for a workspace the host does not know.
     let unknown = host
         .workspaces()
-        .delete_check(&WorkspaceId::new("nobody").unwrap())
+        .delete_check(&OwnedWorkspace::for_test(
+            UserId::OWNER,
+            &WorkspaceId::new("nobody").unwrap(),
+        ))
         .await;
     assert!(
-        matches!(unknown, Err(puddle_api::WorkspaceError::NotFound(_))),
+        matches!(
+            unknown,
+            Err(puddle_services::workspaces::WorkspaceError::NotFound(_))
+        ),
         "{unknown:?}"
     );
     // The host refuses an attach to it as well, for a caller that did not pass the API's checks.
     let attached = host
         .workspaces()
         .attach(
-            &WorkspaceId::new("idle").unwrap(),
-            puddle_api::AttachMode::Browser,
+            &OwnedWorkspace::for_test(UserId::OWNER, &WorkspaceId::new("idle").unwrap()),
+            puddle_services::workspaces::AttachMode::Browser,
         )
         .await;
     assert!(
         matches!(
             attached,
-            Err(puddle_api::WorkspaceError::Conflict(ref m)) if m.ends_with("is not running; start it first")
+            Err(puddle_services::workspaces::WorkspaceError::Conflict(ref m)) if m.ends_with("is not running; start it first")
         ),
         "{attached:?}"
     );

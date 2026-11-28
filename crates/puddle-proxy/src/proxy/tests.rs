@@ -11,7 +11,7 @@ use puddle_netpolicy::LocalCategory;
 use puddle_types::{NullSink, PatternKind, PendingId, PendingOutcome, RuleId, RuleSetId};
 use tokio::net::{TcpListener, TcpStream};
 
-use super::forward::{abort, forward_one_request};
+use super::forward::abort;
 use super::*;
 use crate::destination::AddressVerdict;
 use crate::testing::{AnyAddress, StaticPolicy, StaticResolver};
@@ -78,6 +78,10 @@ where
         }
         (self.f)(mode)
     }
+
+    fn lookup(&self, _: &EgressRequest, _: SuffixAllows) -> Result<Option<Decision>, PolicyError> {
+        Ok(None)
+    }
 }
 
 /// Exact-only for 10/8, block for 127/8, allow for the rest.
@@ -113,13 +117,19 @@ async fn an_allowed_name_is_resolved_and_its_public_addresses_returned() {
     );
 }
 
+/// The status line of every "waiting for approval" refusal: the words a client that prints only the
+/// reason phrase shows its user.
+const WAITING_STATUS: &str = "403 Forbidden, waiting for approval in Puddle";
+
 #[tokio::test]
 async fn an_unmatched_name_is_pending_and_never_resolved() {
     let policy = Arc::new(StaticPolicy::new());
     // The resolver knows nothing: if the proxy resolved, the refusal would be a 502.
     let p = proxy(policy.clone(), StaticResolver::new());
     let first = admit(&p, &request("unknown.example")).await.unwrap_err();
-    assert_eq!(first.status, "403 Forbidden");
+    // The reason phrase carries the meaning too: curl shows neither the body nor the headers of a
+    // refused `CONNECT`, but Python, npm, Go and apt print the phrase.
+    assert_eq!(first.status, WAITING_STATUS);
     assert_eq!(header(&first, "x-puddle-decision"), Some("pending"));
     assert_eq!(header(&first, "x-puddle-pending"), Some("1"));
     assert!(
@@ -135,6 +145,29 @@ async fn an_unmatched_name_is_pending_and_never_resolved() {
     assert_eq!(items[0].workspace, workspace());
 }
 
+/// A tool that calls its own vendor's API unprompted (an installed Claude Code reaches
+/// `api.anthropic.com` on its first run) raises a pending row like any other tool: a login
+/// profile names the hosts whose stand-ins Puddle swaps, it is no allow rule for them.
+#[tokio::test]
+async fn a_login_profile_host_with_no_rule_is_pending_like_any_other() {
+    let claude = puddle_logins::builtin()
+        .iter()
+        .find(|profile| profile.id == "claude")
+        .unwrap();
+    let api = host("api.anthropic.com");
+    assert!(
+        claude.hosts().contains(&api),
+        "the profile no longer names the API host"
+    );
+    let policy = Arc::new(StaticPolicy::new());
+    let p = proxy(policy.clone(), StaticResolver::new());
+    let refusal = admit(&p, &request("api.anthropic.com")).await.unwrap_err();
+    assert_eq!(refusal.status, WAITING_STATUS);
+    assert_eq!(header(&refusal, "x-puddle-decision"), Some("pending"));
+    assert_eq!(policy.pending().len(), 1);
+    assert_eq!(policy.pending()[0].host, api);
+}
+
 #[tokio::test]
 async fn an_unlisted_request_still_says_it_is_waiting() {
     let p = proxy(
@@ -142,6 +175,7 @@ async fn an_unlisted_request_still_says_it_is_waiting() {
         StaticResolver::new(),
     );
     let refusal = admit(&p, &request("a.example")).await.unwrap_err();
+    assert_eq!(refusal.status, WAITING_STATUS);
     assert_eq!(header(&refusal, "x-puddle-decision"), Some("pending"));
     assert_eq!(header(&refusal, "x-puddle-pending"), None);
     assert!(
@@ -318,7 +352,21 @@ async fn ssh_is_blocked_before_the_policy_is_asked() {
     policy.allow(&host("github.com"));
     let p = proxy(policy.clone(), StaticResolver::new());
     let req = request("github.com").with_protocol(ProtocolHint::Ssh);
-    let refusal = admit(&p, &req).await.unwrap_err();
+    let head = Head {
+        method: "CONNECT".into(),
+        uri: "github.com:443".into(),
+        version: "HTTP/1.1".into(),
+        headers: vec![],
+    };
+    let plan = plan::ConnectionPlan::new(
+        &p,
+        &p.seen(&req.workspace),
+        &req,
+        &head,
+        plan::GuestHints::of(&req, &head),
+    );
+    assert!(matches!(plan, plan::ConnectionPlan::SshRefused));
+    let (refusal, _) = admit::refuse_ssh(&p, &req).await;
     assert_eq!(header(&refusal, "x-puddle-decision"), Some("blocked"));
     assert_eq!(
         header(&refusal, "x-puddle-blocked"),
@@ -386,7 +434,7 @@ async fn local_addresses_of_an_allowed_name_are_blocked_by_default() {
     assert!(
         refusal
             .message
-            .contains("turn on 'loopback' (host loopback) or 'metadata' (cloud metadata)"),
+            .contains("turn on 'This computer (loopback)' or 'Cloud metadata'"),
         "{}",
         refusal.message
     );
@@ -488,7 +536,7 @@ async fn the_audit_event_follows_each_admit_path() {
     // Name stage: SSH to a Git host's name never reaches the rules.
     let p = proxy(Arc::new(StaticPolicy::new()), resolver());
     let req = request("gitlab.com").with_protocol(ProtocolHint::Ssh);
-    let (_, e) = super::admit(&p, &req).await;
+    let (_, e) = admit::refuse_ssh(&p, &req).await;
     assert_eq!(
         kind(&e),
         (
@@ -885,6 +933,26 @@ mod guard {
     }
 
     #[tokio::test]
+    async fn block_text_names_the_workspace_by_its_name_not_its_id() {
+        let policy = Arc::new(StaticPolicy::new());
+        policy.set_workspace_name("Client work");
+        policy.allow(&host("10.1.2.3"));
+        let p = guarded(
+            policy,
+            StaticResolver::new(),
+            all_on().with_toggle(LocalCategory::Private, false),
+        );
+        let refusal = admit(&p, &request("10.1.2.3")).await.unwrap_err();
+        assert!(
+            refusal
+                .message
+                .contains("turn on 'Private networks' globally or for workspace Client work;"),
+            "{}",
+            refusal.message
+        );
+    }
+
+    #[tokio::test]
     async fn toggle_off_allowed_local_destination_is_blocked_naming_the_toggle() {
         let policy = Arc::new(StaticPolicy::new());
         policy.allow(&host("10.1.2.3"));
@@ -896,9 +964,9 @@ mod guard {
         let refusal = admit(&p, &request("10.1.2.3")).await.unwrap_err();
         assert_eq!(blocked(&refusal), Some("toggle:private"));
         assert!(
-            refusal.message.contains(
-                "turn on 'private' (local/private network) globally or for workspace box"
-            ),
+            refusal
+                .message
+                .contains("turn on 'Private networks' globally or for workspace box"),
             "{}",
             refusal.message
         );
@@ -1378,9 +1446,9 @@ mod guard {
                     let rule_id = RuleId(100 + i64::try_from(index).unwrap());
                     let pattern = PatternKind::Exact;
                     match kind {
-                        1 => { ip_rules.insert(ip(addr), Decision::Allow { rule_id, pattern }); }
+                        1 => { ip_rules.insert(ip(addr).to_canonical(), Decision::Allow { rule_id, pattern }); }
                         2 => {
-                            ip_rules.insert(ip(addr), Decision::Deny { rule_id, pattern });
+                            ip_rules.insert(ip(addr).to_canonical(), Decision::Deny { rule_id, pattern });
                             denied.push((ip(addr), rule_id));
                         }
                         _ => {}
@@ -1490,7 +1558,9 @@ mod termination {
         let proxy = terminating_proxy();
         for from_container in [false, true] {
             assert_eq!(
-                proxy.skipped(&at("github.com", 443, workspace()), from_container),
+                proxy
+                    .seen(&workspace())
+                    .skipped(&at("github.com", 443, workspace()), from_container),
                 None
             );
         }
@@ -1584,155 +1654,6 @@ fn network_timeouts_replace_the_defaults() {
     assert_eq!(config.connect_timeout, Duration::from_millis(22));
 }
 
-#[tokio::test]
-async fn forwarding_one_request_counts_the_pipelined_bytes_it_drops() {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let (guest, mut guest_peer) = tokio::io::duplex(4096);
-    let (upstream, mut upstream_peer) = tokio::io::duplex(4096);
-    let pipelined = b"GET /next HTTP/1.1\r\n\r\n";
-    guest_peer.write_all(b"hello").await.unwrap();
-    guest_peer.write_all(pipelined).await.unwrap();
-    let server = tokio::spawn(async move {
-        let mut body = [0u8; 5];
-        upstream_peer.read_exact(&mut body).await.unwrap();
-        assert_eq!(&body, b"hello");
-        upstream_peer.write_all(b"OK").await.unwrap();
-    });
-    let mut client = BufReader::new(guest);
-    let mut upstream = upstream;
-    let dropped = forward_one_request(&mut client, &mut upstream, Body::Length(5))
-        .await
-        .unwrap();
-    server.await.unwrap();
-    assert_eq!(dropped, pipelined.len());
-    let mut answer = Vec::new();
-    guest_peer.read_to_end(&mut answer).await.unwrap();
-    assert_eq!(answer, b"OK");
-}
-
-#[tokio::test]
-async fn forwarding_one_request_counts_pipelined_bytes_held_in_both_buffers() {
-    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
-    let (guest, mut guest_peer) = tokio::io::duplex(65536);
-    let (upstream, mut upstream_peer) = tokio::io::duplex(4096);
-    let pipelined = vec![b'p'; 12_000];
-    guest_peer.write_all(b"hello").await.unwrap();
-    guest_peer.write_all(&pipelined).await.unwrap();
-    let server = tokio::spawn(async move {
-        let mut body = [0u8; 5];
-        upstream_peer.read_exact(&mut body).await.unwrap();
-        upstream_peer.write_all(b"OK").await.unwrap();
-    });
-    // A buffer larger than the one the body copy reads through keeps part of the pipelined bytes.
-    let mut client = BufReader::with_capacity(16 * 1024, guest);
-    client.fill_buf().await.unwrap();
-    let mut upstream = upstream;
-    let dropped = forward_one_request(&mut client, &mut upstream, Body::Length(5))
-        .await
-        .unwrap();
-    server.await.unwrap();
-    assert_eq!(dropped, pipelined.len());
-}
-
-/// An upstream stream that holds its answer back until the request side was flushed (the
-/// last thing the upload does), so the upload finishes before the answer can: the order of the
-/// two halves of a forwarded request no longer depends on how the scheduler interleaves them.
-struct AnswersAfterFlush {
-    inner: tokio::io::DuplexStream,
-    flushed: bool,
-    waiting: Option<std::task::Waker>,
-}
-
-impl tokio::io::AsyncRead for AnswersAfterFlush {
-    fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<io::Result<()>> {
-        if !self.flushed {
-            self.waiting = Some(cx.waker().clone());
-            return std::task::Poll::Pending;
-        }
-        std::pin::Pin::new(&mut self.inner).poll_read(cx, buf)
-    }
-}
-
-impl tokio::io::AsyncWrite for AnswersAfterFlush {
-    fn poll_write(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<io::Result<usize>> {
-        std::pin::Pin::new(&mut self.inner).poll_write(cx, buf)
-    }
-
-    fn poll_flush(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<io::Result<()>> {
-        let done = std::pin::Pin::new(&mut self.inner).poll_flush(cx);
-        if done.is_ready() {
-            self.flushed = true;
-            if let Some(waker) = self.waiting.take() {
-                waker.wake();
-            }
-        }
-        done
-    }
-
-    fn poll_shutdown(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<io::Result<()>> {
-        std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
-    }
-}
-
-#[tokio::test]
-async fn an_answer_that_comes_after_the_whole_body_is_still_forwarded_in_full() {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let (guest, mut guest_peer) = tokio::io::duplex(4096);
-    let (held, mut upstream_peer) = tokio::io::duplex(4096);
-    guest_peer.write_all(b"hello").await.unwrap();
-    upstream_peer.write_all(b"OK").await.unwrap();
-    upstream_peer.shutdown().await.unwrap();
-    let mut client = BufReader::new(guest);
-    let mut upstream = AnswersAfterFlush {
-        inner: held,
-        flushed: false,
-        waiting: None,
-    };
-    let dropped = forward_one_request(&mut client, &mut upstream, Body::Length(5))
-        .await
-        .unwrap();
-    assert_eq!(dropped, 0);
-    let mut answer = Vec::new();
-    guest_peer.read_to_end(&mut answer).await.unwrap();
-    assert_eq!(answer, b"OK");
-}
-
-#[tokio::test]
-async fn an_answer_that_ends_before_the_body_is_sent_is_forwarded_and_the_upload_dropped() {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let (guest, mut guest_peer) = tokio::io::duplex(4096);
-    // One byte of room and a peer that never reads: the body cannot be written to the end.
-    let (mut upstream, mut upstream_peer) = tokio::io::duplex(1);
-    guest_peer.write_all(&[b'x'; 64]).await.unwrap();
-    let server = tokio::spawn(async move {
-        upstream_peer.write_all(b"E").await.unwrap();
-        upstream_peer.shutdown().await.unwrap();
-        upstream_peer
-    });
-    let mut client = BufReader::new(guest);
-    forward_one_request(&mut client, &mut upstream, Body::Length(64))
-        .await
-        .unwrap();
-    let _held_open = server.await.unwrap();
-    let mut answer = Vec::new();
-    guest_peer.read_to_end(&mut answer).await.unwrap();
-    assert_eq!(answer, b"E");
-}
-
 mod company_network {
     use puddle_netpolicy::StaticSignals;
     use puddle_types::CompanySignal;
@@ -1798,7 +1719,7 @@ mod company_network {
         policy.allow_as_suffix(&host("corp.example"));
         let p = proxy(policy.clone(), nexus()).with_address_check(guard(on));
         let (admitted, event) = super::super::admit(&p, &request("intranet.corp.example")).await;
-        assert_eq!(admitted.unwrap_err().status, "403 Forbidden");
+        assert_eq!(admitted.unwrap_err().status, WAITING_STATUS);
         assert_eq!(event.decision, ConnectionDecision::Pending);
         assert_eq!(policy.pending().len(), 1);
     }

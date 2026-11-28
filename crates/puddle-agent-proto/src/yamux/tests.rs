@@ -6,7 +6,11 @@ fn both_sides_use_the_16_mib_window() {
     assert_eq!(client_config().max_stream_window_size, STREAM_WINDOW);
     assert_eq!(server_config().max_stream_window_size, STREAM_WINDOW);
     assert_eq!(server_config().accept_backlog, ACCEPT_BACKLOG);
+    assert_eq!(server_config().max_stream_count, MAX_STREAMS);
+    assert_eq!(server_config().max_send_budget, SEND_BUDGET);
     assert!(server_config().enable_keepalive);
+    assert_eq!(server_config().keepalive_interval, KEEPALIVE);
+    assert_eq!(SEND_BUDGET, 32 << 20);
 }
 
 #[test]

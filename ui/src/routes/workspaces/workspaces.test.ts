@@ -14,6 +14,8 @@ const h = await vi.hoisted(async () => {
   };
 });
 
+const goto = vi.hoisted(() => vi.fn());
+vi.mock("$app/navigation", () => ({ goto }));
 vi.mock("#lib/stores/pending.svelte.ts", async (original) => {
   const mod = await original<typeof import("#lib/stores/pending.svelte.ts")>();
   return {
@@ -62,8 +64,10 @@ function reset() {
   workspaces.status = "loading";
   workspaces.progress = {};
   workspaces.oom = {};
-  workspaceActions.createOpen = false;
+  goto.mockClear();
   workspaceActions.connectOpen = false;
+  workspaceActions.renameOpen = false;
+  workspaceActions.renaming = null;
   workspaceActions.trustOpen = false;
   for (const t of [...toasts.items]) toasts.dismiss(t.id);
 }
@@ -130,50 +134,27 @@ describe("the workspace list", () => {
     expect(screen.getByText("1 workspace, 0 running")).toBeInTheDocument();
   });
 
-  it("shows the create form itself when there is none, not a box about it", async () => {
+  it("shows the whole create form when there is none, not a short one or a box about it", async () => {
     await mount();
     expect(
-      await screen.findByRole("textbox", { name: "Repository address" }),
+      await screen.findByRole("region", { name: "New workspace" }),
     ).toBeInTheDocument();
+    expect(screen.getByLabelText("Name")).toBeVisible();
+    expect(screen.getByLabelText("Image")).toBeVisible();
+    expect(screen.getByLabelText("Memory (GiB)")).toBeVisible();
     expect(screen.queryByText("No workspaces yet")).toBeNull();
+    expect(screen.queryByRole("button", { name: "More options" })).toBeNull();
     expect(screen.queryByRole("button", { name: "New workspace" })).toBeNull();
-    await fireEvent.click(screen.getByRole("button", { name: "More options" }));
-    expect(workspaceActions.createOpen).toBe(true);
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
   });
 
-  it("creates the first workspace from the address alone, named after the repository", async () => {
-    await mount();
-    await fireEvent.input(
-      await screen.findByRole("textbox", { name: "Repository address" }),
-      { target: { value: "https://github.com/acme/ledger.git" } },
-    );
-    expect(screen.getByText("It will be called ledger.")).toBeInTheDocument();
-    await fireEvent.click(
-      screen.getByRole("button", { name: "Create workspace" }),
-    );
-    await vi.waitFor(() => expect(api.bodies).toHaveLength(1));
-    expect(api.bodies[0]).toEqual({
-      name: "ledger",
-      repositories: [{ url: "https://github.com/acme/ledger.git" }],
-    });
-  });
-
-  it("says why an address cannot be used, at the field", async () => {
-    await mount();
-    await fireEvent.click(
-      await screen.findByRole("button", { name: "Create workspace" }),
-    );
-    expect(await screen.findByRole("alert")).toHaveTextContent(/address/i);
-    expect(api.bodies).toHaveLength(0);
-  });
-
-  it("opens the create dialog from the header button", async () => {
+  it("opens the New workspace screen from the header button", async () => {
     api.list = [workspace("a")];
     await mount();
     await fireEvent.click(
       await screen.findByRole("button", { name: "New workspace" }),
     );
-    expect(workspaceActions.createOpen).toBe(true);
+    expect(goto).toHaveBeenCalledWith("/workspaces/new");
   });
 
   it("starts a workspace from its row", async () => {
@@ -186,6 +167,29 @@ describe("the workspace list", () => {
       expect(workspaces.byId("w-docs")?.busy).toBe("starting"),
     );
     expect(screen.getByRole("article")).toHaveTextContent("Starting");
+  });
+
+  it("asks to rename or delete a workspace from its row menu", async () => {
+    const ask = vi
+      .spyOn(workspaceActions, "askDelete")
+      .mockResolvedValue(undefined);
+    api.list = [workspace("docs")];
+    await mount();
+    const choose = async (item: string) => {
+      await fireEvent.keyDown(
+        await screen.findByRole("button", { name: "More about docs" }),
+        { key: "Enter" },
+      );
+      await fireEvent.click(
+        await screen.findByRole("menuitem", { name: item }),
+      );
+    };
+    await choose("Rename docs");
+    expect(workspaceActions.renameOpen).toBe(true);
+    expect(workspaceActions.renaming?.id).toBe("w-docs");
+    await choose("Delete docs");
+    expect(ask).toHaveBeenCalledWith(expect.objectContaining({ id: "w-docs" }));
+    ask.mockRestore();
   });
 
   it("shows each row's own waiting count and no banner above the list", async () => {
@@ -248,12 +252,14 @@ describe("the workspace list", () => {
 });
 
 describe("the workspaces layout", () => {
-  it("listens for the whole section, shows the dialogs and toasts, and stops on leaving", async () => {
+  it("listens for the waiting requests of the section, shows the dialogs and toasts, and stops on leaving", async () => {
     api.list = [workspace("a", { status: "running" })];
     const start = vi.spyOn(workspaces, "start");
     const startPending = vi.spyOn(pending, "start");
     const view = render(Layout, { children: (() => {}) as never });
-    expect(start).toHaveBeenCalledOnce();
+    // The shell reads the list (the sidebar counts it); this section adds the waiting requests.
+    expect(start).not.toHaveBeenCalled();
+    const stopList = workspaces.start();
     expect(startPending).toHaveBeenCalledOnce();
     expect(workspaces.onSettled).toBe(workspaceActions.settled);
     expect(
@@ -277,6 +283,7 @@ describe("the workspaces layout", () => {
       expect(toasts.items.at(-1)?.message).toBe("Stopped a."),
     );
     view.unmount();
+    stopList();
     expect(workspaces.onSettled).toBeNull();
     start.mockRestore();
     startPending.mockRestore();

@@ -4,25 +4,18 @@ import { workspaces } from "#lib/stores/workspaces.svelte.ts";
 import { workspace as fakeWorkspace } from "#lib/testing/fake-workspaces.ts";
 import { connection } from "#lib/testing/fake-audit.ts";
 import {
-  DEFAULT_RANGE,
   NO_FILTER,
-  OUTCOMES,
-  TYPES,
-  bytesLabel,
-  describe as row,
-  exportName,
   fromSearch,
-  splitDetail,
-  isFiltered,
-  isNarrowed,
-  jsonLine,
   outcomeLabel,
-  rawJson,
   toQuery,
   toSearch,
   typeLabel,
+} from "./filter.ts";
+import {
+  describe as row,
+  bytesLabel,
+  splitDetail,
   type AuditRecord,
-  type Filter,
 } from "./model.ts";
 
 const rule = {
@@ -51,104 +44,6 @@ const pending = {
   decided_by: null,
   rule_id: null,
 };
-
-describe("filters and the API query", () => {
-  it("sends nothing for the defaults but the range", () => {
-    expect(toQuery(NO_FILTER, 100_000_000)).toEqual({
-      from: 100_000_000 - 86_400_000,
-    });
-    expect(toQuery({ ...NO_FILTER, range: "all" }, 5)).toEqual({});
-  });
-  it("sends every set filter, trimmed, and measures the range from now", () => {
-    const filter: Filter = {
-      workspace: "shop",
-      type: "connection",
-      outcome: "deny",
-      category: "company_network",
-      q: "  github  ",
-      range: "1h",
-    };
-    expect(toQuery(filter, 10_000_000)).toEqual({
-      workspace: "shop",
-      type: "connection",
-      outcome: "deny",
-      category: "company_network",
-      q: "github",
-      from: 10_000_000 - 3_600_000,
-    });
-  });
-  it("knows when a filter is not the default view", () => {
-    expect(isFiltered(NO_FILTER)).toBe(false);
-    expect(isFiltered({ ...NO_FILTER, q: "  " })).toBe(false);
-    for (const change of [
-      { workspace: "a" },
-      { type: "connection" },
-      { outcome: "allow" },
-      { category: "company_network" },
-      { q: "x" },
-      { range: "7d" },
-    ] as Partial<Filter>[]) {
-      expect(isFiltered({ ...NO_FILTER, ...change })).toBe(true);
-    }
-  });
-});
-
-describe("isNarrowed", () => {
-  it("is false only when nothing is left out of the log", () => {
-    expect(isNarrowed({ ...NO_FILTER, range: "all" })).toBe(false);
-    expect(isNarrowed(NO_FILTER)).toBe(true);
-    expect(isNarrowed({ ...NO_FILTER, range: "all", q: "  " })).toBe(false);
-    for (const change of [
-      { workspace: "a" },
-      { type: "connection" },
-      { outcome: "allow" },
-      { category: "company_network" },
-      { q: "x" },
-    ] as Partial<Filter>[]) {
-      expect(isNarrowed({ ...NO_FILTER, range: "all", ...change })).toBe(true);
-    }
-  });
-});
-
-describe("the page address", () => {
-  it("is empty for the default view", () => {
-    expect(toSearch(NO_FILTER)).toBe("");
-    expect(fromSearch("")).toEqual(NO_FILTER);
-  });
-  it("keeps the search in `q` and still reads the `host` of an older address", () => {
-    expect(toSearch({ ...NO_FILTER, q: " /v1/items " })).toBe(
-      "?q=%2Fv1%2Fitems",
-    );
-    expect(fromSearch("?q=post").q).toBe("post");
-    expect(fromSearch("?host=github.com").q).toBe("github.com");
-    expect(fromSearch("?q=a&host=b").q).toBe("a");
-  });
-  it("round-trips every filter, whatever the host holds", () => {
-    const filter: Filter = {
-      workspace: "shop",
-      type: "rule_created",
-      outcome: "blocked",
-      category: "company_network",
-      q: "a&b=c d",
-      range: "all",
-    };
-    expect(fromSearch(toSearch(filter))).toEqual(filter);
-    for (const t of TYPES)
-      expect(fromSearch(toSearch({ ...NO_FILTER, type: t.value })).type).toBe(
-        t.value,
-      );
-    for (const o of OUTCOMES)
-      expect(
-        fromSearch(toSearch({ ...NO_FILTER, outcome: o.value })).outcome,
-      ).toBe(o.value);
-  });
-  it("drops what it does not recognise instead of failing", () => {
-    expect(fromSearch("?type=nope&outcome=x&range=forever&other=1")).toEqual({
-      ...NO_FILTER,
-      range: DEFAULT_RANGE,
-    });
-  });
-});
 
 describe("labels", () => {
   it("names every type and outcome, and passes an unknown one through", () => {
@@ -471,7 +366,7 @@ describe("a record as a row", () => {
     const detail = (reason: string) =>
       row(connection(1, { reason, rule_id: null }).record).detail;
     expect(detail("push_denied")).toBe(
-      'because the push is not on the workspace\'s push list yet (click "Allow push" in the notice, or turn off "Only push to listed repos" on its Git tab)',
+      'because the push is not in the workspace\'s allowed repositories (click "Allow push" in the notice, or tick Push for it on the Git tab)',
     );
     for (const reason of [
       "push_denied",
@@ -526,6 +421,7 @@ describe("a record as a row", () => {
       connection(1, {
         host: "github.com",
         port: 22,
+        protocol: "ssh",
         method,
         path,
         reason: "rule",
@@ -539,11 +435,12 @@ describe("a record as a row", () => {
       `${words} · rule set builtin:git · credential added`,
     );
   });
-  it("words a refused SSH push with the push list's reason, and leaves HTTP alone", () => {
+  it("words a refused SSH push with the allowed repositories' reason, and leaves HTTP alone", () => {
     const refused = row(
       connection(1, {
         host: "github.com",
         port: 22,
+        protocol: "ssh",
         method: "git-receive-pack",
         path: "/acme/other",
         decision: "blocked",
@@ -553,11 +450,12 @@ describe("a record as a row", () => {
     );
     expect(refused.outcome).toEqual({ label: "Blocked", tone: "deny" });
     expect(refused.detail).toBe(
-      'SSH: push to github.com/acme/other · because the push is not on the workspace\'s push list yet (click "Allow push" in the notice, or turn off "Only push to listed repos" on its Git tab)',
+      'SSH: push to github.com/acme/other · because the push is not in the workspace\'s allowed repositories (click "Allow push" in the notice, or tick Push for it on the Git tab)',
     );
     const http = row(
       connection(2, {
         host: "github.com",
+        protocol: "http",
         method: "POST",
         path: "/acme/other/git-receive-pack",
         decision: "blocked",
@@ -567,11 +465,45 @@ describe("a record as a row", () => {
     );
     expect(http.detail).toMatch(/^POST \/acme\/other\/git-receive-pack · /);
   });
+  it.each([
+    ["push", "Git push: GET /acme/app.git/info/refs"],
+    ["fetch", "Git fetch: GET /acme/app.git/info/refs"],
+  ] as const)(
+    "words a Git smart-HTTP %s connection by its operation",
+    (git_operation, words) => {
+      const view = row(
+        connection(1, {
+          host: "github.com",
+          protocol: "http",
+          method: "GET",
+          path: "/acme/app.git/info/refs",
+          git_operation,
+        }).record,
+      );
+      expect(view.detail).toMatch(new RegExp(`^${words}`));
+    },
+  );
+  it("words a method by the record's protocol, not by its spelling", () => {
+    const base = { host: "github.com", path: "/acme/app", reason: "rule" };
+    const http = row(
+      connection(1, {
+        ...base,
+        protocol: "http",
+        method: "git-receive-pack",
+      }).record,
+    );
+    expect(http.detail).toMatch(/^git-receive-pack \/acme\/app · /);
+    const newer = row(
+      connection(2, { ...base, protocol: "ssh", method: "git-archive" }).record,
+    );
+    expect(newer.detail).toMatch(/^SSH: git-archive \/acme\/app · /);
+  });
   it("words a command or a channel request Puddle refused over SSH", () => {
     const command = row(
       connection(1, {
         host: "github.com",
         port: 22,
+        protocol: "ssh",
         method: "ssh-command",
         path: "/",
         decision: "blocked",
@@ -586,6 +518,7 @@ describe("a record as a row", () => {
       connection(2, {
         host: "github.com",
         port: 22,
+        protocol: "ssh",
         method: "ssh-channel",
         path: "/",
         decision: "blocked",
@@ -863,6 +796,8 @@ describe("a record as a row", () => {
       "git_switches_changed",
       "root_disk_grown",
       "git_repaired",
+      "audit_retention_changed",
+      "audit_pruned",
     ]) {
       expect(op({ op: kind }).detail).toMatch(/^[A-Z][a-z ]+, by api$/);
     }
@@ -1011,162 +946,5 @@ describe("records and states this build doesn't know", () => {
         pending: { ...pending, state: "snoozed" },
       } as unknown as AuditRecord).outcome,
     ).toEqual({ label: "snoozed", tone: "neutral" });
-  });
-});
-
-describe("rule set records (R-43)", () => {
-  const set = {
-    id: 4,
-    name: "Client X",
-    description: "",
-    created_at: 1,
-    created_by: "ui",
-  };
-  it("shows a set made, renamed or deleted by name", () => {
-    for (const type of [
-      "rule_set_created",
-      "rule_set_updated",
-      "rule_set_deleted",
-    ]) {
-      expect(
-        row({
-          type,
-          ts: 1,
-          rule_set: set,
-          before: set,
-          actor: "api",
-        } as AuditRecord),
-      ).toMatchObject({
-        workspace: null,
-        destination: "Client X",
-        detail: "user:4, by api",
-      });
-    }
-  });
-  it("shows a switch for every workspace or one", () => {
-    const switched = (workspace: string | null, enabled: boolean | null) =>
-      row({
-        type: "rule_set_switched",
-        ts: 1,
-        set_id: "builtin:github",
-        workspace_id: workspace,
-        enabled,
-        actor: "ui",
-      } as AuditRecord);
-    expect(switched(null, true)).toMatchObject({
-      workspace: null,
-      destination: "builtin:github",
-      detail: "on for every workspace, by ui",
-    });
-    expect(switched("api", false).detail).toBe("off for workspace api, by ui");
-    expect(switched("api", null).detail).toBe(
-      "follows the next level for workspace api, by ui",
-    );
-  });
-  it("shows a rule, a method and path rule or a built-in entry switched", () => {
-    const switched = (
-      kind: "rule" | "request_rule" | "builtin_entry",
-      enabled: boolean,
-    ) =>
-      row({
-        type: "rule_switched",
-        ts: 1,
-        kind,
-        id: kind === "builtin_entry" ? null : 4,
-        set_id: kind === "builtin_entry" ? "builtin:github" : null,
-        pattern: "api.github.com",
-        workspace_id: kind === "rule" ? "shop" : null,
-        enabled,
-        actor: "ui",
-      } as AuditRecord);
-    expect(switched("rule", false)).toMatchObject({
-      workspace: "shop",
-      destination: "api.github.com",
-      detail: "off, by ui",
-    });
-    expect(switched("request_rule", true).detail).toBe(
-      "on, rule on method and path, by ui",
-    );
-    expect(switched("builtin_entry", false).detail).toBe(
-      "off in builtin:github, by ui",
-    );
-  });
-  it("shows what an update changed in a built-in set", () => {
-    const changed = (added: string[], removed: string[]) =>
-      row({
-        type: "rule_set_changed",
-        ts: 1,
-        set_id: "builtin:github",
-        added,
-        removed,
-      } as AuditRecord).detail;
-    expect(changed(["a.example"], ["b.example"])).toBe(
-      "added a.example; removed b.example",
-    );
-    expect(changed(["a.example"], [])).toBe("added a.example");
-    expect(changed([], ["b.example"])).toBe("removed b.example");
-  });
-  it("shows why System managed changed, in words", () => {
-    const changed = (added: string[], removed: string[]) =>
-      row({
-        type: "system_managed_changed",
-        ts: 1,
-        workspace_id: null,
-        added,
-        removed,
-      } as AuditRecord).detail;
-    expect(changed(["microsoft_server"], ["code_server"])).toBe(
-      "now for Microsoft's VS Code server; no longer for code-server",
-    );
-    expect(changed(["direct_ssh", "later"], [])).toBe(
-      "now for direct SSH, later",
-    );
-    expect(changed([], ["direct_ssh"])).toBe("no longer for direct SSH");
-  });
-  it("names the set that decided a connection or a request", () => {
-    expect(
-      row(connection(1, { rule_id: null, rule_set: "system" }).record).detail,
-    ).toBe("System managed");
-    expect(
-      row(connection(1, { rule_id: 8, rule_set: "user:2" }).record).detail,
-    ).toBe("rule set user:2 · rule 8");
-    expect(
-      row({
-        type: "pending_decided",
-        ts: 1,
-        pending: {
-          ...pending,
-          state: "allowed",
-          decided_by: "system",
-          rule_set: "builtin:github",
-        },
-      } as AuditRecord).detail,
-    ).toBe("by system, rule set builtin:github");
-    expect(
-      row({
-        type: "rule_created",
-        ts: 1,
-        rule: { ...rule, scope: "set", workspace_id: null, set_id: 4 },
-      } as AuditRecord).detail,
-    ).toBe("allow in rule set 4, by ui");
-  });
-});
-
-describe("raw records and export lines", () => {
-  const { record } = connection(1, { host: 'a"b.test' });
-  it("indents the raw record and keeps a hostile host as text", () => {
-    expect(rawJson(record)).toContain('\n  "host": "a\\"b.test"');
-    expect(JSON.parse(rawJson(record))).toEqual(record);
-  });
-  it("writes one line per record, exactly as the API sent it", () => {
-    const line = jsonLine(record);
-    expect(line.endsWith("\n")).toBe(true);
-    expect(line.slice(0, -1)).not.toContain("\n");
-    expect(JSON.parse(line)).toEqual(record);
-  });
-  it("names the file after the moment, with no characters a file system refuses", () => {
-    expect(exportName(Date.UTC(2026, 9, 7, 12, 0, 5))).toBe(
-      "puddle-activity-2026-10-07T12-00-05.jsonl",
-    );
   });
 });

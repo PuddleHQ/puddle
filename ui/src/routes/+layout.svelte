@@ -10,8 +10,9 @@
   import { page } from "$app/state";
   import Notices from "#lib/components/Notices.svelte";
   import Sidebar from "#lib/components/Sidebar.svelte";
+  import WaitingStrip from "#lib/components/WaitingStrip.svelte";
   import SignInGate from "#lib/components/SignInGate.svelte";
-  import { documentTitle } from "#lib/nav.ts";
+  import { documentTitle, frameFor } from "#lib/nav.ts";
   import { api } from "#lib/api/client.ts";
   import { inDesktopApp } from "#lib/desktop/folder-picker.ts";
   import { NoticeWatcher } from "#lib/notify/watcher.ts";
@@ -94,6 +95,8 @@
       const stops = [
         live.start(),
         networkHealth.start(),
+        // The sidebar counts the workspaces on every screen.
+        workspaces.start(),
         watcher.start(),
         build.start(),
         reporter.start(),
@@ -114,7 +117,10 @@
       session.mode === "signed-in" &&
       (live.problem === "unauthorized" || live.stream === "refused")
     ) {
-      void session.recover();
+      void session.recover().then((signedIn) => {
+        // The stream ended at the refusal and the new token alone does not reopen it.
+        if (signedIn) live.reopenStream();
+      });
     }
   });
 
@@ -168,8 +174,13 @@
           refreshes every few seconds meanwhile.
         </p>
       {/if}
+      {#if !welcome}<WaitingStrip />{/if}
       <Notices />
-      <main id="main" tabindex="-1">
+      <main
+        id="main"
+        tabindex="-1"
+        class:page-reading={frameFor(page.url.pathname) === "reading"}
+      >
         {@render children()}
       </main>
     </div>

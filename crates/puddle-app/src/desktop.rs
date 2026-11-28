@@ -45,17 +45,25 @@ const NOTICE_MARKER: &str = "tray-notice-shown";
 ///
 /// # Errors
 ///
-/// What is wrong with the stored settings, in words; the caller falls back to the defaults.
-pub fn read_prefs(repo: &dyn SettingsRepo) -> Result<UiPrefs, String> {
-    let Some(document) = repo
-        .load_global()
-        .map_err(|e| format!("the settings cannot be read: {e}"))?
-    else {
+/// What is wrong with the stored settings; the caller falls back to the defaults.
+pub fn read_prefs(repo: &dyn SettingsRepo) -> Result<UiPrefs, PrefsError> {
+    let Some(document) = repo.load_global().map_err(PrefsError::Unreadable)? else {
         return Ok(UiPrefs::default());
     };
     GlobalSettings::from_document(document)
         .map(|loaded| loaded.settings.ui)
-        .map_err(|e| format!("the settings are not valid: {e}"))
+        .map_err(PrefsError::Invalid)
+}
+
+/// Why the window preferences could not be read. It displays as the words for the log.
+#[derive(Debug, thiserror::Error)]
+pub enum PrefsError {
+    /// The settings store could not be read.
+    #[error("the settings cannot be read: {0}")]
+    Unreadable(puddle_api::SettingsRepoError),
+    /// The stored settings are not valid.
+    #[error("the settings are not valid: {0}")]
+    Invalid(puddle_settings::SettingsError),
 }
 
 /// The preferences, or the defaults (with a warning) when the settings cannot be read: the window
@@ -398,10 +406,14 @@ fn show_badge<R: Runtime>(
         let _ = window.set_title(&badge::window_title(count, badge_on));
         #[cfg(windows)]
         {
-            let overlay = (badge_on && count > 0).then(|| {
-                let number = badge::overlay_number(count);
-                tauri::image::Image::new_owned(number.rgba, number.size, number.size)
-            });
+            // drawn at the size Windows shows it for this display, so it is not scaled
+            let scale = window.scale_factor().unwrap_or(1.0);
+            let overlay = (badge_on && count > 0)
+                .then(|| badge::overlay_number(count, scale))
+                .flatten()
+                .map(|number| {
+                    tauri::image::Image::new_owned(number.rgba, number.size, number.size)
+                });
             // the badge is cosmetic; a window that closed meanwhile has nothing to badge
             let _ = window.set_overlay_icon(overlay);
         }

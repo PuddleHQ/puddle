@@ -160,14 +160,16 @@ impl Store {
             .transpose()
     }
 
-    /// Records that `device` was used now and keeps it valid until `expires_at`.
+    /// Records that `device` was used now and keeps it valid until `expires_at`. A device that is
+    /// revoked or expired, or whose user is being deleted, stays as it is.
     ///
     /// # Errors
     /// A database error.
     pub fn touch_device(&self, device: DeviceId, expires_at: u64) -> Result<(), StoreError> {
         lock(&self.conn).execute(
             "UPDATE devices SET last_seen_at = ?2, expires_at = max(expires_at, ?3)
-             WHERE id = ?1 AND revoked_at IS NULL",
+             WHERE id = ?1 AND revoked_at IS NULL AND expires_at > ?2
+               AND user_id IN (SELECT id FROM users WHERE deleting_at IS NULL)",
             params![
                 device.get(),
                 sql_ts(self.clock.now_ms()),

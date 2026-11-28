@@ -206,6 +206,8 @@ async fn a_claude_login_keeps_the_tokens_and_the_tool_gets_stand_ins_with_their_
     assert!(!given.to_string().contains("CANARY"));
 
     assert_eq!(rig.registry.len(), 2);
+    assert_eq!(rig.registry.real_of(access).as_deref(), Some(REAL_ACCESS));
+    assert_eq!(rig.registry.real_of(refresh).as_deref(), Some(REAL_REFRESH));
     assert_eq!(rig.notices.seen(), []);
     let v = vault(&rig);
     let kept = v.read(&CLAUDE, Role::Access).unwrap().unwrap();
@@ -258,14 +260,20 @@ async fn an_old_claude_code_login_on_the_console_host_is_kept_like_a_new_one() {
 async fn a_refresh_gives_the_tool_the_same_stand_ins_with_new_tokens_behind_them() {
     let rig = rig();
     let first = claude_login(&rig, REAL_ACCESS, REAL_REFRESH).await;
-    let again = claude_login(
-        &rig,
-        "sk-ant-oat01-CANARY0access0second0EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE",
-        "sk-ant-ort01-CANARY0refresh0second0FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
-    )
-    .await;
+    let second_access =
+        "sk-ant-oat01-CANARY0access0second0EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE";
+    let second_refresh = "sk-ant-ort01-CANARY0refresh0second0FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF";
+    let again = claude_login(&rig, second_access, second_refresh).await;
     assert_eq!(first["access_token"], again["access_token"]);
     assert_eq!(first["refresh_token"], again["refresh_token"]);
+    // The registry, which the proxy swaps from, holds the new tokens, not the first ones.
+    let access = again["access_token"].as_str().unwrap();
+    let refresh = again["refresh_token"].as_str().unwrap();
+    assert_eq!(rig.registry.real_of(access).as_deref(), Some(second_access));
+    assert_eq!(
+        rig.registry.real_of(refresh).as_deref(),
+        Some(second_refresh)
+    );
     assert_eq!(rig.registry.len(), 2, "a slot has one stand-in");
     let kept = vault(&rig).read(&CLAUDE, Role::Access).unwrap().unwrap();
     assert!(kept.real.contains("second"));
@@ -592,11 +600,23 @@ async fn a_restart_gets_the_stand_ins_the_workspace_still_holds() {
     assert_eq!(second.registry.len(), 0);
     second.logins.load().await;
     assert_eq!(second.registry.len(), 2);
+    let access = given["access_token"].as_str().unwrap();
+    let refresh = given["refresh_token"].as_str().unwrap();
+    assert_eq!(
+        second.registry.real_of(access).as_deref(),
+        Some(REAL_ACCESS)
+    );
+    assert_eq!(
+        second.registry.real_of(refresh).as_deref(),
+        Some(REAL_REFRESH)
+    );
     assert_eq!(second.notices.seen(), []);
     assert_eq!(second.logins.kept(), first.logins.kept());
     // A refresh now reuses the stand-ins the workspace holds.
-    let again = claude_login(&second, REAL_ACCESS, REAL_REFRESH).await;
+    let renewed = "sk-ant-oat01-CANARY0access0third0GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG";
+    let again = claude_login(&second, renewed, REAL_REFRESH).await;
     assert_eq!(again["access_token"], given["access_token"]);
+    assert_eq!(second.registry.real_of(access).as_deref(), Some(renewed));
     assert_eq!(second.registry.len(), 2);
 }
 

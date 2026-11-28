@@ -544,6 +544,72 @@ fn r11_undoing_does_not_repeat_a_request_that_was_asked_again_meanwhile() {
 }
 
 #[test]
+fn r11_undoing_does_not_reopen_a_request_that_another_rule_decides() {
+    let (_, store) = fixture();
+    let plain = new_pending(decide(&store, "a", "api.example.com"));
+    let local = new_pending(
+        store
+            .decide(&req("a", "db.corp.example", 5432), SuffixAllows::Ignore)
+            .unwrap(),
+    );
+    let first = store
+        .resolve_pending(plain, &Resolution::allow(), Actor::Ui)
+        .unwrap();
+    let second = store
+        .resolve_pending(local, &Resolution::allow(), Actor::Ui)
+        .unwrap();
+    // A wider rule arrives after both rows closed. It decides the plain request again, but a
+    // request that needs an exact allow ignores a suffix allow, so it still has to be asked.
+    add(&store, None, "*.example.com", Effect::Allow);
+    add(&store, None, "*.corp.example", Effect::Allow);
+
+    let (_, reopened) = store.undo_decision(first.rule.id, Actor::Ui).unwrap();
+    assert_eq!(reopened.len(), 0);
+    let (_, reopened) = store.undo_decision(second.rule.id, Actor::Ui).unwrap();
+    assert_eq!(
+        reopened
+            .iter()
+            .map(|r| r.host.to_string())
+            .collect::<Vec<_>>(),
+        ["db.corp.example"]
+    );
+    assert!(reopened[0].exact_only);
+    assert!(matches!(
+        decide(&store, "a", "api.example.com"),
+        Decision::Allow { .. }
+    ));
+}
+
+#[test]
+fn r21_undoing_a_global_rule_does_not_reopen_requests_of_a_deleted_workspace() {
+    let (_, store) = fixture();
+    let gone = new_pending(decide(&store, "a", "example.com"));
+    let kept = new_pending(decide(&store, "b", "example.com"));
+    let decided = store
+        .resolve_pending(
+            gone,
+            &Resolution {
+                scope: ScopeChoice::Global,
+                ..Resolution::allow()
+            },
+            Actor::Ui,
+        )
+        .unwrap();
+    assert_eq!(decided.also_closed, vec![kept]);
+    store.delete_workspace(&sb("a")).unwrap();
+
+    let (_, reopened) = store.undo_decision(decided.rule.id, Actor::Ui).unwrap();
+    assert_eq!(
+        reopened
+            .iter()
+            .map(|r| r.workspace.clone())
+            .collect::<Vec<_>>(),
+        [sb("b")]
+    );
+    assert_eq!(store.pending(gone).unwrap().state, PendingState::Allowed);
+}
+
+#[test]
 fn r12_pending_rows_are_immutable_and_ids_never_reused() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("puddle.db");

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! What tells Puddle to shut down.
 
-use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
+
+use tokio::sync::oneshot;
 
 /// Why Puddle is shutting down.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,16 +78,32 @@ impl std::fmt::Display for ShutdownCause {
 
 /// The front's request on the worker's control pipe: one line naming the cause. EOF, an unknown
 /// line or a read error all mean the front is gone, which is also a reason to shut down.
+fn read_request<R: Read>(control: R) -> ShutdownCause {
+    let mut line = String::new();
+    match BufReader::new(control).read_line(&mut line) {
+        Ok(n) if n > 0 => ShutdownCause::parse(line.trim_end()).unwrap_or(ShutdownCause::FrontGone),
+        _ => ShutdownCause::FrontGone,
+    }
+}
+
+/// Reads [`read_request`] on a thread of its own, started now. A blocking read on the runtime's
+/// pool would keep the process alive after the shutdown: the front's pipe stays open until the
+/// front ends, so the read stays parked, and the runtime waits for pool threads when it drops.
 #[cfg_attr(
     all(not(windows), not(test)),
     expect(dead_code, reason = "the worker reads it on Windows only")
 )]
-pub(crate) async fn read_request<R: AsyncRead + Unpin>(control: R) -> ShutdownCause {
-    let mut line = String::new();
-    match BufReader::new(control).read_line(&mut line).await {
-        Ok(n) if n > 0 => ShutdownCause::parse(line.trim_end()).unwrap_or(ShutdownCause::FrontGone),
-        _ => ShutdownCause::FrontGone,
-    }
+pub(crate) fn spawn_request_reader<R: Read + Send + 'static>(
+    control: R,
+) -> std::io::Result<oneshot::Receiver<ShutdownCause>> {
+    let (sender, receiver) = oneshot::channel();
+    std::thread::Builder::new()
+        .name("shutdown-request".into())
+        .spawn(move || {
+            // a dropped receiver means nobody waits for the request any more
+            let _ = sender.send(read_request(control));
+        })?;
+    Ok(receiver)
 }
 
 /// The shutdown triggers, installed. Install them early (a `SIGTERM` that arrives before
@@ -112,6 +130,23 @@ impl ShutdownSignals {
     /// Resolves at the first trigger.
     pub async fn recv(&mut self) -> ShutdownCause {
         self.0.recv().await
+    }
+
+    /// Runs `work`, the shutdown that [`Self::recv`]'s trigger started, until it ends or the next
+    /// trigger arrives, whichever is first. `Err` carries that second trigger: the caller gives up
+    /// waiting for the stop to finish instead of leaving a stuck shutdown to `SIGKILL`.
+    ///
+    /// The Windows worker has no second trigger (the front's one request is its only input),
+    /// so `work` always runs to its end there.
+    ///
+    /// # Errors
+    ///
+    /// The cause of the second trigger, when it came before `work` ended.
+    pub async fn until_again<F: Future>(&mut self, work: F) -> Result<F::Output, ShutdownCause> {
+        tokio::select! {
+            out = work => Ok(out),
+            cause = self.0.recv_again() => Err(cause),
+        }
     }
 }
 
@@ -153,6 +188,10 @@ mod imp {
                 _ = self.hup.recv() => ShutdownCause::Hangup,
             }
         }
+
+        pub(super) async fn recv_again(&mut self) -> ShutdownCause {
+            self.recv().await
+        }
     }
 }
 
@@ -163,12 +202,12 @@ mod imp {
         ctrl_logoff, ctrl_shutdown,
     };
 
-    use super::{ShutdownCause, read_request};
+    use super::{ShutdownCause, spawn_request_reader};
 
     #[derive(Debug)]
     pub(super) enum Signals {
-        /// Under the front: its request arrives on stdin.
-        Worker(Option<tokio::io::Stdin>),
+        /// Under the front: its request arrives on stdin, read by a thread started at install.
+        Worker(Option<tokio::sync::oneshot::Receiver<ShutdownCause>>),
         Console {
             c: CtrlC,
             brk: CtrlBreak,
@@ -181,7 +220,7 @@ mod imp {
     impl Signals {
         pub(super) fn install() -> std::io::Result<Self> {
             if crate::supervise::is_worker() {
-                return Ok(Self::Worker(Some(tokio::io::stdin())));
+                return Ok(Self::Worker(Some(spawn_request_reader(std::io::stdin())?)));
             }
             Ok(Self::Console {
                 c: ctrl_c()?,
@@ -194,8 +233,9 @@ mod imp {
 
         pub(super) async fn recv(&mut self) -> ShutdownCause {
             match self {
-                Self::Worker(stdin) => match stdin.take() {
-                    Some(stdin) => read_request(stdin).await,
+                Self::Worker(request) => match request.take() {
+                    // a reader thread that ended without a request is the front gone too
+                    Some(request) => request.await.unwrap_or(ShutdownCause::FrontGone),
                     // The pipe was read to its end by an earlier call.
                     None => ShutdownCause::FrontGone,
                 },
@@ -212,6 +252,13 @@ mod imp {
                     _ = logoff.recv() => ShutdownCause::Logoff,
                     _ = shutdown.recv() => ShutdownCause::SystemShutdown,
                 },
+            }
+        }
+
+        pub(super) async fn recv_again(&mut self) -> ShutdownCause {
+            match self {
+                Self::Worker(_) => std::future::pending().await,
+                Self::Console { .. } => self.recv().await,
             }
         }
     }

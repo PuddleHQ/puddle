@@ -67,6 +67,37 @@ fn a_used_device_stays_valid_longer_and_never_shorter() {
 }
 
 #[test]
+fn a_device_that_expired_or_whose_user_is_being_deleted_is_not_extended() {
+    let (store, clock) = setup();
+    let ann = ann(&store);
+    let late = store.add_device(UserId::OWNER, "late", 5_000).unwrap();
+    let hers = store.add_device(ann, "phone", 5_000).unwrap();
+    // One millisecond before it lapses a use still extends it.
+    clock.set(4_999);
+    store.touch_device(late.id, 9_000).unwrap();
+    assert_eq!(store.devices(UserId::OWNER).unwrap()[0].expires_at, 9_000);
+
+    let lapsing = store.add_device(UserId::OWNER, "lapsing", 6_000).unwrap();
+    clock.set(6_000);
+    store.touch_device(lapsing.id, 20_000).unwrap();
+    clock.set(5_000);
+    let listed = store.devices(UserId::OWNER).unwrap();
+    let lapsing = listed.iter().find(|d| d.id == lapsing.id).unwrap();
+    assert_eq!((lapsing.expires_at, lapsing.last_seen_at), (6_000, 4_999));
+
+    store.begin_user_delete(UserId::OWNER, ann).unwrap();
+    clock.set(4_000);
+    store.touch_device(hers.id, 20_000).unwrap();
+    let kept = store
+        .devices(ann)
+        .unwrap()
+        .into_iter()
+        .find(|d| d.id == hers.id)
+        .unwrap();
+    assert_eq!((kept.expires_at, kept.last_seen_at), (5_000, 1_000));
+}
+
+#[test]
 fn a_device_name_and_user_are_checked() {
     let (store, _) = setup();
     assert!(matches!(

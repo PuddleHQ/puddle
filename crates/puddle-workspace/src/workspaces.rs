@@ -205,13 +205,14 @@ impl Workspaces {
         size: Option<DiskSize>,
         may_create: bool,
     ) -> Result<Attachment<'_>, WorkspaceError> {
-        self.reserve(rt, id, sandbox).await?;
+        let was_attached = self.reserve(rt, id, sandbox).await?;
         // On error the reservation drops here, which releases it.
         let reservation = Reservation {
             workspaces: self,
             id: id.clone(),
             sandbox: sandbox.clone(),
             open: true,
+            was_attached,
         };
         let mut created_volume = false;
         let mut kept_size = None;
@@ -280,13 +281,13 @@ impl Workspaces {
         rt: &R,
         id: &WorkspaceId,
         sandbox: &SandboxName,
-    ) -> Result<(), WorkspaceError> {
+    ) -> Result<bool, WorkspaceError> {
         let in_use = |h: Holder| WorkspaceError::InUse {
             workspace: id.to_string(),
             holder: h.sandbox.to_string(),
         };
         match self.registry.reserve(id, sandbox) {
-            Ok(()) => Ok(()),
+            Ok(was_attached) => Ok(was_attached),
             Err(h) if h.kind == HoldKind::Attached => {
                 let exists = rt
                     .list()
@@ -981,6 +982,7 @@ impl Workspaces {
         id: &WorkspaceId,
         image: &ImageRef,
         size: DiskSize,
+        user: SessionUser,
         imports: &[Import],
     ) -> Result<ImportReport, WorkspaceError> {
         let name = maintenance_name(id)?;
@@ -997,7 +999,14 @@ impl Workspaces {
             .map_err(|e| WorkspaceError::runtime("look up the volume", id, e))?;
         let existed = existing.is_some();
         let result = self
-            .run_import(rt, id, image, existing.as_ref(), size, imports)
+            .run_import(
+                rt,
+                id,
+                image,
+                existing.as_ref(),
+                size,
+                ImportRun { user, imports },
+            )
             .await;
         // The create makes the volume; whether it got that far is read, not assumed.
         let made = if existed {
@@ -1042,8 +1051,9 @@ impl Workspaces {
         image: &ImageRef,
         existing: Option<&VolumeInfo>,
         size: DiskSize,
-        imports: &[Import],
+        run: ImportRun<'_>,
     ) -> Result<Vec<(CheckoutDir, String)>, WorkspaceError> {
+        let ImportRun { user, imports } = run;
         let name = &maintenance_name(id)?;
         clear_leftover(rt, id, name).await?;
         let layout = Layout::new()?;
@@ -1074,7 +1084,7 @@ impl Workspaces {
                 return Err(WorkspaceError::runtime("create the import sandbox", id, e));
             }
         };
-        let work = self.import_into(&sandbox, id, &layout, imports).await;
+        let work = self.import_into(&sandbox, id, &layout, user, imports).await;
         let stopped = sandbox.stop().await;
         drop(sandbox);
         let removed = rt.remove(name).await;
@@ -1102,6 +1112,7 @@ impl Workspaces {
         sandbox: &S,
         id: &WorkspaceId,
         layout: &Layout,
+        user: SessionUser,
         imports: &[Import],
     ) -> Result<Vec<(CheckoutDir, String)>, WorkspaceError> {
         let mut failed = Vec::new();
@@ -1130,11 +1141,15 @@ impl Workspaces {
             };
             // git removes the folder of a clone it refused; a clone it was stopped in, or whose
             // finishing step failed, is half made.
-            let reason = match step(layout.import_request(n, dir)?).await? {
+            let reason = match step(layout.import_request(n, dir)?.as_user(user.name())).await? {
                 Some((reason, stopped)) => Some((reason, stopped)),
-                None => step(layout.finish_import_request(n, dir, &import.url)?)
-                    .await?
-                    .map(|(reason, _)| (reason, true)),
+                None => step(
+                    layout
+                        .finish_import_request(n, dir, &import.url)?
+                        .as_user(user.name()),
+                )
+                .await?
+                .map(|(reason, _)| (reason, true)),
             };
             let Some((mut reason, half_made)) = reason else {
                 info!(workspace = %id, checkout = %dir, "checkout imported");
@@ -1372,6 +1387,13 @@ fn unreachable_job<T>(id: &WorkspaceId) -> Result<T, WorkspaceError> {
     })
 }
 
+/// Who an import runs as and what it clones.
+#[derive(Clone, Copy)]
+struct ImportRun<'a> {
+    user: SessionUser,
+    imports: &'a [Import],
+}
+
 /// A workspace reserved for a sandbox that is being created (from [`Workspaces::prepare`]).
 /// Finish it with [`Attachment::commit`] or [`Attachment::abort`]; dropping it unfinished only
 /// releases the reservation (and logs a warning), leaving the runtime as it is.
@@ -1393,12 +1415,19 @@ struct Reservation<'w> {
     id: WorkspaceId,
     sandbox: SandboxName,
     open: bool,
+    /// The sandbox held the workspace attached before this reservation: dropping it open
+    /// restores that, so a failed recreate does not leave the workspace unowned.
+    was_attached: bool,
 }
 
 impl Drop for Reservation<'_> {
     fn drop(&mut self) {
         if self.open {
-            self.workspaces.registry.release(&self.id, &self.sandbox);
+            if self.was_attached {
+                self.workspaces.registry.attach(&self.id, &self.sandbox);
+            } else {
+                self.workspaces.registry.release(&self.id, &self.sandbox);
+            }
         }
     }
 }

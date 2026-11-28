@@ -22,6 +22,7 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 use crate::{
     StreamId,
+    budget::SendBudget,
     config::INITIAL_STREAM_WINDOW,
     error::Error,
     frame::{Flag, Flags, Frame, Type},
@@ -36,6 +37,8 @@ pub struct StreamHandle {
     max_recv_window: u32,
     pub(crate) recv_window: u32,
     send_window: u32,
+    // puddle: the session's send budget; unlimited until the session sets its own.
+    budget: Arc<SendBudget>,
     read_buf: Vec<BytesMut>,
 
     // Send stream event to parent session
@@ -82,12 +85,17 @@ impl StreamHandle {
             max_recv_window: max_window_size,
             recv_window: INITIAL_STREAM_WINDOW,
             send_window: INITIAL_STREAM_WINDOW,
+            budget: Arc::new(SendBudget::new(usize::MAX)),
             read_buf: Vec::new(),
             unbound_event_sender,
             frame_receiver,
             channel_waker: waker(Arc::clone(&wakers)),
             wakers,
         }
+    }
+
+    pub(crate) fn set_budget(&mut self, budget: Arc<SendBudget>) {
+        self.budget = budget;
     }
 
     /// Get the stream id
@@ -585,6 +593,10 @@ impl AsyncWrite for StreamHandle {
         }
         // Allow n = 0, send an empty frame to remote
         let n = ::std::cmp::min(self.send_window as usize, buf.len());
+        // puddle: data the session holds for the socket is bounded across all its streams.
+        let Some(n) = self.budget.reserve(n, cx) else {
+            return Poll::Pending;
+        };
         trace!(
             "stream-hanlde({}) poll_write self.send_window={}, buf.len={}, n={}",
             self.id,
@@ -599,8 +611,13 @@ impl AsyncWrite for StreamHandle {
 
                 Poll::Ready(Ok(n))
             }
-            Err(Error::WouldBlock) => Poll::Pending,
-            _ => Poll::Ready(Err(io::ErrorKind::BrokenPipe.into())),
+            Err(err) => {
+                self.budget.release(n);
+                match err {
+                    Error::WouldBlock => Poll::Pending,
+                    _ => Poll::Ready(Err(io::ErrorKind::BrokenPipe.into())),
+                }
+            }
         }
     }
 

@@ -886,3 +886,32 @@ async fn a_guest_that_streams_past_the_cap_is_cut_and_reported() {
     assert_eq!(all.stdout.len(), 10 * ExecRequest::DEFAULT_MAX_OUTPUT);
     assert!(!all.stdout_truncated);
 }
+
+#[tokio::test]
+async fn exec_as_a_user_the_image_lacks_is_refused() {
+    let rt = FakeRuntime::new();
+    let sb = rt.create(spec("a")).await.unwrap();
+    let err = sb
+        .exec(ExecRequest::sh("true").as_user("agent"))
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("guest user not found: agent"),
+        "{err}"
+    );
+    assert!(
+        sb.exec(ExecRequest::sh("true").as_user("root"))
+            .await
+            .unwrap()
+            .status
+            .success()
+    );
+    rt.add_guest_user(&ImageRef::new(FakeRuntime::DEBIAN).unwrap(), "agent");
+    assert!(
+        sb.exec(ExecRequest::sh("true").as_user("agent"))
+            .await
+            .unwrap()
+            .status
+            .success()
+    );
+}

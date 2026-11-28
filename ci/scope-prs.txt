@@ -240,7 +240,7 @@ ui/src/lib/network/model.ts
 ui/src/routes/settings/network-health/network-health.test.ts
 @33 rust true true true true
 crates/puddle-inject/src/header.rs
-crates/puddle-inject/tests/decisions.rs
+crates/puddle-inject/tests/decisions/main.rs
 crates/puddle-repos/src/api.rs
 crates/puddle-repos/src/azure.rs
 crates/puddle-repos/src/engine.rs

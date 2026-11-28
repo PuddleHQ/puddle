@@ -9,7 +9,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use puddle_netpolicy::normalise_host;
 use puddle_store::InterceptionSettings;
-use puddle_types::{CURATED_PASS_THROUGH, Host, InterceptionMode, WorkspaceId};
+use puddle_types::{CURATED_PASS_THROUGH, Host, HostPattern, InterceptionMode, WorkspaceId};
 
 use crate::authz::{self, Action, Principal, ResourceRef};
 use crate::extract::Path;
@@ -28,7 +28,7 @@ const MAX_NAMES: usize = 500;
 
 /// A never-decrypt name in its stored form: lower case, no trailing dot, `*.` kept. The same
 /// rules as the proxy's pattern set, so every stored name is one the proxy accepts.
-pub(super) fn pattern(raw: &str) -> Result<String, ApiError> {
+pub(super) fn pattern(raw: &str) -> Result<HostPattern, ApiError> {
     let (wild, name) = raw
         .trim()
         .strip_prefix("*.")
@@ -42,19 +42,21 @@ pub(super) fn pattern(raw: &str) -> Result<String, ApiError> {
         )));
     };
     let name = name.to_string();
-    if wild {
+    let stored = if wild {
         if name.split('.').count() < 2 {
             return Err(ApiError::invalid(format!(
                 "{raw:?} is too wide: a pattern needs at least two labels after `*.`"
             )));
         }
-        Ok(format!("*.{name}"))
+        format!("*.{name}")
     } else {
-        Ok(name)
-    }
+        name
+    };
+    HostPattern::parse_normalised(&stored)
+        .map_err(|e| ApiError::invalid(format!("{raw:?} is not a host pattern: {e}")))
 }
 
-fn patterns(raw: &[String]) -> Result<Vec<String>, ApiError> {
+fn patterns(raw: &[String]) -> Result<Vec<HostPattern>, ApiError> {
     if raw.len() > MAX_NAMES {
         return Err(ApiError::invalid(format!(
             "at most {MAX_NAMES} names ({} given)",
@@ -98,8 +100,13 @@ fn view(state: &AppState, name: &WorkspaceId) -> Result<InterceptionView, ApiErr
         workspace: name.clone(),
         mode: WorkspaceMode::of(own.mode),
         effective_mode,
-        never_decrypt: own.never_decrypt,
-        global_never_decrypt: state.store.global_never_decrypt()?,
+        never_decrypt: own.never_decrypt.iter().map(ToString::to_string).collect(),
+        global_never_decrypt: state
+            .store
+            .global_never_decrypt()?
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
     })
 }
 
@@ -206,7 +213,9 @@ pub(crate) async fn get_global_never_decrypt(
     State(state): State<AppState>,
 ) -> Result<Json<GlobalNeverDecrypt>, ApiError> {
     let never_decrypt = blocking(move || Ok(state.store.global_never_decrypt()?)).await?;
-    Ok(Json(GlobalNeverDecrypt { never_decrypt }))
+    Ok(Json(GlobalNeverDecrypt {
+        never_decrypt: never_decrypt.iter().map(ToString::to_string).collect(),
+    }))
 }
 
 /// Replaces the names no workspace decrypts. Running workspaces that decrypt every host apply it
@@ -231,7 +240,9 @@ pub(crate) async fn put_global_never_decrypt(
         Ok(state.store.global_never_decrypt()?)
     })
     .await?;
-    Ok(Json(GlobalNeverDecrypt { never_decrypt }))
+    Ok(Json(GlobalNeverDecrypt {
+        never_decrypt: never_decrypt.iter().map(ToString::to_string).collect(),
+    }))
 }
 
 /// Shortest time a host may be passed through: a minute.

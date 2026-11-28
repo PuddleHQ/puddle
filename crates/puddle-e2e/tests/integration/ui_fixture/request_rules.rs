@@ -45,7 +45,7 @@ async fn a_scenario_with_a_bad_rule_on_method_and_path_fails_to_start_and_names_
             "GE T",
         ),
         (json!({"host": "a.example", "path": "/a*"}), "whole segment"),
-        (json!({"host": "", "path": "/"}), "names a host"),
+        (json!({"host": "", "path": "/"}), "invalid host pattern"),
         (
             json!({"host": "a.example", "path": "/", "workspace": "Bad Name"}),
             "Bad Name",

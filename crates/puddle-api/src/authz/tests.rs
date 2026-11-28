@@ -1147,6 +1147,10 @@ async fn hostile_a_rule_for_the_owners_workspace_is_refused_as_an_unknown_worksp
 /// The warning on Ann's global request rule names only the never-decrypt names of her own
 /// workspaces: the rule never applies to the owner's, so their names are no business of hers.
 /// The owner's own global rule on the same host names the owner's workspace (the control).
+fn host_pattern(text: &str) -> puddle_types::HostPattern {
+    puddle_types::HostPattern::parse_normalised(text).unwrap()
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn hostile_a_request_rule_warning_names_only_the_callers_never_decrypt_names() {
     let (pair, things) = pair_with_owners_things().await;
@@ -1154,12 +1158,12 @@ async fn hostile_a_request_rule_warning_names_only_the_callers_never_decrypt_nam
     let box_id = things.workspace;
     let secret = "owners-secret.host.example";
     pair.store
-        .set_never_decrypt(&ws(&box_id), &[secret.to_owned()])
+        .set_never_decrypt(&ws(&box_id), &[host_pattern(secret)])
         .unwrap();
     let mine = ws("annsbox1");
     pair.store.set_workspace_owner(&mine, pair.ann_id).unwrap();
     pair.store
-        .set_never_decrypt(&mine, &["anns.host.example".to_owned()])
+        .set_never_decrypt(&mine, &[host_pattern("anns.host.example")])
         .unwrap();
     let global = json!({"workspace": null, "host": "*.host.example", "methods": [], "path": "/y"});
     let (status, created) = send(ann, token, "POST", "/api/request-rules", Some(&global)).await;
@@ -1365,7 +1369,7 @@ async fn a_user_makes_a_learned_host_permanent_for_her_workspace_only() {
             .workspace_interception(&anns)
             .unwrap()
             .never_decrypt,
-        ["one.example"]
+        [host_pattern("one.example")]
     );
     // The owner may, for a workspace of their own.
     let (status, created) = send(
@@ -1392,7 +1396,7 @@ async fn a_user_makes_a_learned_host_permanent_for_her_workspace_only() {
     assert_eq!(status, 204, "{body}");
     assert_eq!(
         pair.store.global_never_decrypt().unwrap(),
-        ["three.example"]
+        [host_pattern("three.example")]
     );
     pair.owner.1.shutdown().await;
     pair.ann.1.shutdown().await;

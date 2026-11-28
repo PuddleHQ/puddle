@@ -45,7 +45,10 @@ fn plain(text: &str, max: usize, what: &str) -> Result<String, StoreError> {
     if text.chars().count() > max {
         return Err(invalid(format!("{what} is longer than {max} characters")));
     }
-    if text.chars().any(|c| c.is_control() || c == '<' || c == '>') {
+    if text
+        .chars()
+        .any(|c| crate::users::is_hidden(c) || c == '<' || c == '>')
+    {
         return Err(invalid(format!("{what} has a character git does not keep")));
     }
     Ok(text.to_owned())

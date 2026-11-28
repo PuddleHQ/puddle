@@ -689,6 +689,82 @@ async fn cleanup_failed_create<R: Runtime>(
     first
 }
 
+/// The job a short-lived sandbox serves; names it in errors and logs.
+#[derive(Clone, Copy)]
+enum Scratch {
+    Import,
+    Maintenance,
+}
+
+impl Scratch {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Import => "import",
+            Self::Maintenance => "maintenance",
+        }
+    }
+
+    fn ops(self) -> [&'static str; 3] {
+        match self {
+            Self::Import => [
+                "create the import sandbox",
+                "stop the import sandbox",
+                "remove the import sandbox",
+            ],
+            Self::Maintenance => [
+                "create the maintenance sandbox",
+                "stop the maintenance sandbox",
+                "remove the maintenance sandbox",
+            ],
+        }
+    }
+}
+
+/// Runs `work` in a short-lived sandbox made from `spec`: creates it, then stops and removes it
+/// whatever `work` returned. `what` names the job in messages. A failed
+/// create is cleaned up; a failed stop or remove after a failed job reports both
+/// ([`WorkspaceError::Leftover`]), since the job's error alone would hide the sandbox left behind.
+async fn with_scratch_sandbox<R: Runtime, T>(
+    rt: &R,
+    id: &WorkspaceId,
+    spec: SandboxSpec,
+    what: Scratch,
+    work: impl AsyncFnOnce(&R::Sandbox) -> Result<T, WorkspaceError>,
+) -> Result<T, WorkspaceError> {
+    let name = spec.name.clone();
+    let [create_op, stop_op, remove_op] = what.ops();
+    let what = what.name();
+    debug!(workspace = %id, sandbox = %name, "starting the {what} sandbox");
+    let sandbox = match rt.create(spec).await {
+        Ok(s) => s,
+        Err(e) => {
+            if let Err(cleanup) = cleanup_failed_create(rt, &name, Before::NOTHING).await {
+                warn!(workspace = %id, error = %cleanup, "cleanup after a failed {what} create failed");
+            }
+            return Err(WorkspaceError::runtime(create_op, id, e));
+        }
+    };
+    let output = work(&sandbox).await;
+    let stopped = sandbox.stop().await;
+    drop(sandbox);
+    let removed = rt.remove(&name).await;
+    let cleanup = stopped
+        .map_err(|e| WorkspaceError::runtime(stop_op, id, e))
+        .and_then(|()| removed.map_err(|e| WorkspaceError::runtime(remove_op, id, e)));
+    match (output, cleanup) {
+        (Ok(output), Ok(())) => Ok(output),
+        (Ok(_), Err(e)) | (Err(e), Ok(())) => Err(e),
+        (Err(job), Err(leftover)) => {
+            warn!(workspace = %id, error = %leftover, "the {what} sandbox was left behind");
+            Err(WorkspaceError::Leftover {
+                workspace: id.to_string(),
+                job: job.to_string(),
+                leftover: leftover.to_string(),
+            })
+        }
+    }
+}
+
 fn unreachable_job<T>(id: &WorkspaceId) -> Result<T, WorkspaceError> {
     Err(WorkspaceError::Check {
         workspace: id.to_string(),

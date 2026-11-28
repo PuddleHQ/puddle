@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use super::{
-    Before, CheckoutDir, ComputeError, DiskSize, ExecRequest, FileMount, ImageRef, Import, Layout,
-    Loan, Runtime, Sandbox, SandboxSpec, SessionUser, VolumeInfo, VolumeMount, WorkspaceError,
-    WorkspaceId, Workspaces, cleanup_failed_create, clear_leftover, debug, import_mount, info,
-    maintenance_name, mount_for, tail, warn,
+    CheckoutDir, ComputeError, DiskSize, ExecRequest, FileMount, ImageRef, Import, Layout, Loan,
+    Runtime, Sandbox, SandboxSpec, Scratch, SessionUser, VolumeInfo, VolumeMount, WorkspaceError,
+    WorkspaceId, Workspaces, clear_leftover, debug, import_mount, info, maintenance_name,
+    mount_for, tail, warn, with_scratch_sandbox,
 };
 
 /// What [`Workspaces::import`] did.
@@ -134,37 +134,11 @@ impl Workspaces {
         for (n, import) in imports.iter().enumerate() {
             spec = spec.with_file_mount(FileMount::checkout(&import.git_dir, import_mount(n)?));
         }
-        debug!(workspace = %id, sandbox = %name, checkouts = imports.len(), "starting the import sandbox");
-        let sandbox = match rt.create(spec).await {
-            Ok(s) => s,
-            Err(e) => {
-                if let Err(cleanup) = cleanup_failed_create(rt, name, Before::NOTHING).await {
-                    warn!(workspace = %id, error = %cleanup, "cleanup after a failed import create failed");
-                }
-                return Err(WorkspaceError::runtime("create the import sandbox", id, e));
-            }
-        };
-        let work = self.import_into(&sandbox, id, &layout, user, imports).await;
-        let stopped = sandbox.stop().await;
-        drop(sandbox);
-        let removed = rt.remove(name).await;
-        let cleanup = stopped
-            .map_err(|e| WorkspaceError::runtime("stop the import sandbox", id, e))
-            .and_then(|()| {
-                removed.map_err(|e| WorkspaceError::runtime("remove the import sandbox", id, e))
-            });
-        match (work, cleanup) {
-            (Ok(failed), Ok(())) => Ok(failed),
-            (Ok(_), Err(e)) | (Err(e), Ok(())) => Err(e),
-            (Err(job), Err(leftover)) => {
-                warn!(workspace = %id, error = %leftover, "the import sandbox was left behind");
-                Err(WorkspaceError::Leftover {
-                    workspace: id.to_string(),
-                    job: job.to_string(),
-                    leftover: leftover.to_string(),
-                })
-            }
-        }
+        debug!(workspace = %id, sandbox = %name, checkouts = imports.len(), "importing checkouts");
+        with_scratch_sandbox(rt, id, spec, Scratch::Import, async |sandbox| {
+            self.import_into(sandbox, id, &layout, user, imports).await
+        })
+        .await
     }
 
     async fn import_into<S: Sandbox>(

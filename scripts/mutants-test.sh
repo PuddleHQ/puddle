@@ -312,7 +312,7 @@ F
 chmod +x bad-cargo
 export FAKE_GOOD_CARGO="$tmp/fake-cargo"
 for empty in '' 1; do
-    FAKE_TREE_EMPTY=$empty CARGO="$tmp/bad-cargo" scripts/mutants.sh --key puddle-a >/dev/null 2>&1 && fail "--key must refuse when cargo tree fails or lists no puddle crate"
+    FAKE_TREE_EMPTY=$empty CARGO="$tmp/bad-cargo" scripts/mutants.sh --key puddle-a >/dev/null 2>&1 && fail "--key must refuse when cargo tree fails or lists no workspace crate"
     : >"$FAKE_RUNS"
     FAKE_TREE_EMPTY=$empty CARGO="$tmp/bad-cargo" scripts/mutants.sh sweep --crate puddle-a --cache "$tmp/cache-badtree$empty" >/dev/null 2>&1
     [ "$(runs)" = 1 ] || fail "a sweep with no usable cargo tree must still run the crate"

@@ -111,7 +111,7 @@ closure() {
     }
     list=$(echo "$tree" | awk '$1 ~ /^puddle/ { print $1 }' | sort -u)
     [ -n "$list" ] || {
-        echo "mutants: cargo tree -p $1 lists no puddle crate, so the crate has no cache key" >&2
+        echo "mutants: cargo tree -p $1 lists no workspace crate, so the crate has no cache key" >&2
         return 1
     }
     echo "$list"

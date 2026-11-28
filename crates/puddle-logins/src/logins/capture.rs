@@ -2,9 +2,21 @@
 //! Capture of one token answer: which tokens it carries, the stand-ins the tool gets in their
 //! place, and the proxy's rewriter for the answer.
 
+use std::collections::BTreeSet;
+use std::sync::Arc;
+
+use bytes::Bytes;
+use puddle_proxy::{
+    AnswerHead, AnswerRewriter, FieldKind, InjectRefusal, MAX_EXCHANGE_BODY, Rewrite, SecretValue,
+    TokenBody, Want,
+};
+use zeroize::Zeroizing;
+
 use super::refusal::{holds_unnamed_token, is_uuid, refusal_for};
 use super::store::earlier_kept;
-use super::*;
+use super::{Logins, Problem};
+use crate::profile::{Audience, Endpoint, Field, Profile};
+use crate::shape;
 
 /// A token found in an answer: its field, the real token, its stand-in and whether that is new.
 pub(super) type Planned = (&'static Field, Zeroizing<String>, String, bool);

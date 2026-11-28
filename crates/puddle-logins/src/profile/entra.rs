@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The profile of Microsoft Entra.
 
-use super::*;
+use super::{Audience, Endpoint, Field, Keep, Method, Profile, Role, Scope, StandInKind};
 
 /// The token fields Microsoft Entra answers with, the same at the v1 and v2 endpoints.
 const ENTRA_TOKEN_FIELDS: &[Field] = &[

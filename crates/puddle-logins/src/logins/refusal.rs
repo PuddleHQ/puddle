@@ -2,7 +2,11 @@
 //! The refusal rule: an answer that carries a token Puddle would not replace is refused, and the
 //! tool is told why.
 
-use super::*;
+use puddle_proxy::{BodyField, FieldKind, InjectRefusal};
+use puddle_types::ReasonCode;
+
+use super::Problem;
+use crate::profile::{Endpoint, Profile};
 
 /// The shortest text in a token-like field that counts as a token: shorter ones are lifetimes,
 /// counts and flags that happen to carry the word in their name.

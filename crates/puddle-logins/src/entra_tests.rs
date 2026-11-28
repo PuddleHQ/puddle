@@ -148,7 +148,7 @@ async fn one_login_gives_each_resource_its_own_stand_in_that_reads_like_the_toke
     // The answer's other fields are the service's own.
     assert_eq!(given_arm["expires_in"], 3599);
     assert_eq!(given_arm["client_info"], "eyJ1aWQiOiJ1In0");
-    assert!(rig.notices.problems().is_empty());
+    assert_eq!(rig.notices.problems(), []);
 }
 
 #[tokio::test]
@@ -208,7 +208,7 @@ async fn a_resource_the_profile_does_not_name_is_kept_and_its_last_stand_ins_kee
         given.push(reply["access_token"].as_str().unwrap().to_owned());
         reals.push(real);
     }
-    assert!(rig.notices.problems().is_empty());
+    assert_eq!(rig.notices.problems(), []);
     assert_eq!(kept(&rig, slot("other")).1, reals[4]);
     for n in 1..5 {
         assert_ne!(given[n], reals[n]);

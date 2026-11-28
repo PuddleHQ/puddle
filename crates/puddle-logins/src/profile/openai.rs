@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The profile of `OpenAI`'s Codex.
 
-use super::*;
+use super::{Audience, Endpoint, Field, Keep, Method, Profile, Role, Scope, StandInKind};
 
 /// `OpenAI`'s Codex (`codex login` with a `ChatGPT` account): the OAuth code exchange, the refresh and
 /// the token exchange that trades the identity token for an API key all go to

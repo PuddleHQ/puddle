@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The profile of GitHub.
 
-use super::*;
+use super::{Audience, Endpoint, Field, Keep, Method, Profile, Role, Scope, StandInKind};
 
 /// GitHub (`gh auth login`, `copilot login`): the OAuth device flow and the web flow end at
 /// `github.com/login/oauth/access_token`, answered as a form or as JSON by the request's `Accept`.

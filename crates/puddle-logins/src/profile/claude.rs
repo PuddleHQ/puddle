@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The profile of Claude Code.
 
-use super::*;
+use super::{Audience, Endpoint, Field, Keep, Method, Profile, Role, Scope, StandInKind};
 
 /// The token fields Claude Code's token endpoints answer with, the same on every host that serves
 /// the exchange.

@@ -24,22 +24,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use bytes::Bytes;
-use puddle_proxy::{
-    AnswerHead, AnswerRewriter, BodyField, Exchange, ExchangeRewriter, FieldKind, InjectRefusal,
-    MAX_EXCHANGE_BODY, Rewrite, SecretValue, StandIn, StandInError, StandInOrigin, StandIns,
-    TerminationSet, TokenBody, Want,
-};
+use puddle_proxy::{Exchange, ExchangeRewriter, StandIns, TerminationSet};
 use puddle_secrets::SecretStore;
-use puddle_types::{Host, ReasonCode, WorkspaceId};
-use zeroize::Zeroizing;
+use puddle_types::{Host, WorkspaceId};
 
 use crate::marker::Marker;
-use crate::profile::{
-    Audience, Endpoint, Field, Keep, Method, Profile, Role, Scope, Slot, path_matches,
-};
-use crate::shape;
-use crate::vault::{STORE_TIMEOUT, Saved, Vault, VaultError};
+use crate::profile::{Endpoint, Method, Profile, Role, Slot, path_matches};
+use crate::vault::{STORE_TIMEOUT, Vault};
 
 /// What went wrong with a login, for the notice the user sees. Names only: no value is in any of
 /// these.
@@ -378,4 +369,5 @@ mod refusal;
 mod store;
 
 use capture::Capture;
+#[cfg(test)]
 pub(crate) use store::{MEMORY_KEPT, RETIRED_KEPT};

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The profile of Docker Hub.
 
-use super::*;
+use super::{Audience, Endpoint, Field, Keep, Method, Profile, Role, Scope, StandInKind};
 
 /// The token fields of Docker's login host (Auth0): the device flow's poll and a refresh answer with
 /// the same three. The access token is a JWT whose claims `docker` reads (`username` under

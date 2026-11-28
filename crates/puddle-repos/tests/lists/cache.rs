@@ -506,7 +506,7 @@ async fn reads_after_eight_asks_at_once(
     gate.let_go();
     let mut states = Vec::new();
     for ask in asks {
-        states.push(ask.await.unwrap()[0].state.clone());
+        states.extend(ask.await.unwrap().iter().map(|list| list.state));
     }
     (gate.arrived.load(Ordering::SeqCst), states)
 }

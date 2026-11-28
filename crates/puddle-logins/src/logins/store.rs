@@ -2,8 +2,20 @@
 //! The credential store side of a workspace's logins: the calls on the store with their time
 //! limit, what the start loads, what is listed as kept, forgotten and put back.
 
+use std::collections::BTreeSet;
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, PoisonError};
+use std::time::Duration;
+
+use puddle_proxy::{SecretValue, StandIn, StandInError, StandInOrigin};
+use puddle_secrets::SecretStore;
+use puddle_types::WorkspaceId;
+use zeroize::Zeroizing;
+
 use super::capture::Planned;
-use super::*;
+use super::{ForgetError, Kept, KeptList, KeptLogin, Logins, Problem};
+use crate::profile::{Field, Keep, Profile, Role, Scope, Slot};
+use crate::vault::{Saved, Vault, VaultError};
 
 /// What reading a profile's slots from the store found.
 #[derive(Default)]

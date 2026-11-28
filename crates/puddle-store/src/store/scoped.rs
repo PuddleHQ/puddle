@@ -23,7 +23,7 @@ impl Store {
 
 impl Store {
     /// Allows each of `hosts` for `workspace` that no rule of the workspace's user decides yet,
-    /// with an exact allow rule made by [`Actor::WorkspaceCreate`] (a create names the hosts of
+    /// with an exact allow rule made by [`Actor::WorkspaceCreate`](crate::rule::Actor::WorkspaceCreate) (a create names the hosts of
     /// its repositories, and the clone that follows would otherwise wait in the inbox). A host
     /// that is allowed already, or that a deny decides, gets no rule: a create never overrides a
     /// block. Returns the rules made.

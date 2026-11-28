@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The suite's own checks: each helper fails on the wrong answer and each case makes the calls it
 //! names, so a suite that silently does nothing is caught here.
 

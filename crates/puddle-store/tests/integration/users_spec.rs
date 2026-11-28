@@ -14,9 +14,9 @@ use puddle_store::testing::{all_users, break_database, own};
 use puddle_store::{
     Actor, AuditCursor, AuditFilter, Author, Coverage, CredentialBinding, EnvDraft, EnvName,
     EnvScope, IdentityDraft, Limits, ManualClock, NewRequestRule, NewRule, NewWorkspaceOp, Owner,
-    Pattern, PatternChoice, Precedence, Resolution, Scope, ScopeChoice, SshAgentAnswer,
-    SshAgentAskStart, Store, StoreError, SystemPlan, SystemReason, UserId, UserName,
-    WorkspaceOpKind, WorkspaceOpOutcome,
+    Pattern, PatternChoice, Precedence, RepoRef, RepoToggles, Resolution, Scope, ScopeChoice,
+    SshAgentAnswer, SshAgentAskStart, Store, StoreError, SwitchChange, SystemPlan, SystemReason,
+    UserId, UserName, WorkspaceOpKind, WorkspaceOpOutcome,
 };
 use puddle_types::{AccountName, HostName, SourceSpec};
 use puddle_types::{
@@ -737,8 +737,45 @@ fn a_workspace_with_no_user_is_refused_everywhere_and_still_cleaned_up() {
     );
     nobodys(store.workspace_git(&stray).map(drop));
     nobodys(store.set_workspace_identities(&stray, &[]).map(drop));
+    nobodys(
+        store
+            .add_repo(
+                &stray,
+                &RepoRef::new("github.com", "acme", "web").unwrap(),
+                RepoToggles::BOTH,
+                None,
+            )
+            .map(drop),
+    );
+    nobodys(
+        store
+            .change_git_switches(&stray, SwitchChange::Set(true), SwitchChange::Set(true))
+            .map(drop),
+    );
+    nobodys(
+        store
+            .set_ssh_agent_host(&stray, "git.example.com", None)
+            .map(drop),
+    );
+    nobodys(
+        store
+            .start_ssh_agent_ask(&stray, "git.example.com", "SHA256:abc", "ssh-ed25519")
+            .map(drop),
+    );
     assert_eq!(
         store.open_pending_every_user(&all_users(), None).unwrap(),
+        []
+    );
+    // The refused writes left nothing behind: once the workspace has a user it is empty.
+    own(&store, &stray);
+    let git = store.workspace_git(&stray).unwrap();
+    assert_eq!(git.repos, []);
+    assert!(!git.only_pull_listed && git.only_push_listed);
+    assert_eq!(store.ssh_agent_hosts(&stray).unwrap(), []);
+    assert_eq!(
+        store
+            .open_ssh_agent_asks_every_user(&all_users(), Some(&stray))
+            .unwrap(),
         []
     );
 }

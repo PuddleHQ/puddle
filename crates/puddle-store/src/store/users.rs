@@ -192,7 +192,7 @@ impl Store {
     ///
     /// # Errors
     /// [`StoreError::WorkspaceOwned`] when it already belongs to someone else,
-    /// [`StoreError::UnknownUser`], or a database error.
+    /// [`StoreError::UnknownUser`] (also for a user being deleted), or a database error.
     pub fn set_workspace_owner(
         &self,
         workspace: &WorkspaceId,
@@ -200,7 +200,7 @@ impl Store {
     ) -> Result<(), StoreError> {
         self.change(|conn, _now, _fx| {
             let known: bool = conn.query_row(
-                "SELECT count(*) > 0 FROM users WHERE id = ?1",
+                "SELECT count(*) > 0 FROM users WHERE id = ?1 AND deleting_at IS NULL",
                 [user.get()],
                 |r| r.get(0),
             )?;

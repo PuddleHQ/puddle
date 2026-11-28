@@ -28,10 +28,10 @@ runs:
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.temp }}/apt-debs/*.deb
-        key: apt-debs-${{ inputs.name }}-${{ env.ImageVersion }}-${{ hashFiles('.github/workflows/ci.yml') }}
+        key: apt-debs-${{ inputs.name }}-${{ env.ImageVersion }}-${{ hashFiles('.github/workflows/ci.yml', '.github/workflows/ci-unit.yml') }}
     - name: Restore
       if: ${{ github.ref != 'refs/heads/develop' }}
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.temp }}/apt-debs/*.deb
-        key: apt-debs-${{ inputs.name }}-${{ env.ImageVersion }}-${{ hashFiles('.github/workflows/ci.yml') }}
+        key: apt-debs-${{ inputs.name }}-${{ env.ImageVersion }}-${{ hashFiles('.github/workflows/ci.yml', '.github/workflows/ci-unit.yml') }}

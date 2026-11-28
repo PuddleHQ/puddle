@@ -13,12 +13,12 @@ use rusqlite::{OptionalExtension, Transaction, params};
 
 use super::audit::append_by;
 use super::rows::corrupt;
+use super::users::owner_in;
 use crate::audit::{AuditRecord, WorkspaceOpKind, WorkspaceOpOutcome, actor_str};
 use crate::error::StoreError;
 use crate::rule::Actor;
 use crate::users::UserId;
 
-use super::users::owner_in;
 use super::{AllUsers, Store, lock};
 
 /// How long a decided row is kept for the requests still waiting on it to read.
@@ -182,6 +182,7 @@ impl Store {
         key_type: &str,
     ) -> Result<SshAgentAskStart, StoreError> {
         self.change(|tx, now, fx| {
+            owner_in(tx, workspace)?;
             let granted = tx
                 .query_row(
                     "SELECT 1 FROM ssh_agent_grants

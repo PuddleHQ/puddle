@@ -20,10 +20,9 @@
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tokio::io::AsyncWriteExt;
 
 use crate::control::LineError;
-use crate::forward::{GuestLink, OpenError, read_line_exact};
+use crate::forward::{GuestLink, OpenError};
 
 /// Bytes that open a host-control stream ([`crate::kind::StreamKind::HostControl`] v1).
 pub const PREAMBLE: &[u8] = crate::kind::StreamKind::HostControl.preamble();
@@ -141,21 +140,9 @@ impl GuestLink {
     /// [`OpenError`] says whether the agent is gone, did not answer in [`REPLY_TIMEOUT`], or
     /// answered with something that is not a reply.
     pub async fn send(&self, message: &HostMessage) -> Result<HostReply, OpenError> {
-        let mut control = self.control.clone();
-        let mut stream = control
-            .open_stream()
-            .await
-            .map_err(|_| OpenError::Disconnected)?;
-        let exchange = async {
-            stream.write_all(PREAMBLE).await?;
-            stream.write_all(&message.to_line()).await?;
-            stream.flush().await?;
-            read_line_exact(&mut stream, MAX_LINE).await
-        };
-        let bytes = tokio::time::timeout(REPLY_TIMEOUT, exchange)
-            .await
-            .map_err(|_| OpenError::Timeout(REPLY_TIMEOUT))?
-            .map_err(|e| OpenError::Io(e.to_string()))?;
+        let mut asked = PREAMBLE.to_vec();
+        asked.extend_from_slice(&message.to_line());
+        let (_stream, bytes) = self.exchange(&asked, MAX_LINE, REPLY_TIMEOUT).await?;
         HostReply::from_line(&bytes).map_err(|e| OpenError::Io(e.to_string()))
     }
 }

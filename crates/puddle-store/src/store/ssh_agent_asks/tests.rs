@@ -38,6 +38,9 @@ fn store() -> (Arc<ManualClock>, Store, Arc<Seen>) {
     let store = Store::open_in_memory(clock.clone(), Limits::default())
         .unwrap()
         .with_events(seen.clone());
+    for name in ["a", "b"] {
+        store.set_workspace_owner(&ws(name), UserId::OWNER).unwrap();
+    }
     (clock, store, seen)
 }
 
@@ -489,12 +492,12 @@ fn breaking_the_database_with_refused_sql_panics() {
 #[test]
 fn a_question_of_a_workspace_with_no_user_is_answered_by_nobody() {
     let (_, store, _) = store();
-    let SshAgentAskStart::Open(id) = store
-        .start_ssh_agent_ask(&ws("loose"), "h.example.com", KEY, "ssh-ed25519")
-        .unwrap()
-    else {
-        panic!("a grant answered")
-    };
+    let id = open(&store, "loose", "h.example.com");
+    // A damaged database: the workspace lost its user row after the question was asked.
+    crate::testing::break_database(
+        &store,
+        "DELETE FROM workspace_owners WHERE workspace_id = 'loose'",
+    );
 
     let answered = store.as_user(UserId::OWNER).answer_ssh_agent_ask(
         &ws("loose"),

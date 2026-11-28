@@ -131,12 +131,13 @@ mod gate {
         WorkspaceId::new(name).unwrap()
     }
 
+    /// A store whose workspaces "a" and "b" belong to a user: the writes refuse an unowned one.
     fn store() -> Arc<Store> {
         let store =
             Store::open_in_memory(Arc::new(ManualClock::new(1_000)), Limits::default()).unwrap();
         // The workspaces the tests ask from are the owner's, who answers.
-        for workspace in ["a", "b"] {
-            puddle_store::testing::own(&store, &ws(workspace));
+        for name in ["a", "b"] {
+            puddle_store::testing::own(&store, &ws(name));
         }
         Arc::new(store)
     }

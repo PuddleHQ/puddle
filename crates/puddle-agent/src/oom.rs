@@ -10,12 +10,13 @@
 //!
 //! A log line is reported at once with its pid and name. A counter increase that no log line
 //! accounts for within the grace period is reported without them. [`Correlator`] matches the
-//! two so one kill is one report, whichever arrives first. Kills from before the agent started
+//! two so one kill is one report, whichever arrives first. A line that comes after its kill was
+//! already reported unnamed is dropped, not reported a second time. Kills from before the agent started
 //! are not reported: the counter's first reading is the baseline and the log is read from its end.
 
 use std::collections::VecDeque;
 use std::fs::File;
-use std::io::{self, BufRead, BufReader, Seek, SeekFrom};
+use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 use std::time::Duration;
 
@@ -78,14 +79,31 @@ pub fn parse_vmstat(text: &str) -> Option<u64> {
         .and_then(|n| n.trim().parse().ok())
 }
 
+/// What a log kill turned out to be.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Logged {
+    /// A kill not reported yet: report it with its name.
+    New,
+    /// The kill the watch already reported unnamed, because its line came after the grace
+    /// period: report nothing more, so one kill stays one report.
+    AlreadyReported,
+}
+
 /// Matches counter increases with log kills, so each kill is reported once.
+///
+/// Both lists of leftovers (a log kill the counter hasn't shown, an unnamed report no log kill
+/// has claimed) are forgotten after `grace`, so a missing source can't leave a credit that
+/// swallows a much later kill.
 #[derive(Debug)]
 pub struct Correlator {
     grace: Duration,
-    /// Log kills the counter hasn't shown yet.
-    logged_ahead: u64,
+    /// When each log kill the counter hasn't shown yet arrived.
+    logged_ahead: VecDeque<Instant>,
     /// Counter increases no log kill has claimed yet: (when seen, how many).
     unclaimed: VecDeque<(Instant, u64)>,
+    /// Counted kills already reported unnamed, which a late log line may still belong to:
+    /// (when reported, how many).
+    reported: VecDeque<(Instant, u64)>,
 }
 
 impl Correlator {
@@ -94,27 +112,44 @@ impl Correlator {
     pub fn new(grace: Duration) -> Self {
         Self {
             grace,
-            logged_ahead: 0,
+            logged_ahead: VecDeque::new(),
             unclaimed: VecDeque::new(),
+            reported: VecDeque::new(),
         }
     }
 
-    /// A log kill arrived (and was reported with its name).
-    pub fn on_logged(&mut self) {
+    /// A log kill arrived at `now`. It claims, in order, a counted kill still waiting for its
+    /// line, an unnamed report sent within the last `grace` (a late line), or else waits for
+    /// its counter increase.
+    pub fn on_logged(&mut self, now: Instant) -> Logged {
+        self.forget_old(now);
         match self.unclaimed.front_mut() {
             Some((_, n)) if *n > 1 => *n -= 1,
             Some(_) => {
                 self.unclaimed.pop_front();
             }
-            None => self.logged_ahead = self.logged_ahead.saturating_add(1),
+            None => match self.reported.front_mut() {
+                Some((_, n)) if *n > 1 => {
+                    *n -= 1;
+                    return Logged::AlreadyReported;
+                }
+                Some(_) => {
+                    self.reported.pop_front();
+                    return Logged::AlreadyReported;
+                }
+                None => self.logged_ahead.push_back(now),
+            },
         }
+        Logged::New
     }
 
     /// The counter went up by `delta` at `now`.
     pub fn on_counted(&mut self, delta: u64, now: Instant) {
-        let claimed = delta.min(self.logged_ahead);
-        self.logged_ahead -= claimed;
-        let rest = delta - claimed;
+        self.forget_old(now);
+        let mut rest = delta;
+        while rest > 0 && self.logged_ahead.pop_front().is_some() {
+            rest -= 1;
+        }
         if rest > 0 {
             self.unclaimed.push_back((now, rest));
         }
@@ -130,7 +165,22 @@ impl Correlator {
             due = due.saturating_add(n);
             self.unclaimed.pop_front();
         }
+        if due > 0 {
+            self.reported.push_back((now, due));
+        }
         due
+    }
+
+    /// Drops what is `grace` old or older at `now`.
+    fn forget_old(&mut self, now: Instant) {
+        let grace = self.grace;
+        let old = |at: Instant| now.saturating_duration_since(at) >= grace;
+        while self.logged_ahead.front().is_some_and(|&at| old(at)) {
+            self.logged_ahead.pop_front();
+        }
+        while self.reported.front().is_some_and(|&(at, _)| old(at)) {
+            self.reported.pop_front();
+        }
     }
 }
 
@@ -189,8 +239,9 @@ async fn watch_observed(
             biased;
             () = out.closed() => return,
             Some(kill) = kills.recv() => {
-                correlator.on_logged();
-                if !send(&out, AgentMessage::oom_kill(Some(kill.pid), Some(kill.process))) {
+                if correlator.on_logged(Instant::now()) == Logged::New
+                    && !send(&out, AgentMessage::oom_kill(Some(kill.pid), Some(kill.process)))
+                {
                     return;
                 }
             }
@@ -259,8 +310,8 @@ fn open_log(path: &Path) -> io::Result<File> {
 /// Blocking reader (own thread): one record per line, kills go to `out`. On `/dev/kmsg` a read
 /// blocks until a record arrives; on a plain file (tests) end of file is polled every `poll`.
 /// Ends when `out` closes or the log fails.
-fn read_log(file: File, poll: Duration, out: &mpsc::Sender<Kill>, queued: impl Fn()) {
-    let mut reader = BufReader::with_capacity(16 * 1024, file);
+fn read_log(log: impl Read, poll: Duration, out: &mpsc::Sender<Kill>, queued: impl Fn()) {
+    let mut reader = BufReader::with_capacity(16 * 1024, log);
     let mut record = Vec::with_capacity(1024);
     loop {
         record.clear();

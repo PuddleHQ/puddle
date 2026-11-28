@@ -566,8 +566,15 @@ printf "%s %s %s\n" "$boot" "$code" "$tail" >"$run/entrypoint.exit.new" &&
     mv -f "$run/entrypoint.exit.new" "$run/entrypoint.exit"
 exit "$code"'
 if [ "$#" -gt 0 ]; then
+    # The pid file carries the boot id of the start, so a file from this boot means the
+    # entrypoint was started once already: running, or exited (a one-shot init) and not to run
+    # again on a hook re-run. A file from an earlier boot (another id) does not count.
+    entry_boot=
+    if [ -f "$RUN/entrypoint.pid" ]; then read -r entry_boot _ <"$RUN/entrypoint.pid" || entry_boot=; fi
     if alive "$RUN/entrypoint.pid"; then
         say "entrypoint already running"
+    elif [ "$boot_id" != unknown ] && [ "$entry_boot" = "$boot_id" ]; then
+        say "entrypoint already started in this boot"
     else
         rm -f "$RUN/entrypoint.exit" "$RUN/entrypoint.began" "$RUN/entrypoint.ended"
         (

@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+use std::time::Duration;
+
 use puddle_types::{ConnectionEvent, Host};
 
 use super::rows::{RawPending, RawRule, pending_from_raw, rule_from_raw};
@@ -365,6 +367,17 @@ fn summarised_connections(store: &Store) -> u64 {
         .sum()
 }
 
+/// The `connection` records that are not summaries.
+fn plain_connections(store: &Store) -> usize {
+    store
+        .audit_lines(0, 100_000)
+        .unwrap()
+        .into_iter()
+        .map(|(_, line)| serde_json::from_str::<serde_json::Value>(&line).unwrap())
+        .filter(|v| v["type"] == "connection" && v["reason"] != "suppressed")
+        .count()
+}
+
 fn request(workspace: &str, host: &str) -> EgressRequest {
     EgressRequest::new(
         WorkspaceId::new(workspace).unwrap(),
@@ -498,6 +511,57 @@ fn a_summary_is_written_alone_when_the_new_second_admits_no_record() {
     store.record_connection(&puddle_event()).unwrap();
     assert_eq!(summarised_connections(&store), 1);
     assert_eq!(recorded_count(&store, "connection", "count"), 1);
+}
+
+#[test]
+fn a_wall_clock_step_back_keeps_the_connection_limit_and_the_next_second_opens_a_new_window() {
+    let clock = Arc::new(ManualClock::new(1_000_000));
+    let limits = Limits {
+        connection_records_per_second: 1,
+        ..Limits::default()
+    };
+    let store = Store::open_in_memory(clock.clone(), limits).unwrap();
+    store.record_connection(&puddle_event()).unwrap();
+    store.record_connection(&puddle_event()).unwrap();
+    // Ten minutes back: still the same second of real time, so the second record stays refused.
+    clock.set(400_000);
+    store.record_connection(&puddle_event()).unwrap();
+    assert_eq!(plain_connections(&store), 1);
+    // A second later the window has moved on, though the wall clock still reads ten minutes back.
+    clock.advance(1_000);
+    store.record_connection(&puddle_event()).unwrap();
+    assert_eq!(plain_connections(&store), 2);
+    assert_eq!(summarised_connections(&store), 2);
+    // A sweep reads the monotonic clock too: the second after that ends the window with excess.
+    store.record_connection(&puddle_event()).unwrap();
+    clock.advance(1_000);
+    store.sweep().unwrap();
+    assert_eq!(summarised_connections(&store), 3);
+}
+
+#[test]
+fn the_audit_size_counts_the_search_text_a_long_path_adds() {
+    let (_, store) = store();
+    let before = store.audit_bytes().unwrap();
+    let mut record = crate::audit::ConnectionRecord::from_event(
+        1,
+        &ConnectionEvent::new(
+            &request("a", "x.example"),
+            ConnectionDecision::Allow,
+            ConnectionReason::Rule,
+        ),
+    );
+    record.path = Some(format!("/{}", "p".repeat(5_000)));
+    record.category = Some("company_network".into());
+    let record = AuditRecord::connection(record);
+    let line = record.to_line().unwrap().len() as u64;
+    let search = record.search_text().unwrap().len() as u64;
+    assert!(search > crate::MAX_FIELD_BYTES as u64 && search < 2 * crate::MAX_FIELD_BYTES as u64);
+    append(&lock(&store.conn), &record).unwrap();
+    assert_eq!(
+        store.audit_bytes().unwrap() - before,
+        line + search + "company_network".len() as u64
+    );
 }
 
 #[test]
@@ -915,4 +979,57 @@ fn the_entries_of_a_hidden_built_in_set_are_not_served() {
         store.built_in_entries(UserId::OWNER, github, "", 0, 10),
         Err(StoreError::UnknownRuleSet(_))
     ));
+}
+
+#[test]
+fn the_rule_set_list_never_mixes_a_switch_from_before_a_commit_with_rows_from_after() {
+    let (_, store) = store();
+    let before = store.rule_sets(UserId::OWNER).unwrap();
+    let target = before[0].id;
+    assert!(before[0].global.is_none(), "no switch yet");
+    let seen = std::thread::scope(|scope| {
+        // A commit in flight: it holds the lock and swaps the index before it lets go.
+        let conn = lock(&store.conn);
+        let reader = scope.spawn(|| store.rule_sets(UserId::OWNER).unwrap());
+        // Ordering with no signal: the reader has no event to say it reached the lock, so give it time to block on it.
+        std::thread::sleep(Duration::from_millis(300));
+        conn.execute(
+            "INSERT INTO rule_set_switches (rule_set, workspace_id, enabled, changed_at, user_id)
+             VALUES (?1, NULL, 1, 0, 1)",
+            [target.to_string()],
+        )
+        .unwrap();
+        let index = sets::load_index(&conn).unwrap();
+        *store.rules.write().unwrap() = Arc::new(index);
+        drop(conn);
+        reader.join().unwrap()
+    });
+    let listed = seen.iter().find(|s| s.id == target).unwrap();
+    assert_eq!(listed.global, Some(true), "the list reflects the commit");
+}
+
+#[test]
+fn one_rule_set_is_read_with_the_index_of_the_same_lock() {
+    let (_, store) = store();
+    let made = store
+        .create_rule_set(UserId::OWNER, "Mine", "", None, Actor::Ui)
+        .unwrap();
+    assert!(made.global.is_none());
+    let seen = std::thread::scope(|scope| {
+        let conn = lock(&store.conn);
+        let reader = scope.spawn(|| store.rule_set(UserId::OWNER, made.id).unwrap());
+        // Ordering with no signal: the reader has no event to say it reached the lock, so give it time to block on it.
+        std::thread::sleep(Duration::from_millis(300));
+        conn.execute(
+            "INSERT INTO rule_set_switches (rule_set, workspace_id, enabled, changed_at, user_id)
+             VALUES (?1, NULL, 0, 0, 1)",
+            [made.id.to_string()],
+        )
+        .unwrap();
+        let index = sets::load_index(&conn).unwrap();
+        *store.rules.write().unwrap() = Arc::new(index);
+        drop(conn);
+        reader.join().unwrap()
+    });
+    assert_eq!(seen.global, Some(false));
 }

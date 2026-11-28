@@ -105,3 +105,35 @@ fn dropping_a_host_removes_only_its_row_and_a_deleted_workspace_loses_all_of_the
     drop(conn);
     assert_eq!(store.learned_history(&ws("a")).unwrap(), []);
 }
+
+#[test]
+fn a_clock_that_stepped_back_does_not_evict_the_refusal_just_recorded() {
+    let (clock, store) = store();
+    store
+        .set_learned_limits(LearnedLimits {
+            ttl_secs: 3600,
+            cap: 2,
+        })
+        .unwrap();
+    store.record_rejection(&ws("w"), "a.example").unwrap();
+    clock.set(2_000);
+    store.record_rejection(&ws("w"), "b.example").unwrap();
+    // The clock steps back before both: the new host is still the most recent one.
+    clock.set(100);
+    let c = store.record_rejection(&ws("w"), "c.example").unwrap();
+    assert_eq!((c.first_at, c.last_at, c.count), (100, 2_000, 1));
+    let hosts: Vec<_> = store
+        .learned_history(&ws("w"))
+        .unwrap()
+        .into_iter()
+        .map(|r| r.host)
+        .collect();
+    assert_eq!(hosts, ["b.example", "c.example"], "the oldest made room");
+    // A repeat after the step back never moves a host's last time backwards.
+    let b = store.record_rejection(&ws("w"), "b.example").unwrap();
+    assert_eq!((b.first_at, b.last_at, b.count), (2_000, 2_000, 2));
+    // With nothing newer, the step back is just the time.
+    store.record_rejection(&ws("other"), "a.example").unwrap();
+    let again = store.record_rejection(&ws("other"), "a.example").unwrap();
+    assert_eq!(again.last_at, 100);
+}

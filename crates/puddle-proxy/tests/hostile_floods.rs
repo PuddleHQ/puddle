@@ -97,11 +97,11 @@ async fn hostile_hg11_a_hundred_thousand_streams_over_the_cap_are_each_refused_a
         "the workspace connects again after its held streams ended",
         Duration::from_secs(10),
         || async {
-            let (code, _) = guest.lock().await.connect_status(rig.echo).await;
-            if code == 200 {
+            let (reply, _) = guest.lock().await.connect_status(rig.echo).await;
+            if reply.code() == Some(200) {
                 Ok(())
             } else {
-                Err(format!("last answer {code}"))
+                Err(format!("last answer {reply:?}"))
             }
         },
     )

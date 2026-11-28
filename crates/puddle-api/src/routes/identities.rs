@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Git identities and each workspace's Git settings (credentials spec §7, §8). Credentials are
+//! Git identities and each workspace's Git settings. Credentials are
 //! references to sources: nothing here reads, takes or returns a secret value.
 
 use std::sync::Arc;

@@ -159,6 +159,9 @@ own() {
     fi
 }
 
+# Paths outside the home that the plan gives to the session user (one per line).
+SESSION_OWNED_PATHS=
+
 # below_home <guest path>: whether the path is inside the session user's home (not the home).
 below_home() {
     [ "$SESSION_USER" != root ] || return 1
@@ -166,13 +169,31 @@ below_home() {
     return 1
 }
 
+# session_owns <guest path>: whether the file is the session user's, below the home or because
+# the plan said so (a path an image variable moved out of the home).
+session_owns() {
+    [ "$SESSION_USER" != root ] || return 1
+    below_home "$1" && return 0
+    case "
+$SESSION_OWNED_PATHS
+" in *"
+$1
+"*) return 0 ;; esac
+    return 1
+}
+
 # mkdir_for <guest path of a file>: creates its directory; the parts made below the session
-# user's home belong to that user.
+# user's home, or for a file the plan gave to the session user, belong to that user.
 mkdir_for() {
     d=${1%/*}
-    if below_home "$1"; then
-        rest=${d#"$SESSION_HOME"}
-        at=$SESSION_HOME
+    if session_owns "$1"; then
+        if below_home "$1"; then
+            rest=${d#"$SESSION_HOME"}
+            at=$SESSION_HOME
+        else
+            rest=$d
+            at=
+        fi
         while [ -n "$rest" ]; do
             rest=${rest#/}
             part=${rest%%/*}
@@ -299,6 +320,8 @@ replace_whole() {
 # shellcheck disable=SC2329 # the plan calls these
 {
     puddle_session_user() { session_user "$1" "$2"; }
+    puddle_session_owned() { SESSION_OWNED_PATHS="$SESSION_OWNED_PATHS
+$1"; }
     puddle_file() { # puddle_file <path> <octal mode> <printf format of the contents>
         dst=$ROOT$1
         dir=${dst%/*}
@@ -325,7 +348,7 @@ replace_whole() {
             die "$1 is a directory"
         }
         mv -f "$tmp" "$dst" || die "cannot move $1 into place"
-        if below_home "$1"; then own "$SESSION_OWNER" "$dst"; fi
+        if session_owns "$1"; then own "$SESSION_OWNER" "$dst"; fi
         printf '%s\n' "$1" >>"$RUN/files.new" || die "cannot record a written file"
     }
     puddle_merge_tool() { MERGE_TOOL=$1; }
@@ -340,7 +363,7 @@ replace_whole() {
             die "cannot merge $1: $out"
         merge_result "$1" "$out"
         # Below the home every file is the session user's, also one the tool just made as root.
-        if below_home "$1" && [ -f "$dst" ] && [ ! -L "$dst" ]; then own "$SESSION_OWNER" "$dst"; fi
+        if session_owns "$1" && [ -f "$dst" ] && [ ! -L "$dst" ]; then own "$SESSION_OWNER" "$dst"; fi
         printf '%s\n' "$1" >>"$RUN/merge.new" || die "cannot record a merged file"
     }
     puddle_keep() { # puddle_keep <path>: a file an earlier plan merged stays as it is, still Puddle's

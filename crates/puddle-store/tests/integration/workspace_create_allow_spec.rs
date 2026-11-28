@@ -156,6 +156,31 @@ fn a_host_that_is_allowed_already_gets_no_rule_and_a_second_create_adds_none() {
 }
 
 #[test]
+fn a_host_named_twice_gets_one_rule_and_the_rules_are_made_together() {
+    let store = store();
+    let made = store
+        .allow_hosts_for_create(
+            &ws("aaaaaaaa"),
+            &[
+                host("github.com"),
+                host("gitea.example"),
+                host("github.com"),
+            ],
+        )
+        .unwrap();
+    let patterns: Vec<String> = made.iter().map(|rule| rule.pattern.to_string()).collect();
+    assert_eq!(patterns, ["github.com", "gitea.example"]);
+    assert_eq!(
+        store
+            .rules(puddle_store::UserId::OWNER)
+            .iter()
+            .filter(|rule| rule.pattern.to_string() == "github.com")
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn a_block_rule_is_never_overridden_by_the_create() {
     let store = store();
     deny(&store, Scope::Global, ".github.com");

@@ -67,7 +67,8 @@ pub(super) fn close_rows_now_decided(
 impl Store {
     /// Switches a set on or off for every workspace of `user` (`workspace` `None`) or for one of
     /// theirs, or back to following the next level (`enabled` `None`), and closes the open
-    /// requests the set now decides (R-37). Returns the rows it closed.
+    /// requests the set now decides (R-37). Returns the rows it closed. A switch already in that
+    /// state changes nothing, records nothing and sends no event.
     ///
     /// # Errors
     /// [`StoreError::NotSwitchable`] for System managed, [`StoreError::UnknownRuleSet`] (also a
@@ -105,6 +106,17 @@ impl Store {
             }
             let key = set.to_string();
             let name = workspace.map(WorkspaceId::as_str);
+            let before: Option<bool> = tx
+                .query_row(
+                    "SELECT enabled FROM rule_set_switches
+                     WHERE rule_set = ?1 AND workspace_id IS ?2 AND user_id = ?3",
+                    params![key, name, user.get()],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if before == enabled {
+                return Ok(Vec::new());
+            }
             tx.execute(
                 "DELETE FROM rule_set_switches
                  WHERE rule_set = ?1 AND workspace_id IS ?2 AND user_id = ?3",

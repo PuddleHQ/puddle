@@ -331,6 +331,7 @@ impl From<StoreError> for ApiError {
             | StoreError::ShellInitInvalid(_)
             | StoreError::RequestRuleInvalid(_)
             | StoreError::TooManySshAgentHosts(_)
+            | StoreError::SshAgentKeys(_)
             | StoreError::TooManySshAgentAsks(_) => Self::invalid(&err),
             _ => Self::internal(&err),
         }

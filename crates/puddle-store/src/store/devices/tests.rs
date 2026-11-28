@@ -224,3 +224,31 @@ fn a_failing_database_is_an_error_not_an_empty_list() {
     store.break_database("ALTER TABLE users RENAME TO users_gone");
     assert!(store.user_named("owner").is_err());
 }
+
+#[test]
+fn a_sweep_deletes_a_device_30_days_after_it_stopped_working_with_its_session() {
+    const DAY: u64 = 24 * 60 * 60 * 1000;
+    let (store, clock) = setup();
+    let secrets = store.take_account_secrets().unwrap();
+    let revoked = store
+        .add_device(UserId::OWNER, "revoked", 10 * DAY)
+        .unwrap();
+    let lapsed = store.add_device(UserId::OWNER, "lapsed", 2_000).unwrap();
+    let live = store.add_device(UserId::OWNER, "live", 90 * DAY).unwrap();
+    for (digest, device) in [(1_u8, &revoked), (2, &lapsed), (3, &live)] {
+        assert!(secrets.put_session(device.id, &[digest; 32]).unwrap());
+    }
+    store.revoke_device(UserId::OWNER, revoked.id).unwrap();
+    let count = |sql: &str| -> i64 { lock(&store.conn).query_row(sql, [], |r| r.get(0)).unwrap() };
+    // Revoked at 1_000, lapsed at 2_000: both stopped, neither for 30 days yet.
+    clock.set(1_000 + 30 * DAY - 1);
+    assert_eq!(store.sweep().unwrap().devices_removed, 0);
+    assert_eq!(count("SELECT count(*) FROM devices"), 3);
+    clock.set(1_000 + 30 * DAY);
+    assert_eq!(store.sweep().unwrap().devices_removed, 1, "the revoked one");
+    clock.set(2_000 + 30 * DAY);
+    assert_eq!(store.sweep().unwrap().devices_removed, 1, "the lapsed one");
+    assert_eq!(count("SELECT count(*) FROM devices"), 1);
+    assert_eq!(count("SELECT count(*) FROM account_sessions"), 1);
+    assert_eq!(store.sweep().unwrap().devices_removed, 0);
+}

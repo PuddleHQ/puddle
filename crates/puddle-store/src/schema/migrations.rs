@@ -46,16 +46,34 @@ pub(super) type Violation = (String, Option<i64>, String, i64);
 pub(super) const UPGRADE_WAIT: std::time::Duration = std::time::Duration::from_secs(300);
 
 pub(super) fn migrate_with(conn: &mut Connection, migrations: &[&str]) -> Result<u32, StoreError> {
+    migrate_with_copy(conn, migrations, true)
+}
+
+/// Like [`migrate`], and leaves no `.pre-v<N>` copy: for a database that is itself a throwaway
+/// copy (a staged backup), where the rollback copy would only be one more file to clean up.
+pub(crate) fn migrate_without_copy(conn: &mut Connection) -> Result<u32, StoreError> {
+    migrate_with_copy(conn, MIGRATIONS, false)
+}
+
+fn migrate_with_copy(
+    conn: &mut Connection,
+    migrations: &[&str],
+    keep_copy: bool,
+) -> Result<u32, StoreError> {
     let normal: i64 = conn.pragma_query_value(None, "busy_timeout", |row| row.get(0))?;
     conn.busy_timeout(UPGRADE_WAIT)?;
-    let result = migrate_loop(conn, migrations);
+    let result = migrate_loop(conn, migrations, keep_copy);
     let restored = conn.busy_timeout(std::time::Duration::from_millis(
         u64::try_from(normal).unwrap_or(0),
     ));
     result.and_then(|start| restored.map(|()| start).map_err(StoreError::from))
 }
 
-pub(super) fn migrate_loop(conn: &mut Connection, migrations: &[&str]) -> Result<u32, StoreError> {
+fn migrate_loop(
+    conn: &mut Connection,
+    migrations: &[&str],
+    keep_copy: bool,
+) -> Result<u32, StoreError> {
     let supported = u32::try_from(migrations.len()).unwrap_or(u32::MAX);
     loop {
         let start = current_version(conn, supported)?;
@@ -66,7 +84,7 @@ pub(super) fn migrate_loop(conn: &mut Connection, migrations: &[&str]) -> Result
         // transaction) and only put in place under it, once the version is seen unchanged: a
         // process that lost the race to another one must not replace that one's copy with the
         // file it already upgraded.
-        let copy = if start > 0 {
+        let copy = if start > 0 && keep_copy {
             copy_before(conn, supported)?
         } else {
             None

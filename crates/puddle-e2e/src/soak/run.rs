@@ -1123,7 +1123,9 @@ pub async fn run(opts: Options) -> Result<Outcome, String> {
         }
     }
 
-    // The artefacts, then down.
+    // The artefacts, then down. Both tasks loop until aborted, so one that is done died.
+    run.notes.extend(ended_early(&sampling, "sampler"));
+    run.notes.extend(ended_early(&loads, "page-load task"));
     loads.abort();
     sampling.abort();
     run.teardown().await;
@@ -1136,6 +1138,15 @@ pub async fn run(opts: Options) -> Result<Outcome, String> {
     verdict(&opts.out, &metrics, schedule, &run.notes)
 }
 
+/// A MAJOR note when a task that must run to the end of the run has already finished (it
+/// panicked), so the data it was to produce stops short.
+fn ended_early(task: &JoinHandle<()>, what: &str) -> Option<Note> {
+    task.is_finished().then(|| Note {
+        severity: Severity::Major,
+        text: format!("the {what} ended before the run did"),
+    })
+}
+
 /// The judge over `metrics.tsv` and the run's own findings, written to `findings.txt` and
 /// `summary.md`.
 fn verdict(
@@ -1144,7 +1155,8 @@ fn verdict(
     schedule: Schedule,
     notes: &[Note],
 ) -> Result<Outcome, String> {
-    let text = std::fs::read_to_string(metrics).unwrap_or_default();
+    let text = std::fs::read_to_string(metrics)
+        .map_err(|e| format!("reading {}: {e}", metrics.display()))?;
     let series = Series::parse(&text).map_err(|e| e.to_string())?;
     let mut outcome = Outcome::default();
     for f in judge(&series, schedule) {

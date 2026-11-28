@@ -30,14 +30,22 @@ fn leaking() -> String {
     s.render()
 }
 
+fn quiet() -> String {
+    let mut s = Series::default();
+    for i in 0..=(12 * 12) {
+        s.push(5000 + i * 300, "proc.w.1.rss_kb", 100_000.0);
+    }
+    s.render()
+}
+
 #[tokio::test]
 async fn judge_exits_1_with_the_finding_on_a_major_and_0_on_a_quiet_run() {
     let (code, out) = judge_file(&leaking(), &[]).await;
     assert_eq!(code, Ok(1));
     assert!(out.contains("MAJOR Leak proc.w.1.rss_kb"), "{out}");
     assert!(out.contains("the run fails"));
-    let (code, out) = judge_file("5000\tproc.w.1.rss_kb\t1\n", &["--start", "5000"]).await;
-    assert_eq!(code, Ok(0));
+    let (code, out) = judge_file(&quiet(), &["--start", "5000"]).await;
+    assert_eq!(code, Ok(0), "{out}");
     assert!(out.contains("0 finding(s), no MAJOR"), "{out}");
 }
 

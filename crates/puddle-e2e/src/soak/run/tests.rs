@@ -113,3 +113,41 @@ fn a_run_without_the_memory_it_needs_is_blocked() {
     };
     assert_eq!(preflight(&fine), Ok(()));
 }
+
+const DAY: Schedule = Schedule {
+    start: 1_000_000,
+    active_secs: 8 * 3600,
+    idle_secs: 4 * 3600,
+    hour: 3600,
+};
+
+#[test]
+fn an_unreadable_metrics_file_is_an_error_not_a_pass() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let err = verdict(dir, &dir.join("metrics.tsv"), DAY, &[]).unwrap_err();
+    assert!(err.contains("metrics.tsv"), "{err}");
+    assert!(!dir.join("findings.txt").exists());
+}
+
+#[test]
+fn an_empty_metrics_file_fails_the_run() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    std::fs::write(dir.join("metrics.tsv"), "").unwrap();
+    let outcome = verdict(dir, &dir.join("metrics.tsv"), DAY, &[]).unwrap();
+    assert!(outcome.major, "{:?}", outcome.lines);
+}
+
+#[tokio::test]
+async fn a_task_that_finished_before_the_run_did_is_a_major_note() {
+    let mut dead = tokio::spawn(async {});
+    (&mut dead).await.unwrap();
+    let note = ended_early(&dead, "sampler").expect("a finished task is a note");
+    assert_eq!(note.severity, Severity::Major);
+    assert!(note.text.contains("sampler"), "{}", note.text);
+
+    let live = tokio::spawn(std::future::pending::<()>());
+    assert!(ended_early(&live, "sampler").is_none());
+    live.abort();
+}

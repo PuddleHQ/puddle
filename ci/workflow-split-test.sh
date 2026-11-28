@@ -7,7 +7,8 @@
 # in two parts (the later definition would silently win), when a called workflow lacks `workflow_call`,
 # when msi.yml no longer runs for a change to a part, or when the env: block of a called workflow
 # differs from ci.yml's. It also holds scripts/quality-gate.py and ci/scope-test.sh (split into sibling
-# files) to the same 1000-line limit. Prints ok only when every check passes.
+# files) and the Rust files of T-2502 (workspaces.rs, fake/mod.rs, contract/cases.rs, boot_sh, plan.rs,
+# vm_lifecycle.rs) to the same 1000-line limit. Prints ok only when every check passes.
 set -uo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -20,6 +21,18 @@ parts=(ci/msi-install-test/*.ps1)
 
 for f in "$main" .github/workflows/ci.yml "${parts[@]}" \
     scripts/quality-gate.py scripts/quality_gate_*.py ci/scope-test.sh ci/scope-test/*.sh; do
+    [ -f "$f" ] || { bad "$f is missing"; continue; }
+    n=$(wc -l <"$f")
+    [ "$n" -le 1000 ] || bad "$f has $n lines (limit 1000): split it"
+done
+
+# The Rust files split for the same limit (T-2502): each file of the split folders, plus the files
+# that stay beside them.
+for f in crates/puddle-workspace/src/workspaces.rs crates/puddle-workspace/src/workspaces/*.rs \
+    crates/puddle-compute/src/fake/*.rs crates/puddle-compute/src/contract/cases.rs \
+    crates/puddle-compute/src/contract/cases/*.rs crates/puddle-boot/tests/boot_sh/*.rs \
+    crates/puddle-boot/src/plan.rs crates/puddle-boot/src/plan/*.rs \
+    crates/puddle-lifecycle/tests/vm_lifecycle.rs crates/puddle-lifecycle/tests/vm_lifecycle/*.rs; do
     [ -f "$f" ] || { bad "$f is missing"; continue; }
     n=$(wc -l <"$f")
     [ "$n" -le 1000 ] || bad "$f has $n lines (limit 1000): split it"

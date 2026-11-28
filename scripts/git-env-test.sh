@@ -92,7 +92,7 @@ wait "$fast_pid"
 verify victim-fast "$before_fast" "scripts/check.sh fast"
 
 if [ -d ui/node_modules ]; then
-    (cd ui && hook_env victim-tests npx vitest run scripts/diff-coverage.test.ts >"$tmp/ui.log" 2>&1) ||
+    (cd ui && hook_env victim-tests npx vitest run scripts/diff-coverage.test.ts scripts/diff-coverage-run.test.ts >"$tmp/ui.log" 2>&1) ||
         { cat "$tmp/ui.log" >&2; echo "git-env-test: the UI diff-coverage test failed under the hook variables" >&2; exit 1; }
     verify victim-tests "$before_tests" "the UI diff-coverage test"
 else

@@ -26,6 +26,7 @@ const live = vi.hoisted(() => ({
   stream: "connected" as string,
   start: vi.fn(() => () => undefined),
   subscribe: vi.fn(() => () => undefined),
+  reopenStream: vi.fn(),
 }));
 vi.mock("#lib/stores/live.svelte.ts", () => ({ live }));
 
@@ -61,6 +62,7 @@ beforeEach(() => {
   live.stream = "connected";
   live.start.mockClear();
   live.subscribe.mockClear();
+  live.reopenStream.mockClear();
   health.start.mockClear();
   // The desktop window: the shell hands the page its token, so there is nothing to sign in to.
   (globalThis as { __PUDDLE__?: unknown }).__PUDDLE__ = { token: "shell" };
@@ -283,6 +285,7 @@ describe("root layout and signing in", () => {
     live.problem = "unauthorized";
     render(Layout, { children: (() => {}) as never });
     await vi.waitFor(() => expect(recover).toHaveBeenCalled());
+    await vi.waitFor(() => expect(live.reopenStream).toHaveBeenCalledTimes(1));
     live.problem = null;
     live.stream = "refused";
     recover.mockClear();

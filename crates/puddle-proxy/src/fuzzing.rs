@@ -45,7 +45,7 @@ pub fn head(bytes: &[u8]) -> HeadOutcome {
     let parsed = match read {
         Ok(Ok(head)) => head,
         Ok(Err(HeadError::TooLarge)) => return HeadOutcome::TooLarge,
-        Ok(Err(HeadError::Empty | HeadError::Bad(_))) | Err(_) => return HeadOutcome::Refused,
+        Ok(Err(HeadError::Empty | HeadError::Bad(..))) | Err(_) => return HeadOutcome::Refused,
     };
     assert!(
         bytes.len() - reader.len() <= MAX_HEAD,

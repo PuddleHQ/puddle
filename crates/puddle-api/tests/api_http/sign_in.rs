@@ -75,6 +75,19 @@ pub(super) async fn site_reaping(
         &Arc<ManualClock>,
     ) -> Option<Arc<dyn puddle_services::workspaces::WorkspaceService>>,
 ) -> Site {
+    site_wired(multi_user, reap_every, workspaces, |services| services).await
+}
+
+/// Like [`site_reaping`], with `wire` adding more services before the server starts.
+pub(super) async fn site_wired(
+    multi_user: bool,
+    reap_every: std::time::Duration,
+    workspaces: impl FnOnce(
+        &Arc<EventHub>,
+        &Arc<ManualClock>,
+    ) -> Option<Arc<dyn puddle_services::workspaces::WorkspaceService>>,
+    wire: impl FnOnce(Services) -> Services,
+) -> Site {
     let clock = Arc::new(ManualClock::new(START_MS));
     let events = Arc::new(EventHub::default());
     let dir = tempfile::tempdir().unwrap();
@@ -96,6 +109,7 @@ pub(super) async fn site_reaping(
     if let Some(made) = made {
         services = services.with_workspaces(made);
     }
+    let services = wire(services);
     let mut config = ApiConfig::default();
     config.remote = Some(Remote::new(
         RemoteServing::new(vec![PublicHost::parse(HOST).unwrap()], None).unwrap(),

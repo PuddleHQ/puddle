@@ -8,6 +8,7 @@ use crate::authz::Principal;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
+use puddle_services::owned::OwnedWorkspace;
 use puddle_types::WorkspaceId;
 
 use crate::extract::Path;
@@ -93,8 +94,20 @@ pub(crate) async fn restore_orphan_volume(
         .restore_orphan(&id, owner, repository, &git)
         .await?;
     crate::system_managed::refresh(&state).await;
+    // The handle is for the disk's owner, who is the restorer unless the disk was another user's.
+    let (store, restored) = (state.store.clone(), record.id.clone());
+    let workspace = blocking(move || {
+        OwnedWorkspace::resolve(&*store, owner, &restored)
+            .map_err(puddle_services::workspaces::WorkspaceError::from)
+            .map_err(ApiError::from)
+    })
+    .await?;
     Ok((
         StatusCode::CREATED,
-        Json(view(&state, record).await.with_identities(git.take())),
+        Json(
+            view(&state, &workspace, record)
+                .await
+                .with_identities(git.take()),
+        ),
     ))
 }

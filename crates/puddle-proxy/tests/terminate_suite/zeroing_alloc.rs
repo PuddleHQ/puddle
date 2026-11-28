@@ -8,15 +8,29 @@
 //! proxy. One binary serves both sides of the comparison (`PUDDLE_PERF_ZERO_ON_FREE=1` or unset),
 //! so a build difference cannot show up as a cost; the switch is one relaxed load per call.
 //!
+//! It also counts the bytes that are live, for the tests that bound what a connection keeps
+//! ([`live_bytes`]); that is one relaxed add per call, on both sides of the comparison.
+//!
 //! The wipe is `zeroize`'s volatile one: a plain `write_bytes` before a free is a dead store the
 //! optimiser may drop, and then the A side would measure nothing.
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 
 use zeroize::Zeroize;
 
 static ZERO_ON_FREE: AtomicBool = AtomicBool::new(false);
+static LIVE: AtomicIsize = AtomicIsize::new(0);
+
+/// The heap bytes live in this process now, every test in the binary included.
+pub(crate) fn live_bytes() -> isize {
+    LIVE.load(Ordering::Relaxed)
+}
+
+fn count(bytes: usize, up: bool) {
+    let bytes = isize::try_from(bytes).unwrap_or(isize::MAX);
+    LIVE.fetch_add(if up { bytes } else { -bytes }, Ordering::Relaxed);
+}
 
 /// Reads `PUDDLE_PERF_ZERO_ON_FREE` (any value but `0` or empty turns the wipe on) and says which
 /// side this run is, so a log shows it. Call it before the first measured transfer.
@@ -37,16 +51,19 @@ pub(crate) struct ZeroingSystem;
 // block of a `realloc`), before it goes back to the system allocator.
 unsafe impl GlobalAlloc for ZeroingSystem {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        count(layout.size(), true);
         // SAFETY: the caller's contract is the system allocator's.
         unsafe { System.alloc(layout) }
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        count(layout.size(), true);
         // SAFETY: the caller's contract is the system allocator's.
         unsafe { System.alloc_zeroed(layout) }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        count(layout.size(), false);
         if ZERO_ON_FREE.load(Ordering::Relaxed) {
             // SAFETY: `ptr` is a live block of `layout.size()` bytes that the caller owns and is
             // giving back.
@@ -58,6 +75,8 @@ unsafe impl GlobalAlloc for ZeroingSystem {
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         if !ZERO_ON_FREE.load(Ordering::Relaxed) {
+            count(layout.size(), false);
+            count(new_size, true);
             // SAFETY: the caller's contract is the system allocator's.
             return unsafe { System.realloc(ptr, layout, new_size) };
         }
@@ -69,6 +88,7 @@ unsafe impl GlobalAlloc for ZeroingSystem {
         // SAFETY: the caller's contract is the system allocator's.
         let new = unsafe { System.alloc(new_layout) };
         if !new.is_null() {
+            count(new_size, true);
             // SAFETY: both blocks are live, at least `min` bytes long and do not overlap.
             unsafe { std::ptr::copy_nonoverlapping(ptr, new, layout.size().min(new_size)) };
             // SAFETY: `ptr` and `layout` are the caller's live block.

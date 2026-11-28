@@ -17,6 +17,7 @@ pub mod error;
 pub mod fake_workspaces;
 pub mod learned;
 pub mod network_health;
+pub mod owned;
 pub mod ports;
 pub mod proxy_sign_in;
 pub mod repos;
@@ -26,40 +27,58 @@ pub mod terminals;
 pub mod wire;
 pub mod workspaces;
 
-pub use backup::{
-    BackupArchive, BackupService, BackupServiceError, FAKE_BACKUP_BYTES, FakeBackup, NoBackup,
-    archive_file_name,
-};
+pub use backup::{BackupArchive, BackupService, BackupServiceError, NoBackup, archive_file_name};
+#[cfg(any(test, feature = "testing"))]
+pub use backup::{FAKE_BACKUP_BYTES, FakeBackup};
 pub use checkouts::{
     AddRepository, Checkout, Checkouts, Found, FoundList, Manage, RemoteNote, check_addition,
     check_seen, checkouts_view, why_no_remote,
 };
 pub use credential_store::{CredentialStoreService, NoCredentialStore};
+#[cfg(any(test, feature = "testing"))]
+pub use credentials::FakeCredentials;
 pub use credentials::{
-    Check, CredentialService, CredentialsError, FakeCredentials, HostCredentials, NoCredentials,
-    NoSecretStore,
+    Check, CredentialService, CredentialsError, HostCredentials, NoCredentials, NoSecretStore,
 };
-pub use dev_cert::{DevCertService, FakeDevCert, NoDevCert};
-pub use doctor::{DoctorError, DoctorService, FakeDoctor, HostDoctor, NoDoctor, RunChecks};
+#[cfg(any(test, feature = "testing"))]
+pub use dev_cert::FakeDevCert;
+pub use dev_cert::{DevCertService, NoDevCert};
+#[cfg(any(test, feature = "testing"))]
+pub use doctor::FakeDoctor;
+pub use doctor::{DoctorError, DoctorService, HostDoctor, NoDoctor, RunChecks};
 pub use error::{ApiError, ApiErrorBody, ErrorCode, ErrorField};
 #[cfg(any(test, feature = "testing"))]
 pub use fake_workspaces::{FakeLauncher, FakeWorkspaces, Unsaved};
-pub use learned::{FakeLearned, LearnedService, NoLearned};
+#[cfg(any(test, feature = "testing"))]
+pub use learned::FakeLearned;
+pub use learned::{LearnedService, NoLearned};
+#[cfg(any(test, feature = "testing"))]
+pub use network_health::FakeNetworkHealth;
 pub use network_health::{
-    FakeNetworkHealth, HostNetworkHealth, NetworkHealthError, NetworkHealthService,
-    NoNetworkHealth, PullProxyState, forward_network_changes, forward_proxy_sign_in_failures,
+    HostNetworkHealth, NetworkHealthError, NetworkHealthService, NoNetworkHealth, PullProxyState,
+    forward_network_changes, forward_proxy_sign_in_failures,
 };
-pub use ports::{FakePorts, NoPorts, PortsService, PortsServiceError};
-pub use proxy_sign_in::{FakeProxySignIns, NoProxySignIns, ProxySignInError, ProxySignInService};
-pub use repos::{FakeRepos, NoRepos, RepoService, ReposError};
+#[cfg(any(test, feature = "testing"))]
+pub use ports::FakePorts;
+pub use ports::{NoPorts, PortsService, PortsServiceError};
+#[cfg(any(test, feature = "testing"))]
+pub use proxy_sign_in::FakeProxySignIns;
+pub use proxy_sign_in::{NoProxySignIns, ProxySignInError, ProxySignInService};
+#[cfg(any(test, feature = "testing"))]
+pub use repos::FakeRepos;
+pub use repos::{NoRepos, RepoService, ReposError};
+#[cfg(any(test, feature = "testing"))]
+pub use restore::{FAKE_RESTORE_MAGIC, FakeRestore};
 pub use restore::{
-    FAKE_RESTORE_MAGIC, FakeRestore, IdentityTokenRef, NoRestore, RestoreFacts, RestoreService,
-    RestoreServiceError, SecretRef, UploadStream,
+    IdentityTokenRef, NoRestore, RestoreFacts, RestoreService, RestoreServiceError, SecretRef,
+    UploadStream,
 };
+#[cfg(any(test, feature = "testing"))]
+pub use terminals::FakeTerminals;
 pub use terminals::{
-    EndReason, FakeTerminals, MAX_IN_ALL, MAX_MESSAGE_BYTES, MAX_PER_WORKSPACE, NoTerminals,
-    SUBPROTOCOL, TICKET_LIFETIME, TerminalEnd, TerminalError, TerminalInput, TerminalLink,
-    TerminalOutput, TerminalService, TerminalSize, WINDOW_BYTES,
+    EndReason, MAX_IN_ALL, MAX_MESSAGE_BYTES, MAX_PER_WORKSPACE, NoTerminals, SUBPROTOCOL,
+    TICKET_LIFETIME, TerminalEnd, TerminalError, TerminalInput, TerminalLink, TerminalOutput,
+    TerminalService, TerminalSize, WINDOW_BYTES,
 };
 pub use workspaces::phase;
 pub use workspaces::{
@@ -73,6 +92,6 @@ pub use workspaces::{
     RepositoryListError, ShellInitCheck, StartFolder, StartFolderChange, StartFolderError,
     WorkspaceError, WorkspaceRecord, WorkspaceService, admit_delete_fingerprint, admit_grow_size,
     check_rename, check_repositories, check_repositories_with, check_session_user_change,
-    check_start_folder_change, describe_image, entry_id_from_text, label_taken, new_entry_id,
-    not_found,
+    check_start_folder_change, describe_image, entry_id_from_text, free_label, label_taken,
+    new_entry_id, not_found,
 };

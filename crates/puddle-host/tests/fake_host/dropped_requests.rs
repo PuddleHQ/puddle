@@ -7,6 +7,7 @@ use std::pin::pin;
 use std::task::Poll;
 
 use futures_util::future::BoxFuture;
+use puddle_services::owned::OwnedWorkspace;
 use puddle_services::{
     checkouts::AddRepository, workspaces::DisplayName, workspaces::GitSetup,
     workspaces::NewRepository, workspaces::NewWorkspace, workspaces::RepoUrl,
@@ -118,7 +119,10 @@ async fn ready_for(
 ) -> WorkspaceId {
     let service = host.workspaces();
     let kept = match current.as_ref() {
-        Some(id) => service.get(id).await.ok(),
+        Some(id) => service
+            .get(&OwnedWorkspace::for_test(puddle_store::UserId::OWNER, id))
+            .await
+            .ok(),
         None => None,
     };
     let record = if let Some(record) = kept {
@@ -134,15 +138,27 @@ async fn ready_for(
             .await
             .unwrap();
         settled(host, rig, "the create ends").await;
-        service.get(&record.id).await.unwrap()
+        service
+            .get(&OwnedWorkspace::for_test(
+                puddle_store::UserId::OWNER,
+                &record.id,
+            ))
+            .await
+            .unwrap()
     };
     let id = record.id.clone();
     *current = Some(id.clone());
     let running = record.status == WorkspaceStatus::Running;
     if request.needs_running() && !running {
-        service.start(&id).await.unwrap();
+        service
+            .start(&OwnedWorkspace::for_test(puddle_store::UserId::OWNER, &id))
+            .await
+            .unwrap();
     } else if !request.needs_running() && running {
-        service.stop(&id).await.unwrap();
+        service
+            .stop(&OwnedWorkspace::for_test(puddle_store::UserId::OWNER, &id))
+            .await
+            .unwrap();
     }
     settled(host, rig, "the workspace is ready for the request").await;
     id
@@ -163,17 +179,63 @@ async fn send(host: &Host<FakeRuntime>, request: Request, id: &WorkspaceId, wait
             )
             .await
         }
-        Request::Start => drop_after(service.start(id), waits).await,
-        Request::Stop => drop_after(service.stop(id), waits).await,
-        Request::Reclaim => drop_after(service.reclaim(id), waits).await,
-        Request::ResetRootDisk => drop_after(service.reset_root_disk(id), waits).await,
+        Request::Start => {
+            drop_after(
+                service.start(&OwnedWorkspace::for_test(puddle_store::UserId::OWNER, id)),
+                waits,
+            )
+            .await
+        }
+        Request::Stop => {
+            drop_after(
+                service.stop(&OwnedWorkspace::for_test(puddle_store::UserId::OWNER, id)),
+                waits,
+            )
+            .await
+        }
+        Request::Reclaim => {
+            drop_after(
+                service.reclaim(&OwnedWorkspace::for_test(puddle_store::UserId::OWNER, id)),
+                waits,
+            )
+            .await
+        }
+        Request::ResetRootDisk => {
+            drop_after(
+                service.reset_root_disk(&OwnedWorkspace::for_test(puddle_store::UserId::OWNER, id)),
+                waits,
+            )
+            .await
+        }
         Request::GrowRootDisk => {
             // Larger every time, so a grow that went through never makes the next one a shrink.
             let size = 20_480 + 1_024 * u32::try_from(waits).unwrap();
-            drop_after(service.grow_root_disk(id, size), waits).await
+            drop_after(
+                service.grow_root_disk(
+                    &OwnedWorkspace::for_test(puddle_store::UserId::OWNER, id),
+                    size,
+                ),
+                waits,
+            )
+            .await
         }
-        Request::DeleteCheck => drop_after(service.delete_check(id), waits).await,
-        Request::Delete => drop_after(service.delete(id, None), waits).await,
+        Request::DeleteCheck => {
+            drop_after(
+                service.delete_check(&OwnedWorkspace::for_test(puddle_store::UserId::OWNER, id)),
+                waits,
+            )
+            .await
+        }
+        Request::Delete => {
+            drop_after(
+                service.delete(
+                    &OwnedWorkspace::for_test(puddle_store::UserId::OWNER, id),
+                    None,
+                ),
+                waits,
+            )
+            .await
+        }
         Request::Clone => {
             let url = RepoUrl::parse(&format!("https://example.org/acme/r{waits}.git")).unwrap();
             let entry = EntryId::new(&format!("a{waits:07x}")).unwrap();
@@ -186,7 +248,11 @@ async fn send(host: &Host<FakeRuntime>, request: Request, id: &WorkspaceId, wait
                 local: None,
             };
             drop_after(
-                service.add_repository(id, AddRepository::Clone(new), &GitThatWaits(host.store())),
+                service.add_repository(
+                    &OwnedWorkspace::for_test(puddle_store::UserId::OWNER, id),
+                    AddRepository::Clone(new),
+                    &GitThatWaits(host.store()),
+                ),
                 waits,
             )
             .await

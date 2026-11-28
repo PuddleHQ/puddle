@@ -6,6 +6,7 @@
 //! the same transaction (R-8). Lock order, where two are held: `conn`, then `workspaces`.
 
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
@@ -39,9 +40,11 @@ mod audit;
 mod audit_retention;
 mod devices;
 pub(crate) use devices::{insert_device, revoke_devices_in};
+#[cfg(test)]
+mod decision_tests;
 mod environment;
 #[cfg(test)]
-mod failures;
+mod failure_tests;
 mod identities;
 mod interception;
 mod learned;
@@ -54,6 +57,8 @@ mod sets;
 mod shell_init;
 mod ssh_agent;
 mod ssh_agent_asks;
+#[cfg(test)]
+mod test_fixtures;
 pub(crate) mod users;
 mod workspace_git;
 mod workspaces;
@@ -181,6 +186,8 @@ pub struct SweepReport {
     pub audit_over_warn_size: bool,
     /// Records of waiting requests merged into summaries by the per-workspace cap.
     pub waiting_records_merged: u64,
+    /// Revoked and expired devices deleted once they had been stopped for 30 days.
+    pub devices_removed: u64,
 }
 
 /// What deleting a workspace removed (R-21).
@@ -682,8 +689,9 @@ impl Store {
     /// suffix, [`StoreError::ExpiryNotInFuture`] for a zero duration,
     /// [`StoreError::ExactAllowOnly`] for a suffix or rule set allow of an `exact_only` row,
     /// [`StoreError::SystemActor`], or a database error.
-    pub fn resolve_pending(
+    pub(super) fn resolve_pending_by(
         &self,
+        user: UserId,
         id: PendingId,
         resolution: &Resolution,
         actor: Actor,
@@ -696,6 +704,11 @@ impl Store {
         }
         let decided = self.change(|tx, now, fx| {
             let row = load_pending(tx, id)?;
+            // The rule is the user's whose workspace asked, global or not.
+            let owner = users::owner_in(tx, &row.workspace)?;
+            if owner != user {
+                return Err(StoreError::UnknownPending(id));
+            }
             if row.state != PendingState::Requested {
                 return Err(StoreError::PendingNotOpen {
                     id,
@@ -728,8 +741,6 @@ impl Store {
                 expires_at: resolution.expires_in.map(|d| plus(now, d)),
                 created_by: actor,
             };
-            // The rule is the user's whose workspace asked, global or not.
-            let user = users::owner_in(tx, &row.workspace)?;
             let rule = insert_rule(tx, user, &new, now, Some(id), None)?;
             decide_row(tx, &row, &rule, actor, now, fx)?;
             let also_closed = close_decided_rows(tx, &rule, Some(id), actor, now, fx)?;
@@ -753,12 +764,31 @@ impl Store {
         Ok(decided)
     }
 
-    /// One pending row.
+    /// One pending row of any user, for a test.
     ///
     /// # Errors
     /// [`StoreError::UnknownPending`] or a database error.
+    #[cfg(any(test, feature = "testing"))]
     pub fn pending(&self, id: PendingId) -> Result<PendingRow, StoreError> {
         load_pending(&lock(&self.conn), id)
+    }
+
+    /// Whose workspace asked the pending row `id`, or `None` when there is no such row or its
+    /// workspace is nobody's.
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn pending_owner(&self, id: PendingId) -> Result<Option<UserId>, StoreError> {
+        let user: Option<i64> = lock(&self.conn)
+            .query_row(
+                "SELECT o.user_id FROM pending p
+                   JOIN workspace_owners o ON o.workspace_id = p.workspace_id
+                  WHERE p.id = ?1",
+                [id.0],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(user.map(UserId::from_stored))
     }
 
     /// Open (`requested`) rows of every user's workspaces, of one workspace or all, most recent
@@ -850,18 +880,28 @@ fn open_pending_sql() -> String {
 
 /// Open rows, most recent first, grouped by registrable domain in that order.
 fn group_by_domain(rows: Vec<PendingRow>) -> Vec<InboxGroup> {
-    let mut groups: Vec<InboxGroup> = Vec::new();
+    // Per domain, the rows in order; `order` keeps the domains by their first row.
+    let mut by_domain: HashMap<String, Vec<PendingRow>> = HashMap::new();
+    let mut order: Vec<String> = Vec::new();
     for row in rows {
         let domain = registrable_domain(&row.host);
-        match groups.iter_mut().find(|g| g.registrable_domain == domain) {
-            Some(group) => group.rows.push(row),
-            None => groups.push(InboxGroup {
-                registrable_domain: domain,
-                rows: vec![row],
-            }),
+        match by_domain.entry(domain) {
+            Entry::Occupied(mut group) => group.get_mut().push(row),
+            Entry::Vacant(slot) => {
+                order.push(slot.key().clone());
+                slot.insert(vec![row]);
+            }
         }
     }
-    groups
+    order
+        .into_iter()
+        .filter_map(|domain| {
+            by_domain.remove(&domain).map(|rows| InboxGroup {
+                registrable_domain: domain,
+                rows,
+            })
+        })
+        .collect()
 }
 
 impl Policy for Store {

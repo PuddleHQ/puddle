@@ -465,7 +465,7 @@ crates/puddle-api/tests/api_http/routes.rs
 crates/puddle-e2e/src/ui_fixture/scenario.rs
 crates/puddle-e2e/tests/integration/proxy_agent_store.rs
 crates/puddle-e2e/tests/integration/stub_dns.rs
-crates/puddle-e2e/tests/integration/ui_fixture.rs
+crates/puddle-e2e/tests/integration/ui_fixture/scenarios.rs
 crates/puddle-proxy/src/proxy.rs
 crates/puddle-proxy/src/proxy/tests.rs
 crates/puddle-proxy/tests/integration/route.rs

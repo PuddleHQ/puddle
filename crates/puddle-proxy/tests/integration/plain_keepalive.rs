@@ -18,7 +18,8 @@ use std::time::{Duration, Instant};
 use puddle_proxy::testing::StaticResolver;
 use puddle_proxy::{AddressCheck, AddressVerdict, ProxyConfig};
 use puddle_types::{
-    BlockReason, ConnectionDecision, ConnectionOutcome, LocalCategory, WorkspaceId,
+    BlockReason, ConnectionDecision, ConnectionOutcome, ConnectionReason, LocalCategory,
+    ReasonCode, WorkspaceId,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
@@ -864,6 +865,34 @@ async fn an_upstream_that_fails_ends_the_connection_with_what_happened() {
     assert_eq!(rig.events(3).await.len(), 3);
 }
 
+/// A first request whose head is refused (a header name no server would take) is answered `400`
+/// and recorded against the host its target named.
+#[tokio::test]
+async fn a_refused_first_head_is_recorded() {
+    let (web, seen) = keep_alive_server().await;
+    let rig = rig(&ProxyConfig::default());
+    let mut guest = rig.guest().await;
+    let mut reader = BufReader::new(guest.stream().await);
+    let first = format!(
+        "GET http://web.test:{}/x HTTP/1.1\r\nHost: web.test\r\nBad\"Name: x\r\n\r\n",
+        web.port()
+    );
+    reader.get_mut().write_all(first.as_bytes()).await.unwrap();
+    let (code, _) = response_head(&mut reader).await.unwrap();
+    assert_eq!(code, 400);
+    ended(&mut reader).await;
+    let events = rig.events(1).await;
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0].host, host("web.test"));
+    assert_eq!(events[0].port, web.port());
+    assert_eq!(events[0].decision, ConnectionDecision::Blocked);
+    assert_eq!(
+        events[0].reason,
+        ConnectionReason::Refused(ReasonCode::BadRequest)
+    );
+    assert_eq!(seen.accepts(), 0, "nothing connected");
+}
+
 /// What the guest sends wrong on a kept connection is refused and ends it: a body whose chunk
 /// framing breaks halfway (`400`, and the server never sees a complete request), an expectation
 /// other than `100-continue` (`417`), a `CONNECT` (`400`) and a header name no server would take
@@ -912,6 +941,36 @@ async fn a_broken_second_request_is_refused_and_ends_the_connection() {
         "{:?}",
         seen.lines()
     );
+    // Five allowed requests (four first ones and the broken chunked body), and a record for each refusal made before the request was
+    // decided: the expectation, the CONNECT and the head with the bad header name.
+    let events = rig.events(8).await;
+    let refused: Vec<_> = events
+        .iter()
+        .filter(|e| e.decision == ConnectionDecision::Blocked)
+        .map(|e| (e.host.clone(), e.port, e.reason))
+        .collect();
+    let web = (host("web.test"), web.port());
+    assert_eq!(
+        refused,
+        [
+            (
+                web.0.clone(),
+                web.1,
+                ConnectionReason::Refused(ReasonCode::ExpectationUnsupported)
+            ),
+            (
+                web.0.clone(),
+                web.1,
+                ConnectionReason::Refused(ReasonCode::BadRequest)
+            ),
+            (
+                web.0,
+                web.1,
+                ConnectionReason::Refused(ReasonCode::BadRequest)
+            ),
+        ],
+        "{events:?}"
+    );
 }
 
 /// The same mistakes as the first request on a connection are refused before anything connects.
@@ -958,8 +1017,7 @@ async fn a_broken_first_request_is_refused_before_anything_connects() {
     assert_eq!(seen.accepts(), 0, "nothing connected");
     assert_eq!(rig.policy.decisions(), 0, "no rule was asked");
     // Each refusal is a blocked record with its code, as on a decrypted connection.
-    // (The Content-Length plus chunked head is refused while the head is read, before any target.)
-    let events = rig.events(4).await;
+    let events = rig.events(5).await;
     let reasons: Vec<_> = events
         .iter()
         .map(|e| (e.decision, e.reason.to_string(), e.host.to_string()))
@@ -972,7 +1030,7 @@ async fn a_broken_first_request_is_refused_before_anything_connects() {
         )
     };
     let mut want = vec![blocked("expectation_unsupported")];
-    want.extend(std::iter::repeat_n(blocked("bad_request"), 3));
+    want.extend(std::iter::repeat_n(blocked("bad_request"), 4));
     assert_eq!(reasons, want);
 }
 

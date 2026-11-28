@@ -1,0 +1,1 @@
+{"workspaces": ["shop", "tools"], "rules": [".blocked-site.com", "api.example.com", "pypi.org"]}

@@ -838,6 +838,132 @@ async fn a_host_that_stops_taking_the_push_ends_it_whatever_the_guest_still_send
     }
 }
 
+#[tokio::test]
+async fn a_refused_push_ends_though_the_guest_keeps_its_input_open_after_the_pack() {
+    let commands = format!("{}0000", pkt(&format!("{OLD} {NEW} refs/heads/main\n")));
+    let (mut guest, mut ours) = tokio::io::duplex(4 << 20);
+    guest.write_all(commands.as_bytes()).await.unwrap();
+    guest.write_all(b"PACKdata").await.unwrap();
+    let failure = tokio::time::timeout(
+        Duration::from_secs(5),
+        carry(
+            &mut Refusing {
+                calls: 0,
+                frames: 2,
+            },
+            &command(GitService::Receive, None),
+            &mut ours,
+        ),
+    )
+    .await
+    .expect("the host refused and the command did not end")
+    .unwrap_err();
+    assert_eq!(failure.message, "refused mid-body");
+    drop(guest);
+}
+
+/// Takes the whole push body and says how many bytes it was, with the default pack read limit.
+struct Counting {
+    calls: usize,
+}
+
+impl SmartHttp for Counting {
+    fn send(
+        &mut self,
+        request: http::Request<UpBody>,
+    ) -> BoxFuture<'_, Result<http::Response<UpBody>, GitSshFailure>> {
+        self.calls += 1;
+        let first = self.calls == 1;
+        Box::pin(async move {
+            if first {
+                return Ok(http::Response::new(bytes_body(Bytes::from_static(
+                    ADVERT_PUSH,
+                ))));
+            }
+            let mut body = request.into_body();
+            let mut total = 0;
+            while let Some(Ok(frame)) = body.frame().await {
+                total += frame.data_ref().map_or(0, Bytes::len);
+            }
+            Err(GitSshFailure::new(format!("took {total} bytes")))
+        })
+    }
+}
+
+#[tokio::test]
+async fn the_default_pack_read_limit_waits_for_a_guest_that_is_slow_with_the_pack() {
+    let commands = format!("{}0000", pkt(&format!("{OLD} {NEW} refs/heads/main\n")));
+    let sent = commands.len() + b"PACKdata".len();
+    let (mut guest, mut ours) = tokio::io::duplex(4 << 20);
+    guest.write_all(commands.as_bytes()).await.unwrap();
+    let slow = tokio::spawn(async move {
+        // flake-ok: simulated latency; a zero pack read limit would cut the push here.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        guest.write_all(b"PACKdata").await.unwrap();
+        guest.shutdown().await.unwrap();
+        guest
+    });
+    let failure = carry(
+        &mut Counting { calls: 0 },
+        &command(GitService::Receive, None),
+        &mut ours,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(failure.message, format!("took {sent} bytes"));
+    drop(slow.await.unwrap());
+}
+
+/// Takes the push body until it ends, so only the pack read's own limit can end the command.
+struct Waiting {
+    calls: usize,
+}
+
+impl SmartHttp for Waiting {
+    fn send(
+        &mut self,
+        request: http::Request<UpBody>,
+    ) -> BoxFuture<'_, Result<http::Response<UpBody>, GitSshFailure>> {
+        self.calls += 1;
+        let first = self.calls == 1;
+        Box::pin(async move {
+            if first {
+                return Ok(http::Response::new(bytes_body(Bytes::from_static(
+                    ADVERT_PUSH,
+                ))));
+            }
+            let mut body = request.into_body();
+            while let Some(Ok(_)) = body.frame().await {}
+            Err(GitSshFailure::new("the body ended"))
+        })
+    }
+
+    fn body_idle(&self) -> Duration {
+        Duration::from_millis(200)
+    }
+}
+
+#[tokio::test]
+async fn a_guest_that_stops_sending_the_pack_does_not_hold_the_push_for_ever() {
+    let commands = format!("{}0000", pkt(&format!("{OLD} {NEW} refs/heads/main\n")));
+    let (mut guest, mut ours) = tokio::io::duplex(4 << 20);
+    guest.write_all(commands.as_bytes()).await.unwrap();
+    guest.write_all(b"PACKdata").await.unwrap();
+    let failure = tokio::time::timeout(
+        Duration::from_secs(10),
+        carry(
+            &mut Waiting { calls: 0 },
+            &command(GitService::Receive, None),
+            &mut ours,
+        ),
+    )
+    .await
+    .expect("a silent guest held the push past the idle limit")
+    .unwrap_err();
+    assert_eq!(failure.message, "the body ended");
+    drop(guest);
+}
+
 /// Pkt-lines of data with no flush among them, `total` bytes in all (each line at most 65520).
 fn unflushed(total: usize) -> Vec<u8> {
     let mut out = Vec::with_capacity(total);
@@ -926,4 +1052,48 @@ async fn a_request_of_exactly_the_limit_still_goes_up() {
     .await;
     result.unwrap();
     assert_eq!(host.seen[1].body.len(), MAX_REQUEST);
+}
+
+#[tokio::test]
+async fn protocol_v0_stops_asking_after_the_most_rounds_a_client_needs() {
+    let mut replies = vec![Reply::Ok(ADVERT_V0)];
+    replies.extend((0..MAX_FETCH_ROUNDS).map(|_| Reply::Ok(b"0008NAK\n")));
+    let mut host = Host2::answering(replies);
+    let command = command(GitService::Upload, None);
+    let want = "0032want 1111111111111111111111111111111111111111\n";
+    let have = "0032have aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n";
+    let mut input = format!("{want}0000");
+    for _ in 0..=MAX_FETCH_ROUNDS {
+        input.push_str(have);
+        input.push_str("0000");
+    }
+    let (_, result) = session(&mut host, &command, input.as_bytes()).await;
+    let failure = result.expect_err("one round past the limit is refused");
+    assert!(
+        failure.message.contains("rounds"),
+        "the guest is told why: {}",
+        failure.message
+    );
+    assert_eq!(
+        host.seen.len(),
+        1 + MAX_FETCH_ROUNDS,
+        "the advertisement and the allowed rounds only"
+    );
+}
+
+#[tokio::test]
+async fn protocol_v0_allows_exactly_the_most_rounds() {
+    let mut replies = vec![Reply::Ok(ADVERT_V0)];
+    replies.extend((0..MAX_FETCH_ROUNDS).map(|_| Reply::Ok(b"0008NAK\n")));
+    let mut host = Host2::answering(replies);
+    let command = command(GitService::Upload, None);
+    let want = "0032want 1111111111111111111111111111111111111111\n";
+    let mut input = format!("{want}0000");
+    for _ in 0..MAX_FETCH_ROUNDS - 1 {
+        input.push_str("0000");
+    }
+    input.push_str("0009done\n");
+    let (_, result) = session(&mut host, &command, input.as_bytes()).await;
+    result.unwrap();
+    assert_eq!(host.seen.len(), 1 + MAX_FETCH_ROUNDS);
 }

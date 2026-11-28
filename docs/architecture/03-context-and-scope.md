@@ -102,7 +102,8 @@ flowchart TB
 Two facts the diagram makes visible:
 
 - **The VM has no network device.** Every arrow out of the VM goes through the guest agent and vsock
-  into the host process (`crates/puddle-compute-msb/src/spec.rs`). There is no route around the proxy.
+  into the host process (`crates/puddle-compute-msb/src/spec.rs`). There is no socket around the proxy; a few other channels carry bytes or
+  decisions across the boundary, and section 8.1 lists each with its residual.
 - **Puddle's own outbound calls take the same route out.** Repository listing, image pulls and the
   proxy's upstream connections all use the company-proxy route of `crates/puddle-upstream`, so a
   network that needs a proxy needs it configured once.

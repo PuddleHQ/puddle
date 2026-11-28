@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+use super::git::git_author_name;
 use super::*;
 use crate::machine::MACHINE_SETTINGS_GUEST;
 use puddle_types::FileMode;
@@ -583,6 +584,21 @@ fn merged_files_render_their_spec_and_are_counted() {
 }
 
 #[test]
+fn a_session_owned_file_is_announced_just_before_its_own_line() {
+    let plan = BootPlan::builder(&ImageConfig::default())
+        .file(file("/opt/g/a", "x").with_session_owner())
+        .file(file("/opt/g/b", "y"))
+        .build()
+        .unwrap();
+    let r = String::from_utf8(plan.render()).unwrap();
+    assert!(
+        r.contains("\npuddle_session_owned '/opt/g/a'\npuddle_file '/opt/g/a' 0644 "),
+        "{r}"
+    );
+    assert_eq!(r.matches("puddle_session_owned").count(), 1, "{r}");
+}
+
+#[test]
 fn a_kept_file_renders_as_its_path_alone() {
     let plan = BootPlan::builder(&ImageConfig::default())
         .file(GuestFile::kept(
@@ -644,7 +660,7 @@ fn bash_and_zsh_startup_files_get_the_same_exports_as_a_merged_block() {
         assert_eq!(spec.format(), puddle_types::MergeFormat::ShellBlock);
         assert_eq!(
             spec.entries()[0].value(),
-            "export ODD='a'\\''b $c'\nexport PLAIN='x'"
+            "if [ -z \"${PUDDLE_SHELL_ENV_APPLIED:-}\" ]; then\n  export PUDDLE_SHELL_ENV_APPLIED=1\n  export ODD='a'\\''b $c'\n  export PLAIN='x'\nfi"
         );
     }
 }
@@ -659,6 +675,47 @@ fn shell_block_of(plan: &BootPlan, path: &str) -> String {
         panic!("{path} is not merged")
     };
     spec.entries()[0].value().to_owned()
+}
+
+/// Runs `script` in `sh` with only `env` in its environment and returns its stdout.
+fn sh_out(script: &str, env: &[(&str, &str)]) -> String {
+    let out = std::process::Command::new("sh")
+        .args(["-c", script])
+        .env_clear()
+        .envs(env.iter().copied())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    String::from_utf8(out.stdout).unwrap()
+}
+
+#[test]
+fn a_nested_shell_keeps_what_its_caller_set_instead_of_the_blocks_exports() {
+    let plan = BootPlan::builder(&ImageConfig::default())
+        .env(&env_of(&[("TEST_OVERRIDE", "from-plan")]))
+        .build()
+        .unwrap();
+    let block = shell_block_of(&plan, BASH_RC_GUEST);
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("block.sh");
+    std::fs::write(&file, &block).unwrap();
+    // `sh` reads a backslash in a Windows temp path as an escape, so it gets forward slashes.
+    let source = format!(". '{}'", file.display().to_string().replace('\\', "/"));
+    // A first shell has no sentinel: the block applies.
+    assert_eq!(
+        sh_out(&format!("{source}; printf %s \"$TEST_OVERRIDE\""), &[]),
+        "from-plan"
+    );
+    // The caller overrode the variable and a shell below it sources the block again: it stays.
+    let nested = format!(
+        "{source}; TEST_OVERRIDE=caller; export TEST_OVERRIDE; sh -c '{source}; printf %s \"$TEST_OVERRIDE\"'"
+    );
+    assert_eq!(sh_out(&nested, &[]), "caller");
+    // Without the sentinel (after `sudo`) the block applies again.
+    let after_sudo = format!(
+        "TEST_OVERRIDE=caller; export TEST_OVERRIDE; {source}; printf %s \"$TEST_OVERRIDE\""
+    );
+    assert_eq!(sh_out(&after_sudo, &[]), "from-plan");
 }
 
 #[test]
@@ -680,7 +737,7 @@ fn interactive_shells_activate_mise_only_with_the_layer_on_and_the_code_trusted(
         ),
         "{bash}"
     );
-    assert!(bash.starts_with("export MISE_DATA_DIR="), "{bash}");
+    assert!(bash.contains("  export MISE_DATA_DIR="), "{bash}");
     let zsh = shell_block_of(&on, ZSH_ENV_GUEST);
     assert!(
         zsh.contains("[[ -o interactive ]]") && zsh.contains("mise activate zsh"),

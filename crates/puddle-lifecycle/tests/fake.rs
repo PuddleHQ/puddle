@@ -289,6 +289,40 @@ async fn after_shutdown_new_sandboxes_are_handed_back() {
     back.stop().await.unwrap();
 }
 
+/// The second Ctrl-C drops the shutdown future (`ShutdownSignals::until_again`): what it leaves.
+#[tokio::test]
+async fn a_cancelled_shutdown_is_not_retried_and_still_refuses_new_sandboxes() {
+    let rt = FakeRuntime::new();
+    let lc = Lifecycle::new(rt.clone(), ShutdownConfig::default());
+    for n in ["a", "b"] {
+        let sb = rt.create(spec(n)).await.unwrap();
+        assert!(lc.manage(sb, Vec::new()).unwrap().is_none());
+    }
+
+    // On a current-thread runtime the stop tasks have not run when the first poll returns, so
+    // dropping the future there cancels the shutdown before any sandbox was stopped.
+    let mut shutdown = Box::pin(lc.shutdown());
+    std::future::poll_fn(|cx| {
+        assert!(shutdown.as_mut().poll(cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    drop(shutdown);
+
+    assert!(
+        lc.managed().is_empty(),
+        "the handles were taken for the stop"
+    );
+    let late = rt.create(spec("late")).await.unwrap();
+    assert_eq!(
+        lc.manage(late, Vec::new()).unwrap_err().name(),
+        &name("late")
+    );
+    // Nothing is left to stop: the sandboxes the cut-short run held are the next start's
+    // reconcile to clean up.
+    assert_eq!(lc.shutdown().await.sandboxes.len(), 0);
+}
+
 #[tokio::test]
 async fn released_and_replaced_handles_are_not_stopped_by_shutdown() {
     let rt = FakeRuntime::new();
@@ -563,6 +597,53 @@ async fn an_orphan_whose_get_says_it_is_down_is_not_stopped() {
 }
 
 #[tokio::test]
+async fn a_known_sandbox_that_crashed_after_the_listing_is_reported_crashed() {
+    let rt = FakeRuntime::new();
+    let left = rt.create(spec("racing")).await.unwrap();
+    // The listing says Running; by the time `get` asks, the VM has crashed.
+    rt.inject(
+        Op::Get,
+        Fault::once(ComputeError::InvalidState {
+            sandbox: "racing".into(),
+            op: "connect to",
+            status: WorkspaceStatus::Crashed,
+        }),
+    );
+    let inventory = Inventory {
+        sandboxes: BTreeSet::from([name("racing")]),
+        ..Inventory::default()
+    };
+    let report = reconcile(&rt, &inventory, &ShutdownConfig::default())
+        .await
+        .unwrap();
+    assert_eq!(report.crashed, [name("racing")]);
+    drop(left);
+}
+
+#[tokio::test]
+async fn a_known_sandbox_that_stopped_after_the_listing_is_not_reported_crashed() {
+    let rt = FakeRuntime::new();
+    let left = rt.create(spec("racing")).await.unwrap();
+    rt.inject(
+        Op::Get,
+        Fault::once(ComputeError::InvalidState {
+            sandbox: "racing".into(),
+            op: "connect to",
+            status: WorkspaceStatus::Stopped,
+        }),
+    );
+    let inventory = Inventory {
+        sandboxes: BTreeSet::from([name("racing")]),
+        ..Inventory::default()
+    };
+    let report = reconcile(&rt, &inventory, &ShutdownConfig::default())
+        .await
+        .unwrap();
+    assert_eq!(report.crashed, []);
+    drop(left);
+}
+
+#[tokio::test]
 async fn an_orphan_left_starting_draining_or_paused_is_killed_and_its_record_removed() {
     for held in [
         WorkspaceStatus::Starting,
@@ -590,15 +671,78 @@ async fn an_orphan_left_starting_draining_or_paused_is_killed_and_its_record_rem
 }
 
 #[tokio::test]
-async fn reconcile_fails_only_when_the_runtime_cannot_list() {
-    for op in [Op::List, Op::StaleDirs, Op::ListVolumes] {
-        let rt = FakeRuntime::new();
-        rt.inject(op, Fault::once(runtime_error("list")));
-        let err = reconcile(&rt, &Inventory::default(), &ShutdownConfig::default())
+async fn reconcile_fails_only_when_the_runtime_cannot_list_its_sandboxes() {
+    let rt = FakeRuntime::new();
+    rt.inject(Op::List, Fault::once(runtime_error("list")));
+    let err = reconcile(&rt, &Inventory::default(), &ShutdownConfig::default())
+        .await
+        .unwrap_err();
+    assert_eq!(err, runtime_error("list"));
+}
+
+#[tokio::test]
+async fn a_failed_listing_of_stale_dirs_or_volumes_keeps_what_was_already_done() {
+    for (op, item, action) in [
+        (Op::StaleDirs, "stale directories", "list stale dirs"),
+        (Op::ListVolumes, "volumes", "list volumes"),
+    ] {
+        let w = killed_puddle_world().await;
+        w.rt.inject(op, Fault::once(runtime_error("list")));
+
+        let report = reconcile(&w.rt, &w.inventory, &ShutdownConfig::default())
             .await
-            .unwrap_err();
-        assert_eq!(err, runtime_error("list"), "{op:?}");
+            .unwrap();
+
+        // The sandboxes were stopped and removed before the listing failed, and stay reported.
+        assert_eq!(
+            report.stopped,
+            [name("known-running"), name("unknown-running")],
+            "{op:?}"
+        );
+        assert_eq!(
+            report.removed,
+            [name("unknown-running"), name("unknown-stopped")],
+            "{op:?}"
+        );
+        assert_eq!(report.crashed, [name("known-crashed")], "{op:?}");
+        let failed: Vec<(&str, &str)> = report
+            .failures
+            .iter()
+            .map(|f| (f.item.as_str(), f.action))
+            .collect();
+        assert_eq!(failed, [(item, action)], "{op:?}");
+        assert!(report.failures[0].error.contains("injected"), "{op:?}");
+        // The other listing still ran.
+        if op == Op::StaleDirs {
+            assert_eq!(report.volumes_removed, [vol("ws-half")]);
+            assert_eq!(report.stale_dirs_removed, []);
+        } else {
+            assert_eq!(report.stale_dirs_removed, [name("failed-create")]);
+            assert_eq!(report.volumes_removed, []);
+            // No listing, no verdict: a known workspace is not called volume-less.
+            assert_eq!(report.missing_volumes, []);
+        }
     }
+}
+
+#[tokio::test]
+async fn an_orphan_ended_by_force_is_reported_as_forced_not_stopped() {
+    let rt = FakeRuntime::new();
+    fstrim_ok(&rt);
+    let forced = rt.create(spec("stuck")).await.unwrap();
+    let clean = rt.create(spec("clean")).await.unwrap();
+    rt.force_next_stop(&name("stuck"));
+
+    let report = reconcile(&rt, &Inventory::default(), &ShutdownConfig::default())
+        .await
+        .unwrap();
+
+    assert_eq!(report.forced, [name("stuck")]);
+    assert_eq!(report.stopped, [name("clean")]);
+    // Forced is down all the same, so its stale record goes like the clean one's.
+    assert_eq!(report.removed, [name("clean"), name("stuck")]);
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    drop((forced, clean));
 }
 
 #[tokio::test]

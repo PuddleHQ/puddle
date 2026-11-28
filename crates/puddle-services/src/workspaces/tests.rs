@@ -8,6 +8,7 @@ use puddle_store::{IdentityId, UserId};
 use super::repositories::draw_entry_id;
 use super::*;
 use crate::checkouts::AddRepository;
+use crate::owned::OwnedWorkspace;
 use puddle_types::{OriginRefusal, ToolName, ToolVersion, ToolsFileHash};
 
 struct SecretLogin(String);
@@ -315,6 +316,7 @@ fn a_missing_volume_changes_the_fingerprint() {
 async fn the_empty_service_says_it_is_unavailable() {
     let svc = NoWorkspaces;
     let id = WorkspaceId::new("w").unwrap();
+    let mine = OwnedWorkspace::for_test(UserId::OWNER, &id);
     let name = DisplayName::parse("w").unwrap();
     let dir = CheckoutDir::new("a").unwrap();
     let entry = EntryId::from_random([1; 5]);
@@ -330,26 +332,26 @@ async fn the_empty_service_says_it_is_unavailable() {
     }];
     let all = [
         svc.list().await.map(|_| ()),
-        svc.get(&id).await.map(|_| ()),
+        svc.get(&mine).await.map(|_| ()),
         svc.create(NewWorkspace::new(UserId::OWNER, name, repos), &NoGitSetup)
             .await
             .map(|_| ()),
-        svc.start(&id).await.map(|_| ()),
-        svc.stop(&id).await.map(|_| ()),
-        svc.reclaim(&id).await.map(|_| ()),
-        svc.reset_root_disk(&id).await.map(|_| ()),
-        svc.delete_check(&id).await.map(|_| ()),
-        svc.delete(&id, None).await.map(|_| ()),
-        svc.rename(&id, DisplayName::parse("x").unwrap())
+        svc.start(&mine).await.map(|_| ()),
+        svc.stop(&mine).await.map(|_| ()),
+        svc.reclaim(&mine).await.map(|_| ()),
+        svc.reset_root_disk(&mine).await.map(|_| ()),
+        svc.delete_check(&mine).await.map(|_| ()),
+        svc.delete(&mine, None).await.map(|_| ()),
+        svc.rename(&mine, DisplayName::parse("x").unwrap())
             .await
             .map(|_| ()),
-        svc.set_session_user(&id, SessionUser::Root)
+        svc.set_session_user(&mine, SessionUser::Root)
             .await
             .map(|_| ()),
-        svc.attach(&id, AttachMode::Browser).await.map(|_| ()),
-        svc.checkouts(&id).await.map(|_| ()),
+        svc.attach(&mine, AttachMode::Browser).await.map(|_| ()),
+        svc.checkouts(&mine).await.map(|_| ()),
         svc.add_repository(
-            &id,
+            &mine,
             AddRepository::Existing {
                 directory: dir.clone(),
                 seen: RepoUrl::parse("https://github.com/o/r").unwrap(),
@@ -361,23 +363,25 @@ async fn the_empty_service_says_it_is_unavailable() {
         )
         .await
         .map(|_| ()),
-        svc.clone_again(&id, &entry, &NoGitSetup).await.map(|_| ()),
-        svc.remove_repository(&id, &entry).await.map(|_| ()),
-        svc.tools(&id).await.map(|_| ()),
+        svc.clone_again(&mine, &entry, &NoGitSetup)
+            .await
+            .map(|_| ()),
+        svc.remove_repository(&mine, &entry).await.map(|_| ()),
+        svc.tools(&mine).await.map(|_| ()),
         svc.set_tool(
-            &id,
+            &mine,
             &tool,
             &ToolVersion::new("22").unwrap(),
             &ToolsFileHash::absent(),
         )
         .await
         .map(|_| ()),
-        svc.remove_tool(&id, &tool, &ToolsFileHash::absent())
+        svc.remove_tool(&mine, &tool, &ToolsFileHash::absent())
             .await
             .map(|_| ()),
-        svc.tool_registry(&id).await.map(|_| ()),
-        svc.tool_versions(&id, &tool).await.map(|_| ()),
-        svc.install_tools(&id).await,
+        svc.tool_registry(&mine).await.map(|_| ()),
+        svc.tool_versions(&mine, &tool).await.map(|_| ()),
+        svc.install_tools(&mine).await,
     ];
     for result in all {
         assert!(matches!(result, Err(WorkspaceError::Unavailable(_))));
@@ -402,7 +406,9 @@ async fn a_service_that_keeps_no_workspace_disks_lists_none_and_restores_none() 
 #[tokio::test]
 async fn the_empty_service_refuses_a_start_folder_change() {
     let id = WorkspaceId::new("w").unwrap();
-    let changed = NoWorkspaces.set_start_folder(&id, None).await;
+    let changed = NoWorkspaces
+        .set_start_folder(&OwnedWorkspace::for_test(UserId::OWNER, &id), None)
+        .await;
     assert!(
         matches!(changed, Err(WorkspaceError::Unavailable(_))),
         "{changed:?}"
@@ -412,12 +418,16 @@ async fn the_empty_service_refuses_a_start_folder_change() {
 #[tokio::test]
 async fn a_service_with_no_credential_store_keeps_no_logins_to_list_or_forget() {
     let id = WorkspaceId::new("w").unwrap();
-    let listed = NoWorkspaces.kept_logins(&id).await;
+    let listed = NoWorkspaces
+        .kept_logins(&OwnedWorkspace::for_test(UserId::OWNER, &id))
+        .await;
     assert!(
         matches!(listed, Err(WorkspaceError::Unavailable(ref why)) if why.contains("no logins")),
         "{listed:?}"
     );
-    let forgotten = NoWorkspaces.forget_login(&id, "claude").await;
+    let forgotten = NoWorkspaces
+        .forget_login(&OwnedWorkspace::for_test(UserId::OWNER, &id), "claude")
+        .await;
     assert!(
         matches!(forgotten, Err(WorkspaceError::Unavailable(ref why)) if why.contains("no logins")),
         "{forgotten:?}"
@@ -427,7 +437,9 @@ async fn a_service_with_no_credential_store_keeps_no_logins_to_list_or_forget() 
 #[tokio::test]
 async fn a_service_with_no_guest_does_not_check_shell_init() {
     let id = WorkspaceId::new("w").unwrap();
-    let check = NoWorkspaces.check_shell_init(&id, "echo hi\n").await;
+    let check = NoWorkspaces
+        .check_shell_init(&OwnedWorkspace::for_test(UserId::OWNER, &id), "echo hi\n")
+        .await;
     assert!(
         matches!(check, Ok(ShellInitCheck::NotRun(ref why)) if why.contains("no workspace")),
         "{check:?}"
@@ -1103,5 +1115,59 @@ fn an_error_made_from_a_cause_says_the_causes_message() {
     assert_eq!(
         WorkspaceError::internal("disk gone"),
         WorkspaceError::Internal("disk gone".to_owned())
+    );
+}
+
+#[test]
+fn a_free_label_keeps_the_base_until_it_is_taken_then_numbers_it() {
+    let mk = |id: &str, shown: &str, owner: UserId| {
+        WorkspaceRecord::new(
+            WorkspaceId::new(id).unwrap(),
+            owner,
+            DisplayName::parse(shown).unwrap(),
+            Vec::new(),
+        )
+    };
+    let none: [WorkspaceRecord; 0] = [];
+    assert_eq!(free_label(&none, UserId::OWNER, "api").as_str(), "api");
+    let one = [mk("a", "api", UserId::OWNER)];
+    assert_eq!(free_label(&one, UserId::OWNER, "API").as_str(), "API (2)");
+    let two = [
+        mk("a", "api", UserId::OWNER),
+        mk("b", "api (2)", UserId::OWNER),
+    ];
+    assert_eq!(free_label(&two, UserId::OWNER, "api").as_str(), "api (3)");
+    // Another owner's label is no clash.
+    let theirs = [mk("a", "api", UserId::from_stored(2))];
+    assert_eq!(free_label(&theirs, UserId::OWNER, "api").as_str(), "api");
+}
+
+#[test]
+fn a_free_label_is_cut_to_make_room_for_its_number() {
+    let long = "n".repeat(DisplayName::MAX_CHARS);
+    let taken = [WorkspaceRecord::new(
+        WorkspaceId::new("a").unwrap(),
+        UserId::OWNER,
+        DisplayName::parse(&long).unwrap(),
+        Vec::new(),
+    )];
+    let free = free_label(&taken, UserId::OWNER, &long);
+    assert_eq!(free.as_str().chars().count(), DisplayName::MAX_CHARS);
+    assert_eq!(
+        free.as_str(),
+        format!("{} (2)", "n".repeat(DisplayName::MAX_CHARS - 4))
+    );
+    // A stem that ends in a space loses it before the number.
+    let spaced = format!("{} x", "n".repeat(DisplayName::MAX_CHARS - 6));
+    let taken = [WorkspaceRecord::new(
+        WorkspaceId::new("a").unwrap(),
+        UserId::OWNER,
+        DisplayName::parse(&spaced).unwrap(),
+        Vec::new(),
+    )];
+    let free = free_label(&taken, UserId::OWNER, &spaced);
+    assert_eq!(
+        free.as_str(),
+        format!("{} x (2)", "n".repeat(DisplayName::MAX_CHARS - 6))
     );
 }

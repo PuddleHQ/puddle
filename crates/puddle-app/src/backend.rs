@@ -18,6 +18,7 @@ use puddle_host::{
     Host, HostConfig, HostError, HostOptions, HostShutdown, MsbFactory, Platform, Prepared,
     RuntimeFactory, prepare,
 };
+use puddle_services::owned::OwnedWorkspace;
 use puddle_services::workspaces::WorkspaceService;
 use puddle_store::Store;
 use puddle_types::{Problems, WorkspaceId};
@@ -220,7 +221,7 @@ impl Backend {
     }
 
     /// The same backend whose shutdown first runs `seen` (a test says what stopped it).
-    #[cfg(test)]
+    #[cfg(all(test, feature = "fixture"))]
     #[must_use]
     pub(crate) fn on_shutdown(mut self, seen: impl FnOnce() + Send + 'static) -> Self {
         let stop = self.stop.get_mut();
@@ -294,7 +295,19 @@ impl Backend {
             let named = named.clone();
             Box::pin(async move {
                 let host = named.upgrade()?;
-                let record = host.workspaces().get(&workspace).await.ok()?;
+                // The window's own label: not a user's call, so the handle is made for whoever
+                // owns the workspace.
+                let store = host.store().clone();
+                let handle = {
+                    let workspace = workspace.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let owner = store.workspace_owner(&workspace).ok()??;
+                        OwnedWorkspace::resolve(&*store, owner, &workspace).ok()
+                    })
+                    .await
+                    .ok()??
+                };
+                let record = host.workspaces().get(&handle).await.ok()?;
                 Some(record.label().to_owned())
             })
         });

@@ -19,6 +19,8 @@ use subtle::ConstantTimeEq as _;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
+use crate::owned::OwnedWorkspace;
+
 /// How long a ticket works.
 pub const TICKET_LIFETIME: Duration = Duration::from_secs(30);
 /// Terminals one workspace can have open.
@@ -147,12 +149,12 @@ pub enum TerminalError {
 /// What the terminal routes ask the host.
 pub trait TerminalService: Send + Sync {
     /// Whether a terminal can be asked for now: the workspace is running or starting.
-    fn check(&self, workspace: &WorkspaceId) -> BoxFuture<'_, Result<(), TerminalError>>;
+    fn check(&self, workspace: &OwnedWorkspace) -> BoxFuture<'_, Result<(), TerminalError>>;
 
     /// Opens a shell session in the workspace, waiting while it finishes starting.
     fn open(
         &self,
-        workspace: &WorkspaceId,
+        workspace: &OwnedWorkspace,
         size: TerminalSize,
     ) -> BoxFuture<'_, Result<TerminalLink, TerminalError>>;
 }
@@ -166,19 +168,20 @@ fn unavailable() -> TerminalError {
 }
 
 impl TerminalService for NoTerminals {
-    fn check(&self, _: &WorkspaceId) -> BoxFuture<'_, Result<(), TerminalError>> {
+    fn check(&self, _: &OwnedWorkspace) -> BoxFuture<'_, Result<(), TerminalError>> {
         Box::pin(async { Err(unavailable()) })
     }
 
     fn open(
         &self,
-        _: &WorkspaceId,
+        _: &OwnedWorkspace,
         _: TerminalSize,
     ) -> BoxFuture<'_, Result<TerminalLink, TerminalError>> {
         Box::pin(async { Err(unavailable()) })
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 /// An in-memory service for tests and the UI fixture: every workspace runs and the shell is a
 /// stand-in that echoes what it is typed. `exit N` ends it with status `N`; `size` prints the
 /// rows and columns it was last given; `hostname` prints the id of the workspace it belongs to; `colors` prints a sample in ANSI colours; `vanish` drops the session without an end.
@@ -188,6 +191,7 @@ pub struct FakeTerminals {
     refuse_next: Mutex<Option<TerminalError>>,
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl FakeTerminals {
     /// A fake whose workspaces all run.
     #[must_use]
@@ -204,6 +208,7 @@ impl FakeTerminals {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl FakeTerminals {
     /// Makes the next `open` fail with `error`.
     pub fn refuse_next_open(&self, error: TerminalError) {
@@ -214,13 +219,14 @@ impl FakeTerminals {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl TerminalService for FakeTerminals {
-    fn check(&self, workspace: &WorkspaceId) -> BoxFuture<'_, Result<(), TerminalError>> {
+    fn check(&self, workspace: &OwnedWorkspace) -> BoxFuture<'_, Result<(), TerminalError>> {
         let stopped = self
             .stopped
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .contains(workspace);
+            .contains(workspace.id());
         Box::pin(async move {
             if stopped {
                 Err(TerminalError::NotRunning(
@@ -234,11 +240,11 @@ impl TerminalService for FakeTerminals {
 
     fn open(
         &self,
-        workspace: &WorkspaceId,
+        workspace: &OwnedWorkspace,
         size: TerminalSize,
     ) -> BoxFuture<'_, Result<TerminalLink, TerminalError>> {
         let checked = self.check(workspace);
-        let workspace = workspace.clone();
+        let workspace = workspace.id().clone();
         let refused = self
             .refuse_next
             .lock()
@@ -254,10 +260,12 @@ impl TerminalService for FakeTerminals {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 /// What `colors` prints: red, bold green, a 256-colour cell, a true-colour cell and underline,
 /// each followed by a reset, one per line.
 const COLOR_SAMPLE: &[u8] = b"\x1b[31mred-text\x1b[0m\r\n\x1b[1;32mbold-green\x1b[0m\r\n\x1b[38;5;208mpalette-orange\x1b[0m\r\n\x1b[38;2;12;200;250mtrue-cyan\x1b[0m\r\n\x1b[4munderlined\x1b[0m\r\n";
 
+#[cfg(any(test, feature = "testing"))]
 fn fake_shell(workspace: WorkspaceId, mut size: TerminalSize) -> TerminalLink {
     let (input, mut from_page) = mpsc::channel(64);
     let (to_page, output) = mpsc::channel(64);
@@ -348,7 +356,7 @@ impl fmt::Display for Limit {
 }
 
 struct Entry {
-    workspace: WorkspaceId,
+    workspace: OwnedWorkspace,
     size: TerminalSize,
     ticket: Option<(String, Instant)>,
     /// The signed-in browser the terminal was made for, if it was not made with the install token.
@@ -375,7 +383,7 @@ impl Registry {
     /// An invalid-request [`crate::ApiError`] (422) when a value is not valid.
     pub fn create(
         &self,
-        workspace: &WorkspaceId,
+        workspace: &OwnedWorkspace,
         size: TerminalSize,
         ticket: String,
     ) -> Result<u64, Limit> {
@@ -391,7 +399,7 @@ impl Registry {
         if inner
             .entries
             .values()
-            .filter(|e| &e.workspace == workspace)
+            .filter(|e| e.workspace.id() == workspace.id())
             .count()
             >= MAX_PER_WORKSPACE
         {
@@ -436,16 +444,17 @@ impl Registry {
     }
 
     /// Uses the ticket of terminal `id` of `workspace`: works once, within its lifetime, for that
-    /// terminal only. A wrong guess leaves the ticket as it was.
+    /// terminal only. A wrong guess leaves the ticket as it was. The handle is the one the
+    /// ticket was made for, so the socket opens the shell for the user who asked for it.
     pub fn claim(
         &self,
         workspace: &WorkspaceId,
         id: u64,
         presented: &[u8],
-    ) -> Option<TerminalSize> {
+    ) -> Option<(OwnedWorkspace, TerminalSize)> {
         let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let entry = inner.entries.get_mut(&id)?;
-        if &entry.workspace != workspace {
+        if entry.workspace.id() != workspace {
             return None;
         }
         let (ticket, issued) = entry.ticket.as_ref()?;
@@ -454,7 +463,7 @@ impl Registry {
             return None;
         }
         entry.ticket = None;
-        Some(entry.size)
+        Some((entry.workspace.clone(), entry.size))
     }
 
     /// Frees the terminal's place.

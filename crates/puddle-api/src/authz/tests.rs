@@ -1355,7 +1355,12 @@ async fn a_user_makes_a_learned_host_permanent_for_her_workspace_only() {
         pair.store.global_never_decrypt().unwrap().is_empty(),
         "nothing changed"
     );
-    let still = pair.learned.list(&anns);
+    let still = pair
+        .learned
+        .list(&puddle_services::owned::OwnedWorkspace::for_test(
+            pair.ann_id,
+            &anns,
+        ));
     assert_eq!(still.len(), 2, "still learned: {still:?}");
     let (status, body) = permanent("one.example", "workspace").await;
     assert_eq!(status, 204, "{body}");

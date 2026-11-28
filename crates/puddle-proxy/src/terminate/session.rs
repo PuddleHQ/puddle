@@ -629,7 +629,7 @@ where
                     )
                     .await;
             }
-            Ok(Ok(Err(HeadError::Bad(why)))) => {
+            Ok(Ok(Err(HeadError::Bad(why, _)))) => {
                 return self.refuse(&request::bad(why)).await;
             }
             Ok(Ok(Ok(head))) => head,

@@ -10,7 +10,7 @@
 
 use crate::common;
 
-use puddle_test_kit::eventually;
+use puddle_test_kit::{eventually, eventually_async};
 use std::fmt::Write as _;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -18,7 +18,7 @@ use std::time::Duration;
 use puddle_agent::config::{PortWatch, Target};
 use puddle_agent::{Agent, Config};
 use puddle_agent_proto::forward::{GuestLink, OpenError};
-use puddle_agent_proto::host::{GuestStream, HostConfig, StreamHandler, serve_session};
+use puddle_agent_proto::host::{GuestStream, HostConfig, SessionId, StreamHandler, serve_session};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, UnixListener};
 
@@ -26,7 +26,11 @@ use tokio::net::{TcpListener, UnixListener};
 #[derive(Default)]
 struct Told {
     link: Mutex<Option<GuestLink>>,
+    /// How many times the agent said hello.
+    hellos: Mutex<usize>,
     ports: Mutex<Vec<Vec<u16>>>,
+    /// The sessions the host serves, so a test can end them.
+    sessions: Mutex<Vec<tokio::task::AbortHandle>>,
 }
 
 #[derive(Clone)]
@@ -37,6 +41,7 @@ impl StreamHandler for Host {
 
     async fn guest_link(&self, link: GuestLink) {
         *self.0.link.lock().unwrap() = Some(link);
+        *self.0.hellos.lock().unwrap() += 1;
     }
 
     async fn guest_ports(&self, ports: Vec<u16>) {
@@ -65,17 +70,20 @@ async fn rig(tag: &str) -> Rig {
         loop {
             let (conn, _) = listener.accept().await.unwrap();
             let handler = handler.clone();
-            tokio::spawn(async move {
+            let told = Arc::clone(&handler.0);
+            let session = tokio::spawn(async move {
                 let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
                 let _ = serve_session(
                     conn,
                     common::workspace(),
+                    SessionId::next(),
                     Arc::new(common::ChanSink(tx)),
                     Arc::new(handler),
                     HostConfig::default(),
                 )
                 .await;
             });
+            told.sessions.lock().unwrap().push(session.abort_handle());
         }
     });
     let config = Config {
@@ -239,4 +247,32 @@ async fn the_agent_reports_the_listening_ports_at_start_and_on_every_change() {
         rig.told.ports.lock().unwrap().last() == Some(&vec![5000])
     })
     .await;
+}
+
+#[tokio::test]
+async fn a_forward_opens_after_the_session_carrying_the_control_stream_died_with_nothing_to_report()
+{
+    let rig = rig("session-died").await;
+    rig.link().await;
+    // Quiet: no report is due, and the one session stays the only one. An absence window: nothing
+    // signals that the agent did not reconnect.
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(*rig.told.hellos.lock().unwrap(), 1);
+    for session in rig.told.sessions.lock().unwrap().drain(..) {
+        session.abort();
+    }
+    let port = echo().await;
+    // The link the host still holds is dead; the agent notices without a report to write and
+    // says hello on a new session, whose link opens the forward.
+    let stream = eventually_async(
+        "a forward through the agent's new session",
+        WAIT,
+        || async {
+            let link = rig.told.link.lock().unwrap().clone()?;
+            link.open_forward(port).await.ok()
+        },
+    )
+    .await;
+    drop(stream);
+    assert_eq!(*rig.told.hellos.lock().unwrap(), 2);
 }

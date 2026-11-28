@@ -116,7 +116,7 @@ impl Store {
         }
     }
 
-    /// Whether the audit's lines are over [`Limits::audit_warn_bytes`].
+    /// Whether the audit's lines are over [`super::Limits::audit_warn_bytes`].
     ///
     /// # Errors
     /// A database error.
@@ -162,6 +162,7 @@ impl Store {
         let rules_expired = settle(rules_expired, &mut first_error);
         settle(self.flush_limits(), &mut first_error);
         let waiting_records_merged = settle(self.merge_waiting_connections(), &mut first_error);
+        let devices_removed = settle(self.prune_stopped_devices(), &mut first_error);
         let audit_records_pruned = settle(self.prune_audit_if_due(), &mut first_error);
         // Before the shrink, so that a shrink that fails (a full disk) never hides the warning.
         let audit_over_warn_size = settle(self.audit_over_warn_size(), &mut first_error);
@@ -181,6 +182,7 @@ impl Store {
             audit_file_shrunk_bytes,
             audit_over_warn_size,
             waiting_records_merged,
+            devices_removed,
         })
     }
 
@@ -299,10 +301,12 @@ impl Store {
         audit_bytes(&lock(&self.conn))
     }
 
-    /// Audit records after id `after`, oldest first, as `(id, JSONL line)`.
+    /// Audit records of every user after id `after`, oldest first, as `(id, JSONL line)`, for a
+    /// test.
     ///
     /// # Errors
     /// A database error.
+    #[cfg(any(test, feature = "testing"))]
     pub fn audit_lines(&self, after: i64, limit: u32) -> Result<Vec<(i64, String)>, StoreError> {
         let conn = lock(&self.conn);
         let mut stmt =
@@ -364,21 +368,27 @@ impl Store {
         self.audit_query_where(&filter, cursor, limit)
     }
 
-    /// The `workspace_name` each of the audit records `ids` was written with; a record written
-    /// before the column existed, or with no workspace, has none and is left out.
+    /// The `workspace_name` each of `user`'s audit records `ids` was written with; a record of
+    /// another user, written before the column existed, or with no workspace, has none and is
+    /// left out.
     ///
     /// # Errors
     ///
     /// Fails if the database can't be read.
-    pub fn audit_workspace_names(&self, ids: &[i64]) -> Result<HashMap<i64, String>, StoreError> {
+    pub fn audit_workspace_names(
+        &self,
+        user: UserId,
+        ids: &[i64],
+    ) -> Result<HashMap<i64, String>, StoreError> {
         let conn = self.audit_read();
         let mut stmt = conn.prepare_cached(
-            "SELECT workspace_name FROM audit WHERE id = ?1 AND workspace_name IS NOT NULL",
+            "SELECT workspace_name FROM audit
+              WHERE id = ?1 AND user_id = ?2 AND workspace_name IS NOT NULL",
         )?;
         let mut names = HashMap::new();
         for id in ids {
             if let Some(name) = stmt
-                .query_row([id], |row| row.get::<_, String>(0))
+                .query_row(params![id, user.get()], |row| row.get::<_, String>(0))
                 .optional()?
             {
                 names.insert(*id, name);
@@ -483,7 +493,7 @@ pub(super) fn audit_query_sql(
     if let Some(needle) = &filter.host_contains {
         clause(
             "instr(host, ?) > 0",
-            Some(Value::Text(needle.to_lowercase())),
+            Some(Value::Text(needle.to_ascii_lowercase())),
         );
     }
     if let Some(needle) = &filter.q {

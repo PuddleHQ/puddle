@@ -125,3 +125,47 @@ A workspace in the list whose volume is not on this machine has to be recreated.
 
 The data folder must be on a local disk, not a network share: the database runs in WAL mode,
 which needs shared memory between processes on one machine.
+
+## Going back after a bad upgrade
+
+A new Puddle that cannot start, or starts and misbehaves, can be rolled back to the release before it
+if you have the database copy it made. This is by hand; there is no `puddle` command for it.
+
+**The copy.** Before a new version changes the database, it copies the file next to the original as
+`puddle.db.pre-v<N>`, where `<N>` is the schema version the new release moved the database to. The
+copy holds the database as the previous release left it, as one file with no `-wal` or `-shm`. Puddle
+keeps the two copies with the highest `<N>` and deletes older ones, so after two releases that each
+changed the schema, the copy from before the first one is gone. A new install makes none, and a
+release that changes no schema makes none. Unlike `puddle backup`, the copy keeps the sign-in
+secrets (password hashes, invites, device refresh tokens); the data folder is owner-only, so keep the copy
+there and nowhere else. `<N>` is not the old version: the copy's own version is lower than `<N>`,
+and the release that wrote it is the last one before the bad one.
+
+**Restore it.**
+
+1. Stop Puddle (`puddle serve` or the desktop app).
+2. Install the previous release. On Windows the installer refuses to replace a newer version with an
+   older one, so uninstall the new one first; uninstalling never touches the data folder.
+3. In the data folder, move `puddle.db`, `puddle.db-wal` and `puddle.db-shm` aside (do not delete
+   them yet). Never leave an old `-wal` next to a restored `puddle.db`: SQLite would replay it over
+   the restored file.
+4. Copy (not rename) `puddle.db.pre-v<N>` to `puddle.db` in the data folder.
+5. Start the previous release. It tightens the file's permissions at start like any other.
+
+**What you get back, and what you lose.**
+
+- You get the database as it was before the upgrade: rules, pending requests, audit log,
+  environment rows, git identities, users and devices. Everything written to the database after
+  the upgrade is gone: rules and approvals made, audit records, users added or changed.
+- Nothing else has a copy. `workspaces.json` and the files in `settings/` are rewritten in the new
+  format the next time Puddle saves them (a rename, a settings change), and an older Puddle refuses
+  a file a newer one wrote ("was written by a newer Puddle"). If the previous release says that
+  about one of them, only a `puddle backup` taken before the upgrade brings it back: use
+  "Restore by hand" above with the previous release, and take `puddle backup` before every
+  upgrade for that reason.
+- The runtime's own folder (`msb/` in the data folder: sandboxes, root disks, volumes) has no copy
+  and is not touched by this restore. Puddle does not check whether an older runtime opens what a
+  newer one left there; keep a `puddle backup` and expect to recreate a workspace whose disk the
+  older runtime cannot open. Workspace volumes are not in any backup.
+- A database newer than the installed Puddle is never changed by it. Installing the newer release
+  again reads the data as it was left.

@@ -61,11 +61,13 @@ scripts/cap-test-memory-test.sh
 scripts/flake-rules-test.sh
 ci/check-mise-pin-test.sh
 ci/fetch-baseline-msi-test.sh
+ci/capture-upgrade-fixture-test.sh
 ci/workflow-split-test.sh
 ci/cargo-fetch-test.sh
 ci/deny-fresh-test.sh
 ci/tools-cache-heal-test.sh
 ci/fork-upkeep.py lint
+ci/make-installer-artwork.py --check
 ci/fork-upkeep-issue-test.sh
 scripts/check-gate-exit.sh --self-test
 scripts/check-gate-exit.sh

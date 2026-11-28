@@ -446,15 +446,15 @@ fn refuse(status: u16, code: ReasonCode, message: impl Into<String>) -> InjectDe
 /// up to 1.21 at least) matches a key to a field ignoring case and lets a later key win, so
 /// `{"operation":"download","Operation":"upload"}` is an upload there. A read is a body whose top
 /// level has exactly one key that is `operation` in any case, spelled `operation`, with the value
-/// `download`.
+/// `download`, followed by nothing but white space.
 fn batch_access(body: Option<&[u8]>) -> GitAccess {
     let operation = body.and_then(|body| {
-        serde::Deserializer::deserialize_map(
-            &mut serde_json::Deserializer::from_slice(body),
-            OnlyOperation,
-        )
-        .ok()
-        .flatten()
+        let mut reader = serde_json::Deserializer::from_slice(body);
+        let operation = serde::Deserializer::deserialize_map(&mut reader, OnlyOperation)
+            .ok()
+            .flatten();
+        // a second value after the first is read by some servers: not a plain download
+        reader.end().ok().and(operation)
     });
     if operation.as_deref() == Some("download") {
         GitAccess::Pull

@@ -38,7 +38,7 @@ flowchart LR
 ```
 
 **The workspace is untrusted and holds no keys.** Code in a workspace may be hostile and may be root
-in the guest. Its only way out is the vsock route to a per-workspace endpoint on the host, and the
+in the guest. Its only way out for a socket is the vsock route to a per-workspace endpoint on the host (the boundary-crossings table below lists the channels that are not sockets), and the
 endpoint a connection arrives on is the workspace's identity; nothing the guest says changes it
 (`crates/puddle-ipc/src/lib.rs`). The endpoints are owner-only (a protected access list on Windows,
 `0600` sockets in `0700` folders on Unix) with random or install-specific names. The proxy fails
@@ -123,6 +123,23 @@ hold decrypted traffic and tokens. `PUDDLE_ALLOW_DUMPS=1` turns this off for deb
 CI. Test credentials are canary values that the allowlist in `.gitleaks.toml` names exactly, and
 tests that handle a credential assert that the canary never shows up in a log, error, audit record
 or the guest's view.
+
+**Boundary crossings.** The proxy decides every socket the guest opens. Other channels also cross the
+VM boundary, and the proxy does not decide them. This table is the whole list; a new channel is a
+row here before it ships.
+
+| Channel | Direction | Who decides | Residual | Test |
+| --- | --- | --- | --- | --- |
+| Editor page (the guest's editor server page in a host web view) | Guest content, loaded and run on the host; its sub-resource requests leave on the host's network | The front adds only `frame-ancestors` and `X-Frame-Options`; the window guards navigation and permissions (`crates/puddle-front/src/proxy.rs`, `crates/puddle-app/src/sandbox_window.rs`). No rule is asked | A compromised editor page can send data to any host with an `img` or `fetch` request, past the proxy and its rules. Planned: a content security policy that limits the page to the workspace's own origin | Planned with the policy; none today |
+| External links from the editor page | Guest to host | The window opens the link in the default browser; no per-link prompt and no rate limit | Any link the page opens leaves the VM's rules; the user's browser then sees it. Accepted in the threat model (the threat model); a limit is planned | None for a limit |
+| Desktop SSH attach | Host to guest (the user's client connects in); guest code runs in the editor server | The user, per workspace; off by default, and the workspace is marked trusted while it is on | Code the guest put in its editor server can run a command on the host through the client (the threat model records this). Accepted | Live desktop check |
+| Automatic port forwards | Guest to host: each port the guest reports is bound on the host's `127.0.0.1` under the same number | The guest's own report decides, up to a cap of 512; no setting, no notice, no floor | A guest can take a port the user's own tools expect, and any local process can use the forward. A floor, a notice and a switch are planned | None today |
+| Front port names (`<port>.<id>.localhost`) | Host loopback to any guest port | Nobody checks a forward or a listening report; the route carries no credential | Any local process, and any page that knows the workspace id, reaches every port the guest has open | None today |
+| Image pulls | Host to registry, for the image the user chose | The user's workspace settings; the host pulls over the company-proxy route, not the guest | The guest asks for nothing here; the residual is the registry's content, which runs in the guest | A guest reaching the pull proxy is refused (section 10.2, containment) |
+| Clipboard | Page to host (read), host to page (write) | The window's permission handler; the default today allows a read, while the threat model says it asks (the threat model) | A compromised editor page can read what the user copied. Fix: ask by default, or record it as accepted | None today |
+| Guest text in notices and problem titles | Guest to the user's screen | The host shows the text; it is not always marked as the guest's | A guest can word a notice to mislead. Fix: label the guest part | None today |
+
+The table states the design as built; "planned" marks a fix that is not built yet.
 
 _Owned by:_ `puddle-ipc`, `puddle-netpolicy`, `puddle-proxy` (route identity, destination guard),
 `puddle-inject`, `puddle-logins`, `puddle-secrets`, `puddle-ca`, `puddle-api` (`auth.rs`, `authz.rs`,
@@ -245,7 +262,7 @@ transaction. Store calls run on `spawn_blocking`, never on the async runtime's t
 a local disk, so the data folder must not be on a network share ([docs/backup.md](../backup.md)).
 
 **Migrations** (the steps in `crates/puddle-store/src/schema.rs`, the runner in `schema/migrations.rs`) are an append-only list of SQL steps; the
-version is `PRAGMA user_version` (33 today). A step is never edited once released, because an
+version is `PRAGMA user_version` (35 today, `SCHEMA_VERSION`). A step is never edited once released, because an
 installed database already ran it. Before an upgrade the store copies the database with
 `VACUUM INTO` to `puddle.db.pre-v<N>` (the two newest copies are kept), then runs all pending steps
 in one transaction with foreign keys off and checks them afterwards; a step that breaks a foreign key

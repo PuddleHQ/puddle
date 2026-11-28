@@ -32,8 +32,26 @@ async fn unbounded_and_broadcast_receivers_read_too() {
         next_event_within("two", Duration::from_secs(1), &mut rx).await,
         2
     );
+}
+
+#[tokio::test(start_paused = true)]
+#[should_panic(expected = "gone: the channel closed, so silence proves nothing")]
+async fn an_absence_check_fails_on_a_closed_channel() {
+    let (tx, mut rx) = mpsc::channel::<u8>(1);
     drop(tx);
-    no_event_for("closed", Duration::from_millis(10), &mut rx).await;
+    no_event_for("gone", Duration::from_secs(1), &mut rx).await;
+}
+
+#[tokio::test(start_paused = true)]
+#[should_panic(expected = "gone: the channel closed, so silence proves nothing")]
+async fn a_filtered_absence_check_fails_on_a_closed_channel() {
+    let (tx, mut rx) = mpsc::unbounded_channel::<u8>();
+    tx.send(1).unwrap();
+    drop(tx);
+    no_event_matching("gone", Duration::from_secs(1), &mut rx, |n| {
+        (n > 5).then_some(n)
+    })
+    .await;
 }
 
 #[tokio::test(start_paused = true)]
@@ -144,4 +162,26 @@ async fn a_closed_broadcast_channel_reads_as_none() {
     let (tx, mut rx) = broadcast::channel::<u8>(2);
     drop(tx);
     assert_eq!(rx.next().await, None);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_channel_that_closes_with_nothing_sent_passes() {
+    let (tx, mut rx) = mpsc::channel::<u8>(1);
+    drop(tx);
+    closes_without_event("closed", Duration::from_secs(1), &mut rx).await;
+}
+
+#[tokio::test(start_paused = true)]
+#[should_panic(expected = "sent: an event came before the close: 4")]
+async fn an_event_before_the_close_is_shown() {
+    let (tx, mut rx) = mpsc::channel::<u8>(1);
+    tx.send(4).await.unwrap();
+    closes_without_event("sent", Duration::from_secs(1), &mut rx).await;
+}
+
+#[tokio::test(start_paused = true)]
+#[should_panic(expected = "open: the channel was still open after 1s")]
+async fn a_channel_still_open_is_named() {
+    let (_tx, mut rx) = mpsc::channel::<u8>(1);
+    closes_without_event("open", Duration::from_secs(1), &mut rx).await;
 }

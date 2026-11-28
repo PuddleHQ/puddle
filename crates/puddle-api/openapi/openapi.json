@@ -11641,7 +11641,7 @@
             }
           },
           "403": {
-            "description": "forbidden origin",
+            "description": "asked from a signed-in browser: a forward opens a port on the computer Puddle runs on, so only the install token may",
             "content": {
               "application/json": {
                 "schema": {

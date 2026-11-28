@@ -275,6 +275,7 @@ async fn r27_an_ip_deny_wins_over_exact_wildcard_and_approved_name_allows() {
         .unwrap()[0]
         .id;
     rig.store
+        .as_user(puddle_store::UserId::OWNER)
         .resolve_pending(row, &Resolution::allow(), Actor::Cli)
         .unwrap();
     assert_denied_by(&rig, "new.test", port, &deny).await;

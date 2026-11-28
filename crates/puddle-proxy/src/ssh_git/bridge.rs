@@ -16,6 +16,7 @@
 //!   a stateless request cannot do.
 
 use std::io;
+use std::time::Duration;
 
 use bytes::Bytes;
 use http::header::{ACCEPT, CONTENT_TYPE, HOST, USER_AGENT};
@@ -43,6 +44,11 @@ const PIECE: usize = 65_536;
 /// a limit. A pack is streamed and not counted.
 const MAX_REQUEST: usize = 16 * 1024 * 1024;
 
+/// Most rounds of `have` lines one protocol version 0 fetch posts. Real clients stop near ten; each
+/// round posts every `have` so far, so without a limit a guest sends one large batch and then
+/// flushes, and Puddle uploads that batch to the Git host once per flush.
+const MAX_FETCH_ROUNDS: usize = 32;
+
 /// Appends `bytes` to the request being built; `elsewhere` is what the same `POST` holds in
 /// other buffers.
 fn add(into: &mut Vec<u8>, elsewhere: usize, bytes: &[u8]) -> Result<(), GitSshFailure> {
@@ -63,6 +69,11 @@ pub(crate) trait SmartHttp: Send {
         &mut self,
         request: http::Request<UpBody>,
     ) -> BoxFuture<'_, Result<http::Response<UpBody>, GitSshFailure>>;
+
+    /// How long a push waits for the guest's next piece of pack before it gives up.
+    fn body_idle(&self) -> Duration {
+        Duration::from_secs(120)
+    }
 }
 
 /// Carries out `command` between `io` and `http`.
@@ -301,7 +312,7 @@ async fn fetch_v0<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
         }
     }
     let mut haves = Vec::new();
-    loop {
+    for _ in 0..MAX_FETCH_ROUNDS {
         let done = loop {
             match input.next().await.map_err(|err| not_git(&err))? {
                 // The client gave up between rounds: nothing more to ask.
@@ -325,6 +336,9 @@ async fn fetch_v0<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
             return Ok(());
         }
     }
+    Err(GitSshFailure::new(format!(
+        "the Git client asked for more than {MAX_FETCH_ROUNDS} rounds of a fetch, more than Puddle carries over SSH"
+    )))
 }
 
 fn unexpected() -> io::Error {
@@ -431,6 +445,7 @@ async fn push<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin>(
     if !commands.pack {
         return round(http, command, bytes_body(Bytes::from(head)), out).await;
     }
+    let idle = http.body_idle();
     let (body, sender, abort) = ChannelBody::new(crate::http::Body::Chunked);
     let feed = async move {
         if sender.send(Bytes::from(head)).await.is_err() {
@@ -438,15 +453,15 @@ async fn push<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin>(
         }
         let mut piece = vec![0_u8; PIECE];
         loop {
-            match input.get_mut().read(&mut piece).await {
-                Ok(0) => return,
-                Ok(n) => {
+            match tokio::time::timeout(idle, input.get_mut().read(&mut piece)).await {
+                Ok(Ok(0)) => return,
+                Ok(Ok(n)) => {
                     let sent = Bytes::copy_from_slice(piece.get(..n).unwrap_or_default());
                     if sender.send(sent).await.is_err() {
                         return;
                     }
                 }
-                Err(_) => {
+                Ok(Err(_)) | Err(_) => {
                     abort.abort();
                     return;
                 }
@@ -454,7 +469,19 @@ async fn push<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin>(
         }
     };
     let request = post(command, body.map_err(BoxError::from).boxed_unsync())?;
-    let (answer, ()) = tokio::join!(http.send(request), feed);
+    // The host's answer or failure ends the push: a guest that keeps its input open after the
+    // pack must not hold the command. Dropping `feed` here drops the pack's sender with it.
+    let answer = {
+        let send = http.send(request);
+        tokio::pin!(send, feed);
+        let mut feeding = true;
+        loop {
+            tokio::select! {
+                answer = &mut send => break answer,
+                () = &mut feed, if feeding => feeding = false,
+            }
+        }
+    };
     copy(accepted(answer?, command).await?, out, false).await
 }
 

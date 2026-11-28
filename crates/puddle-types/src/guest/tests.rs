@@ -23,6 +23,16 @@ fn an_owner_only_file_never_prints_its_contents() {
 }
 
 #[test]
+fn a_file_is_the_session_users_only_when_marked_and_says_so_when_printed() {
+    let plain = GuestFile::new(p("/opt/gradle/init.d/a.gradle"), Vec::new());
+    assert!(!plain.session_owned());
+    assert!(format!("{plain:?}").contains("session_owned: false"));
+    let owned = plain.with_session_owner();
+    assert!(owned.session_owned());
+    assert!(format!("{owned:?}").contains("session_owned: true"));
+}
+
+#[test]
 fn an_owner_only_merged_file_prints_its_keys_but_not_their_values() {
     use crate::{MergeEntry, MergeFormat};
     let spec = MergeSpec::new(
@@ -228,4 +238,19 @@ fn a_file_mode_within_the_permission_bits_is_accepted() {
 #[should_panic(expected = "a file mode is within 0o7777")]
 fn a_file_mode_beyond_the_permission_bits_panics_which_stops_a_const_build() {
     let _ = FileMode::new(0o10000);
+}
+
+#[test]
+fn the_sudo_keep_line_lists_the_kept_names_in_order() {
+    let mut env = GuestEnv::new();
+    env.set("A", "1").unwrap();
+    env.set("B_C", "2").unwrap();
+    assert_eq!(
+        env.sudo_keep_line(|_| true),
+        "Defaults env_keep += \"A B_C\"\n"
+    );
+    assert_eq!(
+        env.sudo_keep_line(|n| n.starts_with('B')),
+        "Defaults env_keep += \"B_C\"\n"
+    );
 }

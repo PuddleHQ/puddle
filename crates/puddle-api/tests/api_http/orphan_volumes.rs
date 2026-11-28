@@ -35,13 +35,14 @@ async fn an_unclaimed_disk_is_listed_and_a_restore_makes_a_stopped_workspace_of_
         .await;
     assert_eq!(restored.status, 201, "{}", restored.body);
     let workspace = restored.json();
-    assert_eq!(workspace["name"], "lost");
+    // Named after the checkout folder the disk holds, as the host does.
+    assert_eq!(workspace["name"], "api");
     assert_eq!(workspace["status"], "stopped");
     assert_eq!(workspace["repositories"][0]["url"], REPO);
 
     // It is in the list now, and the disk left the notice.
     let all = api.get("/api/workspaces").await.json();
-    assert_eq!(all["workspaces"][0]["name"], "lost", "{all}");
+    assert_eq!(all["workspaces"][0]["name"], "api", "{all}");
     assert_eq!(
         api.get("/api/orphan-volumes").await.json(),
         json!({"volumes": []})

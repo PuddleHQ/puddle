@@ -135,6 +135,7 @@ mod gate {
     fn store() -> Arc<Store> {
         let store =
             Store::open_in_memory(Arc::new(ManualClock::new(1_000)), Limits::default()).unwrap();
+        // The workspaces the tests ask from are the owner's, who answers.
         for name in ["a", "b"] {
             puddle_store::testing::own(&store, &ws(name));
         }
@@ -160,8 +161,13 @@ mod gate {
             let mut waited = 0;
             // flake-ok: a fake user polling for the question the code under test opens.
             while waited < 5_000 {
-                if let Some(ask) = store.open_ssh_agent_asks(None, None).unwrap().first() {
+                if let Some(ask) = store
+                    .open_ssh_agent_asks_every_user(&puddle_store::testing::all_users(), None)
+                    .unwrap()
+                    .first()
+                {
                     store
+                        .as_user(puddle_store::UserId::OWNER)
                         .answer_ssh_agent_ask(&ask.workspace, ask.id, answer, Actor::Ui)
                         .unwrap();
                     return;
@@ -191,7 +197,7 @@ mod gate {
         assert_eq!(gate.approve(&ws("a"), "h.example.com", &key), Ok(()));
         user.join().unwrap();
         let ask = store
-            .ssh_agent_ask(1)
+            .ssh_agent_ask(&ws("a"), 1)
             .unwrap()
             .expect("the question is kept for a while");
         assert_eq!(ask.state, SshAgentAskState::AllowedOnce);
@@ -263,7 +269,12 @@ mod gate {
             Ok(()),
             "a standing yes asks nothing"
         );
-        assert_eq!(store.open_ssh_agent_asks(None, None).unwrap(), []);
+        assert_eq!(
+            store
+                .open_ssh_agent_asks_every_user(&puddle_store::testing::all_users(), None)
+                .unwrap(),
+            []
+        );
     }
 
     #[test]
@@ -275,13 +286,22 @@ mod gate {
             gate.approve(&ws("a"), "h.example.com", &key),
             Err(Disapproval::Unanswered)
         );
-        assert_eq!(store.open_ssh_agent_asks(None, None).unwrap().len(), 1);
+        assert_eq!(
+            store
+                .open_ssh_agent_asks_every_user(&puddle_store::testing::all_users(), None)
+                .unwrap()
+                .len(),
+            1
+        );
         assert_eq!(
             gate.approve(&ws("a"), "h.example.com", &key),
             Err(Disapproval::Unanswered)
         );
         assert_eq!(
-            store.open_ssh_agent_asks(None, None).unwrap()[0].attempts,
+            store
+                .open_ssh_agent_asks_every_user(&puddle_store::testing::all_users(), None)
+                .unwrap()[0]
+                .attempts,
             2,
             "the second try joined the question"
         );
@@ -301,7 +321,12 @@ mod gate {
             gate.approve(&ws("a"), "h.example.com", &key),
             Err(Disapproval::Unavailable)
         );
-        assert_eq!(store.open_ssh_agent_asks(None, None).unwrap(), []);
+        assert_eq!(
+            store
+                .open_ssh_agent_asks_every_user(&puddle_store::testing::all_users(), None)
+                .unwrap(),
+            []
+        );
     }
 
     #[test]
@@ -313,7 +338,11 @@ mod gate {
             let store = Arc::clone(&store);
             std::thread::spawn(move || {
                 // flake-ok: a fake failure, once the question the code under test opens is there.
-                while store.open_ssh_agent_asks(None, None).unwrap().is_empty() {
+                while store
+                    .open_ssh_agent_asks_every_user(&puddle_store::testing::all_users(), None)
+                    .unwrap()
+                    .is_empty()
+                {
                     std::thread::sleep(Duration::from_millis(1));
                 }
                 puddle_store::testing::break_database(
@@ -338,7 +367,11 @@ mod gate {
             let store = Arc::clone(&store);
             std::thread::spawn(move || {
                 // flake-ok: a fake stop, once the question the code under test opens is there.
-                while store.open_ssh_agent_asks(None, None).unwrap().is_empty() {
+                while store
+                    .open_ssh_agent_asks_every_user(&puddle_store::testing::all_users(), None)
+                    .unwrap()
+                    .is_empty()
+                {
                     std::thread::sleep(Duration::from_millis(1));
                 }
                 store.end_ssh_agent_run(Some(&ws("a"))).unwrap();
@@ -359,7 +392,12 @@ mod gate {
             gate.approve(&ws("a"), "h.example.com", b"junk"),
             Err(Disapproval::Unavailable)
         );
-        assert_eq!(store.open_ssh_agent_asks(None, None).unwrap(), []);
+        assert_eq!(
+            store
+                .open_ssh_agent_asks_every_user(&puddle_store::testing::all_users(), None)
+                .unwrap(),
+            []
+        );
     }
 
     #[test]

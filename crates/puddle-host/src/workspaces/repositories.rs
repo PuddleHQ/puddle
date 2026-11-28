@@ -184,7 +184,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         });
     }
 
-    fn get_record(&self, id: &WorkspaceId) -> Result<WorkspaceRecord, WorkspaceError> {
+    pub(super) fn get_record(&self, id: &WorkspaceId) -> Result<WorkspaceRecord, WorkspaceError> {
         self.state()
             .slots
             .get(id)

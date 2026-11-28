@@ -32,7 +32,10 @@ async fn attach_opens_the_desktop_editor_through_the_launcher() {
     let attached = host
         .workspaces()
         .attach(
-            &WorkspaceId::new("acme").unwrap(),
+            &puddle_services::owned::OwnedWorkspace::for_test(
+                puddle_store::UserId::OWNER,
+                &WorkspaceId::new("acme").unwrap(),
+            ),
             puddle_services::workspaces::AttachMode::Desktop,
         )
         .await

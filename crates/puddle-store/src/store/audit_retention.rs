@@ -37,6 +37,9 @@ const SHRINK_MIN_FREE_PERCENT: u64 = 25;
 /// Pages freed per `incremental_vacuum` step, and steps per sweep, so one sweep gives back at
 /// most 2048 x 400 pages and never holds the writer for long at a time.
 const SHRINK_STEP_PAGES: u32 = 2048;
+/// Whether the audit holds records and all are older than `?1`.
+const ALL_AUDIT_OLDER: &str = "SELECT EXISTS (SELECT 1 FROM audit WHERE ts < ?1)
+                    AND NOT EXISTS (SELECT 1 FROM audit WHERE ts >= ?1)";
 const SHRINK_STEPS_PER_SWEEP: u32 = 400;
 
 /// The most the write-ahead log file keeps on disk once a checkpoint has emptied it (64 MiB).
@@ -237,12 +240,7 @@ impl Store {
     /// Whether a prune at `cutoff` would leave the audit empty: it holds records, and all are older.
     fn prune_would_empty_audit(&self, cutoff: i64) -> Result<bool, StoreError> {
         let conn = lock(&self.conn);
-        Ok(conn.query_row(
-            "SELECT EXISTS (SELECT 1 FROM audit WHERE ts < ?1)
-                    AND NOT EXISTS (SELECT 1 FROM audit WHERE ts >= ?1)",
-            [cutoff],
-            |row| row.get(0),
-        )?)
+        Ok(conn.query_row(ALL_AUDIT_OLDER, [cutoff], |row| row.get(0))?)
     }
 
     /// The sweeper's prune: by the saved retention, at most once an hour (and at once at start and

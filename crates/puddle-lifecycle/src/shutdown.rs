@@ -14,12 +14,14 @@ use crate::trim::{TrimOutcome, trim_request};
 /// Time limits for one sandbox's trim and stop, at shutdown and in [`crate::reconcile`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShutdownConfig {
-    /// How long `fstrim` may run before the stop goes ahead anyway.
+    /// How long the status check and `fstrim` may take together before the stop goes ahead
+    /// anyway.
     pub trim_timeout: Duration,
     /// How long a stop may take before Puddle gives up on it and reports
     /// [`StopOutcome::TimedOut`]. The msb adapter itself kills a VM that doesn't stop
     /// gracefully within 30 s (msb gives the guest's processes up to 10 s of that after their
-    /// SIGTERM), so this is a backstop.
+    /// SIGTERM), so this is a backstop. [`crate::reconcile`] also gives each of its other
+    /// runtime calls (list, get, kill, remove) this long.
     pub stop_timeout: Duration,
 }
 
@@ -262,18 +264,24 @@ pub(crate) async fn trim_and_stop<S: Sandbox>(
     config: &ShutdownConfig,
 ) -> (TrimOutcome, StopOutcome) {
     let name = sandbox.name().clone();
-    let trim = match sandbox.status().await {
-        Ok(WorkspaceStatus::Running) => {
-            let request = trim_request(paths, config.trim_timeout);
-            // The exec has its own timeout; the outer one also covers a runtime that hangs.
-            match tokio::time::timeout(config.trim_timeout, sandbox.exec(request)).await {
-                Ok(Ok(out)) => TrimOutcome::from_output(&out),
-                Ok(Err(e)) => TrimOutcome::Error(e.to_string()),
-                Err(_) => TrimOutcome::Error(format!("no answer within {:?}", config.trim_timeout)),
+    // One deadline for the status check and the exec together; the exec has its own timeout,
+    // and this one also covers a runtime that hangs on either call.
+    let trim = match tokio::time::timeout(config.trim_timeout, async {
+        match sandbox.status().await {
+            Ok(WorkspaceStatus::Running) => {
+                match sandbox.exec(trim_request(paths, config.trim_timeout)).await {
+                    Ok(out) => TrimOutcome::from_output(&out),
+                    Err(e) => TrimOutcome::Error(e.to_string()),
+                }
             }
+            Ok(_) => TrimOutcome::NotRunning,
+            Err(e) => TrimOutcome::Error(e.to_string()),
         }
-        Ok(_) => TrimOutcome::NotRunning,
-        Err(e) => TrimOutcome::Error(e.to_string()),
+    })
+    .await
+    {
+        Ok(outcome) => outcome,
+        Err(_) => TrimOutcome::Error(format!("no answer within {:?}", config.trim_timeout)),
     };
     match &trim {
         TrimOutcome::Trimmed | TrimOutcome::NotRunning => {

@@ -24,7 +24,7 @@ async fn a_refused_host_is_told_to_a_tool_inside_the_tunnel() {
         "the body names the host: {}",
         response.text()
     );
-    assert!(response.header("x-puddle-decision").is_some());
+    assert_eq!(response.header("x-puddle-decision"), Some("pending"));
     let events = rig.events(1).await;
     assert_eq!(events[0].decision, ConnectionDecision::Pending);
 }

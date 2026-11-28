@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use puddle_proxy::{AnswerHead, ExchangeRewriter, Rewrite, SecretValue, StandIns, Want};
+use puddle_proxy::{AnswerHead, ExchangeRewriter, Rewrite, StandIns, Want};
 use puddle_secrets::MemoryStore;
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
@@ -136,7 +136,7 @@ async fn reply(rig: &Rig, real: &str, scope: &str) -> Option<Value> {
 }
 
 fn registered(rig: &Rig, stand_in: &str, real: &str) -> bool {
-    rig.registry.set_real(stand_in, SecretValue::new(real)) == Ok(true)
+    rig.registry.real_of(stand_in).as_deref() == Some(real)
 }
 
 fn kept(rig: &Rig, slot: Slot) -> (String, String) {

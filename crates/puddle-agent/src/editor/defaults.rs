@@ -311,7 +311,7 @@ impl Run<'_> {
         // could not take out.
         let mut next: Vec<Value> = wanted
             .iter()
-            .filter(|w| was(&self.applied.keybindings, w) || add.contains(&w))
+            .filter(|w| was(&self.applied.keybindings, w) || add.contains(w))
             .cloned()
             .collect();
         next.extend(

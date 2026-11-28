@@ -121,3 +121,94 @@ async fn a_shutdown_that_finishes_returns_its_result() {
     let mut signals = ShutdownSignals::install().unwrap();
     assert_eq!(signals.until_again(async { 7 }).await.unwrap(), 7);
 }
+
+/// Reads the worker's request off its own standard input; the parent test below starts it.
+#[cfg(windows)]
+#[tokio::test]
+#[ignore = "runs only as the child of `the_worker_reads_the_front_s_request_from_stdin`"]
+async fn worker_child() {
+    let mut signals = ShutdownSignals::install().unwrap();
+    assert_eq!(signals.recv().await, ShutdownCause::Logoff);
+    // the one request is the worker's only input: a second wait ends in `FrontGone`, and the
+    // shutdown it covers is never cut short
+    assert_eq!(signals.recv().await, ShutdownCause::FrontGone);
+    assert_eq!(signals.until_again(async { 9 }).await.unwrap(), 9);
+    let waiting = tokio::time::timeout(
+        std::time::Duration::from_millis(200),
+        signals.until_again(std::future::pending::<()>()),
+    )
+    .await;
+    assert!(waiting.is_err(), "the worker has no second trigger");
+}
+
+#[cfg(windows)]
+#[test]
+fn the_worker_reads_the_front_s_request_from_stdin() {
+    use std::io::Write as _;
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "signal::tests::worker_child",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env(crate::ROLE_VAR, "worker")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all(b"logoff\n").unwrap();
+    // the front keeps the pipe open after its request
+    let output = child.wait_with_output().unwrap();
+    drop(stdin);
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn outside_the_front_the_console_events_are_installed() {
+    let signals = imp::Signals::install().unwrap();
+    assert!(matches!(signals, imp::Signals::Console { .. }));
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn the_worker_waits_for_its_request_once() {
+    let (sender, receiver) = oneshot::channel();
+    let mut signals = imp::Signals::Worker(Some(receiver));
+    sender.send(ShutdownCause::SystemShutdown).unwrap();
+    assert_eq!(signals.recv().await, ShutdownCause::SystemShutdown);
+    assert_eq!(
+        signals.recv().await,
+        ShutdownCause::FrontGone,
+        "already read"
+    );
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn a_reader_that_ended_without_a_request_is_the_front_gone() {
+    let (sender, receiver) = oneshot::channel::<ShutdownCause>();
+    drop(sender);
+    let mut signals = imp::Signals::Worker(Some(receiver));
+    assert_eq!(signals.recv().await, ShutdownCause::FrontGone);
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn the_worker_has_no_second_trigger() {
+    let (_sender, receiver) = oneshot::channel::<ShutdownCause>();
+    let mut signals = imp::Signals::Worker(Some(receiver));
+    let second =
+        tokio::time::timeout(std::time::Duration::from_millis(100), signals.recv_again()).await;
+    assert!(second.is_err(), "pending, whatever the front does");
+}

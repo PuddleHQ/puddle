@@ -15,7 +15,7 @@ use crate::{HostConfig, HostError};
 /// those exist.
 pub(super) async fn inventory_of<R: Runtime>(
     runtime: &R,
-    stored: &[crate::files::Stored],
+    stored: &[crate::state_files::Stored],
 ) -> Result<Inventory, HostError> {
     let existing: BTreeSet<String> = runtime
         .list()
@@ -46,7 +46,7 @@ pub(super) async fn inventory_of<R: Runtime>(
 pub(super) async fn adopt_holders<R: Runtime>(
     runtime: &R,
     config: &HostConfig,
-    stored: &[crate::files::Stored],
+    stored: &[crate::state_files::Stored],
 ) -> Result<Workspaces, HostError> {
     let workspaces = Workspaces::new(config.workspaces.clone());
     let inventory = inventory_of(runtime, stored).await?;
@@ -59,7 +59,7 @@ pub(super) async fn adopt_holders<R: Runtime>(
 pub(super) async fn reconcile_with<R: Runtime>(
     runtime: &R,
     config: &HostConfig,
-    stored: &[crate::files::Stored],
+    stored: &[crate::state_files::Stored],
 ) -> Result<
     (
         puddle_lifecycle::ReconcileReport,

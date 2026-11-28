@@ -549,7 +549,7 @@ refuses to run while Puddle or `msb` is running. The first start of the new vers
   Those come back only from a `puddle backup` taken before the upgrade. There is no command; the
   steps are in [docs/backup.md](../backup.md#going-back-after-a-bad-upgrade).
 - **Workspace list.** `workspaces.json` carries a version; older versions are read and upgraded in
-  memory, a newer one is refused as written by a newer Puddle (`crates/puddle-host/src/files.rs`).
+  memory, a newer one is refused as written by a newer Puddle (`crates/puddle-host/src/state_files.rs`).
 - **Runtime.** The new `msb` ships in the new install folder and is checked like any start (6.1).
   The runtime's own home (`MSB_HOME`, the `msb/` folder of the data folder, section 7) is not part
   of the install and is reused as it is: the new `msb` opens the sandboxes, volumes and database

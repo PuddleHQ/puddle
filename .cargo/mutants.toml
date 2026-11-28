@@ -29,6 +29,9 @@ exclude_globs = [
     # The Credential Manager lock of `puddle-secrets` (`#[cfg(windows)]`): a Linux run never compiles
     # it. The Windows test job runs every real-store test through it.
     "crates/puddle-secrets/src/keyring_store/windows.rs",
+    # The Windows front and kill-on-close job of `puddle-lifecycle` (`#[cfg(windows)]`): a Linux run
+    # never compiles them. The Windows test job runs their tests.
+    "crates/puddle-lifecycle/src/windows/**",
 ]
 
 # Equivalent mutants, each with its reason:
@@ -126,6 +129,20 @@ exclude_re = [
     '(replace ask_pipe | in ask_pipe$)',
     '(replace allocated_windows | in allocated_windows$)',
     '(replace free_bytes_windows | in free_bytes_windows$)',
+    # Not measured: `release_kill_on_close` (the `#[cfg(windows)]` wrapper over the job object) and
+    # `is_worker` (the worker role exists on Windows only, a Linux build leaves it unused) are never
+    # compiled into the tests on Linux; the Windows test job runs them.
+    'lifecycle/src/job\.rs:\d+:\d+: replace release_kill_on_close ',
+    'supervise\.rs:\d+:\d+: replace (is_worker |.* in is_worker$)',
+    # Not measured: the `#[cfg(windows)]` `imp` module of `signal.rs` (console events), which sits after
+    # the Unix one (`UnixSignals`).
+    'replace imp::ConsoleSignals::',
+    # `read_request` takes `Ok(0)` (end of input) as an empty line, which `ShutdownCause::parse` does not
+    # know, so `n > 0` only skips a parse that gives `FrontGone` anyway.
+    'signal\.rs:\d+:\d+: replace (match guard n > 0 with true|> with >=) in read_request',
+    # `trim_and_stop` logs a trim that went well at debug level and one that failed as a warning; the
+    # arm only chooses the log line, the outcomes it returns do not depend on it.
+    'shutdown\.rs:\d+:\d+: delete match arm TrimOutcome::Trimmed \| TrimOutcome::NotRunning in trim_and_stop',
     # `high << 4 | low` style join again: in `tlv` the length bytes are folded with `(acc << 8) | byte`,
     # and `acc << 8` has its low eight bits clear, so `|` and `^` give the same length for every input.
     'der\.rs:\d+:\d+: replace \| with \^ in tlv',

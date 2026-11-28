@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! A user's own msb setup never leaks into the msb Puddle starts: their `MSB_*` variables are
-//! dropped and an `msb` on `PATH` is never what runs. nextest runs each test in its own
-//! process, so changing the process environment here is safe.
+//! dropped and an `msb` on `PATH` is never what runs.
 #![expect(
     clippy::unwrap_used,
     reason = "fixture helpers run outside #[test] but only in tests"
@@ -13,7 +12,7 @@
 )]
 mod support;
 
-use puddle_runtime::{DEV_OVERRIDE_VAR, DevOverride};
+use puddle_runtime::DevOverride;
 #[cfg(unix)]
 use puddle_runtime::{RuntimeEnv, RuntimeLayout};
 #[cfg(unix)]
@@ -30,25 +29,12 @@ const USER_VARS: [(&str, &str); 7] = [
     ("MSB_API_URL", "https://example.invalid"),
 ];
 
-#[expect(unsafe_code, reason = "tests change the process environment")]
-fn set_env(name: &str, value: Option<&str>) {
-    // SAFETY: nextest runs each test in its own process, and these tests start no threads.
-    unsafe {
-        match value {
-            Some(v) => std::env::set_var(name, v),
-            None => std::env::remove_var(name),
-        }
-    }
-}
-
 #[test]
-fn the_dev_override_variable_is_read_from_the_environment() {
-    set_env(DEV_OVERRIDE_VAR, None);
-    assert_eq!(DevOverride::from_env(), DevOverride::none());
-    set_env(DEV_OVERRIDE_VAR, Some("yes"));
-    assert_eq!(DevOverride::from_env(), DevOverride::none());
-    set_env(DEV_OVERRIDE_VAR, Some("1"));
-    assert_eq!(DevOverride::from_env(), DevOverride::requested());
+fn the_dev_override_value_is_requested_only_when_it_is_one() {
+    let value = |v: Option<&str>| DevOverride::from_value(v.map(std::ffi::OsStr::new));
+    assert_eq!(value(None), DevOverride::none());
+    assert_eq!(value(Some("yes")), DevOverride::none());
+    assert_eq!(value(Some("1")), DevOverride::requested());
 }
 
 /// Runs msb the way Puddle does, with a user's `MSB_*` set and a fake `msb` first on `PATH`: only

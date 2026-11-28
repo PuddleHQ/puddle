@@ -130,7 +130,7 @@ export class PendingStore {
   /**
    * The ids the page may draw. A request that arrives while the page is open is held back until
    * the user asks for it (`showHeld`): the guest picks the moment it arrives, so a row must never
-   * move under a pointer that is about to click Allow (an Allow click on the wrong request).
+   * move under a pointer that is about to click Allow.
    */
   #shown = $state.raw<ReadonlySet<number>>(new Set());
   /** The rows the user has been shown: the ones the page draws. */

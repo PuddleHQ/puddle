@@ -9,7 +9,7 @@ use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-use crate::common::{Api, STEP, start};
+use crate::common::{Api, START_MS, STEP, start};
 
 /// An open event stream and what has been read from it so far.
 pub(crate) struct Stream {
@@ -254,12 +254,16 @@ async fn rule_changes_reach_every_stream_even_a_filtered_one() {
         .await;
     assert_eq!(created.status, 201, "{}", created.body);
     let id = created.json()["id"].as_i64().unwrap();
-    api.send(
-        "PUT",
-        &format!("/api/rules/{id}/expiry"),
-        Some(&serde_json::json!({"expires_at": null})),
-    )
-    .await;
+    // The rule starts permanent, so a new expiry is a change; one that changes nothing
+    // announces nothing.
+    let expiry = api
+        .send(
+            "PUT",
+            &format!("/api/rules/{id}/expiry"),
+            Some(&serde_json::json!({"expires_at": START_MS + 60_000})),
+        )
+        .await;
+    assert_eq!(expiry.status, 200, "{}", expiry.body);
     assert_eq!(
         api.send("DELETE", &format!("/api/rules/{id}"), None)
             .await

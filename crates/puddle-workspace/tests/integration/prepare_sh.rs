@@ -178,3 +178,25 @@ fn an_unknown_user_or_a_missing_volume_fails_with_the_reason() {
         assert!(calls(&fx).is_empty(), "{shell}");
     }
 }
+
+#[test]
+fn a_puddle_folder_that_is_a_symlink_is_refused_before_anything_is_changed() {
+    let (user, _) = me();
+    for shell in shells() {
+        let fx = fixture();
+        let elsewhere = fx.vol.parent().unwrap().join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::set_permissions(&elsewhere, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::remove_dir_all(fx.vol.join(".puddle")).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, fx.vol.join(".puddle")).unwrap();
+        let out = run(shell, &fx, &fx.vol, &user);
+        assert_eq!(out.status.code(), Some(1), "{shell}: {out:?}");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("is a symlink"),
+            "{shell}: {out:?}"
+        );
+        let mode = std::fs::metadata(&elsewhere).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o755, "{shell}: the target was not chmod-ed");
+        assert!(calls(&fx).is_empty(), "{shell}: nothing was given away");
+    }
+}

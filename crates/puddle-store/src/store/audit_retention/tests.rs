@@ -454,3 +454,48 @@ fn the_log_checkpoint_never_waits_for_a_reader_and_truncates_once_none_is_left()
     store.checkpoint_wal().unwrap();
     assert_eq!(wal_bytes(&path), 0, "no reader left: the log is truncated");
 }
+
+/// A store with one audit record per ask, the clock at 1.8e12 ms.
+fn store_with_asks(asks: u32) -> (Store, Arc<ManualClock>, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let clock = Arc::new(ManualClock::new(1_800_000_000_000));
+    let store = Store::open(
+        &dir.path().join("puddle.db"),
+        clock.clone(),
+        Limits::default(),
+    )
+    .unwrap();
+    let workspace = WorkspaceId::new("a").unwrap();
+    crate::testing::own(&store, &workspace);
+    for n in 0..asks {
+        let host = Host::parse_normalised(&format!("log{n}.example")).unwrap();
+        let request = EgressRequest::new(workspace.clone(), host, 443);
+        store.decide(&request, SuffixAllows::Count).unwrap();
+    }
+    (store, clock, dir)
+}
+
+fn prune_log_lines(logs: &crate::test_support::Logs) -> Vec<String> {
+    logs.lines()
+        .into_iter()
+        .filter(|line| line.contains("audit records past their retention deleted"))
+        .collect()
+}
+
+#[test]
+fn a_prune_that_deletes_records_logs_how_many_and_one_that_deletes_none_logs_nothing() {
+    let (store, clock, _dir) = store_with_asks(3);
+    let logs = crate::test_support::Logs::capture();
+    assert_eq!(store.prune_audit(5).unwrap().deleted, 0);
+    assert_eq!(prune_log_lines(&logs), Vec::<String>::new());
+    clock.advance(10 * DAY);
+    let deleted = store.prune_audit(5).unwrap().deleted;
+    assert!(deleted >= 3, "{deleted}");
+    let lines = prune_log_lines(&logs);
+    assert_eq!(
+        lines,
+        vec![format!(
+            "INFO audit records past their retention deleted deleted={deleted} keep_days=5"
+        )]
+    );
+}

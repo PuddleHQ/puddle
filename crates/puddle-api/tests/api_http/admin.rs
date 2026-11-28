@@ -229,11 +229,13 @@ async fn the_list_counts_workspaces_and_disk_and_never_names_them() {
     admin.workspaces.idle().await;
     let list = admin.listed().await;
     assert_eq!(list[0]["workspaces_running"].as_u64().unwrap(), 0);
+    // A create ends running.
     assert_eq!(
-        list[1]["workspaces_stopped"].as_u64().unwrap(),
+        list[1]["workspaces_running"].as_u64().unwrap(),
         2,
         "{list:?}"
     );
+    assert_eq!(list[1]["workspaces_stopped"].as_u64().unwrap(), 0);
     let stats = admin.owner("GET", "/api/admin/stats", None).await;
     assert_eq!(stats.status, 200, "{stats:?}");
     assert_eq!(stats.json()["users"], 2);
@@ -508,17 +510,7 @@ async fn a_deletion_whose_workspace_step_fails_is_finished_at_a_later_look() {
     admin.site.setup().await;
     let (ann, ann_id) = admin.user("Ann", pw("ann password three")).await;
     make_box(&admin, &ann, "ann-box").await;
-    let started = admin
-        .site
-        .send(
-            "POST",
-            "/api/workspaces/ann-box/start",
-            &Req::bearer(&ann),
-            None,
-        )
-        .await;
-    assert_eq!(started.status, 202, "{started:?}");
-    admin.workspaces.idle().await;
+    // A create ends running, so her box is up already.
     let mut others = Vec::new();
     for name in ["Bob", "Cy", "Dee", "Eve"] {
         others.push((name, admin.user(name, pw("other password three")).await.1));

@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+use std::time::Duration;
+
 use super::{
     AsyncReadExt, AsyncWriteExt, AtomicBool, ComputeError, ExecContext, ExecOutput, ExecRequest,
     FakeRuntime, Op, Ordering, SSH_BANNER, Sandbox, SandboxName, SshStream, State, WorkspaceStatus,
@@ -80,7 +82,7 @@ impl FakeSandbox {
         &self,
         state: &mut State,
         request: &ExecRequest,
-    ) -> Result<ExecOutput, ComputeError> {
+    ) -> Result<(ExecOutput, Duration), ComputeError> {
         let handlers = state.handlers.clone();
         self.check_user(state, request)?;
         let State {
@@ -100,11 +102,13 @@ impl FakeSandbox {
             spec: &record.spec,
             root: &mut record.files,
             volumes,
+            delay: Duration::ZERO,
         };
-        if let Some(output) = handlers.iter().find_map(|h| h.handle(&mut ctx, request)) {
-            return Ok(output);
-        }
-        builtin(&mut ctx, request)
+        let output = match handlers.iter().find_map(|h| h.handle(&mut ctx, request)) {
+            Some(output) => output,
+            None => builtin(&mut ctx, request)?,
+        };
+        Ok((output, ctx.delay))
     }
 }
 
@@ -161,15 +165,20 @@ impl Sandbox for FakeSandbox {
 
     async fn exec(&self, request: ExecRequest) -> Result<ExecOutput, ComputeError> {
         self.runtime.turn().await;
-        let mut state = self.runtime.lock();
-        let detail = std::iter::once(request.program.as_str())
-            .chain(request.args.iter().map(String::as_str))
-            .collect::<Vec<_>>()
-            .join(" ");
-        state.enter(Op::Exec, Some(self.name.as_str()), Some(detail))?;
-        self.check_running(&state, "exec")?;
-        self.run(&mut state, &request)
-            .map(|output| output.capped(request.max_output))
+        let (output, delay) = {
+            let mut state = self.runtime.lock();
+            let detail = std::iter::once(request.program.as_str())
+                .chain(request.args.iter().map(String::as_str))
+                .collect::<Vec<_>>()
+                .join(" ");
+            state.enter(Op::Exec, Some(self.name.as_str()), Some(detail))?;
+            self.check_running(&state, "exec")?;
+            self.run(&mut state, &request)?
+        };
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
+        Ok(output.capped(request.max_output))
     }
 
     async fn serve_ssh<S: SshStream>(&self, mut stream: S) -> Result<(), ComputeError> {

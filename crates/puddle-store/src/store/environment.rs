@@ -11,7 +11,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use super::{Store, lock, sql_ts, users};
 use crate::environment::{
-    EnvChange, EnvDraft, EnvEntry, EnvName, EnvRow, EnvScope, EnvSecret, EnvValue,
+    DraftKind, EnvChange, EnvDraft, EnvEntry, EnvName, EnvRow, EnvScope, EnvSecret, EnvValue,
     MAX_ENTRIES_PER_SCOPE, MAX_SCOPE_BYTES, MintError, SecretHost, SecretPlace, StartValue,
     StartVar,
 };
@@ -230,8 +230,8 @@ impl Store {
             let before = list(tx, user, scope)?;
             let replaced = before.iter().find(|e| &e.name == name).cloned();
             let (kind, value, secret_id, hosts, place) = match draft {
-                EnvDraft::Plain(value) => ("plain", Some(value), None, None, None),
-                EnvDraft::Secret { id, hosts, place } => (
+                EnvDraft(DraftKind::Plain(value)) => ("plain", Some(value), None, None, None),
+                EnvDraft(DraftKind::Secret { id, hosts, place }) => (
                     "secret",
                     None,
                     Some(id),

@@ -6,6 +6,7 @@
 //! the same transaction (R-8). Lock order, where two are held: `conn`, then `workspaces`.
 
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
@@ -856,22 +857,28 @@ fn open_pending_sql() -> String {
 
 /// Open rows, most recent first, grouped by registrable domain in that order.
 fn group_by_domain(rows: Vec<PendingRow>) -> Vec<InboxGroup> {
-    let mut groups: Vec<InboxGroup> = Vec::new();
-    let mut index: HashMap<String, usize> = HashMap::new();
+    // Per domain, the rows in order; `order` keeps the domains by their first row.
+    let mut by_domain: HashMap<String, Vec<PendingRow>> = HashMap::new();
+    let mut order: Vec<String> = Vec::new();
     for row in rows {
         let domain = registrable_domain(&row.host);
-        match index.get(&domain) {
-            Some(&at) => groups[at].rows.push(row),
-            None => {
-                index.insert(domain.clone(), groups.len());
-                groups.push(InboxGroup {
-                    registrable_domain: domain,
-                    rows: vec![row],
-                });
+        match by_domain.entry(domain) {
+            Entry::Occupied(mut group) => group.get_mut().push(row),
+            Entry::Vacant(slot) => {
+                order.push(slot.key().clone());
+                slot.insert(vec![row]);
             }
         }
     }
-    groups
+    order
+        .into_iter()
+        .filter_map(|domain| {
+            by_domain.remove(&domain).map(|rows| InboxGroup {
+                registrable_domain: domain,
+                rows,
+            })
+        })
+        .collect()
 }
 
 impl Policy for Store {

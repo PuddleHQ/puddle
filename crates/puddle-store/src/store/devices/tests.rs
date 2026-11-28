@@ -235,8 +235,8 @@ fn a_sweep_deletes_a_device_30_days_after_it_stopped_working_with_its_session() 
         .unwrap();
     let lapsed = store.add_device(UserId::OWNER, "lapsed", 2_000).unwrap();
     let live = store.add_device(UserId::OWNER, "live", 90 * DAY).unwrap();
-    for (n, device) in [&revoked, &lapsed, &live].into_iter().enumerate() {
-        assert!(secrets.put_session(device.id, &[n as u8 + 1; 32]).unwrap());
+    for (digest, device) in [(1_u8, &revoked), (2, &lapsed), (3, &live)] {
+        assert!(secrets.put_session(device.id, &[digest; 32]).unwrap());
     }
     store.revoke_device(UserId::OWNER, revoked.id).unwrap();
     let count = |sql: &str| -> i64 { lock(&store.conn).query_row(sql, [], |r| r.get(0)).unwrap() };

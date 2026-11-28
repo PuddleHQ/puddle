@@ -2,9 +2,14 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Downloads the MSI an upgrade starts from: what a user has installed before this build.
 #
-#   ci/fetch-baseline-msi.sh <out-dir>
+#   ci/fetch-baseline-msi.sh <out-dir> [<release tag>]
+#   ci/fetch-baseline-msi.sh --list
 #
-# That is the MSI of the newest published release. While there is no release yet, it is the MSI
+# With no tag that is the MSI of the newest published release; with a tag, the MSI of that
+# release (a user may skip versions, so the upgrade job runs once for every published release).
+# `--list` prints the tags of all published releases as a JSON array for a job matrix, newest
+# first (`[""]` while there is none: one job, which takes the develop fallback). While there is no
+# release yet, the baseline is the MSI
 # the newest msi workflow run on develop whose `msi` job passed kept (the `puddle-msi` artifact, 14
 # days; the run's other jobs may be red, the upgrade job among them), from a commit other than this one, so the upgrade still crosses commits,
 # and from a run that started before this one: the package version is 0.0.<run number>, so a develop run
@@ -19,15 +24,23 @@
 # to the guest's layout.
 set -euo pipefail
 
-out=${1:?usage: fetch-baseline-msi.sh <out-dir>}
 repo=${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is not set}
+die() { echo "fetch-baseline-msi: $*" >&2; exit 1; }
+
+if [ "${1:-}" = --list ]; then
+    tags=$(gh release list -R "$repo" --exclude-drafts --limit 100 --json tagName --jq '[.[].tagName]') ||
+        die "could not list the releases of $repo"
+    if [ "$tags" = '[]' ]; then echo '[""]'; else echo "$tags"; fi
+    exit 0
+fi
+
+out=${1:?usage: fetch-baseline-msi.sh <out-dir> [<release tag>] | --list}
+want=${2:-}
 sha=${GITHUB_SHA:?GITHUB_SHA is not set}
 run_id=${GITHUB_RUN_ID:?GITHUB_RUN_ID is not set}
 # Kept develop MSIs looked at, newest first, for one whose msi job passed.
 max_candidates=${BASELINE_MAX_CANDIDATES:-10}
 pattern='Puddle_*_x64_en-US.msi'
-
-die() { echo "fetch-baseline-msi: $*" >&2; exit 1; }
 
 mkdir -p "$out"
 [ -z "$(ls -A "$out")" ] || die "$out is not empty"
@@ -38,8 +51,12 @@ if [ -n "${BASELINE_RUN:-}" ]; then
         die "could not download the MSI of run $BASELINE_RUN (kept 14 days)"
     source="msi run $BASELINE_RUN (asked for)"
 else
-    tag=$(gh release list -R "$repo" --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName // ""') ||
-        die "could not list the releases of $repo"
+    if [ -n "$want" ]; then
+        tag=$want
+    else
+        tag=$(gh release list -R "$repo" --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName // ""') ||
+            die "could not list the releases of $repo"
+    fi
     if [ -n "$tag" ]; then
         gh release download "$tag" -R "$repo" --pattern "$pattern" --dir "$out" ||
             die "release $tag has no MSI ($pattern): an upgrade from it cannot be tested"

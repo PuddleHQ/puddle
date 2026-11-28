@@ -49,6 +49,7 @@ read_filters() {
     [ -z "$why" ]
 }
 
+# shellcheck disable=SC2154 # $repo is set by the script this text is put in front of
 g() {
     for f in $filters; do
         set -- -c "filter.$f.clean=" -c "filter.$f.smudge=" -c "filter.$f.process=" \

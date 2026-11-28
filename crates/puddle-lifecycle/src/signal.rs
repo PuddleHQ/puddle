@@ -99,6 +99,7 @@ fn read_request<R: Read>(control: R) -> ShutdownCause {
 pub(crate) fn request_worker_shutdown<W: Write>(control: Option<W>, cause: ShutdownCause) -> bool {
     let requested_before = control.is_none();
     if let Some(mut control) = control {
+        // Closing the pipe right after is the request too, so a failed write changes nothing.
         let _ = writeln!(control, "{cause}");
         drop(control);
         tracing::info!(%cause, "front: shutdown requested");

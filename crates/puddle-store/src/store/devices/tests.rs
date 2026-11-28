@@ -239,11 +239,7 @@ fn a_sweep_deletes_a_device_30_days_after_it_stopped_working_with_its_session() 
         assert!(secrets.put_session(device.id, &[n as u8 + 1; 32]).unwrap());
     }
     store.revoke_device(UserId::OWNER, revoked.id).unwrap();
-    let count = |sql: &str| -> i64 {
-        lock(&store.conn)
-            .query_row(sql, [], |r| r.get(0))
-            .unwrap()
-    };
+    let count = |sql: &str| -> i64 { lock(&store.conn).query_row(sql, [], |r| r.get(0)).unwrap() };
     // Revoked at 1_000, lapsed at 2_000: both stopped, neither for 30 days yet.
     clock.set(1_000 + 30 * DAY - 1);
     assert_eq!(store.sweep().unwrap().devices_removed, 0);

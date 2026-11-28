@@ -8,7 +8,7 @@ use puddle_types::StoredId;
 use puddle_types::{Event, WorkspaceId};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
-use super::{Store, lock, sql_ts, users};
+use super::{Store, lock, sql_ts, stored_ts, users};
 use crate::error::StoreError;
 use crate::identity::{
     Author, CredentialBinding, Identity, IdentityDraft, IdentityId, Signing, check_attachable,
@@ -69,8 +69,8 @@ fn identity_of(raw: Raw) -> Result<Identity, StoreError> {
         credentials,
         signing,
         is_default: raw.is_default,
-        created_at: u64::try_from(raw.created_at).unwrap_or(0),
-        changed_at: u64::try_from(raw.changed_at).unwrap_or(0),
+        created_at: stored_ts("identities", raw.id, raw.created_at)?,
+        changed_at: stored_ts("identities", raw.id, raw.changed_at)?,
     })
 }
 

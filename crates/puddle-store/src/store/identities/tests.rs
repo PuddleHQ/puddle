@@ -57,6 +57,27 @@ fn a_hand_edited_identity_row_is_reported_as_corrupt() {
 }
 
 #[test]
+fn a_negative_timestamp_on_an_identity_is_corrupt_not_zero() {
+    for column in ["created_at", "changed_at"] {
+        let store = store();
+        let id = made(&store);
+        lock(&store.conn)
+            .execute(&format!("UPDATE identities SET {column} = -1"), [])
+            .unwrap();
+        assert!(
+            matches!(
+                store.identity(UserId::OWNER, id),
+                Err(StoreError::Corrupt {
+                    table: "identities",
+                    ..
+                })
+            ),
+            "{column}"
+        );
+    }
+}
+
+#[test]
 fn a_hand_edited_repository_row_is_reported_as_corrupt() {
     let store = store();
     let ws = WorkspaceId::new("shop").unwrap();

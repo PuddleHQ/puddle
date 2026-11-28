@@ -694,14 +694,26 @@ if ($SelfTest) {
     # The installer's dialogs: which button a person presses, and what is wrong with what they read.
     function Btn([string]$Name, [bool]$Enabled = $true) { [pscustomobject]@{ Name = $Name; Enabled = $Enabled } }
     function Dlg([string]$Title, [string[]]$Texts, $Buttons = @()) { [pscustomobject]@{ Title = $Title; Texts = $Texts; Buttons = $Buttons } }
-    Check 'the welcome page gets Next' ((Select-DialogButton @((Btn '&Back'), (Btn '&Next >'), (Btn 'Cancel'))).Name -eq '&Next >')
-    Check 'the ready page gets Install' ((Select-DialogButton @((Btn '&Back'), (Btn '&Install'), (Btn 'Cancel'))).Name -eq '&Install')
+    Check 'the first page gets Install, the Default setup' ((Select-DialogButton @((Btn '&Install'), (Btn '&Custom setup'), (Btn 'Cancel'))).Name -eq '&Install')
+    Check 'the Custom setup run presses Custom setup on the first page' ((Select-DialogButton @((Btn '&Install'), (Btn '&Custom setup'), (Btn 'Cancel')) $CustomSetupButtonOrder).Name -eq '&Custom setup')
+    Check 'the Custom setup run presses Install on the custom page' ((Select-DialogButton @((Btn '&Back'), (Btn '&Install'), (Btn 'Cancel')) $CustomSetupButtonOrder).Name -eq '&Install')
     Check 'the finish page gets Finish' ((Select-DialogButton @((Btn '&Back' $false), (Btn '&Finish'), (Btn 'Cancel' $false))).Name -eq '&Finish')
     Check 'a message gets OK' ((Select-DialogButton @((Btn 'OK'))).Name -eq 'OK')
     Check 'the progress page gets no button (Cancel is never pressed)' ($null -eq (Select-DialogButton @((Btn '&Back' $false), (Btn '&Next >' $false), (Btn 'Cancel'))))
-    $pages = @((Dlg 'Puddle Setup' @('Welcome to the Puddle Setup Wizard')), (Dlg 'Puddle Setup' @('Destination Folder')), (Dlg 'Puddle Setup' @('Ready to install Puddle')), (Dlg 'Puddle Setup' @("Copying Puddle's files")), (Dlg 'Puddle Setup' @('Completed the Puddle Setup Wizard')))
+    $first = Dlg 'Puddle Setup' @('Install Puddle', 'Puddle runs your coding agents') @((Btn '&Install'), (Btn '&Custom setup'), (Btn 'Cancel'))
+    $customPage = Dlg 'Puddle Setup' @('Custom setup', 'Install Puddle in this folder:') @((Btn '&Back'), (Btn '&Install'), (Btn 'Cancel'))
+    $copying = Dlg 'Puddle Setup' @("Copying Puddle's files. This takes about a minute.")
+    $done = Dlg 'Puddle Setup' @('Puddle is installed', 'The setup log is saved here:', 'C:\Temp\MSI1.LOG') @((Btn 'Open the &log'), (Btn '&Finish'))
+    $pages = @($first, $copying, $done)
     Check 'a plain installer run has no dialog problem' (@(Find-DialogProblems $pages).Count -eq 0)
     Check 'a run with too few dialogs is named' ((@(Find-DialogProblems $pages[0..1]) -join ';') -match 'only 2 dialogs')
+    Check 'the Default setup run passes the wizard check' (@(Find-WizardProblems $pages 'default').Count -eq 0)
+    Check 'the Custom setup run passes the wizard check' (@(Find-WizardProblems @($first, $customPage, $copying, $done) 'custom').Count -eq 0)
+    Check 'a Custom setup run that skipped its page is named' ((@(Find-WizardProblems $pages 'custom') -join ';') -match 'never showed its page')
+    Check 'a Default setup run that shows the Custom setup page is named' ((@(Find-WizardProblems @($first, $customPage, $copying, $done) 'default') -join ';') -match 'showed the Custom setup page')
+    Check 'a first page without Custom setup is named' ((@(Find-WizardProblems @((Dlg 'Puddle Setup' @('Install Puddle') @((Btn '&Install'))), $copying, $done) 'default') -join ';') -match 'does not offer Install and Custom setup')
+    Check "WixUI's own folder page is named" ((@(Find-WizardProblems ($pages + (Dlg 'Puddle Setup' @('Destination Folder'))) 'default') -join ';') -match "WixUI's own page")
+    Check 'a run that never says installed is named' ((@(Find-WizardProblems @($first, $copying) 'default') -join ';') -match "Puddle is installed")
     Check 'a dialog with no text is named' ((@(Find-DialogProblems ($pages + (Dlg 'Puddle Setup' @()))) -join ';') -match 'shows no text')
     Check 'the installer own script-generation line is not a raw placeholder' (@(Find-DialogProblems ($pages + (Dlg 'Puddle Setup' @('Generating script operations for action: [1]')))).Count -eq 0)
     Check 'a raw placeholder in a dialog is named' ((@(Find-DialogProblems ($pages + (Dlg 'Puddle Setup' @('File: [1],  Directory: [9]')))) -join ';') -match 'raw placeholder')
@@ -797,6 +809,7 @@ if ($BaselineMsi) {
 }
 
 Install-WithUi $Msi 'msi-install.log' $PlantFootprint
+if (-not $PlantFootprint) { Test-CustomSetupAndLog $Msi }
 $first = Assert-InstalledLayout
 if ($PlantFootprint -eq 'no-shortcut') { Remove-Item -LiteralPath $StartMenuLink -Force }
 if ($PlantFootprint -eq 'wrong-shortcut-target') {

@@ -2,14 +2,14 @@
 //! Changing rules: add, edit, switch, expire, delete and undo a decision.
 
 use puddle_types::{Decision, Event, Host, RuleId, SuffixAllows, WorkspaceId};
-use rusqlite::params;
+use rusqlite::{Transaction, params};
 
 use crate::audit::{AuditRecord, RuleSwitchKind, RuleWire, actor_str};
 use crate::engine::Hit;
 use crate::error::StoreError;
 use crate::pattern::Pattern;
 use crate::pending::PendingRow;
-use crate::rule::{Actor, NewRule, Precedence, Rule, RuleEdit, Scope};
+use crate::rule::{Actor, Effect, NewRule, Precedence, Rule, RuleEdit, Scope};
 use crate::users::UserId;
 
 use super::rows::{
@@ -35,23 +35,57 @@ impl Store {
         if new.created_by == Actor::System {
             return Err(StoreError::SystemActor);
         }
-        let rule = self.change(|tx, now, fx| {
-            if new.expires_at.is_some_and(|at| at <= now) {
-                return Err(StoreError::ExpiryNotInFuture);
-            }
-            let rule = insert_rule(tx, user, new, now, None, precedence)?;
-            // A pending row's `decided_by` takes the people's actors and `system`, so a rule
-            // made by a workspace create closes the rows it decides as Puddle itself.
-            let decider = match new.created_by {
-                Actor::WorkspaceCreate => Actor::System,
-                actor => actor,
-            };
-            close_decided_rows(tx, &rule, None, decider, now, fx)?;
-            fx.push(Event::RulesChanged {});
-            Ok(rule)
-        })?;
+        let rule =
+            self.change(|tx, now, fx| insert_and_close(tx, user, new, now, precedence, fx))?;
         tracing::info!(rule = %rule.id, pattern = %rule.pattern, effect = rule.effect.as_str(), "rule created");
         Ok(rule)
+    }
+
+    /// Allows each of `hosts` for `workspace` that no rule of `user` decides yet, in one
+    /// transaction: the check and the rule it leads to cannot be split by another writer, so a
+    /// create never overrides a block that lands in between. A host listed twice gets one rule.
+    /// Reached through [`Store::as_user`].
+    ///
+    /// # Errors
+    /// [`StoreError::UnknownWorkspace`] for a workspace that is not `user`'s, or a database
+    /// error; nothing is made then.
+    pub(super) fn allow_hosts_by(
+        &self,
+        user: UserId,
+        workspace: &WorkspaceId,
+        hosts: &[Host],
+    ) -> Result<Vec<Rule>, StoreError> {
+        let made = self.change(|tx, now, fx| {
+            // The index changes only inside `change`, which this closure runs in, so it is the
+            // committed rules as of this transaction.
+            let index = self.snapshot();
+            let mut made: Vec<Rule> = Vec::new();
+            for host in hosts {
+                let decided = index
+                    .decide_as(user, workspace, host, now, SuffixAllows::Count)
+                    .is_some();
+                if decided
+                    || made
+                        .iter()
+                        .any(|rule| rule.pattern == Pattern::Exact(host.clone()))
+                {
+                    continue;
+                }
+                let new = NewRule {
+                    scope: Scope::Workspace(workspace.clone()),
+                    pattern: Pattern::Exact(host.clone()),
+                    effect: Effect::Allow,
+                    expires_at: None,
+                    created_by: Actor::WorkspaceCreate,
+                };
+                made.push(insert_and_close(tx, user, &new, now, None, fx)?);
+            }
+            Ok(made)
+        })?;
+        for rule in &made {
+            tracing::info!(rule = %rule.id, pattern = %rule.pattern, effect = rule.effect.as_str(), "rule created");
+        }
+        Ok(made)
     }
 
     /// What `user`'s rules say about `host` for `workspace` right now, without recording
@@ -285,4 +319,28 @@ impl Store {
         tracing::info!(rule = %id, enabled, "rule switched");
         Ok(rule)
     }
+}
+
+/// Inserts a rule of `user` and closes the open rows it now decides, inside `tx`.
+fn insert_and_close(
+    tx: &Transaction<'_>,
+    user: UserId,
+    new: &NewRule,
+    now: u64,
+    precedence: Option<Precedence>,
+    fx: &mut Vec<Event>,
+) -> Result<Rule, StoreError> {
+    if new.expires_at.is_some_and(|at| at <= now) {
+        return Err(StoreError::ExpiryNotInFuture);
+    }
+    let rule = insert_rule(tx, user, new, now, None, precedence)?;
+    // A pending row's `decided_by` takes the people's actors and `system`, so a rule
+    // made by a workspace create closes the rows it decides as Puddle itself.
+    let decider = match new.created_by {
+        Actor::WorkspaceCreate => Actor::System,
+        actor => actor,
+    };
+    close_decided_rows(tx, &rule, None, decider, now, fx)?;
+    fx.push(Event::RulesChanged {});
+    Ok(rule)
 }

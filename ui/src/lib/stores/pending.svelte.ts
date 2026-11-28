@@ -181,6 +181,12 @@ export class PendingStore {
     this.#setRows(this.rows, "all");
   }
 
+  /** Draws one request the user asked for by name (a notification's address), held or not. */
+  show(id: number): void {
+    if (this.rows.some((r) => r.request.id === id))
+      this.#setRows(this.rows, [id]);
+  }
+
   /** The workspaces that have an open request. */
   get workspaces(): string[] {
     return [...new Set(this.rows.map((r) => r.request.workspace))].sort();
@@ -406,19 +412,24 @@ export class PendingStore {
       closed.map((c) => [`${c.workspace}\0${c.host}\0${c.port}`, c.domain]),
     );
     const back: Row[] = [];
+    // The stream's event can beat this answer: the row is there, held; the user asked for it back.
+    const already: number[] = [];
     let unknown = false;
     for (const request of reopened) {
-      if (this.rows.some((r) => r.request.id === request.id)) continue;
+      if (this.rows.some((r) => r.request.id === request.id)) {
+        already.push(request.id);
+        continue;
+      }
       const domain = domains.get(
         `${request.workspace}\0${request.host}\0${request.port}`,
       );
       if (domain === undefined) unknown = true;
       else back.push({ request, domain });
     }
-    if (back.length > 0) {
+    if (back.length > 0 || already.length > 0) {
       this.#setRows(
         [...back, ...this.rows],
-        back.map((r) => r.request.id),
+        [...already, ...back.map((r) => r.request.id)],
       );
     }
     // The service names the group; ask it when a request came back that this page did not decide.

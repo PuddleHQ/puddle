@@ -94,15 +94,17 @@ pub fn check_staged_database(
     }))
 }
 
+/// The tables, views and triggers a database holds.
+const SCHEMA_OBJECTS: &str =
+    "SELECT type, name FROM sqlite_master WHERE type IN ('table', 'view', 'trigger')";
+
 /// The tables every Puddle schema version has.
 const CORE_TABLES: [&str; 3] = ["rules", "pending", "audit"];
 
 /// Why the schema of `conn` is not one Puddle made: a core table missing or not a table, a view
 /// (Puddle has none), or a trigger no Puddle version creates.
 fn foreign_structure(conn: &Connection) -> Result<Option<String>, StoreError> {
-    let mut stmt = conn.prepare(
-        "SELECT type, name FROM sqlite_master WHERE type IN ('table', 'view', 'trigger')",
-    )?;
+    let mut stmt = conn.prepare(SCHEMA_OBJECTS)?;
     let found = stmt
         .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
         .collect::<Result<Vec<_>, _>>()?;
@@ -730,8 +732,8 @@ fn map_users(conn: &Connection) -> Result<(), StoreError> {
 /// a row is added only when its natural key is missing here; in [`RestoreMode::Replace`] the
 /// carried tables are cleared first.
 ///
-/// Neither input is changed beyond the migration of `present`. `dest` is checked (integrity and
-/// foreign keys) before this returns.
+/// Neither input is changed beyond the migration of `present`. `dest` is checked for integrity before
+/// this returns; a row of the backup that breaks a foreign key is skipped and counted, never kept.
 ///
 /// # Errors
 ///
@@ -772,7 +774,6 @@ fn merge_into(
         }
     }
     let carried = tables();
-    let before: i64 = scalar(&tx, "SELECT count(*) FROM pragma_foreign_key_check")?;
     let mut dropped_rows = 0;
     // The maps are built after the table they map is merged and before the tables that use them.
     for t in &carried {
@@ -793,18 +794,6 @@ fn merge_into(
         stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
             .collect::<Result<Vec<(i64, i64)>, _>>()?
     };
-    // A row without a parent that was already here (an older bug, a hand edit) is not the
-    // restore's doing and never blocks it, as in the migration runner.
-    let after: i64 = scalar(&tx, "SELECT count(*) FROM pragma_foreign_key_check")?;
-    let broken = after - before;
-    if broken > 0 {
-        return Err(StoreError::Database(rusqlite::Error::SqliteFailure(
-            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CONSTRAINT_FOREIGNKEY),
-            Some(format!(
-                "the restored data left {broken} rows without their parent row"
-            )),
-        )));
-    }
     let owner_id: i64 = scalar(&tx, "SELECT id FROM main.users WHERE role = 'owner'")?;
     tx.commit()?;
     conn.execute("DETACH DATABASE backup", [])?;

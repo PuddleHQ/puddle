@@ -725,7 +725,8 @@ allows can be ranked when one exists.
   compared in a canonical form that errs towards matching more, because a rule only refuses: the
   query is cut and never read; `%XX` and `%uXXXX` are decoded up to four times; `\` counts as `/`;
   empty and `.` segments go and `..` removes the segment before it; `;parameters` of a segment
-  go; trailing dots and spaces of a segment go; a NUL ends the path; case is ignored; a `#` is judged
+  go; trailing dots and spaces of a segment go; a NUL ends the path; a fullwidth ASCII character
+  (`ａ`, `／`, `＼`) reads as the ASCII one (Windows best-fit narrowing); case is ignored; a `#` is judged
   both as the start of a fragment and as a plain character of the path (a server that keeps it
   reads `/public#/../admin` as `/admin`). A pattern is
   written in the same form, so `/Gists/` and `/%67ists` are one pattern. Two paths that differ only
@@ -752,7 +753,10 @@ allows can be ranked when one exists.
   the method an HTTP/1.1 server is sent for it, so a rule written for a WebSocket upgrade names
   it. Methods are HTTP tokens, at most 16 per rule. A rule cannot see a method carried in
   the request body (a `_method` form field that some frameworks honour) and does not decode spellings
-  only a server's own decoder understands (overlong UTF-8, look-alike Unicode): both are limits of
+  only a server's own decoder understands (overlong UTF-8 such as `%c0%af`, which only IIS 4 and 5
+  and Tomcat before 6.0.18 read as `/`, and which current servers refuse; dotless `ı`, compatibility
+  forms and other look-alike Unicode, which no common server folds to ASCII; folding them would
+  also refuse real names): both are limits of
   a rule on method and path, so a rule is a guard against an agent's ordinary mistakes and its
   common tricks, not a proof against a guest that knows the server.
 - **R-53 The refusal** is a `403` whose body says in words that a rule refuses requests like this

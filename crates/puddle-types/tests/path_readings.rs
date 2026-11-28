@@ -223,3 +223,24 @@ fn the_readings_cover_the_known_server_disagreements() {
     assert!(!named("/admin", "/administrator"));
     assert!(!named("/repos/*", "/repos/a/b"));
 }
+
+/// Windows narrows a wide character to the ASCII one that looks like it ("best fit") when a
+/// server calls an ANSI API on the path, so a fullwidth spelling is the plain path there. The
+/// other Unicode spellings (overlong UTF-8, dotless i, compatibility forms) are no reading: no
+/// current server folds them, and folding them would refuse real names (`docs/spec/rules.md`
+/// R-52).
+#[test]
+fn a_fullwidth_spelling_is_read_as_the_ascii_path() {
+    let named = |pattern: &str, target: &str| {
+        let pattern = PathPattern::parse(pattern).unwrap();
+        CanonicalPath::readings(target)
+            .iter()
+            .any(|reading| pattern.matches(reading))
+    };
+    assert!(named("/admin", "/\u{ff41}dmin"));
+    assert!(named("/admin", "/%EF%BD%81dmin"));
+    assert!(named("/admin/x", "/admin\u{ff0f}x"));
+    assert!(named("/admin/x", "/a/\u{ff0e}\u{ff0e}/admin\u{ff3c}x"));
+    assert!(!named("/admin", "/adm\u{131}n"));
+    assert!(!named("/admin", "/admin%c0%af"));
+}

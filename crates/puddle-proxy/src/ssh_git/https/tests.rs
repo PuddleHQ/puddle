@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use super::*;
 
+use puddle_types::{NullSink, WorkspaceId};
+
+use crate::Proxy;
+use crate::testing::StaticPolicy;
+
 fn host(name: &str) -> Host {
     Host::parse_normalised(name).unwrap_or_else(|_| unreachable!("a valid test name"))
 }
@@ -106,4 +111,36 @@ async fn a_leg_is_recorded_when_its_connection_ends_though_nothing_waits_for_it(
     )
     .await;
     assert_eq!(legs.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn closing_a_leg_waits_until_its_connections_record_is_kept() {
+    let proxy = Arc::new(Proxy::new(
+        Arc::new(StaticPolicy::new()),
+        Arc::new(NullSink),
+    ));
+    let workspace = WorkspaceId::new("box").unwrap_or_else(|_| unreachable!("a valid id"));
+    let cx = GitSshContext::new(proxy.handler(workspace));
+    let (client, _server) = tokio::io::duplex(PIPE);
+    let (send, connection) = hyper::client::conn::http1::handshake(TokioIo::new(client))
+        .await
+        .unwrap_or_else(|_| unreachable!("a handshake writes nothing"));
+    // The connection ends only once `send` is dropped, so the record cannot exist before `close`.
+    let done = record_when_done(cx.leg_log(), async move {
+        let _ = connection.await;
+        Outcome {
+            hop: Some("corp-proxy".to_owned()),
+            ..Outcome::default()
+        }
+    });
+    let leg = Leg {
+        cx: &cx,
+        host: host("github.com"),
+        open: Some(Open { send, done }),
+    };
+    assert!(cx.legs().is_empty());
+    leg.close().await;
+    let legs = cx.legs();
+    assert_eq!(legs.len(), 1);
+    assert_eq!(legs[0].hop.as_deref(), Some("corp-proxy"));
 }

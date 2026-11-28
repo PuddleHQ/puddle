@@ -34,6 +34,7 @@ vi.mock("#lib/stores/live.svelte.ts", async (original) => {
   return { ...mod, live: h.source };
 });
 
+import { session } from "#lib/session/session.svelte.ts";
 import { toasts } from "#lib/stores/toasts.svelte.ts";
 import { workspaces } from "#lib/stores/workspaces.svelte.ts";
 import { port } from "#lib/testing/fake-environment.ts";
@@ -76,6 +77,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  session.mode = "checking";
   for (const t of [...toasts.items]) toasts.dismiss(t.id);
 });
 
@@ -85,6 +87,30 @@ const rowOf = async (guest: number) => {
     .getAllByRole("row")
     .find((r) => r.getAttribute("data-port") === String(guest)) as HTMLElement;
 };
+
+describe("a browser on another computer", () => {
+  it("offers no forward, but lists the ports and can stop a forward", async () => {
+    session.mode = "signed-in";
+    render(Page);
+    expect(await rowOf(3000)).toHaveTextContent("Not forwarded");
+    expect(screen.queryByRole("button", { name: /^Forward/ })).toBeNull();
+    expect(screen.queryByLabelText(/Port on this computer/)).toBeNull();
+    expect(screen.queryByText("Forward another port")).toBeNull();
+    expect(screen.getByText(/another computer/)).toBeTruthy();
+    expect(
+      within(await rowOf(5432)).getByRole("button", {
+        name: "Stop forwarding 5432",
+      }),
+    ).toBeEnabled();
+  });
+
+  it("keeps the forward controls in the desktop window", async () => {
+    session.mode = "local";
+    render(Page);
+    await rowOf(3000);
+    expect(screen.getByRole("button", { name: "Forward 3000" })).toBeEnabled();
+  });
+});
 
 describe("the table", () => {
   it("lists what listens, what is forwarded and what is kept", async () => {

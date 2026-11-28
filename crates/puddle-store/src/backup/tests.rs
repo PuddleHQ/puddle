@@ -22,6 +22,17 @@ fn copy_has_the_committed_rows_and_the_schema_version() {
         copy.rules_every_user(&crate::testing::all_users()).len(),
         rules
     );
+    drop(copy);
+    let beside_the_copy: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("copy.db"))
+        .collect();
+    assert_eq!(
+        beside_the_copy,
+        ["copy.db"],
+        "the copy leaves no sidecar files"
+    );
 }
 
 #[test]

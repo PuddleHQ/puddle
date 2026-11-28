@@ -483,7 +483,7 @@ pub(super) fn audit_query_sql(
     if let Some(needle) = &filter.host_contains {
         clause(
             "instr(host, ?) > 0",
-            Some(Value::Text(needle.to_lowercase())),
+            Some(Value::Text(needle.to_ascii_lowercase())),
         );
     }
     if let Some(needle) = &filter.q {

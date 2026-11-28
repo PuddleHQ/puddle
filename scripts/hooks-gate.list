@@ -67,6 +67,7 @@ ci/cargo-fetch-test.sh
 ci/deny-fresh-test.sh
 ci/tools-cache-heal-test.sh
 ci/fork-upkeep.py lint
+ci/make-installer-artwork.py --check
 ci/fork-upkeep-issue-test.sh
 scripts/check-gate-exit.sh --self-test
 scripts/check-gate-exit.sh

@@ -24,7 +24,8 @@ use puddle_upstream::{AuthList, BasicAuth, Chain, ChainConfig, Discovery, TlsCli
 use crate::injection::{Injection, InjectorInputs, credential_read_log, forward_sign_in_needed};
 use crate::{HostConfig, HostError, HostWorkspaces, ProxyPasswords};
 
-use super::{AbortOnDrop, HostOptions, local_access};
+use super::background::AbortOnDrop;
+use super::{HostOptions, local_access};
 
 /// A company root as the TLS client takes it.
 pub(super) fn der_of(

@@ -71,6 +71,7 @@ pub(crate) mod orphans;
 mod access;
 mod boot;
 mod create_and_grow;
+mod memory_at_start;
 mod plumbing;
 mod service;
 mod settle;

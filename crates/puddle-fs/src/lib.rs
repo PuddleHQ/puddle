@@ -7,6 +7,7 @@
 //!   explicit, protected ACL with one entry, for the current user.
 //! - [`allocated_bytes`]: what a sparse file (a VM's disk image) really takes on the host.
 //! - [`free_bytes`]: how much room is left on the drive that holds a folder.
+//! - [`available_memory_bytes`]: how much memory the host can still give to new work.
 //! - [`lock`]: one host process per data folder, an OS lock that dies with its holder.
 //!
 //! | OS | `data_dir()` |
@@ -18,6 +19,7 @@
 mod allocated;
 mod data_dir;
 mod free;
+mod free_memory;
 pub mod lock;
 pub mod private;
 #[cfg(windows)]
@@ -30,4 +32,5 @@ pub mod win;
 pub use allocated::allocated_bytes;
 pub use data_dir::{DataDirError, data_dir, data_dir_in, user_ssh_config, user_ssh_config_in};
 pub use free::free_bytes;
+pub use free_memory::available_memory_bytes;
 pub use lock::{DataLock, LockError};

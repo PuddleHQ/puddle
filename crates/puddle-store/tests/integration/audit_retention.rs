@@ -392,3 +392,24 @@ fn a_file_exactly_at_the_warning_size_is_not_over_it() {
         assert_eq!(store.sweep().unwrap().audit_over_warn_size, over, "{warn}");
     }
 }
+
+#[test]
+fn the_file_in_use_is_the_file_less_its_free_bytes() {
+    let stats = |file_bytes, free_bytes| puddle_store::AuditStats {
+        records: 0,
+        bytes: 0,
+        oldest_ts: None,
+        records_last_day: 0,
+        bytes_last_day: 0,
+        records_last_week: 0,
+        bytes_last_week: 0,
+        retention_days: 90,
+        warn_bytes: 0,
+        file_bytes,
+        free_bytes,
+    };
+    assert_eq!(stats(10_000, 2_500).file_in_use_bytes(), 7_500);
+    assert_eq!(stats(10_000, 0).file_in_use_bytes(), 10_000);
+    assert_eq!(stats(10_000, 10_000).file_in_use_bytes(), 0);
+    assert_eq!(stats(4_096, 8_192).file_in_use_bytes(), 0);
+}

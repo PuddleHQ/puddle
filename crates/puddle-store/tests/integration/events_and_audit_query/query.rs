@@ -970,3 +970,54 @@ fn a_users_audit_query_returns_only_that_users_records_when_the_filter_names_no_
     assert_eq!(anns.len(), 1, "{anns:?}");
     assert!(anns[0].contains("ann.example"), "{anns:?}");
 }
+
+/// Whether the plan for a query over `from`/`to` reads through the `audit_ts` index. SQLite
+/// picks that index on its own for a window bounded on both sides, so the tests below use one
+/// bound: then it is the store's probe that turns the index on, and the plan says which way it went.
+fn reads_through_the_time_index(store: &Store, from: Option<u64>, to: Option<u64>) -> bool {
+    let filter = AuditFilter {
+        from,
+        to,
+        ..AuditFilter::default()
+    };
+    store
+        .audit_query_plan(&filter, AuditCursor::Before(None), 100)
+        .unwrap()
+        .iter()
+        .any(|line| line.contains("USING INDEX audit_ts"))
+}
+
+#[test]
+fn a_time_window_is_read_through_the_time_index_only_below_ten_thousand_records() {
+    const TOTAL: u64 = 10_050;
+    // Record i is at T0 + 10 * i.
+    let records: Vec<AuditRecord> = (0..TOTAL)
+        .map(|i| {
+            connection(
+                T0 + i * 10,
+                "alpha",
+                "a.example.com",
+                ConnectionDecision::Allow,
+            )
+        })
+        .collect();
+    let (_dir, store) = seeded(&records);
+
+    // `from` of the newest n records, and `to` of the oldest n.
+    for (n, narrow) in [(9_999, true), (10_000, false), (10_001, false)] {
+        let from = Some(T0 + 10 * (TOTAL - n));
+        assert_eq!(
+            reads_through_the_time_index(&store, from, None),
+            narrow,
+            "newest {n} records, from only"
+        );
+        let to = Some(T0 + 10 * n);
+        assert_eq!(
+            reads_through_the_time_index(&store, None, to),
+            narrow,
+            "oldest {n} records, to only"
+        );
+    }
+    // No window at all keeps to the id order.
+    assert!(!reads_through_the_time_index(&store, None, None));
+}

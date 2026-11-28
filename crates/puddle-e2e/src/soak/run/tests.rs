@@ -141,10 +141,8 @@ fn an_empty_metrics_file_fails_the_run() {
 
 #[tokio::test]
 async fn a_task_that_finished_before_the_run_did_is_a_major_note() {
-    let dead = tokio::spawn(async {});
-    while !dead.is_finished() {
-        tokio::task::yield_now().await;
-    }
+    let mut dead = tokio::spawn(async {});
+    (&mut dead).await.unwrap();
     let note = ended_early(&dead, "sampler").expect("a finished task is a note");
     assert_eq!(note.severity, Severity::Major);
     assert!(note.text.contains("sampler"), "{}", note.text);

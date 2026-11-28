@@ -1238,6 +1238,14 @@ function Get-PuddleProcessesNow { @(Get-Process -Name 'msb', 'puddle-app', 'pudd
 #   - a silent uninstall asked for everything (PUDDLE_STOP_RUNNING=1 PUDDLE_REMOVE_ALL=1) over a running Puddle
 #     leaves no process, no data folder, no shell state, no Include line of Puddle's in the user's ssh config
 #     (the rest of that file stays) and nothing new on the machine.
+# The uninstall helper's own note of a stop (its session, the sessions of Puddle's processes), into the logs.
+function Save-UninstallHelperLog {
+    foreach ($dir in @([IO.Path]::GetTempPath(), (Join-Path $env:SystemRoot 'Temp'))) {
+        $note = Join-Path $dir 'puddle-uninstall.log'
+        if (Test-Path -LiteralPath $note) { Get-Content -LiteralPath $note -ErrorAction SilentlyContinue | Add-Content -LiteralPath (Join-Path $LogDir 'puddle-uninstall.log') }
+    }
+}
+
 function Test-UninstallRunningApp([string]$Package, [string]$Policy) {
     Step 'an uninstall over a running Puddle is refused unless asked; the dialog offers to quit it and go on'
     Invoke-Msiexec @('/i', "`"$Package`"") 'msi-running-install.log'
@@ -1269,6 +1277,7 @@ function Test-UninstallRunningApp([string]$Package, [string]$Policy) {
             Expect ($kept.Count -gt 0) "the uninstall removed the files of workspace $wsId without the removal box ticked"
         }
     } finally {
+        Save-UninstallHelperLog
         Stop-Installed
     }
 
@@ -1308,6 +1317,7 @@ function Test-UninstallRunningApp([string]$Package, [string]$Policy) {
         Expect ($added.Count -eq 0) "the full removal left: $($added -join '; ')"
         Write-Host 'the full removal left no process, folder, sign-in entry or ssh config line of Puddle'
     } finally {
+        Save-UninstallHelperLog
         Stop-Installed
         if ($null -eq $sshOriginal) { Remove-Item -LiteralPath $sshConfig -Force -ErrorAction SilentlyContinue }
         else { Set-Content -LiteralPath $sshConfig -Value $sshOriginal -NoNewline }

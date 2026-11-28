@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { page } from "$app/state";
+  import { session } from "#lib/session/session.svelte.ts";
   import { toasts } from "#lib/stores/toasts.svelte.ts";
   import { WorkspacePortsStore } from "#lib/stores/workspace-ports.svelte.ts";
   import { workspaces } from "#lib/stores/workspaces.svelte.ts";
@@ -16,6 +17,8 @@
   const workspace = $derived(workspaces.list.find((w) => w.id === id));
   const wid = $derived(workspace?.id);
   const store = new WorkspacePortsStore();
+  // A forward opens on the computer Puddle runs on, so the service refuses it for a signed-in browser.
+  const remote = $derived(session.isRemote);
   const fid = $props.id();
 
   // The port on this computer typed for a row, by the workspace's port; and the "another port" form.
@@ -106,6 +109,13 @@
       127.0.0.1 only, never on your network. Keep a forward and it comes back at
       every start of the workspace.
     </p>
+    {#if remote}
+      <p class="muted">
+        This page is open in a browser on another computer, and a forward opens
+        only on the computer Puddle runs on. Forward a port from Puddle's
+        desktop window. You can still see the ports here and stop a forward.
+      </p>
+    {/if}
     {#if !store.running}
       <p class="warn" role="status">
         {workspace.name} is not running, so nothing listens and a port can't be forwarded
@@ -139,6 +149,8 @@
                 <td>
                   {#if hasForward(row)}
                     {forwardText(row)}
+                  {:else if remote}
+                    Not forwarded
                   {:else}
                     <input
                       type="text"
@@ -181,7 +193,7 @@
                     >
                       Stop
                     </button>
-                  {:else}
+                  {:else if !remote}
                     <button
                       type="button"
                       class="btn"
@@ -212,41 +224,43 @@
       <p class="error" role="alert">{problem}</p>
     {/if}
 
-    <form class="add" onsubmit={other} novalidate>
-      <div class="field">
-        <label for="{fid}-guest">Forward another port</label>
-        <input
-          id="{fid}-guest"
-          type="text"
-          inputmode="numeric"
-          autocomplete="off"
-          placeholder="Port in the workspace"
-          bind:value={otherGuest}
-          aria-invalid={formProblem ? "true" : undefined}
-          aria-describedby={formProblem ? `${fid}-form-error` : undefined}
-        />
-      </div>
-      <div class="field">
-        <label for="{fid}-host">On this computer</label>
-        <input
-          id="{fid}-host"
-          type="text"
-          inputmode="numeric"
-          autocomplete="off"
-          placeholder="Same number"
-          bind:value={otherHost}
-        />
-      </div>
-      <label class="choice">
-        <input type="checkbox" bind:checked={otherKeep} />Keep it
-      </label>
-      <button type="submit" class="btn" disabled={busy || !store.running}>
-        Forward
-      </button>
-      {#if !store.running}
-        <span class="why">Start the workspace to forward a port.</span>
-      {/if}
-    </form>
+    {#if !remote}
+      <form class="add" onsubmit={other} novalidate>
+        <div class="field">
+          <label for="{fid}-guest">Forward another port</label>
+          <input
+            id="{fid}-guest"
+            type="text"
+            inputmode="numeric"
+            autocomplete="off"
+            placeholder="Port in the workspace"
+            bind:value={otherGuest}
+            aria-invalid={formProblem ? "true" : undefined}
+            aria-describedby={formProblem ? `${fid}-form-error` : undefined}
+          />
+        </div>
+        <div class="field">
+          <label for="{fid}-host">On this computer</label>
+          <input
+            id="{fid}-host"
+            type="text"
+            inputmode="numeric"
+            autocomplete="off"
+            placeholder="Same number"
+            bind:value={otherHost}
+          />
+        </div>
+        <label class="choice">
+          <input type="checkbox" bind:checked={otherKeep} />Keep it
+        </label>
+        <button type="submit" class="btn" disabled={busy || !store.running}>
+          Forward
+        </button>
+        {#if !store.running}
+          <span class="why">Start the workspace to forward a port.</span>
+        {/if}
+      </form>
+    {/if}
     {#if formProblem}
       <p class="error" id="{fid}-form-error" role="alert">{formProblem}</p>
     {/if}

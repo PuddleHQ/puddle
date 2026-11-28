@@ -301,7 +301,15 @@ async fn connections_land_in_the_store_audit() {
     } else {
         String::new()
     };
-    assert_eq!(allowed["bytes_up"], head.len() + program_line.len() + 4);
+    // The name is a hint the agent leaves out when its scan of `/proc` is over budget (a loaded
+    // machine), so the line counts when it was sent and not otherwise: both totals are exact.
+    let without_name = head.len() + 4;
+    let with_name = without_name + program_line.len();
+    assert!(
+        allowed["bytes_up"] == without_name || allowed["bytes_up"] == with_name,
+        "{} is neither {without_name} nor {with_name}",
+        allowed["bytes_up"]
+    );
     assert_eq!(allowed["bytes_down"], established.len() + 4);
 
     for (_, line) in rig.store.audit_lines(0, 1000).unwrap() {

@@ -245,7 +245,7 @@ transaction. Store calls run on `spawn_blocking`, never on the async runtime's t
 a local disk, so the data folder must not be on a network share ([docs/backup.md](../backup.md)).
 
 **Migrations** (the steps in `crates/puddle-store/src/schema.rs`, the runner in `schema/migrations.rs`) are an append-only list of SQL steps; the
-version is `PRAGMA user_version` (33 today). A step is never edited once released, because an
+version is `PRAGMA user_version` (35 today, `SCHEMA_VERSION`). A step is never edited once released, because an
 installed database already ran it. Before an upgrade the store copies the database with
 `VACUUM INTO` to `puddle.db.pre-v<N>` (the two newest copies are kept), then runs all pending steps
 in one transaction with foreign keys off and checks them afterwards; a step that breaks a foreign key

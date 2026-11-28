@@ -15,7 +15,7 @@ use puddle_types::WorkspaceId;
 use crate::authz::Principal;
 use crate::extract::Path;
 use crate::routes::AppState;
-use crate::routes::workspaces::{named, owned};
+use crate::routes::workspaces::owned;
 use puddle_services::error::ApiErrorBody;
 use puddle_services::error::{ApiError, blocking};
 use puddle_services::wire::{ShellInitRequest, ShellInitSaved, ShellInitView};
@@ -43,9 +43,10 @@ fn view(workspace: &WorkspaceId, saved: Option<ShellInit>) -> ShellInitView {
 )]
 pub(crate) async fn get_shell_init(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
 ) -> Result<Json<ShellInitView>, ApiError> {
-    let id = named(&state, &id).await?;
+    let id = owned(&state, principal, &id).await?.id().clone();
     let shown = id.clone();
     let saved = blocking(move || Ok(state.store.shell_init(&id)?)).await?;
     Ok(Json(view(&shown, saved)))
@@ -107,9 +108,10 @@ pub(crate) async fn put_shell_init(
 )]
 pub(crate) async fn delete_shell_init(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let id = named(&state, &id).await?;
+    let id = owned(&state, principal, &id).await?.id().clone();
     let shown = id.to_string();
     let had = blocking(move || Ok(state.store.clear_shell_init(&id)?)).await?;
     if had {

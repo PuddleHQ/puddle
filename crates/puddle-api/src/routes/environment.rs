@@ -20,7 +20,7 @@ use puddle_store::{
 use crate::authz::Principal;
 use crate::extract::Path;
 use crate::routes::AppState;
-use crate::routes::workspaces::named;
+use crate::routes::workspaces::owned;
 use puddle_services::error::ApiErrorBody;
 use puddle_services::error::{ApiError, ErrorCode, blocking};
 use puddle_services::wire::{EnvList, EnvSetRequest, EnvVariable, SecretPlace, WorkspaceEnv};
@@ -241,9 +241,10 @@ pub(crate) async fn delete_global_env(
 )]
 pub(crate) async fn list_workspace_env(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
 ) -> Result<Json<WorkspaceEnv>, ApiError> {
-    let name = named(&state, &id).await?;
+    let name = owned(&state, principal, &id).await?.id().clone();
     let shown = name.clone();
     let variables = blocking(move || {
         Ok(state
@@ -285,7 +286,7 @@ pub(crate) async fn put_workspace_env(
     Path((id, name)): Path<(String, String)>,
     crate::extract::SecretJson(body): crate::extract::SecretJson<EnvSetRequest>,
 ) -> Result<Json<EnvVariable>, ApiError> {
-    let workspace = named(&state, &id).await?;
+    let workspace = owned(&state, principal, &id).await?.id().clone();
     Ok(Json(
         set(
             &state,
@@ -319,7 +320,7 @@ pub(crate) async fn delete_workspace_env(
     principal: Principal,
     Path((id, name)): Path<(String, String)>,
 ) -> Result<StatusCode, ApiError> {
-    let workspace = named(&state, &id).await?;
+    let workspace = owned(&state, principal, &id).await?.id().clone();
     remove(
         &state,
         principal.user,

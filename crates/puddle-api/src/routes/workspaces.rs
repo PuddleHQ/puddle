@@ -51,21 +51,6 @@ pub(super) async fn owned(
     .await
 }
 
-/// The workspace a path names, as the id the store keys it by; 404 for none.
-pub(super) async fn named(state: &AppState, raw: &str) -> Result<WorkspaceId, ApiError> {
-    let id = workspace_id(raw)?;
-    if state
-        .workspaces
-        .names()
-        .iter()
-        .any(|(known, _)| *known == id)
-    {
-        Ok(id)
-    } else {
-        Err(WorkspaceError::NotFound(format!("no workspace {raw:?}")).into())
-    }
-}
-
 /// Whether direct SSH is on for a workspace, and why that is only a guess when the settings
 /// cannot be read. A settings document that cannot be read counts as off: the answer fails
 /// closed, as the host's own check does.

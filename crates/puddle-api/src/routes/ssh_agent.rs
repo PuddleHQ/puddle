@@ -19,7 +19,7 @@ use puddle_types::WorkspaceId;
 
 use crate::extract::Path;
 use crate::routes::AppState;
-use crate::routes::workspaces::named;
+use crate::routes::workspaces::owned;
 use puddle_services::error::ApiErrorBody;
 use puddle_services::error::{ApiError, blocking};
 use puddle_store::Actor;
@@ -101,9 +101,10 @@ fn view(state: &AppState, workspace: WorkspaceId) -> Result<SshAgentView, ApiErr
 )]
 pub(crate) async fn get_ssh_agent(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
 ) -> Result<Json<SshAgentView>, ApiError> {
-    let name = named(&state, &id).await?;
+    let name = owned(&state, principal, &id).await?.id().clone();
     Ok(Json(blocking(move || view(&state, name)).await?))
 }
 
@@ -128,10 +129,11 @@ pub(crate) async fn get_ssh_agent(
 )]
 pub(crate) async fn put_ssh_agent_host(
     State(state): State<AppState>,
+    principal: Principal,
     Path((id, raw_host)): Path<(String, String)>,
     crate::extract::Json(body): crate::extract::Json<SshAgentHostRequest>,
 ) -> Result<Json<SshAgentHostView>, ApiError> {
-    let name = named(&state, &id).await?;
+    let name = owned(&state, principal, &id).await?.id().clone();
     let host = host(&raw_host)?;
     let keys = fingerprints(body.keys.as_deref())?;
     blocking(move || {
@@ -161,9 +163,10 @@ pub(crate) async fn put_ssh_agent_host(
 )]
 pub(crate) async fn delete_ssh_agent_host(
     State(state): State<AppState>,
+    principal: Principal,
     Path((id, raw_host)): Path<(String, String)>,
 ) -> Result<StatusCode, ApiError> {
-    let name = named(&state, &id).await?;
+    let name = owned(&state, principal, &id).await?.id().clone();
     let host = host(&raw_host)?;
     blocking(move || {
         if state.store.remove_ssh_agent_host(&name, &host)? {
@@ -228,7 +231,7 @@ pub(crate) async fn answer_ask(
     Path((id, ask)): Path<(String, i64)>,
     crate::extract::Json(body): crate::extract::Json<SshAgentAnswerRequest>,
 ) -> Result<StatusCode, ApiError> {
-    let name = named(&state, &id).await?;
+    let name = owned(&state, principal, &id).await?.id().clone();
     blocking(move || {
         state.store.as_user(principal.user).answer_ssh_agent_ask(
             &name,

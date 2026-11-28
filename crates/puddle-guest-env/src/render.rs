@@ -83,7 +83,9 @@ pub struct GuestProxyConfig {
 /// # Errors
 ///
 /// [`ConfigError::ImageEnv`] when an image value that is passed on can't be an env value;
-/// [`ConfigError::GuestPath`] when a per-user path built from `settings.home` is too long.
+/// [`ConfigError::GuestPath`] when a per-user path built from `settings.home` is too long;
+/// [`ConfigError::Content`] when the agent path or the SSH agent socket can't be put in an ssh
+/// config.
 pub fn guest_proxy_config(
     settings: &ProxySettings,
     image_env: &[(String, String)],
@@ -238,6 +240,12 @@ fn path_error(e: &puddle_types::ValidationError) -> ConfigError {
     }
 }
 
+fn content_error(e: &puddle_types::ValidationError) -> ConfigError {
+    ConfigError::Content {
+        reason: e.to_string(),
+    }
+}
+
 /// Env under construction; the first invalid value is reported by [`Vars::finish`].
 #[derive(Default)]
 struct Vars {
@@ -280,10 +288,8 @@ fn apt_conf(proxy_url: &str, bypass: &[NoProxyEntry]) -> String {
 }
 
 fn sudoers(env: &GuestEnv) -> String {
-    let names = join(env.iter().map(|(k, _)| k.to_owned()), " ");
-    format!(
-        "# {GENERATED}\n# Keeps Puddle's proxy variables under sudo.\nDefaults env_keep += \"{names}\"\n"
-    )
+    let keep = env.sudo_keep_line(|_| true);
+    format!("# {GENERATED}\n# Keeps Puddle's proxy variables under sudo.\n{keep}")
 }
 
 fn maven_settings(proxy: SocketAddr, java_bypass: &str) -> String {
@@ -341,7 +347,7 @@ fn ssh_config_include() -> Result<GuestFile, ConfigError> {
         MergeFormat::SshConfig,
         vec![MergeEntry::ssh_include(SSH_CONFIG_INCLUDE)],
     )
-    .map_err(|e| path_error(&e))?;
+    .map_err(|e| content_error(&e))?;
     let path = GuestPath::new(SSH_CONFIG_SYSTEM).map_err(|e| path_error(&e))?;
     Ok(GuestFile::merged(path, spec))
 }
@@ -352,14 +358,14 @@ fn ssh_config_include() -> Result<GuestFile, ConfigError> {
 ///
 /// # Errors
 ///
-/// [`ConfigError::GuestPath`] when `lines` is empty, longer than the merge allows or holds a
+/// [`ConfigError::Content`] when `lines` is empty, longer than the merge allows or holds a
 /// comment, a blank line or a control character.
 pub fn ssh_known_hosts_file(lines: &str) -> Result<GuestFile, ConfigError> {
     let spec = MergeSpec::new(
         MergeFormat::KnownHosts,
         vec![MergeEntry::known_hosts(lines)],
     )
-    .map_err(|e| path_error(&e))?;
+    .map_err(|e| content_error(&e))?;
     let path = GuestPath::new(SSH_KNOWN_HOSTS_GUEST).map_err(|e| path_error(&e))?;
     Ok(GuestFile::merged(path, spec))
 }
@@ -373,7 +379,7 @@ pub fn ssh_known_hosts_file(lines: &str) -> Result<GuestFile, ConfigError> {
 fn ssh_config(settings: &ProxySettings) -> Result<String, ConfigError> {
     let agent = settings.agent.as_str();
     if agent.contains('%') || agent.chars().any(char::is_control) {
-        return Err(ConfigError::GuestPath {
+        return Err(ConfigError::Content {
             reason: format!("the agent path {agent:?} can't be a ProxyCommand"),
         });
     }
@@ -397,7 +403,7 @@ fn ssh_config(settings: &ProxySettings) -> Result<String, ConfigError> {
         let socket = socket.as_str();
         // ssh expands `%` tokens and `${VAR}` in IdentityAgent, and the value is one quoted word.
         if socket.contains(['%', '$', '"']) || socket.chars().any(char::is_control) {
-            return Err(ConfigError::GuestPath {
+            return Err(ConfigError::Content {
                 reason: format!("the SSH agent socket {socket:?} can't be an IdentityAgent"),
             });
         }
@@ -424,7 +430,7 @@ fn docker_cli_config(container: SocketAddr, no_proxy: &str) -> Result<MergeSpec,
         MergeFormat::Json,
         vec![MergeEntry::json(&["proxies", "default"], &default)],
     )
-    .map_err(|e| path_error(&e))
+    .map_err(|e| content_error(&e))
 }
 
 #[cfg(test)]

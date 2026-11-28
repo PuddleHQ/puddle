@@ -491,6 +491,7 @@ fn a_refused_settings_merge_is_not_remembered_and_the_defaults_come_back_once_th
 }
 
 #[test]
+#[cfg(unix)]
 fn a_settings_write_that_fails_is_not_remembered_and_is_tried_again() {
     use std::os::unix::fs::PermissionsExt;
     let rig = Rig::new();
@@ -512,6 +513,7 @@ fn a_settings_write_that_fails_is_not_remembered_and_is_tried_again() {
 }
 
 #[test]
+#[cfg(unix)]
 fn a_key_bindings_write_that_fails_is_not_remembered_and_is_tried_again() {
     use std::os::unix::fs::PermissionsExt;
     let rig = Rig::new();

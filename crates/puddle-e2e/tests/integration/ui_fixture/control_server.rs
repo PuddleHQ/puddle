@@ -3,7 +3,6 @@
 
 use super::*;
 
-
 #[tokio::test]
 async fn emit_puts_an_event_on_the_stream_and_any_event_json_is_accepted() {
     let run = start("empty").await;

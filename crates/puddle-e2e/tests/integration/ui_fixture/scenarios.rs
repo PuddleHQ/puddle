@@ -5,29 +5,24 @@ use super::*;
 
 #[tokio::test]
 async fn every_built_in_scenario_starts_with_its_seeded_data() {
-    let counts = [
+    // What a scenario seeds beyond nothing: (name, pending requests, at least this many rules).
+    // A built-in that is not listed must start with neither.
+    let seeded = [
         ("default", 1, 0),
-        ("empty", 0, 0),
         ("lived-in", 8, 6),
-        ("corporate-network", 0, 0),
         ("company-network", 2, 0),
-        ("network-trouble", 0, 0),
-        ("volume-missing", 0, 0),
-        ("disks-full", 0, 0),
-        ("git-identities", 0, 0),
-        ("azure-cli", 0, 0),
-        ("azure-cli-missing", 0, 0),
-        ("repo-lists", 0, 0),
-        ("first-run", 0, 0),
-        ("unmanaged-checkouts", 0, 0),
-        ("start-folder-missing", 0, 0),
         ("environment", 0, 1),
-        ("multi-user", 0, 0),
         ("request-rules", 0, 1),
-        ("ids-differ", 0, 0),
-        ("two-running", 0, 0),
     ];
-    for (name, pending, rules_min) in counts {
+    let names = built_in_names();
+    for (name, ..) in seeded {
+        assert!(names.contains(&name), "{name} is not a built-in scenario");
+    }
+    for name in names {
+        let (pending, rules_min) = seeded
+            .iter()
+            .find(|(seeded_name, ..)| *seeded_name == name)
+            .map_or((0, 0), |&(_, pending, rules_min)| (pending, rules_min));
         let run = start(name).await;
         let state = run.state().await;
         assert_eq!(state["scenario"], name);
@@ -41,32 +36,6 @@ async fn every_built_in_scenario_starts_with_its_seeded_data() {
         assert_eq!(run.get("/api/audit").await.status, 200);
         run.fixture.shutdown().await;
     }
-    assert_eq!(
-        built_in_names(),
-        [
-            "default",
-            "empty",
-            "lived-in",
-            "corporate-network",
-            "company-proxy-env",
-            "company-network",
-            "network-trouble",
-            "volume-missing",
-            "disks-full",
-            "git-identities",
-            "azure-cli",
-            "azure-cli-missing",
-            "repo-lists",
-            "first-run",
-            "unmanaged-checkouts",
-            "start-folder-missing",
-            "environment",
-            "multi-user",
-            "request-rules",
-            "ids-differ",
-            "two-running"
-        ]
-    );
 }
 
 /// The binary's start-up runs on its main thread inside `#[tokio::main]`, whose stack `build.rs`

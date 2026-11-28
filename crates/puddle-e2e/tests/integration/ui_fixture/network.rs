@@ -3,7 +3,6 @@
 
 use super::*;
 
-
 #[tokio::test]
 async fn a_history_step_writes_connection_records_across_a_week() {
     let run = start("empty").await;

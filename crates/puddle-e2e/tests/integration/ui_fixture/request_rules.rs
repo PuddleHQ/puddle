@@ -3,7 +3,6 @@
 
 use super::*;
 
-
 #[tokio::test]
 async fn the_request_rules_scenario_seeds_rules_on_method_and_path_and_a_request_one_refused() {
     let run = start("request-rules").await;

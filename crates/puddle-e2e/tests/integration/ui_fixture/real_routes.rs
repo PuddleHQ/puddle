@@ -5,7 +5,6 @@
 
 use super::*;
 
-
 #[tokio::test]
 async fn the_api_keeps_its_guard() {
     let run = start("default").await;
@@ -26,6 +25,87 @@ async fn the_api_keeps_its_guard() {
     let host = format!("127.0.0.1:{}", run.control.port());
     let no_token = http(run.control, &host, None, "GET", "/control/state", None).await;
     assert_eq!(no_token.status, 401);
+}
+
+#[tokio::test]
+async fn a_wrong_token_is_refused_by_the_api_and_the_control_server() {
+    let run = start("default").await;
+    // The same length as the real token, so only the comparison can tell them apart.
+    let wrong = "x".repeat(run.token.len());
+    for token in [wrong.as_str(), "", "wrong"] {
+        let host = format!("127.0.0.1:{}", run.api.port());
+        let reply = http(run.api, &host, Some(token), "GET", "/api/pending", None).await;
+        assert_eq!(reply.status, 401, "api, token {token:?}");
+        let host = format!("127.0.0.1:{}", run.control.port());
+        let reply = http(
+            run.control,
+            &host,
+            Some(token),
+            "GET",
+            "/control/state",
+            None,
+        )
+        .await;
+        assert_eq!(reply.status, 401, "control, token {token:?}");
+    }
+    // A refused reset changes nothing.
+    let host = format!("127.0.0.1:{}", run.control.port());
+    let reset = http(
+        run.control,
+        &host,
+        Some("wrong"),
+        "POST",
+        "/control/reset",
+        Some(&json!({"scenario": "empty"})),
+    )
+    .await;
+    assert_eq!(reset.status, 401);
+    assert_eq!(run.state().await["scenario"], "default");
+}
+
+#[tokio::test]
+async fn the_control_server_refuses_a_host_that_is_not_its_own_address() {
+    let run = start("default").await;
+    let own = run.control.port();
+    for host in [
+        "evil.example".to_owned(),
+        format!("evil.example:{own}"),
+        // The API's address is not the control server's.
+        format!("127.0.0.1:{}", run.api.port()),
+    ] {
+        let reset = http(
+            run.control,
+            &host,
+            Some(&run.token),
+            "POST",
+            "/control/reset",
+            Some(&json!({"scenario": "empty"})),
+        )
+        .await;
+        assert_eq!(reset.status, 421, "Host {host}");
+        let state = http(
+            run.control,
+            &host,
+            Some(&run.token),
+            "GET",
+            "/control/state",
+            None,
+        )
+        .await;
+        assert_eq!(state.status, 421, "Host {host}");
+    }
+    // Neither reset took effect, and both spellings of the loopback name still work.
+    assert_eq!(run.state().await["scenario"], "default");
+    let localhost = http(
+        run.control,
+        &format!("localhost:{own}"),
+        Some(&run.token),
+        "GET",
+        "/control/state",
+        None,
+    )
+    .await;
+    assert_eq!(localhost.status, 200);
 }
 
 #[tokio::test]

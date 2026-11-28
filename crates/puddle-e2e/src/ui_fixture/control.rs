@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The control server: a second loopback listener next to the API, so a test or a developer can
 //! change what the page sees while it is open. It exists only in the fixture; the product has
-//! nothing like it. It takes the same bearer token as the API.
+//! nothing like it. It takes the same bearer token as the API and, like the API, answers 421 to a
+//! `Host` that is not `127.0.0.1:<port>` or `localhost:<port>`.
 //!
 //! | Request | Does |
 //! |---|---|
@@ -78,11 +79,35 @@ pub async fn serve(
         .route("/control/restart", post(restart))
         .route("/control/reset", post(reset))
         .layer(middleware::from_fn_with_state(fixture.clone(), authorised))
+        .layer(middleware::from_fn_with_state(addr.port(), own_host))
         .with_state(fixture);
     let task = tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
     });
     Ok((addr, task))
+}
+
+/// Refuses a request whose `Host` is not this server's own loopback address, as the API does: a
+/// page on another name that a browser points at this port cannot reset or script the fixture.
+async fn own_host(
+    State(port): State<u16>,
+    headers: HeaderMap,
+    request: axum::extract::Request,
+    next: Next,
+) -> Response {
+    let host = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok());
+    let own = [format!("127.0.0.1:{port}"), format!("localhost:{port}")];
+    if host.is_some_and(|host| own.iter().any(|own| own == host)) {
+        next.run(request).await
+    } else {
+        (
+            StatusCode::MISDIRECTED_REQUEST,
+            "the Host header must be this server's own address",
+        )
+            .into_response()
+    }
 }
 
 async fn authorised(

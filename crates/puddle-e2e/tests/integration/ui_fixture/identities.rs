@@ -3,7 +3,6 @@
 
 use super::*;
 
-
 #[tokio::test]
 async fn a_kept_login_is_forgotten_until_the_script_makes_the_store_refuse() {
     let run = start("lived-in").await;

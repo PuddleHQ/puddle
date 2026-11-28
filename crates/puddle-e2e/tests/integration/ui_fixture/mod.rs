@@ -151,7 +151,6 @@ async fn read_until(tcp: &mut TcpStream, done: impl Fn(&str) -> bool) -> String 
     seen
 }
 
-
 mod control_server;
 mod identities;
 mod network;

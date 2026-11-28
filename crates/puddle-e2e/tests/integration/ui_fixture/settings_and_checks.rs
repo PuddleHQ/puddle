@@ -3,7 +3,6 @@
 
 use super::*;
 
-
 #[tokio::test]
 async fn settings_in_a_scenario_are_served_with_their_unknown_fields_listed() {
     let scenario: Scenario = serde_json::from_value(json!({

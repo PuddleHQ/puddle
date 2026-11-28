@@ -3,7 +3,6 @@
 
 use super::*;
 
-
 #[tokio::test]
 async fn a_seeded_workspace_with_an_id_keeps_it_apart_from_its_name() {
     let mut scenario = load_scenario("empty").unwrap();

@@ -365,10 +365,13 @@ fn a_user_sees_only_the_questions_of_their_own_workspaces() {
     assert_eq!(ids(ann, None), [hers]);
     assert_eq!(ids(ann, Some(&ws("a"))), Vec::<i64>::new());
     assert_eq!(ids(UserId::from_stored(999), None), Vec::<i64>::new());
-    assert_eq!(store
+    assert_eq!(
+        store
             .open_ssh_agent_asks_every_user(&AllUsers::new(), None)
             .unwrap()
-            .len(), 2);
+            .len(),
+        2
+    );
 }
 
 #[test]

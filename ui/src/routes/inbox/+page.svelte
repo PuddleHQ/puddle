@@ -369,7 +369,7 @@
     background: var(--color-surface-raised);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-pill);
-    box-shadow: var(--shadow-md, 0 2px 8px rgb(0 0 0 / 0.25));
+    box-shadow: 0 2px 8px rgb(0 0 0 / 0.25);
     cursor: pointer;
     z-index: 5;
   }

@@ -459,7 +459,13 @@ sequenceDiagram
 
 **Port forwards.** The Ports tab forwards a guest port to a port on `127.0.0.1` of the computer over
 the agent's `forward` stream, not over SSH, so forwards work with direct SSH off. Pinned forwards
-come back at every start (`crates/puddle-ports`).
+come back at every start (`crates/puddle-ports`). The host also builds `Ports` with
+`with_auto_forward` (`crates/puddle-host/src/host.rs`): each port the agent newly reports as
+listening in a running workspace is forwarded to the same number on `127.0.0.1` when that number is
+free, and closed again when the guest stops listening. A port the user closed is not reopened while
+it keeps listening, a port with a pin is left to the pin, and a taken port is skipped without a
+notice. The report is the guest's claim, so the guest decides which numbers are tried
+(`docs/spec/ports-and-front.md`).
 
 ## 6.6 Stop, start and delete
 
@@ -549,7 +555,7 @@ refuses to run while Puddle or `msb` is running. The first start of the new vers
   Those come back only from a `puddle backup` taken before the upgrade. There is no command; the
   steps are in [docs/backup.md](../backup.md#going-back-after-a-bad-upgrade).
 - **Workspace list.** `workspaces.json` carries a version; older versions are read and upgraded in
-  memory, a newer one is refused as written by a newer Puddle (`crates/puddle-host/src/files.rs`).
+  memory, a newer one is refused as written by a newer Puddle (`crates/puddle-host/src/state_files.rs`).
 - **Runtime.** The new `msb` ships in the new install folder and is checked like any start (6.1).
   The runtime's own home (`MSB_HOME`, the `msb/` folder of the data folder, section 7) is not part
   of the install and is reused as it is: the new `msb` opens the sandboxes, volumes and database

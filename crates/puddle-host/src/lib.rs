@@ -26,9 +26,9 @@
 
 mod accounts;
 mod agent_reports;
+mod audit_commands;
 mod backup;
 mod boot;
-mod changes;
 mod company_signals;
 mod config;
 mod data_folder;
@@ -39,7 +39,6 @@ mod editor_file;
 mod editor_updates;
 mod environment;
 mod error;
-mod files;
 mod front;
 mod git_hosts;
 mod host;
@@ -56,6 +55,7 @@ mod proxy_passwords;
 mod proxy_sign_ins;
 mod quit_trims;
 mod restore;
+mod setting_changes;
 mod settings_read;
 mod shell_init;
 mod space_watch;
@@ -64,6 +64,7 @@ mod ssh_agent;
 mod ssh_config;
 mod ssh_login;
 mod ssh_target;
+mod state_files;
 mod terminals;
 #[cfg(test)]
 mod test_logs;
@@ -76,9 +77,9 @@ mod vscode;
 mod workspaces;
 
 pub use accounts::{
-    AccountError, AuditPruned, UserRow, UserState, add_user, audit_status, list_users, prune_audit,
-    remove_user, reset_user,
+    AccountError, UserRow, UserState, add_user, list_users, remove_user, reset_user,
 };
+pub use audit_commands::{AuditPruned, audit_status, prune_audit};
 pub use backup::{
     BACKUP_DATABASE, BACKUP_FORMAT, BACKUP_MANIFEST, BACKUP_SETTINGS, BACKUP_WORKSPACES,
     BackupArchive, BackupError, BackupReport, Manifest, backup, backup_archive,
@@ -91,7 +92,6 @@ pub use config::{
 pub use dev_cert::{DevCertSource, GuestCertSource};
 pub use doctor::{disk_limits, ssh_agent_pipe};
 pub use error::HostError;
-pub use files::FileSettings;
 pub use host::{
     Host, HostOptions, HostShutdown, MsbFactory, PREPARE_STEPS, Prepared, RemoteListener,
     RuntimeFactory, RuntimeInputs, SHUTDOWN_STEPS, START_STEPS, Step, prepare,
@@ -107,5 +107,6 @@ pub use restore::{
 };
 pub use space_watch::Space;
 pub use ssh_config::{SshSettings, ssh_host};
+pub use state_files::FileSettings;
 pub use vscode::VsCodeLauncher;
 pub use workspaces::{EndExtensionHostsError, HostWorkspaces, RewriteGate, SwitchEditorBuildError};

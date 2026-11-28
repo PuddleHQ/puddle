@@ -184,6 +184,16 @@ async fn scripted_steps_hold_and_fail_workspace_operations() {
         run.get("/api/workspaces/demo").await.json()["busy"],
         Value::Null
     );
+    // A created workspace ends Running, so it is stopped before a start can be refused.
+    let stopped = run
+        .api("POST", "/api/workspaces/demo/stop", Some(&json!({})))
+        .await;
+    assert_eq!(stopped.status, 202, "{}", stopped.body);
+    read_until(&mut stream, |s| s.contains("\"step\":\"done\"")).await;
+    assert_eq!(
+        run.get("/api/workspaces/demo").await.json()["status"],
+        "stopped"
+    );
 
     let fail =
         json!({"do": "fail_workspace", "operation": "start", "reason": "the VM did not boot"});

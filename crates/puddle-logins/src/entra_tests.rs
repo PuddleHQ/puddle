@@ -3,21 +3,18 @@
 //! for several resources at once, each over a thousand characters, an opaque refresh token and an
 //! `id_token`. No token here is a real one; every value is built by the test.
 
-use std::sync::{Arc, Mutex};
-
-use base64::Engine as _;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use puddle_proxy::{AnswerHead, ExchangeRewriter, Rewrite, StandIns, Want};
-use puddle_secrets::MemoryStore;
+use puddle_proxy::ExchangeRewriter;
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 
 use crate::profile::{
     Audience, ENTRA, Endpoint, Field, Keep, Method, Role, Scope, Slot, StandInKind,
 };
+use crate::test_rig::{
+    Rig, answer_json, assert_refused, claims_of, host, rewritten, rig_for, sized_jwt,
+};
 use crate::vault::{Vault, slot_id};
-use crate::widened_tests::host;
-use crate::{LoginNotices, Logins, Marker, Problem, Profile, builtin};
+use crate::{Problem, Profile, builtin};
 
 const LOGIN: &str = "login.microsoftonline.com";
 
@@ -29,65 +26,12 @@ const ALIASES: [&str; 3] = [
     "sts.windows.net",
 ];
 
-#[derive(Default)]
-struct Notices(Mutex<Vec<Problem>>);
-
-impl LoginNotices for Notices {
-    fn problem(&self, _: &WorkspaceId, _: &Profile, problem: Problem) {
-        self.0.lock().unwrap().push(problem);
-    }
-}
-
-struct Rig {
-    logins: Logins,
-    registry: Arc<StandIns>,
-    store: Arc<MemoryStore>,
-    notices: Arc<Notices>,
-}
-
 fn rig() -> Rig {
-    let registry = Arc::new(StandIns::new());
-    let store = Arc::new(MemoryStore::new());
-    let notices = Arc::new(Notices::default());
-    let logins = Logins::new(
-        WorkspaceId::new("alpha").unwrap(),
-        true,
-        builtin(),
-        Arc::clone(&registry),
-        store.clone(),
-        notices.clone(),
-        Marker::none(),
-    );
-    Rig {
-        logins,
-        registry,
-        store,
-        notices,
-    }
+    rig_for(builtin())
 }
 
-/// A JWT shaped like an Entra access token: the claims a tool reads, a padding claim that brings it
-/// to about `size` characters (real ones carry roles, groups and device ids), and a signature of
-/// the length a real one has.
 fn jwt(aud: &str, exp: u64, size: usize, signature: char) -> String {
-    let header = URL_SAFE_NO_PAD.encode(r#"{"typ":"JWT","alg":"RS256","kid":"test-key"}"#);
-    let signature = signature.to_string().repeat(342);
-    let bare =
-        json!({"aud": aud, "tid": "tenant-1", "upn": "me@example.invalid", "exp": exp, "pad": ""});
-    let used = header.len() + signature.len() + 2 + URL_SAFE_NO_PAD.encode(bare.to_string()).len();
-    // The payload's base64 is 4/3 of its text.
-    let pad = "p".repeat(size.saturating_sub(used) * 3 / 4);
-    let claims =
-        json!({"aud": aud, "tid": "tenant-1", "upn": "me@example.invalid", "exp": exp, "pad": pad});
-    format!(
-        "{header}.{}.{signature}",
-        URL_SAFE_NO_PAD.encode(claims.to_string())
-    )
-}
-
-fn claims_of(token: &str) -> Value {
-    let payload = token.split('.').nth(1).unwrap();
-    serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).unwrap()).unwrap()
+    sized_jwt(aud, exp, size, signature)
 }
 
 /// A refresh token as Entra writes one: `1.`, then a long run of base64url.
@@ -104,23 +48,7 @@ async fn answer(rig: &Rig, path: &str, body: &Value) -> Option<Value> {
 }
 
 async fn answer_at(rig: &Rig, login: &str, path: &str, body: &Value) -> Option<Value> {
-    let mut exchange = rig
-        .logins
-        .begin(&host(login), "POST", path)
-        .expect("a token request of the profile");
-    let bytes = serde_json::to_vec(body).unwrap();
-    let head = AnswerHead {
-        status: 200,
-        content_type: Some("application/json; charset=utf-8"),
-        content_encoding: None,
-        content_length: Some(bytes.len() as u64),
-    };
-    let answer = exchange.answer_mut().unwrap();
-    assert_eq!(answer.wants(&head), Want::Read);
-    let Rewrite::Replace(out) = answer.rewrite(&head, &bytes).await else {
-        return None;
-    };
-    Some(serde_json::from_slice(&out).unwrap())
+    answer_json(rig, login, "POST", path, body).await
 }
 
 fn v2(access: &str, scope: &str) -> Value {
@@ -220,7 +148,7 @@ async fn one_login_gives_each_resource_its_own_stand_in_that_reads_like_the_toke
     // The answer's other fields are the service's own.
     assert_eq!(given_arm["expires_in"], 3599);
     assert_eq!(given_arm["client_info"], "eyJ1aWQiOiJ1In0");
-    assert!(rig.notices.0.lock().unwrap().is_empty());
+    assert!(rig.notices.problems().is_empty());
 }
 
 #[tokio::test]
@@ -280,7 +208,7 @@ async fn a_resource_the_profile_does_not_name_is_kept_and_its_last_stand_ins_kee
         given.push(reply["access_token"].as_str().unwrap().to_owned());
         reals.push(real);
     }
-    assert!(rig.notices.0.lock().unwrap().is_empty());
+    assert!(rig.notices.problems().is_empty());
     assert_eq!(kept(&rig, slot("other")).1, reals[4]);
     for n in 1..5 {
         assert_ne!(given[n], reals[n]);
@@ -341,24 +269,12 @@ async fn a_token_over_the_registry_limit_fails_closed_with_a_notice_and_is_not_k
     let huge = jwt("https://management.azure.com", 1_893_456_000, 9000, 'A');
     assert!(huge.len() > 8192);
     let body = v2(&huge, "https://management.azure.com/user_impersonation");
-    let mut exchange = rig
+    let exchange = rig
         .logins
-        .begin(&host(LOGIN), "POST", "/contoso/oauth2/v2.0/token")
-        .unwrap();
+        .begin(&host(LOGIN), "POST", "/contoso/oauth2/v2.0/token");
     let bytes = serde_json::to_vec(&body).unwrap();
-    let head = AnswerHead {
-        status: 200,
-        content_type: Some("application/json"),
-        content_encoding: None,
-        content_length: Some(bytes.len() as u64),
-    };
-    let answer = exchange.answer_mut().unwrap();
-    assert_eq!(answer.wants(&head), Want::Read);
-    assert!(matches!(
-        answer.rewrite(&head, &bytes).await,
-        Rewrite::Refuse(_)
-    ));
-    assert_eq!(*rig.notices.0.lock().unwrap(), [Problem::UnusableToken]);
+    assert_refused(&rewritten(exchange, 200, Some("application/json"), &bytes).await);
+    assert_eq!(rig.notices.problems(), [Problem::UnusableToken]);
     assert_eq!(rig.registry.len(), 0);
 }
 
@@ -516,36 +432,15 @@ static NAMED_ONLY: [Profile; 1] = [Profile {
 
 #[tokio::test]
 async fn a_token_that_no_field_of_the_profile_takes_fails_closed_and_is_not_kept() {
-    let registry = Arc::new(StandIns::new());
-    let notices = Arc::new(Notices::default());
-    let logins = Logins::new(
-        WorkspaceId::new("alpha").unwrap(),
-        true,
-        &NAMED_ONLY,
-        Arc::clone(&registry),
-        Arc::new(MemoryStore::new()),
-        notices.clone(),
-        Marker::none(),
-    );
+    let rig = rig_for(&NAMED_ONLY);
     let real = jwt("https://graph.microsoft.com", 1_893_456_000, 1500, 'G');
     let body = serde_json::to_vec(&json!({"access_token": real})).unwrap();
-    let mut exchange = logins
-        .begin(&host("login.named.test"), "POST", "/token")
-        .unwrap();
-    let head = AnswerHead {
-        status: 200,
-        content_type: Some("application/json"),
-        content_encoding: None,
-        content_length: Some(body.len() as u64),
-    };
-    let answer = exchange.answer_mut().unwrap();
-    assert_eq!(answer.wants(&head), Want::Read);
-    assert!(matches!(
-        answer.rewrite(&head, &body).await,
-        Rewrite::Refuse(_)
-    ));
-    assert_eq!(*notices.0.lock().unwrap(), [Problem::UnusableToken]);
-    assert_eq!(registry.len(), 0);
+    let exchange = rig
+        .logins
+        .begin(&host("login.named.test"), "POST", "/token");
+    assert_refused(&rewritten(exchange, 200, Some("application/json"), &body).await);
+    assert_eq!(rig.notices.problems(), [Problem::UnusableToken]);
+    assert_eq!(rig.registry.len(), 0);
 }
 
 #[tokio::test]

@@ -444,6 +444,34 @@ fn replace_makes_the_carried_rows_the_backups_and_keeps_the_people() {
 }
 
 #[test]
+fn replace_drops_the_per_workspace_rows_that_only_this_machine_has_and_add_keeps_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let (here, there) = pair(dir.path());
+    sql(
+        &here,
+        "INSERT INTO workspace_names (workspace_id, name) VALUES ('w9', 'Nine');
+         INSERT INTO env_vars (user_id, workspace_id, name, kind, value, changed_at)
+             VALUES (1, 'w9', 'KEEP', 'plain', 'v', 1);",
+    );
+    let names = "SELECT group_concat(workspace_id) FROM (SELECT workspace_id FROM workspace_names ORDER BY 1)";
+    let env = "SELECT count(*) FROM env_vars WHERE name = 'KEEP'";
+    let text = |path: &Path| -> String {
+        Connection::open(path)
+            .unwrap()
+            .query_row(names, [], |r| r.get(0))
+            .unwrap()
+    };
+    let added = dir.path().join("added.db");
+    restore_database(&here, &there, &added, RestoreMode::Add).unwrap();
+    assert_eq!(text(&added), "w1,w9");
+    assert_eq!(count(&added, env), 1);
+    let replaced = dir.path().join("replaced.db");
+    restore_database(&here, &there, &replaced, RestoreMode::Replace).unwrap();
+    assert_eq!(text(&replaced), "w1");
+    assert_eq!(count(&replaced, env), 0);
+}
+
+#[test]
 fn a_users_password_here_survives_a_restore_of_the_same_name() {
     let dir = tempfile::tempdir().unwrap();
     let (here, there) = pair(dir.path());

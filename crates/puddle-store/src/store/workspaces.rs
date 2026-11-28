@@ -53,6 +53,12 @@ impl Store {
                 "DELETE FROM system_reasons WHERE workspace_id = ?1",
                 [workspace.as_str()],
             )?;
+            // Closed rows stay (R-12) but no longer name a rule, so undoing a global rule never
+            // reopens a request of a workspace that is gone.
+            tx.execute(
+                "UPDATE pending SET rule_id = NULL WHERE workspace_id = ?1",
+                [workspace.as_str()],
+            )?;
             let expired = expire_rows(
                 tx,
                 "workspace_id = ?2",

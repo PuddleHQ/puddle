@@ -999,7 +999,14 @@ impl Workspaces {
             .map_err(|e| WorkspaceError::runtime("look up the volume", id, e))?;
         let existed = existing.is_some();
         let result = self
-            .run_import(rt, id, image, existing.as_ref(), size, user, imports)
+            .run_import(
+                rt,
+                id,
+                image,
+                existing.as_ref(),
+                size,
+                ImportRun { user, imports },
+            )
             .await;
         // The create makes the volume; whether it got that far is read, not assumed.
         let made = if existed {
@@ -1044,9 +1051,9 @@ impl Workspaces {
         image: &ImageRef,
         existing: Option<&VolumeInfo>,
         size: DiskSize,
-        user: SessionUser,
-        imports: &[Import],
+        run: ImportRun<'_>,
     ) -> Result<Vec<(CheckoutDir, String)>, WorkspaceError> {
+        let ImportRun { user, imports } = run;
         let name = &maintenance_name(id)?;
         clear_leftover(rt, id, name).await?;
         let layout = Layout::new()?;
@@ -1378,6 +1385,13 @@ fn unreachable_job<T>(id: &WorkspaceId) -> Result<T, WorkspaceError> {
         workspace: id.to_string(),
         reason: "internal error: the maintenance job returned the wrong output".into(),
     })
+}
+
+/// Who an import runs as and what it clones.
+#[derive(Clone, Copy)]
+struct ImportRun<'a> {
+    user: SessionUser,
+    imports: &'a [Import],
 }
 
 /// A workspace reserved for a sandbox that is being created (from [`Workspaces::prepare`]).

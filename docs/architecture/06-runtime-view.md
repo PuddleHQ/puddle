@@ -542,7 +542,7 @@ refuses to run while Puddle or `msb` is running. The first start of the new vers
   refused, and the app says that nothing in the data folder was changed
   (`crates/puddle-app/src/shell.rs`).
 - **Workspace list.** `workspaces.json` carries a version; older versions are read and upgraded in
-  memory, a newer one is refused as written by a newer Puddle (`crates/puddle-host/src/files.rs`).
+  memory, a newer one is refused as written by a newer Puddle (`crates/puddle-host/src/state_files.rs`).
 - **Runtime.** The new `msb` ships in the new install folder and is checked like any start (6.1).
   The runtime's own home (`MSB_HOME`, the `msb/` folder of the data folder, section 7) is not part
   of the install and is reused as it is: the new `msb` opens the sandboxes, volumes and database

@@ -29,7 +29,6 @@ use crate::backup::DataFolderBackup;
 use crate::boot::BootKit;
 use crate::dev_cert::{DevCertSource, host_dev_cert};
 use crate::doctor::system_doctor;
-use crate::files::{FileSettings, WorkspaceBook};
 use crate::front::Flavours;
 use crate::learned::HostLearned;
 use crate::ports::{HostPorts, StorePins};
@@ -37,6 +36,7 @@ use crate::proxy_sign_ins::HostProxySignIns;
 use crate::quit_trims::QuitTrims;
 use crate::restore::DataFolderRestore;
 use crate::ssh_config::SshSetup;
+use crate::state_files::{FileSettings, WorkspaceBook};
 use crate::workspaces::Parts;
 use crate::{HostConfig, HostError, HostWorkspaces, ProxyPasswords};
 
@@ -55,7 +55,7 @@ pub(super) struct State {
     pub(super) all_users: AllUsers,
     pub(super) settings: Arc<dyn SettingsRepo>,
     pub(super) book: WorkspaceBook,
-    pub(super) stored: Vec<crate::files::Stored>,
+    pub(super) stored: Vec<crate::state_files::Stored>,
     pub(super) retired: BTreeSet<WorkspaceId>,
     pub(super) cleaned: BTreeSet<WorkspaceId>,
 }
@@ -91,7 +91,7 @@ pub(super) fn open_state(
     })?;
     let settings: Arc<dyn SettingsRepo> = Arc::new(FileSettings::new(paths.settings()));
     let book = WorkspaceBook::new(paths.workspace_book());
-    let crate::files::Book {
+    let crate::state_files::Book {
         workspaces: stored,
         retired,
         cleaned,
@@ -412,7 +412,7 @@ pub(super) struct Reconciled {
 pub(super) async fn reconcile_phase<R: Runtime>(
     runtime: &R,
     config: &HostConfig,
-    stored: &[crate::files::Stored],
+    stored: &[crate::state_files::Stored],
     problems: &Problems,
 ) -> Result<Reconciled, HostError> {
     let (report, status) = reconcile_with(runtime, config, stored).await?;

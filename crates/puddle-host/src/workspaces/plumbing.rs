@@ -23,9 +23,9 @@ use super::{
 };
 use crate::HostError;
 
-use crate::files::Stored;
 use crate::op_error::OpError;
 use crate::settings_read::SettingsReadError;
+use crate::state_files::Stored;
 
 /// Why a create could not keep what it chose: the workspace's own CPU count in its settings file,
 /// then the workspace list. It displays as the reason shown to the user.

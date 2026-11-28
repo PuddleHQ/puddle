@@ -24,6 +24,8 @@ dist/
 *.db
 *.db-wal
 *.db-shm
+# Kept upgrade fixtures hold a whole data folder, database included
+!crates/puddle-host/tests/fixtures/upgrade/**/puddle.db
 
 # Editors / OS
 .DS_Store

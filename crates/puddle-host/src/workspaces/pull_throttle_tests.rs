@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-use super::plumbing::PullThrottle;
+use super::images::PullThrottle;
 use puddle_compute::{PullPhase, PullProgress};
 
 fn at(phase: PullPhase, done: u64, total: Option<u64>) -> PullProgress {

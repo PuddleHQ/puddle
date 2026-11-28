@@ -23,6 +23,11 @@ tokio = { version = "1.52", default-features = false, features = ["io-util", "ne
 
 [workspace]
 
+# The root `[patch.crates-io]` does not reach this workspace: puddle-agent-proto needs the vendored tokio-yamux
+# (vendor/tokio-yamux NOTICE), so patch it here too. Change both together.
+[patch.crates-io]
+tokio-yamux = { path = "../vendor/tokio-yamux" }
+
 # A copy of `[workspace.lints]` in ../Cargo.toml (this crate is its own workspace, so it cannot inherit the table):
 # `scripts/check.sh clippy` lints fuzz/ with it. Change both together.
 [lints.rust]

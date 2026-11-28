@@ -285,6 +285,7 @@ async fn begin_exchange<W: Wire>(
     let Some(mut exchange) = began else {
         return Ok(());
     };
+    exchange.prepare().await;
     if exchange.answer_mut().is_some() {
         prepared.headers.remove(header::ACCEPT_ENCODING);
     }

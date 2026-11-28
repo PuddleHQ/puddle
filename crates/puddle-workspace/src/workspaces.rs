@@ -22,10 +22,8 @@ use crate::registry::{HoldKind, Holder, Registry};
 use crate::trim::{self, TrimReport, tail};
 use crate::{Layout, WorkspaceError};
 
-/// Prefix of Puddle's short-lived maintenance sandboxes: `m--<workspace id>` (fits the 63
-/// characters of a sandbox name for the longest workspace id). Reconcile may remove
-/// leftovers with this prefix.
-pub const MAINTENANCE_PREFIX: &str = "m--";
+/// Reconcile may remove leftovers of the maintenance sandboxes (see [`MAINTENANCE_PREFIX`]).
+pub use puddle_types::MAINTENANCE_PREFIX;
 
 /// Whether `name` is one of Puddle's maintenance sandboxes.
 #[must_use]
@@ -451,8 +449,8 @@ impl Workspaces {
     ///
     /// # Errors
     ///
-    /// [`WorkspaceError::Checkouts`] when the listing fails, times out or its output can't be
-    /// read; [`WorkspaceError::Runtime`].
+    /// [`WorkspaceError::Checkouts`] when the listing exits non-zero or its output can't be
+    /// read; [`WorkspaceError::Runtime`] when the exec fails, including a timeout.
     pub async fn list_checkouts<S: Sandbox>(
         &self,
         sandbox: &S,

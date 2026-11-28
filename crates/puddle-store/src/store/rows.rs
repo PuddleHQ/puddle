@@ -194,7 +194,9 @@ pub(super) fn closed_by_rule(
 }
 
 /// Opens a new row for each of `closed` that keeps its workspace, host, port, times and attempt
-/// count, so it sorts where it did. A key that already has an open row is skipped.
+/// count, so it sorts where it did. A key that already has an open row is skipped, and so is a
+/// request that another rule decides now, which would wait in the inbox for nothing. A row of a
+/// deleted workspace is not among `closed`: deleting the workspace detached it from its rule.
 pub(super) fn reopen_rows(
     tx: &Transaction<'_>,
     closed: Vec<PendingRow>,
@@ -202,7 +204,19 @@ pub(super) fn reopen_rows(
     fx: &mut Vec<Event>,
 ) -> Result<Vec<PendingRow>, StoreError> {
     let mut reopened = Vec::new();
+    let set = super::sets::load_index(tx)?;
     for old in closed {
+        let suffix_allows = if old.exact_only {
+            SuffixAllows::Ignore
+        } else {
+            SuffixAllows::Count
+        };
+        if set
+            .decide(&old.workspace, &old.host, now, suffix_allows)
+            .is_some()
+        {
+            continue;
+        }
         let key = params![old.workspace.as_str(), old.host.to_string(), old.port];
         let taken: i64 = tx.query_row(OPEN_ROW_COUNT, key, |row| row.get(0))?;
         if taken > 0 {

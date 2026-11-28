@@ -177,8 +177,10 @@ impl Store {
     /// # Errors
     /// A database error.
     pub fn rule_sets(&self, user: UserId) -> Result<Vec<RuleSetInfo>, StoreError> {
-        let index = self.snapshot();
+        // Lock first: a commit swaps the index while it holds the lock, so a snapshot taken
+        // after the lock matches the rows read under it.
         let conn = lock(&self.conn);
+        let index = self.snapshot();
         let hidden = load_hidden(&conn)?;
         let mut out = Vec::new();
         for set in BUILT_IN_SETS.iter().filter(|s| !hidden.contains(s.slug)) {
@@ -276,8 +278,8 @@ impl Store {
     pub fn rule_set(&self, user: UserId, id: RuleSetId) -> Result<RuleSetInfo, StoreError> {
         match id {
             RuleSetId::User(set) => {
-                let index = self.snapshot();
-                user_set_info(&lock(&self.conn), &index, user, set)
+                let conn = lock(&self.conn);
+                user_set_info(&conn, &self.snapshot(), user, set)
             }
             _ => self
                 .rule_sets(user)?

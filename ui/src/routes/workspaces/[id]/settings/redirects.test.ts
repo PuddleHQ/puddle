@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vitest";
+import { load as editorAndGit } from "../../../settings/editor-and-git/+page.ts";
 import { load as environment } from "../environment/+page.ts";
 import { load as ports } from "../ports/+page.ts";
 import { load as shellInit } from "../shell-init/+page.ts";
@@ -27,5 +28,11 @@ describe("the old addresses of the pages now under Settings", () => {
     expect(target(sshAgent as never, "w")).toBe(
       "/workspaces/w/settings/ssh-agent",
     );
+  });
+});
+
+describe("the old Editor and Git settings address", () => {
+  it("opens the Editor tab", () => {
+    expect(target(editorAndGit as never, "")).toBe("/settings/editor");
   });
 });

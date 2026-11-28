@@ -195,6 +195,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                 .map(|id| id.as_str().to_owned())
                 .collect(),
             keybindings: editor.keybindings.value.map(|k| k.as_str().to_owned()),
+            settings: editor.settings.value.map(|s| s.as_str().to_owned()),
         };
         if defaults.is_empty() {
             return None;

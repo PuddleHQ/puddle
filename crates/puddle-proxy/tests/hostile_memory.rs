@@ -98,7 +98,9 @@ async fn guests(path: &Path) {
         } else {
             &many_headers
         });
-        attacks.push(tokio::spawn(async move { guest.refused(bytes).await }));
+        attacks.push(tokio::spawn(async move {
+            guest.refused(bytes).await.answered()
+        }));
     }
     println!("{SENDING}");
     for attack in attacks {

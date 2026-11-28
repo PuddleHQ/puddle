@@ -110,7 +110,7 @@ pub async fn next_event_matching<S: EventSource, T>(
 }
 
 /// Shows that no event arrives for `window`: panics with `what` and the event when one does. A closed
-/// channel counts as none. Every call costs the whole window, so keep it as short as the code under
+/// channel panics too: its senders are gone, so nothing could have come. Every call costs the whole window, so keep it as short as the code under
 /// test needs to have sent by then.
 pub async fn no_event_for<S: EventSource>(what: &str, window: Duration, source: &mut S) {
     no_event_matching(what, window, source, Some).await;
@@ -132,18 +132,39 @@ pub async fn no_event_matching<S: EventSource, T: Debug>(
                         return Ok(unwanted);
                     }
                 }
-                Read::Lagged(skipped) => return Err(skipped),
-                Read::Closed => return Err(0),
+                Read::Lagged(skipped) => return Err(Some(skipped)),
+                Read::Closed => return Err(None),
             }
         }
     })
     .await;
     match seen {
         Ok(Ok(event)) => panic!("{what}: an event came within {window:?}: {event:?}"),
-        Ok(Err(skipped)) if skipped > 0 => panic!(
+        Ok(Err(Some(skipped))) => panic!(
             "{what}: {skipped} events were dropped before they were read, so silence proves nothing; use a bigger channel"
         ),
-        Ok(Err(_)) | Err(_) => {}
+        Ok(Err(None)) => panic!("{what}: the channel closed, so silence proves nothing"),
+        Err(_) => {}
+    }
+}
+
+/// Shows that the channel closes without an event: for a test that ends the sender itself and then
+/// checks that nothing was sent before. Panics with `what` and the event when one comes, or when the
+/// channel is still open after `within`.
+pub async fn closes_without_event<S: EventSource>(what: &str, within: Duration, source: &mut S) {
+    assert!(
+        within <= MAX_WAIT,
+        "{what}: asked to wait {within:?}, over the {MAX_WAIT:?} a wait may take"
+    );
+    let Ok(read) = tokio::time::timeout(within, source.read()).await else {
+        panic!("{what}: the channel was still open after {within:?}");
+    };
+    match read {
+        Read::Closed => {}
+        Read::Event(event) => panic!("{what}: an event came before the close: {event:?}"),
+        Read::Lagged(skipped) => {
+            panic!("{what}: {skipped} events were dropped before they were read")
+        }
     }
 }
 

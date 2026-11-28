@@ -76,8 +76,8 @@ pub use merge::{
     parse as parse_merge_file, unmerge,
 };
 pub use name::{
-    CheckoutDir, EntryId, ImageRef, ImageRefLit, RESERVED_WORKSPACE_NAMES, SandboxName, VolumeName,
-    WORKSPACE_VOLUME_PREFIX, WorkspaceId,
+    CheckoutDir, EntryId, ImageRef, ImageRefLit, MAINTENANCE_PREFIX, RESERVED_WORKSPACE_NAMES,
+    SandboxName, VolumeName, WORKSPACE_VOLUME_PREFIX, WorkspaceId,
 };
 
 pub use source_name::{

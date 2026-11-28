@@ -14,7 +14,8 @@ use std::time::Duration;
 
 use puddle_agent_proto::forward::GuestLink;
 use puddle_agent_proto::host::{
-    AgentReport, AgentReports, AgentStream, GuestStream, GuestWatcher, StreamHandler, UdpRefusal,
+    AgentReport, AgentReports, AgentStream, GuestStream, GuestWatcher, SessionId, StreamHandler,
+    UdpRefusal,
 };
 use puddle_agent_proto::resolve::{ResolveAnswer, ResolveQuery};
 use puddle_types::{
@@ -67,6 +68,9 @@ use relay::relay;
 /// # impl Policy for Store {
 /// #     fn decide(&self, _: &EgressRequest, _: SuffixAllows) -> Result<Decision, PolicyError> {
 /// #         Err(PolicyError { reason: "demo".into() })
+/// #     }
+/// #     fn lookup(&self, _: &EgressRequest, _: SuffixAllows) -> Result<Option<Decision>, PolicyError> {
+/// #         Ok(None)
 /// #     }
 /// # }
 /// let proxy = Arc::new(Proxy::new(Arc::new(Store), Arc::new(NullSink)));
@@ -597,10 +601,10 @@ impl StreamHandler for WorkspaceHandler {
 }
 
 impl Proxy {
-    /// Tells the guest watcher that an agent session of `workspace` ended.
-    pub(crate) fn session_ended(&self, workspace: &WorkspaceId) {
+    /// Tells the guest watcher that agent session `session` of `workspace` ended.
+    pub(crate) fn session_ended(&self, workspace: &WorkspaceId, session: SessionId) {
         if let Some(watcher) = &self.guest {
-            watcher.session_ended(workspace);
+            watcher.session_ended(workspace, session);
         }
     }
 }

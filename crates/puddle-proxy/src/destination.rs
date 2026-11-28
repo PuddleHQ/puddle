@@ -155,7 +155,7 @@ impl BlockingSlots {
     }
 }
 
-/// The OS resolver (`getaddrinfo` on a blocking thread, through tokio, at most [`MAX_LOOKUPS`]
+/// The OS resolver (`getaddrinfo` on a blocking thread, through tokio, at most `MAX_LOOKUPS`
 /// at once). A name under `.invalid`
 /// (and the bare `invalid`) is answered "no such name" at once without asking the OS: RFC 6761
 /// section 6.4 reserves it as never existing, and lets software say so itself. A private DNS that

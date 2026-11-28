@@ -943,7 +943,8 @@ fn guest_response(
     super::alt_svc::strip_h3(&mut parts.headers);
     parts.version = ::http::Version::HTTP_2;
     let body: RespBody = if head_only {
-        // `HEAD` and `304` describe a body they do not carry; an HTTP/2 stream just ends.
+        // `HEAD` describes a body it does not carry; an HTTP/2 stream just ends. (A `304` takes the
+        // other branch; its body is empty.)
         release(lease, sent);
         drop(guard);
         http_body_util::Empty::<Bytes>::new()

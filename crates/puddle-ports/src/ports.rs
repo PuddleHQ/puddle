@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use puddle_agent_proto::forward::GuestLink;
-use puddle_agent_proto::host::GuestWatcher;
+use puddle_agent_proto::host::{GuestWatcher, SessionId};
 use puddle_netpolicy::{HostAddrs, OwnAddresses, PuddleEndpoints};
 use puddle_types::{Event, EventSink, WorkspaceId};
 
@@ -664,7 +664,21 @@ impl GuestWatcher for Ports {
             .send_replace(Some(link));
     }
 
-    fn session_ended(&self, workspace: &WorkspaceId) {
+    fn session_ended(&self, workspace: &WorkspaceId, session: SessionId) {
+        let cell = self
+            .entries()
+            .get(workspace)
+            .and_then(|entry| entry.link.clone());
+        if let Some(cell) = cell {
+            // A link of this session opens nothing now; one a newer session gave stays.
+            cell.send_if_modified(|link| {
+                let dead = link.as_ref().is_some_and(|l| l.session() == session);
+                if dead {
+                    *link = None;
+                }
+                dead
+            });
+        }
         // No receiver is fine: nobody is watching.
         let _ = self.inner.ended.send(workspace.clone());
     }

@@ -4105,6 +4105,12 @@ export interface components {
              *     objects (at most 64 KiB).
              */
             keybindings: string | null;
+            /**
+             * @description The user's own editor settings, merged into new workspaces: the text of a JSON object of
+             *     setting keys to values (at most 64 KiB). Keys Puddle owns (`workbench.colorTheme`,
+             *     `window.autoDetectColorScheme`, `editor.fontSize`) are refused.
+             */
+            settings: string | null;
         };
         /**
          * @description Allow or deny.
@@ -4121,6 +4127,8 @@ export interface components {
             font_size: components["schemas"]["ResolvedOptionalNumber"];
             /** @description The key bindings text; `null` adds none. */
             keybindings: components["schemas"]["ResolvedText"];
+            /** @description The custom editor settings text; `null` adds none. */
+            settings: components["schemas"]["ResolvedText"];
         };
         /** @description The limits as they apply on this computer. */
         EffectiveLimits: {

@@ -15,6 +15,7 @@ export const FONT_MIN = 8;
 export const FONT_MAX = 40;
 export const EXTENSIONS_MAX = 50;
 export const KEYBINDINGS_MAX_BYTES = 64 * 1024;
+export const CUSTOM_SETTINGS_MAX_BYTES = 64 * 1024;
 
 const ok = <T>(value: T): Parsed<T> => ({ ok: true, value });
 const bad = (message: string): Parsed<never> => ({ ok: false, message });
@@ -25,6 +26,7 @@ export const NO_EDITOR: EditorSettings = {
   font_size: null,
   extensions: null,
   keybindings: null,
+  settings: null,
 };
 
 /** The layer as stored, tolerating a document from before the group existed. */
@@ -112,12 +114,39 @@ export function parseKeybindings(text: string): Parsed<string | null> {
   return ok(t);
 }
 
+/** Keys Puddle sets through their own fields; the API refuses them in the custom box. */
+export const OWNED_EDITOR_KEYS: Record<string, string> = {
+  "workbench.colorTheme": "the colour theme field",
+  "window.autoDetectColorScheme": "the colour theme field",
+  "editor.fontSize": "the font size field",
+};
+
+/** Custom editor settings: the text of a JSON object of setting keys to values (no comments). Empty text is none (`null`). */
+export function parseCustomSettings(text: string): Parsed<string | null> {
+  const t = text.trim();
+  if (t === "") return ok(null);
+  if (new TextEncoder().encode(t).length > CUSTOM_SETTINGS_MAX_BYTES)
+    return bad("Use at most 64 KiB.");
+  let json: unknown;
+  try {
+    json = JSON.parse(t);
+  } catch {
+    return bad("This is not valid JSON. Comments are not allowed here.");
+  }
+  if (typeof json !== "object" || json === null || Array.isArray(json))
+    return bad('Use a JSON object, like {"editor.tabSize": 2}.');
+  for (const [key, owner] of Object.entries(OWNED_EDITOR_KEYS))
+    if (key in json) return bad(`"${key}" is set by ${owner}. Remove it here.`);
+  return ok(t);
+}
+
 /** What a workspace's empty box means for a field: "none" is a value there, the rest inherit. */
 export const EMPTY_MEANS = {
   colour_theme: null,
   font_size: null,
   extensions: [] as string[],
   keybindings: "[]",
+  settings: "{}",
 } as const;
 
 /** The font size in a box, and how the layers word what they hold. */
@@ -129,3 +158,4 @@ export const THEME_DEFAULT = "Follows the system colour scheme";
 export const FONT_DEFAULT = "The editor's own size";
 export const EXTENSIONS_DEFAULT = "None";
 export const KEYBINDINGS_DEFAULT = "None added";
+export const CUSTOM_SETTINGS_DEFAULT = "None added";

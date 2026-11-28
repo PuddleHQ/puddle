@@ -9,10 +9,10 @@
 
 use std::net::SocketAddr;
 use std::path::Path;
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::time::Duration;
 
-use puddle_test_kit::{MAX_WAIT, accepts, eventually_blocking};
+use puddle_test_kit::{MAX_WAIT, ProcessGuard, accepts, eventually_blocking};
 
 fn lab() -> Command {
     Command::new(env!("CARGO_BIN_EXE_puddle-lab"))
@@ -62,7 +62,7 @@ fn listening(port: u64) -> bool {
 }
 
 /// Starts the program with `args`, waits for its info file and returns the child and the info.
-fn start(args: &[&str], dir: &Path, stop_file: bool) -> (Child, serde_json::Value) {
+fn start(args: &[&str], dir: &Path, stop_file: bool) -> (ProcessGuard, serde_json::Value) {
     let info = dir.join("lab.json");
     let mut command = lab();
     command.args(args).arg("--info").arg(&info);
@@ -70,6 +70,8 @@ fn start(args: &[&str], dir: &Path, stop_file: bool) -> (Child, serde_json::Valu
         command.arg("--stop").arg(dir.join("stop"));
     }
     let child = command.stderr(Stdio::null()).spawn().unwrap();
+    let stop = stop_file.then(|| dir.join("stop"));
+    let child = ProcessGuard::new(child, stop);
     let text = eventually_blocking("the lab writes its info file", MAX_WAIT, || {
         std::fs::read_to_string(&info).ok()
     });
@@ -358,7 +360,7 @@ fn a_termination_signal_stops_the_lab_cleanly() {
     let port = info["ntlm"]["port"].as_u64().unwrap();
     assert!(listening(port));
     let sent = Command::new("kill")
-        .args(["-TERM", &child.id().to_string()])
+        .args(["-TERM", &child.child().id().to_string()])
         .status()
         .unwrap();
     assert!(sent.success());
@@ -462,15 +464,18 @@ fn a_self_test_stopped_by_a_signal_removes_the_containers_it_started() {
     for signal in ["-TERM", "-INT"] {
         let dir = tempfile::tempdir().unwrap();
         let (bin, state) = fake_docker(dir.path(), false);
-        let mut child = self_test_in_docker_mode(&bin)
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
+        let mut child = ProcessGuard::new(
+            self_test_in_docker_mode(&bin)
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+            None,
+        );
         eventually_blocking("the self-test starts its container", MAX_WAIT, || {
             (containers(&state) == 1).then_some(())
         });
         let sent = Command::new("kill")
-            .args([signal, &child.id().to_string()])
+            .args([signal, &child.child().id().to_string()])
             .status()
             .unwrap();
         assert!(sent.success());

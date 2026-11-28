@@ -831,3 +831,33 @@ async fn hostile_hg51_a_request_that_never_flushes_is_cut_off_at_a_bound_before_
         "no request was sent"
     );
 }
+
+/// What a command that ran and ended may leave on its connection, in heap bytes. The SSH library
+/// keeps about 3.7 KB a command for a channel the server closed first (as Puddle always does);
+/// a command task and a channel-table entry kept as well show as about 5.5 KB a command.
+const KEPT_PER_COMMAND: isize = 4_300;
+
+#[tokio::test]
+async fn hostile_hg59_commands_on_one_connection_leave_nothing_of_their_own_behind() {
+    use crate::zeroing_alloc::live_bytes;
+    const COMMANDS: isize = 5_000;
+    let t = SshRig::new().await;
+    let mut guest = t.git.rig.guest();
+    let mut ssh = t.client(&mut guest, "bound.test:22").await;
+    login(&mut ssh).await;
+    for _ in 0..COMMANDS {
+        let ran = exec(&ssh, &[], "nonsense", b"").await;
+        assert_eq!(ran.exit, Some(1));
+    }
+    let before = live_bytes();
+    for _ in 0..COMMANDS {
+        let ran = exec(&ssh, &[], "nonsense", b"").await;
+        assert_eq!(ran.exit, Some(1));
+    }
+    let kept = live_bytes() - before;
+    assert!(
+        kept < COMMANDS * KEPT_PER_COMMAND,
+        "{COMMANDS} more commands left {kept} bytes ({} a command; limit {KEPT_PER_COMMAND})",
+        kept / COMMANDS
+    );
+}

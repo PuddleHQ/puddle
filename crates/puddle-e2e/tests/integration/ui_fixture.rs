@@ -121,7 +121,9 @@ impl Running {
         self.control("GET", "/control/state", None).await.json()
     }
 
-    /// An open SSE stream on the API.
+    /// An open SSE stream on the API, returned once the response head has come: the handler has
+    /// subscribed by then, so an event sent after this returns is on the stream. The head is read
+    /// a byte at a time so that no event is consumed with it.
     async fn events(&self) -> TcpStream {
         let mut tcp = TcpStream::connect(self.api).await.unwrap();
         let request = format!(
@@ -130,6 +132,14 @@ impl Running {
             self.token
         );
         tcp.write_all(request.as_bytes()).await.unwrap();
+        let mut head = Vec::new();
+        tokio::time::timeout(STEP, async {
+            while !head.ends_with(b"\r\n\r\n") {
+                head.push(tcp.read_u8().await.unwrap());
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("no response head; saw {:?}", String::from_utf8_lossy(&head)));
         tcp
     }
 }
@@ -323,7 +333,6 @@ async fn requests_made_through_the_real_routes_change_what_the_fixture_holds() {
 async fn emit_puts_an_event_on_the_stream_and_any_event_json_is_accepted() {
     let run = start("empty").await;
     let mut stream = run.events().await;
-    read_until(&mut stream, |s| s.contains("\r\n\r\n")).await;
     // The stream is subscribed once the hub has a receiver; emit until it shows up.
     let event = json!({"type": "oom_kill", "workspace": "web-shop", "pid": 7, "process": "node"});
     let sent = run.control("POST", "/control/emit", Some(&event)).await;
@@ -415,7 +424,6 @@ async fn advancing_the_clock_expires_rules_like_the_sweeper() {
 async fn restart_ends_open_streams_and_keeps_the_data_on_the_same_port() {
     let run = start("lived-in").await;
     let mut stream = run.events().await;
-    read_until(&mut stream, |s| s.contains("\r\n\r\n")).await;
     let before = run.get("/api/pending").await.body;
     let restarted = run.control("POST", "/control/restart", None).await;
     assert_eq!(restarted.status, 204);
@@ -769,7 +777,6 @@ async fn every_remote_note_of_a_seeded_checkout_says_why_it_cannot_be_managed() 
 async fn scripted_steps_hold_and_fail_workspace_operations() {
     let run = start("empty").await;
     let mut stream = run.events().await;
-    read_until(&mut stream, |s| s.contains("\r\n\r\n")).await;
     let step = |body: Value| {
         let run = &run;
         async move { run.control("POST", "/control/step", Some(&body)).await }
@@ -914,7 +921,6 @@ async fn a_workspaces_kept_logins_are_listed_as_the_script_sets_them_and_forgett
 async fn scripted_steps_raise_and_end_background_problems() {
     let run = start("lived-in").await;
     let mut stream = run.events().await;
-    read_until(&mut stream, |s| s.contains("\r\n\r\n")).await;
     let step = |body: Value| {
         let run = &run;
         async move { run.control("POST", "/control/step", Some(&body)).await }
@@ -1057,7 +1063,6 @@ async fn the_network_health_report_is_seeded_stamped_and_replaced_by_a_step() {
     assert_eq!(body["routes"].as_array().unwrap().len(), 3);
 
     let mut stream = run.events().await;
-    read_until(&mut stream, |s| s.contains("\r\n\r\n")).await;
     let ran = run
         .control("POST", "/control/script/network-change", None)
         .await;

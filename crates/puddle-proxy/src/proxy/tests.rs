@@ -78,6 +78,10 @@ where
         }
         (self.f)(mode)
     }
+
+    fn lookup(&self, _: &EgressRequest, _: SuffixAllows) -> Result<Option<Decision>, PolicyError> {
+        Ok(None)
+    }
 }
 
 /// Exact-only for 10/8, block for 127/8, allow for the rest.

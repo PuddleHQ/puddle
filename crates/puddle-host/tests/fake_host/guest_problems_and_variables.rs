@@ -463,9 +463,9 @@ async fn a_variable_set_while_the_guest_boots_reaches_its_login_shells_once_it_i
 fn during_the_next_boot_from_another_thread(rig: &Rig, change: impl FnOnce() + Send + 'static) {
     *rig.guest.during_boot.lock().unwrap() = Some(Box::new(move || {
         std::thread::spawn(change).join().unwrap();
-        // Simulated busy boot hook: the change has landed before the hook returns.
-        std::thread::sleep(Duration::from_millis(300));
     }));
+    // Simulated busy boot hook: the change has landed before the hook returns.
+    *rig.guest.boot_busy.lock().unwrap() = Duration::from_millis(300);
 }
 
 #[tokio::test(flavor = "multi_thread")]

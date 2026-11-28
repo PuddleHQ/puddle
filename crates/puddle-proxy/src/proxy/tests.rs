@@ -1907,9 +1907,10 @@ fn a_full_blocking_pool_does_not_delay_another_workspaces_decision() {
                 let _ = held.lock().unwrap().recv();
             }));
         }
-        while started.load(Ordering::SeqCst) < POOL {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
+        puddle_test_kit::eventually("the pool holders start", Duration::from_secs(5), || {
+            started.load(Ordering::SeqCst) >= POOL
+        })
+        .await;
         let policy = Arc::new(StaticPolicy::new());
         policy.allow(&host("b.example.com"));
         policy.set_workspace_name("workspace-b");

@@ -16,6 +16,7 @@
 //!   a stateless request cannot do.
 
 use std::io;
+use std::time::Duration;
 
 use bytes::Bytes;
 use http::header::{ACCEPT, CONTENT_TYPE, HOST, USER_AGENT};
@@ -63,6 +64,11 @@ pub(crate) trait SmartHttp: Send {
         &mut self,
         request: http::Request<UpBody>,
     ) -> BoxFuture<'_, Result<http::Response<UpBody>, GitSshFailure>>;
+
+    /// How long a push waits for the guest's next piece of pack before it gives up.
+    fn body_idle(&self) -> Duration {
+        Duration::from_secs(120)
+    }
 }
 
 /// Carries out `command` between `io` and `http`.
@@ -431,6 +437,7 @@ async fn push<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin>(
     if !commands.pack {
         return round(http, command, bytes_body(Bytes::from(head)), out).await;
     }
+    let idle = http.body_idle();
     let (body, sender, abort) = ChannelBody::new(crate::http::Body::Chunked);
     let feed = async move {
         if sender.send(Bytes::from(head)).await.is_err() {
@@ -438,15 +445,15 @@ async fn push<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin>(
         }
         let mut piece = vec![0_u8; PIECE];
         loop {
-            match input.get_mut().read(&mut piece).await {
-                Ok(0) => return,
-                Ok(n) => {
+            match tokio::time::timeout(idle, input.get_mut().read(&mut piece)).await {
+                Ok(Ok(0)) => return,
+                Ok(Ok(n)) => {
                     let sent = Bytes::copy_from_slice(piece.get(..n).unwrap_or_default());
                     if sender.send(sent).await.is_err() {
                         return;
                     }
                 }
-                Err(_) => {
+                Ok(Err(_)) | Err(_) => {
                     abort.abort();
                     return;
                 }
@@ -454,7 +461,19 @@ async fn push<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin>(
         }
     };
     let request = post(command, body.map_err(BoxError::from).boxed_unsync())?;
-    let (answer, ()) = tokio::join!(http.send(request), feed);
+    // The host's answer or failure ends the push: a guest that keeps its input open after the
+    // pack must not hold the command. Dropping `feed` here drops the pack's sender with it.
+    let answer = {
+        let send = http.send(request);
+        tokio::pin!(send, feed);
+        let mut feeding = true;
+        loop {
+            tokio::select! {
+                answer = &mut send => break answer,
+                () = &mut feed, if feeding => feeding = false,
+            }
+        }
+    };
     copy(accepted(answer?, command).await?, out, false).await
 }
 

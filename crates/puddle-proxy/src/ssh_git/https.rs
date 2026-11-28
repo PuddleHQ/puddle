@@ -227,6 +227,10 @@ impl Leg<'_> {
 }
 
 impl SmartHttp for Leg<'_> {
+    fn body_idle(&self) -> std::time::Duration {
+        self.cx.handler.proxy.config.body_idle_timeout
+    }
+
     fn send(
         &mut self,
         request: http::Request<UpBody>,

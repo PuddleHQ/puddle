@@ -838,6 +838,80 @@ async fn a_host_that_stops_taking_the_push_ends_it_whatever_the_guest_still_send
     }
 }
 
+#[tokio::test]
+async fn a_refused_push_ends_though_the_guest_keeps_its_input_open_after_the_pack() {
+    let commands = format!("{}0000", pkt(&format!("{OLD} {NEW} refs/heads/main\n")));
+    let (mut guest, mut ours) = tokio::io::duplex(4 << 20);
+    guest.write_all(commands.as_bytes()).await.unwrap();
+    guest.write_all(b"PACKdata").await.unwrap();
+    let failure = tokio::time::timeout(
+        Duration::from_secs(5),
+        carry(
+            &mut Refusing {
+                calls: 0,
+                frames: 2,
+            },
+            &command(GitService::Receive, None),
+            &mut ours,
+        ),
+    )
+    .await
+    .expect("the host refused and the command did not end")
+    .unwrap_err();
+    assert_eq!(failure.message, "refused mid-body");
+    drop(guest);
+}
+
+/// Takes the push body until it ends, so only the pack read's own limit can end the command.
+struct Waiting {
+    calls: usize,
+}
+
+impl SmartHttp for Waiting {
+    fn send(
+        &mut self,
+        request: http::Request<UpBody>,
+    ) -> BoxFuture<'_, Result<http::Response<UpBody>, GitSshFailure>> {
+        self.calls += 1;
+        let first = self.calls == 1;
+        Box::pin(async move {
+            if first {
+                return Ok(http::Response::new(bytes_body(Bytes::from_static(
+                    ADVERT_PUSH,
+                ))));
+            }
+            let mut body = request.into_body();
+            while let Some(Ok(_)) = body.frame().await {}
+            Err(GitSshFailure::new("the body ended"))
+        })
+    }
+
+    fn body_idle(&self) -> Duration {
+        Duration::from_millis(200)
+    }
+}
+
+#[tokio::test]
+async fn a_guest_that_stops_sending_the_pack_does_not_hold_the_push_for_ever() {
+    let commands = format!("{}0000", pkt(&format!("{OLD} {NEW} refs/heads/main\n")));
+    let (mut guest, mut ours) = tokio::io::duplex(4 << 20);
+    guest.write_all(commands.as_bytes()).await.unwrap();
+    guest.write_all(b"PACKdata").await.unwrap();
+    let failure = tokio::time::timeout(
+        Duration::from_secs(10),
+        carry(
+            &mut Waiting { calls: 0 },
+            &command(GitService::Receive, None),
+            &mut ours,
+        ),
+    )
+    .await
+    .expect("a silent guest held the push past the idle limit")
+    .unwrap_err();
+    assert_eq!(failure.message, "the body ended");
+    drop(guest);
+}
+
 /// Pkt-lines of data with no flush among them, `total` bytes in all (each line at most 65520).
 fn unflushed(total: usize) -> Vec<u8> {
     let mut out = Vec::with_capacity(total);

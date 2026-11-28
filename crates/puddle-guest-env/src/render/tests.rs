@@ -458,6 +458,14 @@ fn image_dirs_move_the_per_user_files() {
     let c = guest_proxy_config(&ProxySettings::default(), &env).unwrap();
     file_at(&c, "/opt/gradle-home/init.d/puddle-proxy.gradle");
     file_at(&c, "/etc/docker-cli/config.json");
+    // Outside the session user's home, both belong to that user all the same.
+    assert!(file_at(&c, "/opt/gradle-home/init.d/puddle-proxy.gradle").session_owned());
+    assert!(file_at(&c, "/etc/docker-cli/config.json").session_owned());
+    for f in &c.files {
+        let per_user = f.path().as_str().starts_with("/opt/gradle-home")
+            || f.path().as_str().starts_with("/etc/docker-cli");
+        assert_eq!(f.session_owned(), per_user, "{:?}", f.path());
+    }
 
     // Unusable values (relative, `..`, the root) fall back to the home.
     for bad in ["relative", "/a/../b", "/", "/trailing/"] {

@@ -20,7 +20,7 @@ use puddle_agent::editor::EditorConfig;
 use puddle_agent::{Agent, Config};
 use puddle_agent_proto::editor::{EditorServer, MicrosoftOptions};
 use puddle_agent_proto::forward::GuestLink;
-use puddle_agent_proto::host::{GuestStream, HostConfig, StreamHandler, serve_session};
+use puddle_agent_proto::host::{GuestStream, HostConfig, SessionId, StreamHandler, serve_session};
 use puddle_agent_proto::host_control::{HostMessage, HostReply};
 use puddle_test_kit::eventually;
 use tokio::net::UnixListener;
@@ -98,6 +98,7 @@ async fn start_agent(dir: &tempfile::TempDir, mut server: EditorServer) -> (Host
                 let _ = serve_session(
                     conn,
                     common::workspace(),
+                    SessionId::next(),
                     Arc::new(common::ChanSink(tx)),
                     Arc::new(handler),
                     HostConfig::default(),

@@ -116,7 +116,7 @@ impl Store {
         }
     }
 
-    /// Whether the audit's lines are over [`Limits::audit_warn_bytes`].
+    /// Whether the audit's lines are over [`super::Limits::audit_warn_bytes`].
     ///
     /// # Errors
     /// A database error.
@@ -162,6 +162,7 @@ impl Store {
         let rules_expired = settle(rules_expired, &mut first_error);
         settle(self.flush_limits(), &mut first_error);
         let waiting_records_merged = settle(self.merge_waiting_connections(), &mut first_error);
+        let devices_removed = settle(self.prune_stopped_devices(), &mut first_error);
         let audit_records_pruned = settle(self.prune_audit_if_due(), &mut first_error);
         // Before the shrink, so that a shrink that fails (a full disk) never hides the warning.
         let audit_over_warn_size = settle(self.audit_over_warn_size(), &mut first_error);
@@ -181,6 +182,7 @@ impl Store {
             audit_file_shrunk_bytes,
             audit_over_warn_size,
             waiting_records_merged,
+            devices_removed,
         })
     }
 
@@ -483,7 +485,7 @@ pub(super) fn audit_query_sql(
     if let Some(needle) = &filter.host_contains {
         clause(
             "instr(host, ?) > 0",
-            Some(Value::Text(needle.to_lowercase())),
+            Some(Value::Text(needle.to_ascii_lowercase())),
         );
     }
     if let Some(needle) = &filter.q {

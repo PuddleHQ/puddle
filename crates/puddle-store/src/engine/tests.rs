@@ -1077,9 +1077,9 @@ proptest! {
                 switches.insert(*u, *set, None, *on);
             }
         }
-        for ((set, w), on) in &index.switches.workspace {
-            if let Some(user) = user {
-                switches.insert(user, *set, Some(w.clone()), *on);
+        for ((u, set, w), on) in &index.switches.workspace {
+            if Some(*u) == user {
+                switches.insert(*u, *set, Some(w.clone()), *on);
             }
         }
         let alone = RuleIndex::new(
@@ -1239,4 +1239,22 @@ fn a_hidden_built_in_set_decides_nothing_even_when_its_entries_are_shared() {
             )
             .is_none()
     );
+}
+
+#[test]
+fn a_workspace_switch_belongs_to_the_user_who_set_it() {
+    let (first, second) = (UserId::OWNER, UserId::from_stored(2));
+    let set = RuleSetId::BuiltIn("github");
+    let workspace = sb("a");
+    let mut switches = Switches::default();
+    switches.insert(first, set, Some(workspace.clone()), true);
+    switches.insert(second, set, Some(workspace.clone()), false);
+    assert!(switches.is_on(first, set, &workspace));
+    assert!(!switches.is_on(second, set, &workspace));
+    assert_eq!(
+        switches.overrides(first, set),
+        vec![(workspace.clone(), true)]
+    );
+    assert_eq!(switches.overrides(second, set), vec![(workspace, false)]);
+    assert_eq!(switches.overrides(UserId::from_stored(3), set), Vec::new());
 }

@@ -15,7 +15,9 @@ use first_steps::{V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V
 
 #[cfg(test)]
 pub(crate) use migrations::migrate_up_to;
-pub(crate) use migrations::{known_trigger_names, migrate, remove_stale_partial_copies};
+pub(crate) use migrations::{
+    known_trigger_names, migrate, migrate_without_copy, remove_stale_partial_copies,
+};
 
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
 const MIGRATIONS: &[&str] = &[

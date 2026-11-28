@@ -1431,3 +1431,83 @@ fn r59_a_default_precedence_is_the_users_own_and_never_the_systems() {
     assert!(github.entries.iter().all(|e| e.precedence == 0));
     assert_eq!(github.default_precedence, None);
 }
+
+#[test]
+fn switching_a_set_to_the_state_it_is_in_writes_nothing_and_closes_nothing() {
+    let (_, store) = fixture();
+    let set = RuleSetId::BuiltIn("github");
+    let switch = |enabled: Option<bool>| {
+        store
+            .switch_rule_set(OWNER, set, None, enabled, Actor::Ui)
+            .unwrap()
+    };
+    switch(None);
+    assert_eq!(
+        audit_of(&store, "rule_set_switched").len(),
+        0,
+        "no override yet"
+    );
+    switch(Some(true));
+    assert_eq!(audit_of(&store, "rule_set_switched").len(), 1);
+    let waiting = pending(decide(&store, "a", "example.org"));
+    switch(Some(true));
+    assert_eq!(audit_of(&store, "rule_set_switched").len(), 1, "already on");
+    assert_eq!(
+        store.pending(waiting).unwrap().state,
+        PendingState::Requested
+    );
+    switch(Some(false));
+    switch(None);
+    assert_eq!(audit_of(&store, "rule_set_switched").len(), 3);
+}
+
+#[test]
+fn another_user_cannot_switch_or_delete_a_set_or_use_a_workspace_that_is_not_theirs() {
+    let (_, store) = fixture();
+    let ann = store
+        .admin_add_user(OWNER, &puddle_store::UserName::new("ann").unwrap())
+        .unwrap()
+        .id;
+    let mine = user_set(&store, "Mine");
+    assert!(matches!(
+        store.switch_rule_set(ann, RuleSetId::User(mine), None, Some(true), Actor::Ui),
+        Err(StoreError::UnknownRuleSet(_))
+    ));
+    assert!(matches!(
+        store.switch_rule_set(
+            ann,
+            RuleSetId::BuiltIn("github"),
+            Some(&sb("a")),
+            Some(true),
+            Actor::Ui
+        ),
+        Err(StoreError::UnknownWorkspace(_))
+    ));
+    assert!(matches!(
+        store.delete_rule_set(ann, mine, Actor::Ui),
+        Err(StoreError::UnknownRuleSet(_))
+    ));
+    assert!(store.rule_set(OWNER, RuleSetId::User(mine)).is_ok());
+    assert_eq!(audit_of(&store, "rule_set_switched").len(), 0);
+    assert_eq!(audit_of(&store, "rule_set_deleted").len(), 0);
+}
+
+#[test]
+fn deleting_a_set_returns_it_as_it_was_with_its_entries_and_switches() {
+    let (_, store) = fixture();
+    let set = user_set(&store, "Mine");
+    store
+        .switch_rule_set(OWNER, RuleSetId::User(set), None, Some(true), Actor::Ui)
+        .unwrap();
+    for host in ["a.example", "b.example"] {
+        store
+            .as_user(OWNER)
+            .add_rule(&new_rule(Scope::Set(set), host, Effect::Allow))
+            .unwrap();
+    }
+    let info = store.delete_rule_set(OWNER, set, Actor::Ui).unwrap();
+    assert_eq!(info.name, "Mine");
+    assert_eq!(info.entries.len(), 2);
+    assert_eq!(info.global, Some(true));
+    assert!(store.rule_set(OWNER, RuleSetId::User(set)).is_err());
+}

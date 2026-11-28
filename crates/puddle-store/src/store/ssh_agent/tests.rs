@@ -121,6 +121,27 @@ fn turning_it_off_removes_the_host_and_says_whether_it_was_on() {
 }
 
 #[test]
+fn a_host_takes_between_one_and_the_limit_of_keys_and_a_refusal_changes_nothing() {
+    let (_, store, _) = store();
+    let list = |n: usize| -> Vec<String> { (0..n).map(|i| format!("SHA256:k{i}")).collect() };
+    assert!(matches!(
+        store.set_ssh_agent_host(&ws("a"), "h.example", Some(&[])),
+        Err(StoreError::SshAgentKeys(_))
+    ));
+    assert!(matches!(
+        store.set_ssh_agent_host(&ws("a"), "h.example", Some(&list(MAX_SSH_AGENT_KEYS + 1))),
+        Err(StoreError::SshAgentKeys(_))
+    ));
+    assert_eq!(store.ssh_agent_hosts(&ws("a")).unwrap(), []);
+    store
+        .set_ssh_agent_host(&ws("a"), "h.example", Some(&list(MAX_SSH_AGENT_KEYS)))
+        .unwrap();
+    store
+        .set_ssh_agent_host(&ws("a"), "one.example", Some(&list(1)))
+        .unwrap();
+}
+
+#[test]
 fn a_workspace_may_have_the_agent_on_for_at_most_the_limit_of_hosts() {
     let (_, store, _) = store();
     for n in 0..MAX_SSH_AGENT_HOSTS {

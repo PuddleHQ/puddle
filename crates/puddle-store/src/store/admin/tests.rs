@@ -30,6 +30,18 @@ fn seed(store: &Store, user: UserId, workspace: &WorkspaceId) {
         "INSERT INTO git_defaults (user_id, only_push_listed, only_pull_listed) VALUES (?1, 1, 0)",
         "INSERT INTO builtin_entry_switches (user_id, rule_set, pattern, changed_at)
              VALUES (?1, 'builtin:github', 'api.github.com', 1)",
+        "INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by, user_id)
+             VALUES ('global', 'exact', 'example.com', 'allow', 1, 'ui', ?1)",
+        "INSERT INTO request_rules (scope, host, methods, path, created_at, created_by, user_id)
+             VALUES ('global', 'example.com', 'GET', '/', 1, 'ui', ?1)",
+        "INSERT INTO audit (ts, type, line, user_id) VALUES (1, 'rule_created', '{}', ?1)",
+        "INSERT INTO rule_set_switches (rule_set, workspace_id, enabled, changed_at, user_id)
+             VALUES ('builtin:github', NULL, 1, 1, ?1)",
+        "INSERT INTO account_passwords (user_id, hash, changed_at) VALUES (?1, 'hash', 1)",
+        "INSERT INTO account_invites (user_id, digest, expires_at)
+             VALUES (?1, randomblob(32), 9999999)",
+        "INSERT INTO devices (user_id, name, created_at, last_seen_at, expires_at)
+             VALUES (?1, 'phone', 1, 1, 9999999)",
     ] {
         conn.execute(sql, [uid]).unwrap();
     }
@@ -85,7 +97,6 @@ fn deleting_a_user_removes_every_row_that_names_them_and_nobody_elses() {
     );
     seed(&store, ann, &ws_a);
     seed(&store, bob, &ws_b);
-    store.add_device(ann, "phone", 50_000).unwrap();
     assert_eq!(store.workspaces_of(ann).unwrap(), vec![ws_a]);
 
     store.begin_user_delete(UserId::OWNER, ann).unwrap();
@@ -118,16 +129,7 @@ fn deleting_a_user_removes_every_row_that_names_them_and_nobody_elses() {
             0,
             "{table} still holds rows of the deleted user"
         );
-        if table != "devices" && table != "account_passwords" && table != "account_invites" {
-            assert!(
-                count(bob) > 0
-                    || table == "rules"
-                    || table == "request_rules"
-                    || table == "audit"
-                    || table == "rule_set_switches",
-                "{table} lost Bob's rows"
-            );
-        }
+        assert!(count(bob) > 0, "{table} lost Bob's rows");
     }
     drop(conn);
     let lines = store.admin_audit(10).unwrap();

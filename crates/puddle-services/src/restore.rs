@@ -6,11 +6,12 @@
 //! upload to it and adds what only the API knows (which workspaces run, which disks exist, which
 //! secrets have a value here) to the preview it gets back.
 
+#[cfg(any(test, feature = "testing"))]
 use std::sync::{Mutex, PoisonError};
 
-use crate::wire::{
-    RestoreApplied, RestoreMode, RestorePart, RestorePartName, RestoreResult, SafetyCopy,
-};
+#[cfg(any(test, feature = "testing"))]
+use crate::wire::RestorePartName;
+use crate::wire::{RestoreApplied, RestoreMode, RestorePart, RestoreResult, SafetyCopy};
 use futures_util::future::BoxFuture;
 use futures_util::stream::BoxStream;
 
@@ -151,6 +152,7 @@ impl RestoreService for NoRestore {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 /// An in-memory [`RestoreService`] for tests and the UI fixture: it accepts a body that starts with
 /// the fake backup's first word, refuses anything else as a file that is not a backup, and
 /// answers with the facts set with [`FakeRestore::set_facts`].
@@ -159,6 +161,7 @@ pub struct FakeRestore {
     state: Mutex<FakeState>,
 }
 
+#[cfg(any(test, feature = "testing"))]
 #[derive(Debug)]
 struct FakeState {
     facts: RestoreFacts,
@@ -170,15 +173,18 @@ struct FakeState {
     copies: Vec<SafetyCopy>,
 }
 
+#[cfg(any(test, feature = "testing"))]
 /// The first bytes a body must have for [`FakeRestore`] to accept it.
 pub const FAKE_RESTORE_MAGIC: &[u8] = b"Puddle fake backup";
 
+#[cfg(any(test, feature = "testing"))]
 impl Default for FakeRestore {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl FakeRestore {
     /// A fake that answers with one rule to add and nothing else.
     #[must_use]
@@ -275,6 +281,7 @@ impl FakeRestore {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl RestoreService for FakeRestore {
     fn apply<'a>(
         &'a self,

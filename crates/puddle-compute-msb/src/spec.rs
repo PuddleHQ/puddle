@@ -15,7 +15,7 @@ use crate::{OWNER_LABEL, OWNER_LABEL_VALUE};
 pub enum SdkSetting {
     /// Puddle sets it, to this.
     Set(&'static str),
-    /// Puddle leaves it; this is the SDK's default (msb 0.7.7).
+    /// Puddle leaves it; this is the SDK's default (at the pinned SDK).
     Default(&'static str),
 }
 
@@ -54,7 +54,7 @@ pub const GUEST_OPEN_FILES_SOFT: u64 = 65_536;
 /// Hard open-file limit in the guest; a process may raise its soft limit up to it.
 pub const GUEST_OPEN_FILES_HARD: u64 = 1_048_576;
 
-/// Every `SandboxBuilder` option of SDK 0.7.7 (and the mount, exec, SSH and backend options the
+/// Every `SandboxBuilder` option of the pinned SDK (the tag in the root `Cargo.toml`; and the mount, exec, SSH and backend options the
 /// adapter touches), with what Puddle does. `SandboxBuilder` entries are kept in step with
 /// [`builder`] by a unit test: every method it calls is listed as [`SdkSetting::Set`] and
 /// nothing else is.
@@ -261,7 +261,22 @@ pub const SDK_OPTIONS: &[SdkOption] = &[
         "guest files are written by the boot hook",
     ),
     default(
-        "SandboxBuilder::overlay / from_spec_json / override_image / override_snapshot / snapshot_resolved",
+        "SandboxBuilder::nested_virt",
+        "disabled",
+        "no VM runs inside a sandbox",
+    ),
+    default(
+        "SandboxBuilder::intercept_tls",
+        "off",
+        "the network is off, so there is no TLS to intercept",
+    ),
+    default(
+        "SandboxBuilder::rlimit",
+        "none",
+        "only the NOFILE range above is set",
+    ),
+    default(
+        "SandboxBuilder::overlay / from_spec_json / override_image / override_image_with / override_snapshot / snapshot_resolved",
         "unset",
         "no snapshots or overlays",
     ),

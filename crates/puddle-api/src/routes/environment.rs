@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Environment variables and secrets, global and per workspace (credentials spec §9).
+//! Environment variables and secrets, global and per workspace.
 //!
 //! A plain variable is kept in the database. A secret's value goes to the operating system's
 //! credential store and nowhere else: the database keeps only the id it is filed under, and no

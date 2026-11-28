@@ -262,8 +262,10 @@ cat >"$d/scripts/check-standalone.sh" <<'STUB'
 echo "$0 $*" >>"$(dirname "$0")/../standalone.calls"
 STUB
 printf '#!/bin/sh\nexit 0\n' >"$d/scripts/check-product-name.sh"
+mkdir -p "$d/ci"
+printf '#!/bin/sh\nexit 0\n' >"$d/ci/workflow-split-test.sh"
 printf '#!/bin/sh\nexit 1\n' >"$d/bin/pkg-config"
-chmod +x "$d"/scripts/*.sh "$d/bin/pkg-config"
+chmod +x "$d"/scripts/*.sh "$d"/ci/*.sh "$d/bin/pkg-config"
 (cd "$d" && git init -q && git add . && git -c user.email=t@example.org -c user.name=t commit -q -m init)
 dcf() { # dcf <crates the stub reports> <gate>...: one run of check.sh; prints its output
     crates=$1

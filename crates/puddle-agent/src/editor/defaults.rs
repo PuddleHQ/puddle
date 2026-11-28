@@ -164,10 +164,20 @@ struct Run<'a> {
 }
 
 /// What Puddle wants each owned setting to be: `Some(value)` sets it, `None` removes it.
-fn wanted_settings(defaults: &EditorDefaults, applied: &Applied) -> Vec<(String, Option<Value>)> {
+fn wanted_settings(
+    defaults: &EditorDefaults,
+    applied: &Applied,
+    current: &Value,
+) -> Vec<(String, Option<Value>)> {
+    // The theme goes back in this run only when the file still holds the one Puddle wrote.
+    let theme_handed_back = defaults.colour_theme.is_none()
+        && applied
+            .settings
+            .get(THEME)
+            .is_some_and(|last| current.get(THEME) == Some(last));
     let auto = if defaults.colour_theme.is_some() {
         Some(json!(false))
-    } else if applied.settings.get(AUTO_DETECT) == Some(&json!(false)) {
+    } else if theme_handed_back && applied.settings.get(AUTO_DETECT) == Some(&json!(false)) {
         // The theme is unset again: hand the colour scheme back to the system, as the first open does.
         Some(json!(true))
     } else {
@@ -233,7 +243,10 @@ impl Run<'_> {
         };
         let mut sets = Vec::new();
         let mut removes = Vec::new();
-        for (key, wanted) in wanted_settings(self.defaults, &self.applied) {
+        // Kept apart until the file holds the values: a refused or failed write must not be
+        // remembered as done.
+        let mut next = self.applied.settings.clone();
+        for (key, wanted) in wanted_settings(self.defaults, &self.applied, &current) {
             let key = key.as_str();
             let now = current.get(key);
             let last = self.applied.settings.get(key);
@@ -244,21 +257,29 @@ impl Run<'_> {
             }
             if let Some(value) = wanted {
                 sets.push(MergeEntry::json(&[key], &value));
-                self.applied.settings.insert(key.to_owned(), value);
+                next.insert(key.to_owned(), value);
             } else {
                 if now.is_some() {
                     removes.push(vec![key.to_owned()]);
                 }
-                self.applied.settings.remove(key);
+                next.remove(key);
             }
         }
         if sets.is_empty() && removes.is_empty() {
+            self.applied.settings = next;
             return Ok(());
         }
         let edited = edit_settings(existing, &sets, &removes);
         match edited {
-            Ok(Some(text)) => self.write_user_file(file, &text),
-            Ok(None) => Ok(()),
+            Ok(Some(text)) => {
+                self.write_user_file(file, &text)?;
+                self.applied.settings = next;
+                Ok(())
+            }
+            Ok(None) => {
+                self.applied.settings = next;
+                Ok(())
+            }
             Err(err) => {
                 tracing::warn!(%err, "the editor settings file is left as it is");
                 Ok(())
@@ -281,9 +302,8 @@ impl Run<'_> {
             );
             return Ok(());
         };
-        let in_file = |entry: &Value| entries.iter().any(|e| identity(e) == identity(entry));
-        let was =
-            |list: &[Value], entry: &Value| list.iter().any(|a| identity(a) == identity(entry));
+        let in_file = |entry: &Value| entries.contains(entry);
+        let was = |list: &[Value], entry: &Value| list.contains(entry);
         let add: Vec<&Value> = wanted
             .iter()
             .filter(|w| !in_file(w) && !was(&self.applied.keybindings, w))
@@ -302,9 +322,7 @@ impl Run<'_> {
         // could not take out.
         let mut next: Vec<Value> = wanted
             .iter()
-            .filter(|w| {
-                was(&self.applied.keybindings, w) || add.iter().any(|a| identity(a) == identity(w))
-            })
+            .filter(|w| was(&self.applied.keybindings, w) || add.contains(w))
             .cloned()
             .collect();
         next.extend(
@@ -317,10 +335,7 @@ impl Run<'_> {
         let text = if drop.is_empty() {
             insert_entries(existing.as_deref(), &add)
         } else {
-            let mut kept: Vec<&Value> = entries
-                .iter()
-                .filter(|e| !drop.iter().any(|d| identity(d) == identity(e)))
-                .collect();
+            let mut kept: Vec<&Value> = entries.iter().filter(|e| !drop.contains(e)).collect();
             kept.extend(add.iter().copied());
             format!(
                 "{}\n",
@@ -343,8 +358,9 @@ impl Run<'_> {
             );
             return Ok(());
         }
+        self.write_user_file(file, text.as_bytes())?;
         self.applied.keybindings = next;
-        self.write_user_file(file, text.as_bytes())
+        Ok(())
     }
 
     /// Writes `text` to `file` and notes what it made.
@@ -404,22 +420,19 @@ fn with_sets(text: Vec<u8>, sets: &[MergeEntry]) -> Result<Vec<u8>, SettingsRefu
     Ok(written(merged, text))
 }
 
-/// One key binding's identity: its key, command and `when`.
-fn identity(entry: &Value) -> Option<(String, String, String)> {
-    let get = |k: &str| entry.get(k).and_then(Value::as_str).map(str::to_owned);
-    Some((
-        get("key")?,
-        get("command")?,
-        get("when").unwrap_or_default(),
-    ))
-}
-
 fn planned_keybindings(defaults: &EditorDefaults) -> Vec<Value> {
     defaults
         .keybindings
         .as_deref()
         .and_then(|text| serde_json::from_str::<Vec<Value>>(text).ok())
         .unwrap_or_default()
+        .into_iter()
+        .filter(|entry| {
+            ["key", "command"]
+                .iter()
+                .all(|k| entry.get(k).is_some_and(Value::is_string))
+        })
+        .collect()
 }
 
 /// `existing` (an array in JSON with comments, or no file) with `add` before its closing bracket.
@@ -455,10 +468,7 @@ fn missing_extensions(
     let mut install = Vec::new();
     for id in &wanted {
         let known = applied.extensions.contains(id);
-        if installed
-            .iter()
-            .any(|name| name.starts_with(&format!("{id}-")))
-        {
+        if installed.iter().any(|name| is_folder_of(name, id)) {
             if !known {
                 applied.extensions.push(id.clone());
             }
@@ -468,6 +478,14 @@ fn missing_extensions(
     }
     applied.extensions.retain(|id| wanted.contains(id));
     install
+}
+
+/// Whether the folder `name` is an install of extension `id`: `<id>-<version>`, where the version
+/// starts with a digit, so `acme.tool-extra-1.0.0` is not `acme.tool`.
+fn is_folder_of(name: &str, id: &str) -> bool {
+    name.strip_prefix(id)
+        .and_then(|rest| rest.strip_prefix('-'))
+        .is_some_and(|version| version.starts_with(|c: char| c.is_ascii_digit()))
 }
 
 /// The lower-cased folder names in the extensions folder (`publisher.name-version`).

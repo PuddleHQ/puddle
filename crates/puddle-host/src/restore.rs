@@ -91,6 +91,14 @@ pub enum RestoreError {
     /// The safety copy could not be made again at the start of the apply.
     #[error("the safety copy could not be refreshed: {0}")]
     SafetyCopy(String),
+    /// A step failed and putting the moved-aside parts back failed too.
+    #[error("{cause}; and putting the previous files back failed: {stuck}")]
+    RollBack {
+        /// Why the restore failed.
+        cause: String,
+        /// The parts that did not come back, with why.
+        stuck: String,
+    },
 }
 
 fn io_error(what: &str, path: &Path) -> impl FnOnce(io::Error) -> RestoreError {

@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use puddle_compute::fake::{ExecContext, FakeRuntime, Fault, Op};
 use puddle_compute::{ComputeError, DiskSize, ExecOutput, ExecRequest, Runtime};
-use puddle_types::{CheckoutDir, GuestPath, ImageRef, WorkspaceId};
+use puddle_types::{CheckoutDir, GuestPath, ImageRef, SessionUser, WorkspaceId};
 use puddle_workspace::{FINISH_IMPORT_SH, HoldKind, Import, WorkspaceError, Workspaces};
 
 mod spy;
@@ -136,7 +136,14 @@ async fn each_checkout_is_cloned_in_a_sandbox_with_no_route_that_is_gone_afterwa
     ];
     let report = s
         .workspaces
-        .import(&s.rt, &s.id, &image(), DiskSize::gib(1), &imports)
+        .import(
+            &s.rt,
+            &s.id,
+            &image(),
+            DiskSize::gib(1),
+            SessionUser::Agent,
+            &imports,
+        )
         .await
         .unwrap();
     assert!(report.created_volume);
@@ -150,10 +157,10 @@ async fn each_checkout_is_cloned_in_a_sandbox_with_no_route_that_is_gone_afterwa
     assert_eq!(
         lines,
         [
-            "m--acme - git clone --quiet --no-local --no-checkout --origin puddle-checkout -- /puddle/import/0 /workspace/api".to_owned(),
-            format!("m--acme - sh -c {FINISH_IMPORT_SH} puddle-import /workspace/api /puddle/import/0 https://github.com/acme/api.git"),
-            "m--acme - git clone --quiet --no-local --no-checkout --origin puddle-checkout -- /puddle/import/1 /workspace/web".to_owned(),
-            format!("m--acme - sh -c {FINISH_IMPORT_SH} puddle-import /workspace/web /puddle/import/1 https://github.com/acme/web.git"),
+            "m--acme agent git clone --quiet --no-local --no-checkout --origin puddle-checkout -- /puddle/import/0 /workspace/api".to_owned(),
+            format!("m--acme agent sh -c {FINISH_IMPORT_SH} puddle-import /workspace/api /puddle/import/0 https://github.com/acme/api.git"),
+            "m--acme agent git clone --quiet --no-local --no-checkout --origin puddle-checkout -- /puddle/import/1 /workspace/web".to_owned(),
+            format!("m--acme agent sh -c {FINISH_IMPORT_SH} puddle-import /workspace/web /puddle/import/1 https://github.com/acme/web.git"),
             "m--acme root sync ".to_owned(),
         ]
     );
@@ -188,6 +195,7 @@ async fn the_working_tree_is_never_what_is_mounted() {
             &s.id,
             &image(),
             DiskSize::gib(1),
+            SessionUser::Agent,
             &[import(folder, "api")],
         )
         .await
@@ -212,7 +220,14 @@ async fn a_checkout_git_refuses_fails_alone_and_leaves_no_folder() {
     ];
     let report = s
         .workspaces
-        .import(&s.rt, &s.id, &image(), DiskSize::gib(1), &imports)
+        .import(
+            &s.rt,
+            &s.id,
+            &image(),
+            DiskSize::gib(1),
+            SessionUser::Agent,
+            &imports,
+        )
         .await
         .unwrap();
     assert_eq!(report.failed.len(), 1);
@@ -243,6 +258,7 @@ async fn a_clone_whose_finishing_step_fails_is_removed_and_a_failed_removal_is_s
                 &s.id,
                 &image(),
                 DiskSize::gib(1),
+                SessionUser::Agent,
                 &[import(checkout(&s.base, "api", "main"), "api")],
             )
             .await
@@ -283,7 +299,14 @@ async fn a_clone_that_runs_out_of_time_fails_alone_and_a_lost_guest_fails_the_im
     ];
     let report = s
         .workspaces
-        .import(&s.rt, &s.id, &image(), DiskSize::gib(1), &imports)
+        .import(
+            &s.rt,
+            &s.id,
+            &image(),
+            DiskSize::gib(1),
+            SessionUser::Agent,
+            &imports,
+        )
         .await
         .unwrap();
     assert_eq!(report.failed.len(), 1);
@@ -307,7 +330,14 @@ async fn a_clone_that_runs_out_of_time_fails_alone_and_a_lost_guest_fails_the_im
     );
     let err = s
         .workspaces
-        .import(&s.rt, &s.id, &image(), DiskSize::gib(1), &imports)
+        .import(
+            &s.rt,
+            &s.id,
+            &image(),
+            DiskSize::gib(1),
+            SessionUser::Agent,
+            &imports,
+        )
         .await
         .unwrap_err();
     assert!(err.to_string().contains("the guest is gone"), "{err}");
@@ -326,6 +356,7 @@ async fn when_every_checkout_fails_nothing_is_synced() {
             &s.id,
             &image(),
             DiskSize::gib(1),
+            SessionUser::Agent,
             &[import(checkout(&s.base, "api", "main"), "api")],
         )
         .await
@@ -347,7 +378,14 @@ async fn a_volume_that_exists_is_kept_and_a_failed_create_leaves_none_behind() {
     );
     let err = s
         .workspaces
-        .import(&s.rt, &s.id, &image(), DiskSize::gib(1), &imports)
+        .import(
+            &s.rt,
+            &s.id,
+            &image(),
+            DiskSize::gib(1),
+            SessionUser::Agent,
+            &imports,
+        )
         .await
         .unwrap_err();
     assert!(matches!(err, WorkspaceError::Runtime { .. }), "{err}");
@@ -361,7 +399,14 @@ async fn a_volume_that_exists_is_kept_and_a_failed_create_leaves_none_behind() {
     .unwrap();
     let report = s
         .workspaces
-        .import(&s.rt, &s.id, &image(), DiskSize::gib(1), &imports)
+        .import(
+            &s.rt,
+            &s.id,
+            &image(),
+            DiskSize::gib(1),
+            SessionUser::Agent,
+            &imports,
+        )
         .await
         .unwrap();
     assert!(!report.created_volume);
@@ -380,7 +425,14 @@ async fn a_volume_that_exists_with_another_size_keeps_it() {
     .unwrap();
     let report = s
         .workspaces
-        .import(&s.rt, &s.id, &image(), DiskSize::gib(2), &imports)
+        .import(
+            &s.rt,
+            &s.id,
+            &image(),
+            DiskSize::gib(2),
+            SessionUser::Agent,
+            &imports,
+        )
         .await
         .unwrap();
     assert!(!report.created_volume);
@@ -411,6 +463,7 @@ async fn a_lookup_that_fails_before_anything_is_made_is_an_error_and_makes_nothi
             &s.id,
             &image(),
             DiskSize::gib(1),
+            SessionUser::Agent,
             &[import(checkout(&s.base, "api", "main"), "api")],
         )
         .await
@@ -435,7 +488,14 @@ async fn a_sandbox_that_will_not_go_is_named_and_its_volume_is_not_pulled_from_u
     );
     let err = s
         .workspaces
-        .import(&s.rt, &s.id, &image(), DiskSize::gib(1), &imports)
+        .import(
+            &s.rt,
+            &s.id,
+            &image(),
+            DiskSize::gib(1),
+            SessionUser::Agent,
+            &imports,
+        )
         .await
         .unwrap_err();
     assert!(matches!(err, WorkspaceError::Leftover { .. }), "{err}");
@@ -460,7 +520,14 @@ async fn a_volume_that_will_not_go_after_a_failed_import_is_named() {
     );
     let err = s
         .workspaces
-        .import(&s.rt, &s.id, &image(), DiskSize::gib(1), &imports)
+        .import(
+            &s.rt,
+            &s.id,
+            &image(),
+            DiskSize::gib(1),
+            SessionUser::Agent,
+            &imports,
+        )
         .await
         .unwrap_err();
     assert!(matches!(err, WorkspaceError::Leftover { .. }), "{err}");
@@ -481,7 +548,14 @@ async fn a_failed_create_whose_cleanup_fails_too_reports_the_create() {
     );
     let err = s
         .workspaces
-        .import(&s.rt, &s.id, &image(), DiskSize::gib(1), &imports)
+        .import(
+            &s.rt,
+            &s.id,
+            &image(),
+            DiskSize::gib(1),
+            SessionUser::Agent,
+            &imports,
+        )
         .await
         .unwrap_err();
     assert!(err.to_string().contains("no room"), "{err}");
@@ -500,9 +574,14 @@ async fn a_dropped_import_gives_the_workspace_back() {
     });
     let imports = [import(checkout(&s.base, "api", "main"), "api")];
     let image = image();
-    let held = s
-        .workspaces
-        .import(&spy, &s.id, &image, DiskSize::gib(1), &imports);
+    let held = s.workspaces.import(
+        &spy,
+        &s.id,
+        &image,
+        DiskSize::gib(1),
+        SessionUser::Agent,
+        &imports,
+    );
     let timed_out = tokio::time::timeout(Duration::from_millis(50), held).await;
     assert!(timed_out.is_err(), "the import never ends");
     assert_eq!(
@@ -546,7 +625,14 @@ async fn the_workspace_stays_lent_while_a_failed_import_looks_for_and_removes_it
     );
     let imports = [import(checkout(&s.base, "api", "main"), "api")];
     workspaces
-        .import(&spy, &s.id, &image(), DiskSize::gib(1), &imports)
+        .import(
+            &spy,
+            &s.id,
+            &image(),
+            DiskSize::gib(1),
+            SessionUser::Agent,
+            &imports,
+        )
         .await
         .unwrap_err();
     assert_eq!(
@@ -575,7 +661,14 @@ async fn a_lookup_that_fails_after_a_failed_import_says_the_new_volume_may_be_le
     let imports = [import(checkout(&s.base, "api", "main"), "api")];
     let err = s
         .workspaces
-        .import(&s.rt, &s.id, &image(), DiskSize::gib(1), &imports)
+        .import(
+            &s.rt,
+            &s.id,
+            &image(),
+            DiskSize::gib(1),
+            SessionUser::Agent,
+            &imports,
+        )
         .await
         .unwrap_err();
     assert!(matches!(err, WorkspaceError::Leftover { .. }), "{err}");
@@ -600,9 +693,36 @@ async fn a_lookup_that_fails_after_a_good_import_still_reports_the_volume_it_mad
     let imports = [import(checkout(&s.base, "api", "main"), "api")];
     let report = s
         .workspaces
-        .import(&s.rt, &s.id, &image(), DiskSize::gib(1), &imports)
+        .import(
+            &s.rt,
+            &s.id,
+            &image(),
+            DiskSize::gib(1),
+            SessionUser::Agent,
+            &imports,
+        )
         .await
         .unwrap();
     assert!(report.created_volume);
     assert_eq!(report.failed, []);
+}
+
+#[tokio::test]
+async fn the_clone_and_its_finishing_step_run_as_the_workspaces_session_user() {
+    let s = setup();
+    let imports = [import(checkout(&s.base, "api", "main"), "api")];
+    s.workspaces
+        .import(
+            &s.rt,
+            &s.id,
+            &image(),
+            DiskSize::gib(1),
+            SessionUser::Root,
+            &imports,
+        )
+        .await
+        .unwrap();
+    let lines = s.guest.lines();
+    assert!(lines[0].starts_with("m--acme root git clone "), "{lines:?}");
+    assert!(lines[1].starts_with("m--acme root sh -c "), "{lines:?}");
 }

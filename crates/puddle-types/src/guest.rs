@@ -300,6 +300,7 @@ impl fmt::Debug for GuestFile {
             shown.field("contents", &self.contents);
         }
         shown.field("mode", &self.mode);
+        shown.field("session_owned", &self.session_owned);
         match &self.apply {
             // A merge spec holds the values of the keys it owns, as private as the contents.
             ApplyKind::Merge(spec) if owner_only => shown.field(

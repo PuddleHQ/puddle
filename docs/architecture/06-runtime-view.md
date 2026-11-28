@@ -541,6 +541,13 @@ refuses to run while Puddle or `msb` is running. The first start of the new vers
   transaction, and a step that breaks a foreign key aborts it. A database from a newer Puddle is
   refused, and the app says that nothing in the data folder was changed
   (`crates/puddle-app/src/shell.rs`).
+- **Going back.** What can be undone: the database, from the `puddle.db.pre-v<N>` copy, with an
+  older Puddle installed (the MSI refuses a downgrade, so the new one is uninstalled first; the
+  data folder stays). Everything written to the database since the upgrade is lost. What cannot:
+  `workspaces.json` and the settings documents have no copy and are rewritten in the new format at
+  their next save, and an older Puddle refuses a newer file; the `msb/` home has no copy either.
+  Those come back only from a `puddle backup` taken before the upgrade. There is no command; the
+  steps are in [docs/backup.md](../backup.md#going-back-after-a-bad-upgrade).
 - **Workspace list.** `workspaces.json` carries a version; older versions are read and upgraded in
   memory, a newer one is refused as written by a newer Puddle (`crates/puddle-host/src/files.rs`).
 - **Runtime.** The new `msb` ships in the new install folder and is checked like any start (6.1).

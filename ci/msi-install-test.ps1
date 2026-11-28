@@ -686,6 +686,8 @@ function Test-UninstallRunningApp([string]$Package, [string]$Policy) {
     Invoke-Msiexec @('/i', "`"$Package`"") 'msi-removeall-install.log'
     $sshConfig = Join-Path $env:USERPROFILE '.ssh\config'
     $sshOriginal = if (Test-Path -LiteralPath $sshConfig) { Get-Content -LiteralPath $sshConfig -Raw } else { $null }
+    $sshDir = Split-Path -Parent $sshConfig
+    $sshDirExisted = Test-Path -LiteralPath $sshDir
     $conn = Start-Installed
     try {
         # The development certificate's file, with a certificate that is in no store (the removal reads the
@@ -714,6 +716,9 @@ function Test-UninstallRunningApp([string]$Package, [string]$Policy) {
         Expect (-not $sshAfter.Contains($include)) "the full removal left Puddle's Include line in $sshConfig"
         Expect ($sshAfter.Contains('Host keep-me')) "the full removal changed the rest of $sshConfig"
         Expect ($null -eq (Get-LoginEntry)) "the full removal left the sign-in entry: $(Get-LoginEntry)"
+        # The test planted the ssh config (and ~/.ssh on a runner that had none): that folder is the test's, not
+        # Puddle's, so it goes before the footprint is compared.
+        if (-not $sshDirExisted) { Remove-Item -LiteralPath $sshDir -Recurse -Force -ErrorAction SilentlyContinue }
         $added = @(Get-Footprint | Where-Object { $before -notcontains $_ })
         Expect ($added.Count -eq 0) "the full removal left: $($added -join '; ')"
         Write-Host 'the full removal left no process, folder, sign-in entry or ssh config line of Puddle'

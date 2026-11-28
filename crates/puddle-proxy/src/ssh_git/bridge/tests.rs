@@ -1053,3 +1053,47 @@ async fn a_request_of_exactly_the_limit_still_goes_up() {
     result.unwrap();
     assert_eq!(host.seen[1].body.len(), MAX_REQUEST);
 }
+
+#[tokio::test]
+async fn protocol_v0_stops_asking_after_the_most_rounds_a_client_needs() {
+    let mut replies = vec![Reply::Ok(ADVERT_V0)];
+    replies.extend((0..MAX_FETCH_ROUNDS).map(|_| Reply::Ok(b"0008NAK\n")));
+    let mut host = Host2::answering(replies);
+    let command = command(GitService::Upload, None);
+    let want = "0032want 1111111111111111111111111111111111111111\n";
+    let have = "0032have aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n";
+    let mut input = format!("{want}0000");
+    for _ in 0..=MAX_FETCH_ROUNDS {
+        input.push_str(have);
+        input.push_str("0000");
+    }
+    let (_, result) = session(&mut host, &command, input.as_bytes()).await;
+    let failure = result.expect_err("one round past the limit is refused");
+    assert!(
+        failure.message.contains("rounds"),
+        "the guest is told why: {}",
+        failure.message
+    );
+    assert_eq!(
+        host.seen.len(),
+        1 + MAX_FETCH_ROUNDS,
+        "the advertisement and the allowed rounds only"
+    );
+}
+
+#[tokio::test]
+async fn protocol_v0_allows_exactly_the_most_rounds() {
+    let mut replies = vec![Reply::Ok(ADVERT_V0)];
+    replies.extend((0..MAX_FETCH_ROUNDS).map(|_| Reply::Ok(b"0008NAK\n")));
+    let mut host = Host2::answering(replies);
+    let command = command(GitService::Upload, None);
+    let want = "0032want 1111111111111111111111111111111111111111\n";
+    let mut input = format!("{want}0000");
+    for _ in 0..MAX_FETCH_ROUNDS - 1 {
+        input.push_str("0000");
+    }
+    input.push_str("0009done\n");
+    let (_, result) = session(&mut host, &command, input.as_bytes()).await;
+    result.unwrap();
+    assert_eq!(host.seen.len(), 1 + MAX_FETCH_ROUNDS);
+}

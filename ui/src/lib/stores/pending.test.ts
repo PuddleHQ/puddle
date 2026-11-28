@@ -185,6 +185,26 @@ describe("refresh", () => {
 });
 
 describe("events", () => {
+  it("draws one held request when it is asked for by name, and leaves the others held", async () => {
+    const { inbox, source, store } = setup();
+    inbox.add(request(1), "example.com");
+    store.start();
+    await vi.waitFor(() => expect(store.status).toBe("ready"));
+    for (const id of [2, 3]) {
+      source.emit({
+        type: "pending_opened",
+        request: request(id, { host: `h${id}.other.org` }),
+        registrable_domain: "other.org",
+      });
+    }
+    expect(store.held).toBe(2);
+    store.show(3);
+    expect(store.held).toBe(1);
+    expect(store.visible.map((r) => r.request.id).sort()).toEqual([1, 3]);
+    store.show(99);
+    expect(store.held).toBe(1);
+  });
+
   it("opens, updates and closes rows in place without a refetch", async () => {
     const { inbox, source, store, counts } = setup();
     inbox.add(request(1), "example.com");
@@ -694,6 +714,38 @@ describe("undo", () => {
       expect(store.rows.map((r) => r.request.host)).toEqual(["h1.example.com"]),
     );
     expect(store.groups[0]?.domain).toBe("example.com");
+  });
+
+  it("draws an undone request even when the stream's event reached the page first and held it", async () => {
+    const { store, inbox } = setup();
+    inbox.add(request(1));
+    inbox.add(request(2));
+    await store.refresh();
+    const decided = await store.decide(
+      rowOf(store, 1),
+      narrowest("allow"),
+      false,
+    );
+    if (!decided.ok) throw new Error("decide failed");
+    const real = inbox.POST;
+    vi.spyOn(inbox, "POST").mockImplementation((async (
+      ...args: Parameters<typeof real>
+    ) => {
+      const reply = await real(...args);
+      const [reopened] = (reply.data as { reopened: Row["request"][] })
+        .reopened;
+      store.handleEvent({
+        type: "pending_opened",
+        request: reopened,
+        registrable_domain: "example.com",
+      });
+      return reply;
+    }) as never);
+    expect(await store.undo(decided.decided)).toEqual({ ok: true });
+    expect(store.held).toBe(0);
+    expect(store.visible.map((r) => r.request.host)).toContain(
+      "h1.example.com",
+    );
   });
 
   it("keeps the entry and says so when the service refuses or is down", async () => {

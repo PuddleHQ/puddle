@@ -132,7 +132,7 @@ pub(super) fn run_steps(
     }
     // A commit by another process of the same version since the copy was taken is missing from
     // it: take the copy again.
-    if copy.is_some_and(|copy| copy.data_version != data_version(&tx).unwrap_or(-1)) {
+    if copy.is_some_and(|copy| data_version(&tx).ok() != Some(copy.data_version)) {
         return Ok(false);
     }
     // Violations a step did not cause (an older bug, a hand edit) never block the upgrade.

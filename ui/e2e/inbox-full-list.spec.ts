@@ -5,6 +5,7 @@
 import type { Page } from "@playwright/test";
 import { slowdown } from "./cpu-throttle.ts";
 import { type Backend, expect, test } from "./fixture";
+import { showArrived } from "./support";
 
 const LIMIT = 1000;
 const DOMAIN = "flood.example.net";
@@ -81,6 +82,8 @@ test.describe("a workspace with a full list of waiting requests", () => {
       workspace: "flood",
       host: `n${LIMIT}.${DOMAIN}`,
     });
+    // The new request waits behind the "new requests" line until it is clicked.
+    await showArrived(page, rows(page).filter({ hasText: `n${LIMIT}.` }));
     await expect(rows(page)).toHaveCount(LIMIT);
     await expect(rows(page).filter({ hasText: `n${LIMIT}.` })).toHaveCount(1);
     await expect(notice).toContainText(`flood has ${LIMIT} waiting requests`);

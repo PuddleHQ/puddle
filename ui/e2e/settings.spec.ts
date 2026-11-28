@@ -11,6 +11,7 @@ import {
   watchCsp,
   expectNoAxeViolations,
   staysEmpty,
+  showArrived,
 } from "./support";
 
 const TERMS = "https://code.visualstudio.com/license/server";
@@ -585,6 +586,7 @@ test("with the confirmation switched off, a decision for every workspace goes th
     .getByRole("link", { name: /^Inbox/ })
     .click();
   const row = page.locator("li.req", { hasText: "global.example.com" });
+  await showArrived(page, row);
   await row.getByRole("button", { name: /^More choices for/ }).click();
   const dialog = page.getByRole("dialog", { name: /^Choices for/ });
   await dialog.getByRole("radio", { name: /^Every workspace/ }).check();

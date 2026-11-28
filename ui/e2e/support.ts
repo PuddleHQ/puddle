@@ -173,6 +173,23 @@ export const AXE_SCAN_ALLOWANCE_MS = 30_000;
 export const CONVERGE_WAIT_MS = 20_000;
 
 /**
+ * Waits until the row is on screen. A request that arrives while the Inbox is open waits behind the
+ * "N new requests" line (it never moves a row under the pointer), so the line is clicked whenever it is
+ * there; an empty list draws the arrival at once and has no line.
+ */
+export async function showArrived(
+  page: Page,
+  row: Locator,
+  timeout: number = CONVERGE_WAIT_MS,
+): Promise<void> {
+  const line = page.getByRole("button", { name: /new requests?$/ });
+  await expect(async () => {
+    if ((await line.count()) > 0) await line.click({ timeout: 1000 });
+    await expect(row).toBeVisible({ timeout: 1000 });
+  }).toPass({ timeout });
+}
+
+/**
  * The wait after the API restarts: the page's event stream reconnects after 1, 2, 5 and 10 s of backoff
  * at most (18 s in all) and then refetches, so a shorter wait would fail on the backoff alone.
  */

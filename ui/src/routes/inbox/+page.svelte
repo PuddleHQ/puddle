@@ -114,6 +114,7 @@
     if (wanted === null || pending.status !== "ready") return;
     const id = wanted;
     wanted = null;
+    pending.show(id);
     if (!flat.some((r) => r.request.id === id)) return;
     currentId = id;
     afterPaint(() => rowElement(id)?.focus());

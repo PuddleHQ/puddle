@@ -59,6 +59,7 @@ fn a_decision_is_logged_with_its_effect() {
     let logs = Logs::capture();
 
     let decided = store
+        .as_user(UserId::OWNER)
         .resolve_pending(id, &Resolution::allow(), Actor::Ui)
         .unwrap();
 

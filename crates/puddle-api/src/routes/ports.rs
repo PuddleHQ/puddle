@@ -8,11 +8,11 @@
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use puddle_types::WorkspaceId;
 
+use crate::authz::Principal;
 use crate::extract::{Json as BodyJson, Path};
 use crate::routes::AppState;
-use crate::routes::workspaces::named;
+use crate::routes::workspaces::owned;
 use puddle_services::error::ApiError;
 use puddle_services::error::ApiErrorBody;
 use puddle_services::wire::{PortEntry, PortForwardRequest, WorkspacePorts};
@@ -33,10 +33,11 @@ use puddle_services::wire::{PortEntry, PortForwardRequest, WorkspacePorts};
 )]
 pub(crate) async fn list_ports(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
 ) -> Result<Json<WorkspacePorts>, ApiError> {
-    let name: WorkspaceId = named(&state, &id).await?;
-    Ok(Json(state.ports.list(&name).await?))
+    let workspace = owned(&state, principal, &id).await?;
+    Ok(Json(state.ports.list(&workspace).await?))
 }
 
 /// Forwards a port of the running workspace to a port of this computer's loopback, and keeps it
@@ -62,14 +63,15 @@ pub(crate) async fn list_ports(
 )]
 pub(crate) async fn forward_port(
     State(state): State<AppState>,
+    principal: Principal,
     Path((id, port)): Path<(String, u16)>,
     BodyJson(body): BodyJson<PortForwardRequest>,
 ) -> Result<Json<PortEntry>, ApiError> {
-    let name = named(&state, &id).await?;
+    let workspace = owned(&state, principal, &id).await?;
     Ok(Json(
         state
             .ports
-            .forward(&name, port, body.host_port, body.pinned)
+            .forward(&workspace, port, body.host_port, body.pinned)
             .await?,
     ))
 }
@@ -91,9 +93,10 @@ pub(crate) async fn forward_port(
 )]
 pub(crate) async fn release_port(
     State(state): State<AppState>,
+    principal: Principal,
     Path((id, port)): Path<(String, u16)>,
 ) -> Result<StatusCode, ApiError> {
-    let name = named(&state, &id).await?;
-    state.ports.release(&name, port).await?;
+    let workspace = owned(&state, principal, &id).await?;
+    state.ports.release(&workspace, port).await?;
     Ok(StatusCode::NO_CONTENT)
 }

@@ -625,6 +625,7 @@ function Test-WorkspaceLifecycle($Conn) {
 . "$PSScriptRoot/msi-install-test/workspace.ps1"
 . "$PSScriptRoot/msi-install-test/upgrade.ps1"
 . "$PSScriptRoot/msi-install-test/dialogs.ps1"
+. "$PSScriptRoot/msi-install-test/uninstall.ps1"
 
 if ($SelfTest) {
     $failures = 0
@@ -926,4 +927,5 @@ $removed = @($before | Where-Object { $after -notcontains $_ })
 Write-Host "left behind on purpose: $(($added | ForEach-Object { $_ -replace '^\w+ ', '' }) -join ', ')"
 Write-Host "gone from the machine since the start (not Puddle's): $($removed.Count)"
 if ($policy -eq 'run') { Test-UninstallKeepsData $current $PlantFootprint }
+Test-UninstallRunningApp $current $policy
 Step 'ok'

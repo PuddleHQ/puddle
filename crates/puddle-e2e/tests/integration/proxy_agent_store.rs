@@ -341,6 +341,7 @@ async fn an_unknown_host_is_pending_in_the_store_and_passes_after_approval() {
     assert_eq!(rig.store.pending(row.id).unwrap().attempts, 2);
 
     rig.store
+        .as_user(puddle_store::UserId::OWNER)
         .resolve_pending(row.id, &Resolution::allow(), Actor::Cli)
         .unwrap();
     let (code, mut conn) = connect_via(agent, &authority).await.unwrap();
@@ -883,6 +884,7 @@ async fn a_hundred_thousand_unknown_names_are_all_told_to_wait_and_the_store_sta
     assert_eq!(open.len(), cap);
     assert!(open.iter().any(|row| row.id == first));
     rig.store
+        .as_user(puddle_store::UserId::OWNER)
         .resolve_pending(first, &Resolution::allow(), Actor::Cli)
         .unwrap();
 }

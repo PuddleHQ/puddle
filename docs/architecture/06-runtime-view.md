@@ -544,7 +544,11 @@ refuses to run while Puddle or `msb` is running. The first start of the new vers
 - **Workspace list.** `workspaces.json` carries a version; older versions are read and upgraded in
   memory, a newer one is refused as written by a newer Puddle (`crates/puddle-host/src/files.rs`).
 - **Runtime.** The new `msb` ships in the new install folder and is checked like any start (6.1).
-  The runtime's own folder, with the sandboxes and volumes, is reused.
+  The runtime's own home (`MSB_HOME`, the `msb/` folder of the data folder, section 7) is not part
+  of the install and is reused as it is: the new `msb` opens the sandboxes, volumes and database
+  the old one left there. The `puddle.db.pre-v<N>` copy covers Puddle's store, not this home; a
+  layout change in it between two pinned `msb` versions is msb's own, and the only check is the
+  MSI upgrade job with a workspace that has files (section 10).
 - **Guest agent.** Every host start copies the installed agent into the guest share, so a workspace
   gets the new agent at its next start. A workspace still running the old agent is noticed through
   the agent's hello: the protocol mismatch shows as a problem that says to stop and start the

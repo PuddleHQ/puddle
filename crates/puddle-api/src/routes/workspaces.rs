@@ -20,6 +20,7 @@ use crate::extract::Path;
 use crate::routes::{AppState, repository_hosts};
 use puddle_services::error::ApiErrorBody;
 use puddle_services::error::{ApiError, ErrorCode, ErrorField, blocking};
+use puddle_services::owned::OwnedWorkspace;
 use puddle_services::wire::{
     AllowedHost, AttachRequest, AttachResponse, DeleteCheck, DeleteWorkspaceRequest,
     GrowRootDiskRequest, NewWorkspaceIdentity, NewWorkspaceRequest, RenameWorkspaceRequest,
@@ -36,6 +37,21 @@ pub(super) fn workspace_id(raw: &str) -> Result<WorkspaceId, ApiError> {
 }
 
 /// The workspace a path names, as the id the store keys it by; 404 for none.
+/// The handle for the workspace `raw` names, if it is the principal's: the argument a
+/// user-scoped service method takes. Another user's workspace answers as an unknown one.
+pub(super) async fn owned(
+    state: &AppState,
+    principal: Principal,
+    raw: &str,
+) -> Result<OwnedWorkspace, ApiError> {
+    let id = workspace_id(raw)?;
+    let store = state.store.clone();
+    blocking(move || {
+        Ok(OwnedWorkspace::resolve(&*store, principal.user, &id).map_err(WorkspaceError::from)?)
+    })
+    .await
+}
+
 pub(super) async fn named(state: &AppState, raw: &str) -> Result<WorkspaceId, ApiError> {
     Ok(state.workspaces.get(&workspace_id(raw)?).await?.id)
 }

@@ -173,10 +173,11 @@ pub(crate) async fn inbox(
 )]
 pub(crate) async fn get_pending(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<i64>,
 ) -> Result<Json<PendingRequest>, ApiError> {
     let store = state.store.clone();
-    let row = blocking(move || Ok(store.pending(PendingId(id))?)).await?;
+    let row = blocking(move || Ok(store.as_user(principal.user).pending(PendingId(id))?)).await?;
     Ok(Json(present(&state, vec![row]).await?.remove(0)))
 }
 
@@ -249,9 +250,11 @@ async fn decide(
         .await?;
     }
     let decided = blocking(move || {
-        Ok(state
-            .store
-            .resolve_pending(PendingId(id), &resolution, Actor::Api)?)
+        Ok(state.store.as_user(principal.user).resolve_pending(
+            PendingId(id),
+            &resolution,
+            Actor::Api,
+        )?)
     })
     .await?;
     Ok(Json(DecisionOutcome::from_store(decided)?))

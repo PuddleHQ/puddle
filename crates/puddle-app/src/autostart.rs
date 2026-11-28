@@ -16,6 +16,17 @@ use std::path::Path;
 /// [`crate::shell::Options::at_login`]).
 pub const AT_LOGIN_FLAG: &str = "--at-login";
 
+/// The argument that asks a running Puddle to quit: a second start with it hands over to the
+/// running program, which runs its normal quit (the workspaces stop cleanly) and ends. The
+/// uninstaller uses it. Started with no program running, it starts and ends at once.
+pub const QUIT_FLAG: &str = "--quit";
+
+/// Whether `args` (the program's arguments) ask the running Puddle to quit.
+#[must_use]
+pub fn asks_to_quit<S: AsRef<std::ffi::OsStr>>(args: impl IntoIterator<Item = S>) -> bool {
+    args.into_iter().any(|arg| arg.as_ref() == QUIT_FLAG)
+}
+
 /// The name Puddle's entry has in the system's list.
 pub const ENTRY_NAME: &str = "Puddle";
 

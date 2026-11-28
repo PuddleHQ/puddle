@@ -19,7 +19,7 @@ pub(crate) struct Refusal {
     pub(crate) outcome: Option<ConnectionOutcome>,
     /// Where the guest was going, for a refusal of a request head that never became a request:
     /// the proxy records it (a refusal of a decided request is recorded where it is decided).
-    pub(crate) target: Option<Target>,
+    pub(crate) target: Option<Box<Target>>,
 }
 
 impl Refusal {
@@ -39,7 +39,7 @@ impl Refusal {
 
     /// Names where the guest was going, so the refusal is recorded against it.
     pub(crate) fn at(mut self, target: Target) -> Self {
-        self.target = Some(target);
+        self.target = Some(Box::new(target));
         self
     }
 

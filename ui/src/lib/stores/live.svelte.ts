@@ -136,6 +136,14 @@ export class LiveState implements LiveSource {
     }
   }
 
+  /**
+   * Opens a refused stream anew. The session got a new token after the refusal (a laptop slept
+   * past the token's life), so the poll never failed and would never reopen it.
+   */
+  reopenStream(): void {
+    if (this.stream === "refused") this.#reopen?.();
+  }
+
   /** Starts the stream and the poll; returns the function that stops both. */
   start(): () => void {
     const controller = new AbortController();

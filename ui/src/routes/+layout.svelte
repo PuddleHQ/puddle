@@ -117,7 +117,10 @@
       session.mode === "signed-in" &&
       (live.problem === "unauthorized" || live.stream === "refused")
     ) {
-      void session.recover();
+      void session.recover().then((signedIn) => {
+        // The stream ended at the refusal and the new token alone does not reopen it.
+        if (signedIn) live.reopenStream();
+      });
     }
   });
 

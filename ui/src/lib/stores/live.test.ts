@@ -312,3 +312,34 @@ describe("the SSH agent questions in the badge", () => {
     stop();
   });
 });
+
+describe("LiveState.reopenStream", () => {
+  it("opens a refused stream anew while the poll answers all along", async () => {
+    vi.useFakeTimers();
+    const opened: EventStreamOptions[] = [];
+    const live = new LiveState({
+      api: fakeApi(() => ok(0)),
+      pollMs: 1000,
+      events: (o) => {
+        opened.push(o);
+        return (async function* () {})();
+      },
+    });
+    const stop = live.start();
+    await vi.advanceTimersByTimeAsync(0);
+    opened[0]?.onState?.("refused");
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(opened).toHaveLength(1);
+    // The session got a new token: the stream may try again.
+    live.reopenStream();
+    expect(opened).toHaveLength(2);
+    expect(opened[0]?.signal.aborted).toBe(true);
+    expect(live.stream).toBe("connecting");
+    // A stream that is not refused stays as it is.
+    opened[1]?.onState?.("connected");
+    live.reopenStream();
+    expect(opened).toHaveLength(2);
+    stop();
+    vi.useRealTimers();
+  });
+});

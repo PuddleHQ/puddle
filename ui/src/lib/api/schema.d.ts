@@ -17352,7 +17352,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            /** @description forbidden origin */
+            /** @description asked from a signed-in browser: a forward opens a port on the computer Puddle runs on, so only the install token may */
             403: {
                 headers: {
                     [name: string]: unknown;

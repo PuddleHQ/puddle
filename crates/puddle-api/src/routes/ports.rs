@@ -9,12 +9,12 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 
-use crate::authz::Principal;
+use crate::authz::{Principal, Via};
 use crate::extract::{Json as BodyJson, Path};
 use crate::routes::AppState;
 use crate::routes::workspaces::owned;
-use puddle_services::error::ApiError;
 use puddle_services::error::ApiErrorBody;
+use puddle_services::error::{ApiError, ErrorCode};
 use puddle_services::wire::{PortEntry, PortForwardRequest, WorkspacePorts};
 
 /// The workspace's ports: the ones a process in it listens on (as the workspace reports them),
@@ -55,6 +55,7 @@ pub(crate) async fn list_ports(
     request_body = PortForwardRequest,
     responses(
         (status = OK, description = "the port now", body = PortEntry),
+        (status = FORBIDDEN, description = "asked from a signed-in browser: a forward opens a port on the computer Puddle runs on, so only the install token may", body = ApiErrorBody),
         (status = NOT_FOUND, description = "no such workspace", body = ApiErrorBody),
         (status = CONFLICT, description = "the workspace is not running, or the port of this computer is in use (the message says by whom)", body = ApiErrorBody),
         (status = UNPROCESSABLE_ENTITY, description = "a port that is not 1 to 65535", body = ApiErrorBody),
@@ -68,6 +69,16 @@ pub(crate) async fn forward_port(
     BodyJson(body): BodyJson<PortForwardRequest>,
 ) -> Result<Json<PortEntry>, ApiError> {
     let workspace = owned(&state, principal, &id).await?;
+    if let Via::Device(_) = principal.via {
+        // The listener opens on this computer's loopback, where a signed-in browser on another
+        // computer must not put one: whatever else listens there would be one step closer.
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            ErrorCode::Forbidden,
+            "a forward opens a port on the computer Puddle runs on, so it can only be made from \
+             the desktop window or the command line there",
+        ));
+    }
     Ok(Json(
         state
             .ports

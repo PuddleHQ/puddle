@@ -897,6 +897,7 @@ async fn the_default_pack_read_limit_waits_for_a_guest_that_is_slow_with_the_pac
     let (mut guest, mut ours) = tokio::io::duplex(4 << 20);
     guest.write_all(commands.as_bytes()).await.unwrap();
     let slow = tokio::spawn(async move {
+        // flake-ok: simulated latency; a zero pack read limit would cut the push here.
         tokio::time::sleep(Duration::from_millis(100)).await;
         guest.write_all(b"PACKdata").await.unwrap();
         guest.shutdown().await.unwrap();

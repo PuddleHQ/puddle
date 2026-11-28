@@ -113,7 +113,9 @@ impl Store {
         Ok((rule, reopened))
     }
 
-    /// Changes a rule's expiry (`None` makes it permanent).
+    /// Changes a rule's expiry (`None` makes it permanent) and closes the open requests the
+    /// rule now decides, like [`Store::update_rule`]. Writes one `rule_updated` record, and none
+    /// when the expiry is unchanged.
     ///
     /// # Errors
     /// [`StoreError::UnknownRule`], [`StoreError::ExpiryNotInFuture`],
@@ -137,6 +139,9 @@ impl Store {
                 params![expires_at.map(sql_ts), id.0],
             )?;
             let after = load_rule(tx, id)?;
+            if after == before {
+                return Ok(after);
+            }
             append_for(
                 tx,
                 &AuditRecord::RuleUpdated {
@@ -147,6 +152,7 @@ impl Store {
                 },
                 after.user,
             )?;
+            close_decided_rows(tx, &after, None, actor, now, fx)?;
             fx.push(Event::RulesChanged {});
             Ok(after)
         })

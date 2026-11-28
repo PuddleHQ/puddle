@@ -851,14 +851,18 @@ fn open_pending_sql() -> String {
 /// Open rows, most recent first, grouped by registrable domain in that order.
 fn group_by_domain(rows: Vec<PendingRow>) -> Vec<InboxGroup> {
     let mut groups: Vec<InboxGroup> = Vec::new();
+    let mut index: HashMap<String, usize> = HashMap::new();
     for row in rows {
         let domain = registrable_domain(&row.host);
-        match groups.iter_mut().find(|g| g.registrable_domain == domain) {
-            Some(group) => group.rows.push(row),
-            None => groups.push(InboxGroup {
-                registrable_domain: domain,
-                rows: vec![row],
-            }),
+        match index.get(&domain) {
+            Some(&at) => groups[at].rows.push(row),
+            None => {
+                index.insert(domain.clone(), groups.len());
+                groups.push(InboxGroup {
+                    registrable_domain: domain,
+                    rows: vec![row],
+                });
+            }
         }
     }
     groups

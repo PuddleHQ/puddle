@@ -417,7 +417,7 @@ fn a_failed_swap_puts_the_moved_parts_back() {
         }
         swap_part(paths, new, old, part)
     };
-    let err = run_with(&s.here, &pending, marker, failing).unwrap_err();
+    let err = run_with(&s.here, &pending, marker, failing, roll_back_part).unwrap_err();
     assert!(err.to_string().contains("the disk went away"), "{err}");
     assert_eq!(
         (
@@ -563,4 +563,141 @@ fn a_swap_that_cannot_make_its_aside_folder_fails_and_changes_nothing() {
     let err = run(&s.here, &pending, marker).unwrap_err();
     assert!(matches!(err, RestoreError::Io { .. }), "{err}");
     assert_eq!(rules(&s.here), before);
+}
+
+#[test]
+fn the_marker_keeps_the_summary_read_from_the_staged_folder() {
+    let s = setup();
+    let seen = |dir: &Path| {
+        if dir.join("puddle.db").is_file() {
+            "counts read".to_owned()
+        } else {
+            String::new()
+        }
+    };
+    request_with(&s.here, &s.staging_id, ApplyMode::Add, seen).unwrap();
+    let marker: Marker =
+        serde_json::from_slice(&fs::read(s.here.restore_pending().join("marker.json")).unwrap())
+            .unwrap();
+    assert_eq!(marker.summary, "counts read");
+    let outcome = apply_pending(&s.here).unwrap();
+    assert!(
+        outcome.message.contains("counts read"),
+        "{}",
+        outcome.message
+    );
+}
+
+#[test]
+fn two_confirms_of_one_backup_leave_the_first_ones_pending_restore_alone() {
+    let s = setup();
+    let first_in = std::sync::atomic::AtomicBool::new(false);
+    let (inside_tx, inside_rx) = std::sync::mpsc::channel::<()>();
+    let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+    let go_rx = std::sync::Mutex::new(go_rx);
+    let results = std::thread::scope(|scope| {
+        let confirm = || {
+            request_with(&s.here, &s.staging_id, ApplyMode::Add, |_| {
+                // Only the first confirm to get here waits; it is "slow" while the second starts.
+                if !first_in.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                    inside_tx.send(()).unwrap();
+                    go_rx.lock().unwrap().recv().unwrap();
+                }
+                String::new()
+            })
+        };
+        let first = scope.spawn(confirm);
+        inside_rx.recv().unwrap();
+        let second = scope.spawn(confirm);
+        // The safety copies are named by the second: the second confirm must not share the first's.
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+        go_tx.send(()).unwrap();
+        (first.join().unwrap(), second.join().unwrap())
+    });
+    assert!(results.0.is_ok(), "{:?}", results.0);
+    assert!(
+        matches!(results.1, Err(RequestError::AlreadyPending)),
+        "{:?}",
+        results.1
+    );
+    let pending = s.here.restore_pending();
+    assert!(pending.join("marker.json").is_file());
+    assert!(pending.join("staged").join("puddle.db").is_file());
+}
+
+#[test]
+fn a_roll_back_that_fails_keeps_what_was_moved_aside_and_says_so() {
+    let s = setup();
+    request(&s.here, &s.staging_id, ApplyMode::Replace, "").unwrap();
+    let swap = |paths: &HostPaths, new: &Path, old: &Path, part: &str| {
+        if part == "workspaces.json" {
+            return Err(RestoreError::Io {
+                what: "cannot move into place".to_owned(),
+                source: io::Error::other("a scanner holds it"),
+            });
+        }
+        swap_part(paths, new, old, part)
+    };
+    let stuck = |_: &HostPaths, _: &Path, part: &str| -> io::Result<()> {
+        if part == "settings" {
+            Err(io::Error::other("still locked"))
+        } else {
+            Ok(())
+        }
+    };
+    let outcome = apply_pending_with(&s.here, |paths, pending, marker| {
+        run_with(paths, pending, marker, swap, stuck)
+    })
+    .unwrap();
+    assert!(!outcome.applied);
+    assert!(
+        outcome.message.contains("could not be fully undone"),
+        "{}",
+        outcome.message
+    );
+    assert!(
+        outcome.message.contains("settings: still locked"),
+        "{}",
+        outcome.message
+    );
+    let kept = s.here.data().join("restore-pending.rollback-failed");
+    assert!(kept.join("marker.json").is_file());
+    assert!(
+        kept.join("old").join("settings").is_dir(),
+        "the live settings went here"
+    );
+    assert!(
+        !s.here.restore_pending().exists(),
+        "a later restore is not blocked"
+    );
+    assert_eq!(read(s.here.restore_result())["applied"], false);
+}
+
+#[test]
+fn an_unreadable_marker_does_not_block_restores_when_its_parking_name_is_taken() {
+    let s = setup();
+    request(&s.here, &s.staging_id, ApplyMode::Add, "").unwrap();
+    fs::write(s.here.restore_pending().join("marker.json"), b"{not json").unwrap();
+    let taken = s.here.data().join("restore-pending.unreadable");
+    fs::create_dir_all(taken.join("earlier")).unwrap();
+    let outcome = apply_pending(&s.here).unwrap();
+    assert!(!outcome.applied);
+    assert!(
+        !s.here.restore_pending().exists(),
+        "the next confirm is not told \"already waiting\""
+    );
+    assert!(
+        taken.join("earlier").is_dir(),
+        "the earlier parked folder is untouched"
+    );
+    let parked = fs::read_dir(s.here.data())
+        .unwrap()
+        .flatten()
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with("restore-pending.unreadable-")
+        })
+        .count();
+    assert_eq!(parked, 1);
 }

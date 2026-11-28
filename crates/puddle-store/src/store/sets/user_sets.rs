@@ -4,7 +4,7 @@
 use puddle_types::{Event, Fill, RuleSetId};
 use rusqlite::{Connection, OptionalExtension, params};
 
-use super::views::{RuleSetInfo, stored_fill};
+use super::views::{RuleSetInfo, stored_fill, user_set_info};
 use crate::audit::{AuditRecord, RuleDeleteReason, RuleSetWire, RuleWire, actor_str};
 use crate::catalogue::BUILT_IN_SETS;
 use crate::error::StoreError;
@@ -247,9 +247,10 @@ impl Store {
         if actor == Actor::System {
             return Err(StoreError::SystemActor);
         }
-        let info = self.rule_set(user, RuleSetId::User(id))?;
-        self.change(|tx, now, fx| {
+        let info = self.change(|tx, now, fx| {
             let set = require_user_set(tx, user, id)?;
+            // Read in the transaction that deletes it, so the answer is the set as it went.
+            let info = user_set_info(tx, &self.snapshot(), user, id)?;
             let entries: Vec<Rule> = load_rules(tx)?
                 .into_iter()
                 .filter(|rule| rule.scope == Scope::Set(id))
@@ -276,7 +277,7 @@ impl Store {
             };
             append_for(tx, &record, user)?;
             fx.push(Event::RulesChanged {});
-            Ok(())
+            Ok(info)
         })?;
         tracing::info!(set = id, entries = info.entries.len(), "rule set deleted");
         Ok(info)

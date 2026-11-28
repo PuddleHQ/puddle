@@ -12,7 +12,10 @@ fn sb(s: &str) -> SandboxName {
 #[test]
 fn a_reservation_blocks_everyone_until_attached_or_released() {
     let r = Registry::default();
-    r.reserve(&ws("a"), &sb("one")).unwrap();
+    assert!(
+        !r.reserve(&ws("a"), &sb("one")).unwrap(),
+        "nothing was held"
+    );
     let held = r.reserve(&ws("a"), &sb("two")).unwrap_err();
     assert_eq!(held.sandbox, sb("one"));
     assert_eq!(held.kind, HoldKind::Attaching);
@@ -22,7 +25,10 @@ fn a_reservation_blocks_everyone_until_attached_or_released() {
     r.attach(&ws("a"), &sb("one"));
     assert_eq!(r.holder(&ws("a")).unwrap().kind, HoldKind::Attached);
     // The owner may attach again (a recreate under the same name); others may not.
-    r.reserve(&ws("a"), &sb("one")).unwrap();
+    assert!(
+        r.reserve(&ws("a"), &sb("one")).unwrap(),
+        "it held the workspace attached before"
+    );
     r.attach(&ws("a"), &sb("one"));
     assert_eq!(
         r.reserve(&ws("a"), &sb("two")).unwrap_err().sandbox,

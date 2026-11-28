@@ -36,6 +36,8 @@ gid=$(id -g "$user" 2>/dev/null) || fail "the image has no group for $user" 3
 owner=$uid:$gid
 
 [ -d "$mount" ] || fail "no volume at $mount" 3
+# A link here would lead the mkdir, chmod and chown below to wherever it points.
+[ ! -L "$mount/.puddle" ] || fail "$mount/.puddle is a symlink"
 mkdir -p "$mount/.puddle" || fail "cannot create $mount/.puddle"
 chmod 0700 "$mount/.puddle" || fail "cannot set the mode of $mount/.puddle"
 

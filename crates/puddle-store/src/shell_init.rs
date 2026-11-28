@@ -16,7 +16,8 @@ pub struct ShellInitText(String);
 impl ShellInitText {
     /// Checks `text`. CRLF and lone CR line ends become LF (a browser's textarea can send
     /// either), because a CR at the end of a shell line is part of the word and breaks the line.
-    /// The text ends in one newline.
+    /// The text ends in a newline: one is added when it has none, and a text that ends in
+    /// several keeps them.
     ///
     /// # Errors
     /// [`StoreError::ShellInitInvalid`] for an empty text, a NUL, or a text over the limit; the

@@ -454,6 +454,12 @@ impl BootPlan {
             ));
         }
         for f in &self.files {
+            if f.session_owned() {
+                lines.push(format!(
+                    "puddle_session_owned {}",
+                    sh_word(f.path().as_str())
+                ));
+            }
             if matches!(f.apply(), ApplyKind::Keep) {
                 lines.push(format!("puddle_keep {}", sh_word(f.path().as_str())));
                 continue;

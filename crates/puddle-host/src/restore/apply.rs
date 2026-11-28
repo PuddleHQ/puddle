@@ -21,6 +21,9 @@ use super::{RestoreError, merge, staging_dir};
 use crate::HostPaths;
 use crate::backup::{BACKUP_DATABASE, BACKUP_SETTINGS, BACKUP_WORKSPACES, make_backup};
 
+/// Serialises [`request_with`]: the safety copy takes seconds, and the pending folder is shared.
+static REQUESTING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 const MARKER: &str = "marker.json";
 const STAGED: &str = "staged";
 const NEW: &str = "new";
@@ -164,14 +167,19 @@ pub(crate) fn request_with(
     mode: ApplyMode,
     summary: impl FnOnce(&Path) -> String,
 ) -> Result<Requested, RequestError> {
+    // One confirm at a time: a second one that ran beside the first would clear the first one's
+    // `restore-pending/` after the first had answered "restart" (two clicks, a retry, two tabs).
+    let _one_at_a_time = REQUESTING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let fail = |what: &str, e: &dyn std::fmt::Display| RequestError::Failed(format!("{what}: {e}"));
-    let staged = staging_dir(&paths.restore_staging(), staging_id)
-        .filter(|d| d.join(BACKUP_DATABASE).is_file())
-        .ok_or(RequestError::NotStaged)?;
     let pending = paths.restore_pending();
     if pending.join(MARKER).exists() {
         return Err(RequestError::AlreadyPending);
     }
+    let staged = staging_dir(&paths.restore_staging(), staging_id)
+        .filter(|d| d.join(BACKUP_DATABASE).is_file())
+        .ok_or(RequestError::NotStaged)?;
     book_versions_agree(paths, &staged).map_err(|why| RequestError::Refused(why.to_string()))?;
 
     let requested_at_ms = now_ms();
@@ -182,6 +190,9 @@ pub(crate) fn request_with(
             "the safety copy of the present state could not be made, so the restore did not start: {e}"
         ))
     })?;
+
+    // Read before the staged folder moves: afterwards `staged` names nothing.
+    let summary = summary(&staged);
 
     // A leftover without a marker is an earlier request that never finished: it is ours to clear.
     drop(fs::remove_dir_all(&pending));
@@ -194,7 +205,7 @@ pub(crate) fn request_with(
             format: 1,
             mode,
             safety_copy: name.clone(),
-            summary: summary(&staged),
+            summary,
             requested_at_ms,
             phase: Phase::Requested,
         },
@@ -211,6 +222,14 @@ pub(crate) fn request_with(
 /// A step that fails is undone: the live parts come back and Puddle starts with the old state; the
 /// outcome says why. A crash is finished at the next call from the marker.
 pub(crate) fn apply_pending(paths: &HostPaths) -> Option<RestoreOutcome> {
+    apply_pending_with(paths, run)
+}
+
+/// [`apply_pending`] with the run of the marker's steps given, so a test can fail them.
+fn apply_pending_with(
+    paths: &HostPaths,
+    run: impl Fn(&HostPaths, &Path, Marker) -> Result<(), RestoreError>,
+) -> Option<RestoreOutcome> {
     drop(fs::remove_dir_all(paths.restore_staging()));
     let pending = paths.restore_pending();
     let marker_path = pending.join(MARKER);
@@ -235,16 +254,20 @@ pub(crate) fn apply_pending(paths: &HostPaths) -> Option<RestoreOutcome> {
                     "the restore marker could not be read ({why}); the restore was not applied and the present data was kept"
                 ),
             };
-            // The unreadable marker stays in `restore-pending/` for a person to look at.
+            // The unreadable marker stays in a folder of its own for a person to look at; when it
+            // cannot be moved it is removed, so it cannot block every later restore.
             drop(write_json(&paths.restore_result(), &outcome));
-            drop(fs::rename(
-                &pending,
-                paths.data().join("restore-pending.unreadable"),
-            ));
+            if park(paths, &pending, "restore-pending.unreadable").is_err() {
+                drop(fs::remove_dir_all(&pending));
+            }
             return Some(outcome);
         }
     };
-    let outcome = match run(paths, &pending, marker.clone()) {
+    let ran = run(paths, &pending, marker.clone());
+    if let Err(RestoreError::RollBack { .. }) = &ran {
+        return Some(keep_after_failed_roll_back(paths, &pending, &marker, &ran));
+    }
+    let outcome = match ran {
         Ok(()) => RestoreOutcome {
             applied: true,
             mode: marker.mode,
@@ -281,16 +304,62 @@ pub(crate) fn apply_pending(paths: &HostPaths) -> Option<RestoreOutcome> {
     Some(outcome)
 }
 
-fn run(paths: &HostPaths, pending: &Path, marker: Marker) -> Result<(), RestoreError> {
-    run_with(paths, pending, marker, swap_part)
+/// A roll-back step failed, so `old/` holds files the live folder does not: nothing is deleted.
+/// The whole pending folder (marker, `old/`, `new/`) moves to a folder of its own and the outcome
+/// names it and the safety copy.
+fn keep_after_failed_roll_back(
+    paths: &HostPaths,
+    pending: &Path,
+    marker: &Marker,
+    ran: &Result<(), RestoreError>,
+) -> RestoreOutcome {
+    let cause = ran
+        .as_ref()
+        .err()
+        .map(ToString::to_string)
+        .unwrap_or_default();
+    let kept = match park(paths, pending, "restore-pending.rollback-failed") {
+        Ok(name) => format!("The files it moved aside are kept in {name}"),
+        Err(e) => format!("The files it moved aside stay in restore-pending/old ({e})"),
+    };
+    let outcome = RestoreOutcome {
+        applied: false,
+        mode: marker.mode,
+        safety_copy: marker.safety_copy.clone(),
+        at_ms: now_ms(),
+        message: format!(
+            "The restore failed and could not be fully undone: Puddle started with a mix of restored and previous files. Cause: {cause}. {kept}, and the safety copy {} holds the previous state.",
+            marker.safety_copy
+        ),
+    };
+    drop(write_json(&paths.restore_result(), &outcome));
+    outcome
 }
 
-/// [`run`] with the swap of one part given, so a test can fail it.
+/// Moves `from` to `<data folder>/<name>`, or to `<name>-<time>` when that name is taken (a rename
+/// onto a non-empty folder fails). Returns the name used.
+fn park(paths: &HostPaths, from: &Path, name: &str) -> io::Result<String> {
+    let first = paths.data().join(name);
+    if !first.exists() {
+        fs::rename(from, &first)?;
+        return Ok(name.to_owned());
+    }
+    let unique = format!("{name}-{}", now_ms());
+    fs::rename(from, paths.data().join(&unique))?;
+    Ok(unique)
+}
+
+fn run(paths: &HostPaths, pending: &Path, marker: Marker) -> Result<(), RestoreError> {
+    run_with(paths, pending, marker, swap_part, roll_back_part)
+}
+
+/// [`run`] with the swap and the roll-back of one part given, so a test can fail them.
 fn run_with(
     paths: &HostPaths,
     pending: &Path,
     mut marker: Marker,
     swap: impl Fn(&HostPaths, &Path, &Path, &str) -> Result<(), RestoreError>,
+    roll_back: impl Fn(&HostPaths, &Path, &str) -> io::Result<()>,
 ) -> Result<(), RestoreError> {
     let marker_path = pending.join(MARKER);
     let (new, old) = (pending.join(NEW), pending.join(OLD));
@@ -313,9 +382,21 @@ fn run_with(
         .iter()
         .try_for_each(|part| swap(paths, &new, &old, part));
     if let Err(e) = swapped {
-        // Put every part back that was moved aside, then report why.
-        for part in PARTS {
-            drop(roll_back_part(paths, &old, part));
+        // Put every part back that was moved aside, then report why. Every part is tried, and a
+        // part that does not come back is named.
+        let stuck: Vec<String> = PARTS
+            .iter()
+            .filter_map(|part| {
+                roll_back(paths, &old, part)
+                    .err()
+                    .map(|e| format!("{part}: {e}"))
+            })
+            .collect();
+        if !stuck.is_empty() {
+            return Err(RestoreError::RollBack {
+                cause: e.to_string(),
+                stuck: stuck.join("; "),
+            });
         }
         return Err(e);
     }

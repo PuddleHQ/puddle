@@ -179,6 +179,7 @@ impl TerminalService for NoTerminals {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 /// An in-memory service for tests and the UI fixture: every workspace runs and the shell is a
 /// stand-in that echoes what it is typed. `exit N` ends it with status `N`; `size` prints the
 /// rows and columns it was last given; `hostname` prints the id of the workspace it belongs to; `colors` prints a sample in ANSI colours; `vanish` drops the session without an end.
@@ -188,6 +189,7 @@ pub struct FakeTerminals {
     refuse_next: Mutex<Option<TerminalError>>,
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl FakeTerminals {
     /// A fake whose workspaces all run.
     #[must_use]
@@ -204,6 +206,7 @@ impl FakeTerminals {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl FakeTerminals {
     /// Makes the next `open` fail with `error`.
     pub fn refuse_next_open(&self, error: TerminalError) {
@@ -214,6 +217,7 @@ impl FakeTerminals {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl TerminalService for FakeTerminals {
     fn check(&self, workspace: &WorkspaceId) -> BoxFuture<'_, Result<(), TerminalError>> {
         let stopped = self
@@ -254,10 +258,12 @@ impl TerminalService for FakeTerminals {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 /// What `colors` prints: red, bold green, a 256-colour cell, a true-colour cell and underline,
 /// each followed by a reset, one per line.
 const COLOR_SAMPLE: &[u8] = b"\x1b[31mred-text\x1b[0m\r\n\x1b[1;32mbold-green\x1b[0m\r\n\x1b[38;5;208mpalette-orange\x1b[0m\r\n\x1b[38;2;12;200;250mtrue-cyan\x1b[0m\r\n\x1b[4munderlined\x1b[0m\r\n";
 
+#[cfg(any(test, feature = "testing"))]
 fn fake_shell(workspace: WorkspaceId, mut size: TerminalSize) -> TerminalLink {
     let (input, mut from_page) = mpsc::channel(64);
     let (to_page, output) = mpsc::channel(64);

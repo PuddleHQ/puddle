@@ -85,14 +85,28 @@ impl Store {
     /// or changes the keys of a host it is on for. The caller has checked the host and the keys.
     ///
     /// # Errors
-    /// [`StoreError::TooManySshAgentHosts`] for a new host past [`MAX_SSH_AGENT_HOSTS`], or a database
-    /// error; nothing changes then.
+    /// [`StoreError::SshAgentKeys`] for an empty list or one past [`MAX_SSH_AGENT_KEYS`] keys,
+    /// [`StoreError::TooManySshAgentHosts`] for a new host past [`MAX_SSH_AGENT_HOSTS`], or a
+    /// database error; nothing changes then.
     pub fn set_ssh_agent_host(
         &self,
         workspace: &WorkspaceId,
         host: &str,
         keys: Option<&[String]>,
     ) -> Result<SshAgentHost, StoreError> {
+        if let Some(list) = keys {
+            if list.is_empty() {
+                return Err(StoreError::SshAgentKeys(
+                    "no keys given: pass none for every key".to_owned(),
+                ));
+            }
+            if list.len() > MAX_SSH_AGENT_KEYS {
+                return Err(StoreError::SshAgentKeys(format!(
+                    "at most {MAX_SSH_AGENT_KEYS} keys ({} given)",
+                    list.len()
+                )));
+            }
+        }
         let keys = joined(keys);
         self.change(|tx, now, fx| {
             owner_in(tx, workspace)?;

@@ -7,8 +7,11 @@
 //! No method returns a secret value. A pasted token goes in and is never read back through here;
 //! the injector and the host-side API calls read it through `puddle-secrets` directly.
 
+#[cfg(any(test, feature = "testing"))]
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
+#[cfg(any(test, feature = "testing"))]
+use std::sync::{Mutex, PoisonError};
 
 use futures_util::future::BoxFuture;
 use puddle_secrets::{
@@ -270,6 +273,7 @@ impl CredentialService for HostCredentials {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 /// Answers from what a test or the UI fixture put in it: the accounts "found", which credentials
 /// are readable, the code a sign-in shows. A sign-in makes the credential readable, as a finished
 /// one would. Pasted tokens are kept by id, with their value, so a test can see that one was stored
@@ -280,6 +284,7 @@ pub struct FakeCredentials {
     reads: ReadLog,
 }
 
+#[cfg(any(test, feature = "testing"))]
 #[derive(Default)]
 struct FakeState {
     found: Option<Discovery>,
@@ -290,12 +295,14 @@ struct FakeState {
     sign_ins: Vec<SourceSpec>,
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl std::fmt::Debug for FakeCredentials {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FakeCredentials").finish_non_exhaustive()
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl FakeCredentials {
     /// Nothing found, everything readable.
     #[must_use]
@@ -368,6 +375,7 @@ impl FakeCredentials {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl CredentialService for FakeCredentials {
     fn found(&self) -> BoxFuture<'_, Result<Discovery, CredentialsError>> {
         Box::pin(async move { Ok(self.state().found.clone().unwrap_or_default()) })

@@ -6,7 +6,9 @@
 //! The values live in the operating system's credential store (see the proxy spec); nothing here
 //! returns a password.
 
+#[cfg(any(test, feature = "testing"))]
 use std::collections::BTreeMap;
+#[cfg(any(test, feature = "testing"))]
 use std::sync::{Mutex, PoisonError};
 
 use puddle_upstream::ProxyAddr;
@@ -73,6 +75,7 @@ fn unavailable() -> ProxySignInError {
     ProxySignInError::Unavailable("proxy sign-in is not available in this build yet".into())
 }
 
+#[cfg(any(test, feature = "testing"))]
 /// An in-memory service for tests and the UI fixture. It applies the same value rules as the
 /// host and keeps the password, which a test reads back through [`FakeProxySignIns::password`].
 #[derive(Debug, Default)]
@@ -81,6 +84,7 @@ pub struct FakeProxySignIns {
     failing: Mutex<bool>,
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl FakeProxySignIns {
     /// A fake with nothing stored.
     #[must_use]
@@ -108,6 +112,7 @@ impl FakeProxySignIns {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl ProxySignInService for FakeProxySignIns {
     fn list(&self) -> Vec<StoredSignIn> {
         self.state

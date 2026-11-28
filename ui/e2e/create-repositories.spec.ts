@@ -150,7 +150,8 @@ test.describe("the list of repositories", () => {
       );
     }
     await backend.control.step({ do: "release_workspaces" });
-    await expect(created).toContainText("Not started");
+    // The service ends a create running, like the real one.
+    await expect(created).toContainText("Running");
     const made = await workspace(request, backend, "api");
     expect(listed(made)).toEqual([
       { url: API, directory: "api" },
@@ -425,7 +426,7 @@ test.describe("a clone that fails", () => {
     await dialog.getByRole("button", { name: "Create workspace" }).click();
     await expect(dialog).toHaveCount(0);
     // Both clones ran in the fake; the host would have raised this for the one that failed.
-    await expect(card(page, "api")).toContainText("Not started");
+    await expect(card(page, "api")).toContainText("Running");
     await backend.control.step({
       do: "problem",
       key: "clone:api:web",

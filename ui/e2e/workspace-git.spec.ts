@@ -323,7 +323,10 @@ test("creating for a repository an identity covers says nothing and attaches tha
   await dialog.getByRole("button", { name: "Create workspace" }).click();
   await expect(dialog).toHaveCount(0);
   // The workspace is listed, and no warning came with it.
-  await expect(page.getByRole("button", { name: "Start notes" })).toBeVisible();
+  // A create ends running, so its card offers Connect, not Start.
+  await expect(
+    page.getByRole("button", { name: "Connect to notes" }),
+  ).toBeVisible();
   await expect(
     page.getByRole("region", { name: "Notifications" }),
   ).not.toContainText("No identity covers");

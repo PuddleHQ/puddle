@@ -144,7 +144,11 @@ pub(super) async fn cpus_change_applies_at_next_start<R: Runtime>(c: &Case<'_, R
     let rt = c.runtime();
     let name = c.sandbox("a")?;
     let two = CpuCount::new(2).map_err(|e| e.to_string())?;
-    let sb = step("create with 1 CPU", rt.create(spec(c, &name).with_cpus(1))).await?;
+    let sb = step(
+        "create with 1 CPU",
+        rt.create(spec(c, &name).with_cpus(CpuCount::MIN)),
+    )
+    .await?;
     let before = online_cpus(&sb).await?;
     check!(before == 1, "created with 1 CPU, the guest has {before}");
     step("set cpus to 2", rt.set_cpus(&name, two)).await?;

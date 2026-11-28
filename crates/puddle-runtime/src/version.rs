@@ -166,8 +166,14 @@ impl DevOverride {
     /// Reads [`DEV_OVERRIDE_VAR`] from the process environment: requested only when it is `1`.
     #[must_use]
     pub fn from_env() -> Self {
+        Self::from_value(std::env::var_os(DEV_OVERRIDE_VAR).as_deref())
+    }
+
+    /// The override for an environment value: requested only when it is `1`.
+    #[must_use]
+    pub fn from_value(value: Option<&std::ffi::OsStr>) -> Self {
         Self {
-            requested: std::env::var_os(DEV_OVERRIDE_VAR).is_some_and(|v| v == "1"),
+            requested: value.is_some_and(|v| v == "1"),
         }
     }
 

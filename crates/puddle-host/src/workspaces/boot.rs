@@ -96,7 +96,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
                     .kit
                     .spec(name, image, record.memory, &env, &route)
                     .with_root_disk(root_disk_size(record.root_disk_grown_mib))
-                    .with_cpus(self.cpus(name).get()),
+                    .with_cpus(self.cpus(name)),
             )
             .with_file_mount(inner.kit.shell_init().mount(id));
         // The agent says hello during this boot: its reports count again from here.

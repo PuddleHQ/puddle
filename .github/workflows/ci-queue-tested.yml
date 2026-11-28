@@ -1,0 +1,122 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The merge-queue lookup of ci.yml (job `queue-tested`), a reusable workflow so ci.yml stays under 1000 lines.
+# Called from ci.yml; its `if` (scope verdict, event) lives on the calling job. The environment below is a copy of ci.yml's,
+# because a called workflow does not inherit it: change both together.
+name: ci-queue-tested
+
+on:
+  workflow_call:
+    outputs:
+      skip:
+        description: "true when a green merge queue run tested this commit and every cache the heavy jobs save exists"
+        value: ${{ jobs.queue-tested.outputs.skip }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  # Line tables only: backtraces and coverage keep file:line, while the test binaries that link
+  # the msb SDK (puddle-vm-tests) stay small enough for the runner's disk (full debug info filled
+  # it: `ld terminated with signal 7 [Bus error]`).
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  # The commit the diff-coverage gate measures from: the PR's base, the merge queue's base, or the push's
+  # previous head (empty or unknown, e.g. a new branch or a manual run: scripts/check.sh uses the merge
+  # base with origin/develop).
+  DIFF_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+
+jobs:
+  # A push to develop whose commit a green merge queue run of this workflow already tested (the queue
+  # fast-forwards develop to the commit it tested) need not build and test it again. Runs only with
+  # PUDDLE_QUEUE_SKIP_PUSH=on, and says skip=true only when that run exists and the caches the heavy
+  # jobs would save (the Rust `linux` and `gates` entries, the Chromium and WebKit browsers, cargo-xwin) are all on develop
+  # for this exact key. Any error or doubt says skip=false and everything runs.
+  queue-tested:
+    name: already tested in the merge queue?
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      skip: ${{ steps.decide.outputs.skip }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: a green merge queue run on this commit?
+        id: queue
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUDDLE_QUEUE_SKIP_PUSH: ${{ vars.PUDDLE_QUEUE_SKIP_PUSH }}
+          PUDDLE_LIGHT_CI: ${{ vars.PUDDLE_LIGHT_CI }}
+        run: ci/should-run.sh ci.yml --queue-tested
+      # The Rust key hashes the toolchain, the manifests and the environment, as in the rust job (no extra
+      # CARGO or RUST variables may be set in this job, or the key differs). If the two keys ever drift
+      # apart, the lookup misses and the push run always tests: safe, but option D then saves nothing.
+      - name: Toolchain (from rust-toolchain.toml)
+        if: steps.queue.outputs.tested == 'true'
+        continue-on-error: true
+        run: rustup toolchain install && rustc --version
+      - name: Rust cache entry (lookup only)
+        id: rust-cache
+        if: steps.queue.outputs.tested == 'true'
+        continue-on-error: true
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: linux
+          lookup-only: true
+          save-if: false
+      - name: Rust cache entry of the gates job (lookup only)
+        id: gates-cache
+        if: steps.queue.outputs.tested == 'true'
+        continue-on-error: true
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: gates
+          lookup-only: true
+          save-if: false
+      - name: Playwright browsers entry (lookup only)
+        id: browsers
+        if: steps.queue.outputs.tested == 'true'
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
+          lookup-only: true
+      - name: Playwright WebKit entry (lookup only)
+        id: webkit
+        if: steps.queue.outputs.tested == 'true'
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-webkit-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
+          lookup-only: true
+      - name: cargo-xwin entry (lookup only)
+        id: xwin
+        if: steps.queue.outputs.tested == 'true'
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/cargo-xwin
+          key: cargo-xwin-0.23.1-x86_64
+          lookup-only: true
+      - name: skip the heavy jobs?
+        id: decide
+        env:
+          TESTED: ${{ steps.queue.outputs.tested }}
+          RUST_HIT: ${{ steps.rust-cache.outputs.cache-hit }}
+          GATES_HIT: ${{ steps.gates-cache.outputs.cache-hit }}
+          BROWSERS_HIT: ${{ steps.browsers.outputs.cache-hit }}
+          WEBKIT_HIT: ${{ steps.webkit.outputs.cache-hit }}
+          XWIN_HIT: ${{ steps.xwin.outputs.cache-hit }}
+        run: |
+          echo "merge queue tested this commit: ${TESTED:-unknown}; cache hits: rust ${RUST_HIT:-none}, gates ${GATES_HIT:-none}, browsers ${BROWSERS_HIT:-none}, webkit ${WEBKIT_HIT:-none}, cargo-xwin ${XWIN_HIT:-none}"
+          if [ "$TESTED" = true ] && [ "$RUST_HIT" = true ] && [ "$GATES_HIT" = true ] && [ "$BROWSERS_HIT" = true ] && [ "$WEBKIT_HIT" = true ] && [ "$XWIN_HIT" = true ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi

@@ -37,9 +37,16 @@ fn only_window_close_logoff_and_system_shutdown_have_a_deadline() {
     );
 }
 
+/// Signals go to the whole process and every `ShutdownSignals` in it hears each one, so the tests
+/// that raise or watch a signal take turns: one test's `kill` would otherwise reach another's
+/// handlers and end its wait with the wrong cause.
+#[cfg(unix)]
+static SIGNAL_TURN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[cfg(unix)]
 #[tokio::test]
 async fn sigterm_is_a_terminate_request() {
+    let _turn = SIGNAL_TURN.lock().await;
     let mut signals = ShutdownSignals::install().unwrap();
     let pid = std::process::id().to_string();
     let status = std::process::Command::new("kill")
@@ -99,6 +106,7 @@ fn send_to_self(signal: &str) {
 #[cfg(unix)]
 #[tokio::test]
 async fn a_second_signal_cuts_the_shutdown_short() {
+    let _turn = SIGNAL_TURN.lock().await;
     let mut signals = ShutdownSignals::install().unwrap();
     send_to_self("-TERM");
     assert_eq!(signals.recv().await, ShutdownCause::Terminate);
@@ -118,6 +126,7 @@ async fn a_second_signal_cuts_the_shutdown_short() {
 #[cfg(unix)]
 #[tokio::test]
 async fn a_shutdown_that_finishes_returns_its_result() {
+    let _turn = SIGNAL_TURN.lock().await;
     let mut signals = ShutdownSignals::install().unwrap();
     assert_eq!(signals.until_again(async { 7 }).await.unwrap(), 7);
 }

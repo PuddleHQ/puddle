@@ -28,6 +28,10 @@ impl AnswerRewriter for Plain {
     fn rewrite<'a>(&'a mut self, _: &'a AnswerHead<'a>, _: &'a [u8]) -> BoxFuture<'a, Rewrite> {
         Box::pin(std::future::ready(Rewrite::Keep))
     }
+
+    fn too_large(&mut self) -> Rewrite {
+        Rewrite::Keep
+    }
 }
 
 #[test]

@@ -862,6 +862,57 @@ async fn a_refused_push_ends_though_the_guest_keeps_its_input_open_after_the_pac
     drop(guest);
 }
 
+/// Takes the whole push body and says how many bytes it was, with the default pack read limit.
+struct Counting {
+    calls: usize,
+}
+
+impl SmartHttp for Counting {
+    fn send(
+        &mut self,
+        request: http::Request<UpBody>,
+    ) -> BoxFuture<'_, Result<http::Response<UpBody>, GitSshFailure>> {
+        self.calls += 1;
+        let first = self.calls == 1;
+        Box::pin(async move {
+            if first {
+                return Ok(http::Response::new(bytes_body(Bytes::from_static(
+                    ADVERT_PUSH,
+                ))));
+            }
+            let mut body = request.into_body();
+            let mut total = 0;
+            while let Some(Ok(frame)) = body.frame().await {
+                total += frame.data_ref().map_or(0, Bytes::len);
+            }
+            Err(GitSshFailure::new(format!("took {total} bytes")))
+        })
+    }
+}
+
+#[tokio::test]
+async fn the_default_pack_read_limit_waits_for_a_guest_that_is_slow_with_the_pack() {
+    let commands = format!("{}0000", pkt(&format!("{OLD} {NEW} refs/heads/main\n")));
+    let sent = commands.len() + b"PACKdata".len();
+    let (mut guest, mut ours) = tokio::io::duplex(4 << 20);
+    guest.write_all(commands.as_bytes()).await.unwrap();
+    let slow = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        guest.write_all(b"PACKdata").await.unwrap();
+        guest.shutdown().await.unwrap();
+        guest
+    });
+    let failure = carry(
+        &mut Counting { calls: 0 },
+        &command(GitService::Receive, None),
+        &mut ours,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(failure.message, format!("took {sent} bytes"));
+    drop(slow.await.unwrap());
+}
+
 /// Takes the push body until it ends, so only the pack read's own limit can end the command.
 struct Waiting {
     calls: usize,

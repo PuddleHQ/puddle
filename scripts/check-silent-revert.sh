@@ -7,7 +7,8 @@
 #
 # What it does: for each commit of the last 14 days on the first-parent line of the base (at most 300), count
 # the lines that commit added and the pull request now removes, plus the lines it removed and the pull request
-# adds back (exact lines after trimming, 8 characters or more, per file). A commit counts as undone when 4 or
+# adds back (exact lines after trimming, 8 characters or more, per file). A line the pull request also adds
+# (or removes) in another file of the same change was moved, not undone, and does not count. A commit counts as undone when 4 or
 # more such lines are undone and they are at least half of the lines the commit changed. An undone commit fails
 # the gate unless the pull request names it: its 8-character SHA or its `#<number>` in the title, the body or a
 # commit message (a deliberate revert says `Reverts #1233`).
@@ -25,7 +26,8 @@ MAX=300
 MIN_LINES=4
 
 # Prints "<undone> <changed>" for one commit and one file diff pair: lines of the commit's diff (file 1) that
-# the net diff (file 2) undoes, and the lines the commit changed.
+# the net diff of that file (file 2) undoes, and the lines the commit changed. File 3 is the whole net diff:
+# a line it adds elsewhere (or removes elsewhere) moved, so it is not undone.
 undone() {
     awk -v min=8 '
         function norm(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
@@ -35,13 +37,14 @@ undone() {
         /^[+-]/ {
             t = norm(substr($0, 2)); if (!ok(t)) next
             if (f == 1) { if (substr($0, 1, 1) == "+") ca[t]++; else cr[t]++ }
-            else        { if (substr($0, 1, 1) == "-") pd[t]++; else pa[t]++ }
+            else if (f == 2) { if (substr($0, 1, 1) == "-") pd[t]++; else pa[t]++ }
+            else { if (substr($0, 1, 1) == "-") gd[t]++; else ga[t]++ }
         }
         END {
-            for (t in ca) { total += ca[t]; u += (ca[t] < pd[t] ? ca[t] : pd[t]) }
-            for (t in cr) { total += cr[t]; u += (cr[t] < pa[t] ? cr[t] : pa[t]) }
+            for (t in ca) { total += ca[t]; e = pd[t] - ga[t]; if (e < 0) e = 0; u += (ca[t] < e ? ca[t] : e) }
+            for (t in cr) { total += cr[t]; e = pa[t] - gd[t]; if (e < 0) e = 0; u += (cr[t] < e ? cr[t] : e) }
             print u + 0, total + 0
-        }' "$1" "$2"
+        }' "$1" "$2" "$3"
 }
 
 # Replaces PR_TITLE and PR_BODY with the live ones when the pull request can be read; otherwise keeps them.
@@ -67,6 +70,7 @@ check() {
     text="${PR_TITLE:-}"$'\n'"${PR_BODY:-}"$'\n'"$(git log --format='%H %B' "$base..$head")"
     local fail=0
     git diff --name-only "$base" "$head" >"$tmp/changed"
+    git diff -U0 "$base" "$head" >"$tmp/all"
     [ -s "$tmp/changed" ] || { echo "silent-revert: the change touches no file"; return 0; }
     while read -r c; do
         [ -n "$c" ] || continue
@@ -83,7 +87,7 @@ check() {
             git diff -U0 "$c^" "$c" -- "$f" >"$tmp/c"
             git diff -U0 "$base" "$head" -- "$f" >"$tmp/p"
             [ -s "$tmp/p" ] || continue
-            read -r u t < <(undone "$tmp/c" "$tmp/p")
+            read -r u t < <(undone "$tmp/c" "$tmp/p" "$tmp/all")
             su=$((su + u)) st=$((st + t))
         done <<<"$files"
         if [ "$su" -ge "$MIN_LINES" ] && [ $((su * 2)) -ge "$st" ]; then
@@ -124,6 +128,10 @@ self_test() {
         git commit -qam 'revert: undo the rename
 
 Reverts #77'
+        git checkout -q -B pr-move develop
+        printf 'alpha line one\n' >f.txt
+        printf 'beta fixed two\nbeta fixed three\nbeta fixed four\nbeta fixed five\n' >k.txt
+        git add . && git commit -qm 'ci: split f.txt into parts'
         git checkout -q -B pr-innocent develop
         printf 'something else entirely, a long line\n' >>g.txt
         git commit -qam 'chore: add a line'
@@ -139,6 +147,10 @@ Reverts #77'
     esac
     out=$(check_in "$d" pr-named 2>&1) || {
         echo "self-test: a revert that names #77 failed: $out" >&2
+        return 1
+    }
+    out=$(check_in "$d" pr-move 2>&1) || {
+        echo "self-test: lines moved to another file were called a revert: $out" >&2
         return 1
     }
     out=$(check_in "$d" pr-innocent 2>&1) || {

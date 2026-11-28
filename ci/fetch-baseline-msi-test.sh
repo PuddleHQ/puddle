@@ -30,7 +30,12 @@ for ((i = 0; i < ${#args[@]}; i++)); do
     esac
 done
 case "$1 $2" in
-"release list") printf '[%s]' "${FAKE_TAG:+{\"tagName\":\"$FAKE_TAG\"\}}" | jq -r "$jq_filter" ;;
+"release list")
+    if [ -n "${FAKE_TAGS:-}" ]; then
+        printf "%s" "$FAKE_TAGS" | jq -rc "$jq_filter"
+        exit 0
+    fi
+    printf '[%s]' "${FAKE_TAG:+{\"tagName\":\"$FAKE_TAG\"\}}" | jq -r "$jq_filter" ;;
 "release download")
     [ -n "${FAKE_RELEASE_MSI:-}" ] || { echo "no assets match the file pattern" >&2; exit 1; }
     : >"$dir/$FAKE_RELEASE_MSI"
@@ -112,5 +117,17 @@ grep -qE "^(release|api) " "$tmp/log" && bad "an asked-for run: looked at the re
 
 run "a run id that is not one" FAKE_TAG= BASELINE_RUN='12; x'
 [ "$rc" = 1 ] && [[ $err == *"is not a run id"* ]] || bad "a bad run id: exit $rc ($err)"
+
+# A named release is taken, not the newest.
+: >"$tmp/log"
+env PATH="$tmp/bin:$PATH" GITHUB_REPOSITORY=o/r GITHUB_SHA=thiscommit FAKE_LOG="$tmp/log" \
+    FAKE_TAG=v0.3.0 FAKE_RELEASE_MSI=Puddle_0.1.0_x64_en-US.msi "$script" "$tmp/named" v0.1.0 >/dev/null 2>&1 ||
+    bad "a named release: exit $?"
+grep -q "^release download v0.1.0 " "$tmp/log" || bad "a named release: did not download v0.1.0: $(cat "$tmp/log")"
+grep -q "^release list" "$tmp/log" && bad "a named release: asked for the newest release too"
+
+list() { env PATH="$tmp/bin:$PATH" GITHUB_REPOSITORY=o/r FAKE_LOG="$tmp/log" "$@" "$script" --list; }
+[ "$(list FAKE_TAGS='[{"tagName":"v0.2.0"},{"tagName":"v0.1.0"}]')" = '["v0.2.0","v0.1.0"]' ] || bad "--list: not every release, newest first"
+[ "$(list FAKE_TAGS='[]')" = '[""]' ] || bad "--list with no release: not one empty entry for the develop fallback"
 
 if [ "$fail" = 0 ]; then echo "fetch-baseline-msi-test: ok"; else exit 1; fi

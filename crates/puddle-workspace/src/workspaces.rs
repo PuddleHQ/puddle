@@ -9,8 +9,8 @@ use puddle_compute::{
     VolumeMount, VolumeSpec,
 };
 use puddle_types::{
-    CheckoutDir, GuestPath, ImageRef, MemoryMib, SandboxName, SessionUser, VolumeName, WorkspaceId,
-    WorkspaceStatus, image_ref,
+    CheckoutDir, CpuCount, GuestPath, ImageRef, MemoryMib, SandboxName, SessionUser, VolumeName,
+    WorkspaceId, WorkspaceStatus, image_ref,
 };
 use tracing::{debug, info, warn};
 

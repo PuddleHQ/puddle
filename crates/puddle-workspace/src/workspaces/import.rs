@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use super::{
-    CheckoutDir, ComputeError, DiskSize, ExecRequest, FileMount, ImageRef, Import, Layout, Loan,
-    Runtime, Sandbox, SandboxSpec, Scratch, SessionUser, VolumeInfo, VolumeMount, WorkspaceError,
-    WorkspaceId, Workspaces, clear_leftover, debug, import_mount, info, maintenance_name,
-    mount_for, tail, warn, with_scratch_sandbox,
+    CheckoutDir, ComputeError, CpuCount, DiskSize, ExecRequest, FileMount, ImageRef, Import,
+    Layout, Loan, Runtime, Sandbox, SandboxSpec, Scratch, SessionUser, VolumeInfo, VolumeMount,
+    WorkspaceError, WorkspaceId, Workspaces, clear_leftover, debug, import_mount, info,
+    maintenance_name, mount_for, tail, warn, with_scratch_sandbox,
 };
 
 /// What [`Workspaces::import`] did.
@@ -129,7 +129,7 @@ impl Workspaces {
         };
         let mut spec = SandboxSpec::new(name.clone(), image.clone())
             .with_memory(self.config.maintenance_memory)
-            .with_cpus(1)
+            .with_cpus(CpuCount::MIN)
             .with_volume(mount);
         for (n, import) in imports.iter().enumerate() {
             spec = spec.with_file_mount(FileMount::checkout(&import.git_dir, import_mount(n)?));

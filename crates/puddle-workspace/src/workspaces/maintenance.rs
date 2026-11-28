@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use super::{
-    CheckoutList, Findings, Registry, Runtime, SandboxSpec, Scratch, TrimReport, VolumeInfo,
-    WorkspaceError, WorkspaceId, Workspaces, check, clear_leftover, maintenance_name, mount_for,
-    with_scratch_sandbox,
+    CheckoutList, CpuCount, Findings, Registry, Runtime, SandboxSpec, Scratch, TrimReport,
+    VolumeInfo, WorkspaceError, WorkspaceId, Workspaces, check, clear_leftover, maintenance_name,
+    mount_for, with_scratch_sandbox,
 };
 
 /// The work a maintenance sandbox does.
@@ -64,7 +64,7 @@ impl Workspaces {
         let volume = id.volume_name();
         let spec = SandboxSpec::new(name.clone(), self.config.maintenance_image.clone())
             .with_memory(self.config.maintenance_memory)
-            .with_cpus(1)
+            .with_cpus(CpuCount::MIN)
             .with_volume(mount_for(&volume, info)?);
         with_scratch_sandbox(
             rt,

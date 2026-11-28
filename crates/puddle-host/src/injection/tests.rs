@@ -325,8 +325,6 @@ async fn the_rules_on_method_and_path_follow_the_store_and_their_hosts_are_decry
     };
     add(None, "global.example", "/a");
     add(Some(&workspace("beta")), "beta.example", "/a");
-    // Too wide for the proxy's grammar: the row is left out, the others still apply.
-    add(Some(&ws), "*.com", "/a");
     let own = add(Some(&ws), "own.example", "/b/**");
     injection.begin(&ws, false).await.unwrap();
     assert!(delete_refused(&terminations, "global.example", "/a").is_some());
@@ -380,30 +378,26 @@ async fn a_workspace_on_the_curated_mode_decrypts_unlisted_hosts_and_passes_the_
 }
 
 #[tokio::test]
-async fn a_stored_never_decrypt_name_that_does_not_parse_is_skipped_and_the_others_still_apply() {
+async fn a_stored_never_decrypt_name_that_does_not_parse_fails_the_start_and_names_the_row() {
     let store = store();
-    let (injection, terminations) = injection(&store);
+    let (injection, _terminations) = injection(&store);
     let ws = workspace("alpha");
     store
         .set_workspace_mode(&ws, Some(InterceptionMode::All))
         .unwrap();
     // The API refuses such a name; a row written by another version or by hand must not
-    // switch the workspace off.
-    store
-        .set_never_decrypt(&ws, &["not a host".to_owned(), "bank.example".to_owned()])
-        .unwrap();
-    injection.begin(&ws, false).await.unwrap();
-    let interception = terminations
-        .termination(&ws)
-        .unwrap()
-        .interception()
-        .clone();
-    let host = |h: &str| Host::parse_normalised(h).unwrap();
-    assert_eq!(
-        interception.skipped(&host("bank.example")),
-        Some(PassThroughCode::NeverDecrypt)
+    // leave a list that silently lacks it.
+    puddle_store::testing::break_database(
+        &store,
+        "INSERT INTO never_decrypt (workspace_id, pattern) VALUES ('alpha', 'not a host')",
     );
-    assert_eq!(interception.skipped(&host("other.example")), None);
+    let Err(err) = injection.begin(&ws, false).await else {
+        panic!("a corrupt never-decrypt row must fail the start");
+    };
+    assert!(
+        err.to_string().contains("not a host"),
+        "the error names the stored name: {err}"
+    );
 }
 
 #[tokio::test]
@@ -425,10 +419,15 @@ async fn the_switch_and_the_never_decrypt_names_apply_to_the_running_workspace_a
         .set_workspace_mode(&ws, Some(InterceptionMode::All))
         .unwrap();
     store
-        .set_never_decrypt(&ws, &["bank.example".to_owned()])
+        .set_never_decrypt(
+            &ws,
+            &[puddle_types::HostPattern::parse_normalised("bank.example").unwrap()],
+        )
         .unwrap();
     store
-        .set_global_never_decrypt(&["global.example".to_owned()])
+        .set_global_never_decrypt(&[
+            puddle_types::HostPattern::parse_normalised("global.example").unwrap(),
+        ])
         .unwrap();
     injection.begin(&ws, false).await.unwrap();
     assert_eq!(

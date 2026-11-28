@@ -669,10 +669,7 @@ impl Injection {
         }
         let mut never = TerminationSet::new();
         for pattern in own.never_decrypt.iter().chain(&global) {
-            match TerminationSet::parse([pattern.as_str()]) {
-                Ok(one) => never.extend(&one),
-                Err(e) => tracing::warn!(%pattern, error = %e, "a never-decrypt name is not valid"),
-            }
+            never.insert_pattern(pattern);
         }
         Ok(Interception::new(Arc::clone(learned))
             .decrypt_all(mode.decrypts_unknown_hosts())

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The "decrypt every host" switch of each workspace and the names that are never decrypted.
 
-use puddle_types::{Event, InterceptionMode, WorkspaceId};
+use puddle_types::{Event, HostPattern, InterceptionMode, WorkspaceId};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use super::{Store, lock};
@@ -15,8 +15,8 @@ use crate::users::UserId;
 pub struct WorkspaceInterception {
     /// This workspace's own mode; `None` follows the global setting.
     pub mode: Option<InterceptionMode>,
-    /// The names this workspace never decrypts, as written (`example.com`, `*.example.com`).
-    pub never_decrypt: Vec<String>,
+    /// The names this workspace never decrypts (`example.com`, `*.example.com`).
+    pub never_decrypt: Vec<HostPattern>,
 }
 
 /// The global setting for every workspace that does not choose its own mode.
@@ -110,14 +110,31 @@ fn workspace_interception_in(
         .optional()?
         .flatten()
         .and_then(|name| InterceptionMode::parse(&name));
-    let mut stmt =
-        conn.prepare("SELECT pattern FROM never_decrypt WHERE workspace_id = ?1 ORDER BY pattern")?;
+    let mut stmt = conn.prepare(
+        "SELECT rowid, pattern FROM never_decrypt WHERE workspace_id = ?1 ORDER BY pattern",
+    )?;
     let never_decrypt = stmt
-        .query_map([workspace.as_str()], |r| r.get::<_, String>(0))?
+        .query_map([workspace.as_str()], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+        })?
+        .map(|row| stored_pattern("never_decrypt", row?))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(WorkspaceInterception {
         mode,
         never_decrypt,
+    })
+}
+
+/// A stored name as a checked pattern; a row outside the grammar is corrupt, so a list never
+/// holds a name that the proxy would not take.
+fn stored_pattern(
+    table: &'static str,
+    (id, text): (i64, String),
+) -> Result<HostPattern, StoreError> {
+    HostPattern::parse_normalised(&text).map_err(|e| StoreError::Corrupt {
+        table,
+        id,
+        reason: e.to_string(),
     })
 }
 
@@ -202,7 +219,7 @@ fn set_names_in(
     tx: &Transaction<'_>,
     fx: &mut Vec<Event>,
     workspace: &WorkspaceId,
-    patterns: &[String],
+    patterns: &[HostPattern],
 ) -> Result<(), StoreError> {
     let before = workspace_interception_in(tx, workspace)?.never_decrypt;
     tx.execute(
@@ -212,13 +229,14 @@ fn set_names_in(
     for pattern in patterns {
         tx.execute(
             "INSERT OR IGNORE INTO never_decrypt (workspace_id, pattern) VALUES (?1, ?2)",
-            params![workspace.as_str(), pattern],
+            params![workspace.as_str(), pattern.to_string()],
         )?;
     }
-    let mut now: Vec<&String> = patterns.iter().collect();
+    let mut now: Vec<String> = patterns.iter().map(ToString::to_string).collect();
     now.sort();
     now.dedup();
-    if now.len() != before.len() || now.iter().zip(&before).any(|(a, b)| *a != b) {
+    let before: Vec<String> = before.iter().map(ToString::to_string).collect();
+    if now != before {
         changed(fx, workspace);
     }
     Ok(())
@@ -290,12 +308,13 @@ impl Store {
     ///
     /// # Errors
     /// A database error.
-    pub fn global_never_decrypt(&self) -> Result<Vec<String>, StoreError> {
+    pub fn global_never_decrypt(&self) -> Result<Vec<HostPattern>, StoreError> {
         let conn = lock(&self.conn);
-        let mut stmt = conn.prepare("SELECT pattern FROM never_decrypt_global ORDER BY pattern")?;
-        Ok(stmt
-            .query_map([], |r| r.get::<_, String>(0))?
-            .collect::<Result<Vec<_>, _>>()?)
+        let mut stmt =
+            conn.prepare("SELECT rowid, pattern FROM never_decrypt_global ORDER BY pattern")?;
+        stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+            .map(|row| stored_pattern("never_decrypt_global", row?))
+            .collect()
     }
 
     /// The never-decrypt names `user` sees as (workspace, name): the global names (workspace
@@ -303,25 +322,31 @@ impl Store {
     /// workspace and name. Another user's workspaces and their names are left out.
     ///
     /// # Errors
-    /// A database error.
+    /// A database error, or a stored name outside the grammar ([`StoreError::Corrupt`]).
     pub fn never_decrypt_names(
         &self,
         user: UserId,
-    ) -> Result<Vec<(Option<String>, String)>, StoreError> {
+    ) -> Result<Vec<(Option<String>, HostPattern)>, StoreError> {
         let conn = lock(&self.conn);
         let mut stmt = conn.prepare(
-            "SELECT NULL, pattern FROM never_decrypt_global
+            "SELECT NULL, pattern, rowid FROM never_decrypt_global
              UNION ALL
-             SELECT n.workspace_id, n.pattern FROM never_decrypt n
+             SELECT n.workspace_id, n.pattern, n.rowid FROM never_decrypt n
                JOIN workspace_owners o ON o.workspace_id = n.workspace_id
               WHERE o.user_id = ?1
              ORDER BY 1, 2",
         )?;
-        Ok(stmt
-            .query_map([user.get()], |r| {
-                Ok((r.get::<_, Option<String>>(0)?, r.get::<_, String>(1)?))
-            })?
-            .collect::<Result<Vec<_>, _>>()?)
+        stmt.query_map([user.get()], |r| {
+            Ok((
+                r.get::<_, Option<String>>(0)?,
+                (r.get::<_, i64>(2)?, r.get::<_, String>(1)?),
+            ))
+        })?
+        .map(|row| {
+            let (workspace, stored) = row?;
+            Ok((workspace, stored_pattern("never_decrypt", stored)?))
+        })
+        .collect()
     }
 
     /// The time and size the learned pass-through lists use (the built-in values until saved).
@@ -365,15 +390,14 @@ impl Store {
         self.change(|tx, _now, fx| set_mode_in(tx, fx, workspace, mode))
     }
 
-    /// Replaces `workspace`'s own never-decrypt names with `patterns` (the caller has checked
-    /// them).
+    /// Replaces `workspace`'s own never-decrypt names with `patterns`.
     ///
     /// # Errors
     /// A database error; nothing changes then.
     pub fn set_never_decrypt(
         &self,
         workspace: &WorkspaceId,
-        patterns: &[String],
+        patterns: &[HostPattern],
     ) -> Result<(), StoreError> {
         self.change(|tx, _now, fx| set_names_in(tx, fx, workspace, patterns))
     }
@@ -388,7 +412,7 @@ impl Store {
         &self,
         workspace: &WorkspaceId,
         mode: Option<Option<InterceptionMode>>,
-        never_decrypt: Option<&[String]>,
+        never_decrypt: Option<&[HostPattern]>,
     ) -> Result<WorkspaceInterception, StoreError> {
         self.change(|tx, _now, fx| {
             if let Some(mode) = mode {
@@ -410,20 +434,21 @@ impl Store {
     pub fn add_never_decrypt(
         &self,
         workspace: &WorkspaceId,
-        pattern: &str,
+        pattern: &HostPattern,
         max: usize,
     ) -> Result<bool, StoreError> {
+        let pattern = pattern.to_string();
         self.change(|tx, _now, fx| {
             let held: i64 = scalar(tx, COUNT_OWN, [workspace.as_str()])?;
             let added = tx.execute(
                 "INSERT OR IGNORE INTO never_decrypt (workspace_id, pattern)
                  SELECT ?1, ?2 WHERE ?3 > ?4",
-                params![workspace.as_str(), pattern, max_names(max), held],
+                params![workspace.as_str(), &pattern, max_names(max), held],
             )?;
             if added == 1 {
                 changed(fx, workspace);
             }
-            let present: bool = scalar(tx, HOLDS_OWN, [workspace.as_str(), pattern])?;
+            let present: bool = scalar(tx, HOLDS_OWN, [workspace.as_str(), pattern.as_str()])?;
             Ok(present)
         })
     }
@@ -433,17 +458,22 @@ impl Store {
     ///
     /// # Errors
     /// A database error; nothing changes then.
-    pub fn add_global_never_decrypt(&self, pattern: &str, max: usize) -> Result<bool, StoreError> {
+    pub fn add_global_never_decrypt(
+        &self,
+        pattern: &HostPattern,
+        max: usize,
+    ) -> Result<bool, StoreError> {
+        let pattern = pattern.to_string();
         self.change(|tx, _now, fx| {
             let held: i64 = scalar(tx, COUNT_GLOBAL, [])?;
             let added = tx.execute(
                 "INSERT OR IGNORE INTO never_decrypt_global (pattern) SELECT ?1 WHERE ?2 > ?3",
-                params![pattern, max_names(max), held],
+                params![&pattern, max_names(max), held],
             )?;
             if added == 1 {
                 changed_everywhere(tx, fx)?;
             }
-            let present: bool = scalar(tx, HOLDS_GLOBAL, [pattern])?;
+            let present: bool = scalar(tx, HOLDS_GLOBAL, [pattern.as_str()])?;
             Ok(present)
         })
     }
@@ -452,13 +482,13 @@ impl Store {
     ///
     /// # Errors
     /// A database error; nothing changes then.
-    pub fn set_global_never_decrypt(&self, patterns: &[String]) -> Result<(), StoreError> {
+    pub fn set_global_never_decrypt(&self, patterns: &[HostPattern]) -> Result<(), StoreError> {
         self.change(|tx, _now, fx| {
             tx.execute("DELETE FROM never_decrypt_global", [])?;
             for pattern in patterns {
                 tx.execute(
                     "INSERT OR IGNORE INTO never_decrypt_global (pattern) VALUES (?1)",
-                    [pattern],
+                    [pattern.to_string()],
                 )?;
             }
             changed_everywhere(tx, fx)?;

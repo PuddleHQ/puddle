@@ -334,6 +334,8 @@ jobs:
       - name: boot.sh as root
         if: ${{ !cancelled() }}
         timeout-minutes: 3
+        env:
+          PUDDLE_REQUIRE_ROOT: "1"
         run: ci/boot-sh-root.sh
       - name: disk after the tests with coverage (evidence, never a gate)
         if: ${{ always() }}

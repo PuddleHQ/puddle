@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use super::{
     CheckoutDir, ComputeError, CpuCount, DiskSize, ExecRequest, FileMount, ImageRef, Import,
-    Layout, Loan, Runtime, Sandbox, SandboxSpec, Scratch, VolumeInfo, VolumeMount,
-    WorkspaceError, WorkspaceId, Workspaces, clear_leftover, debug, import_mount, info,
-    maintenance_name, mount_for, tail, warn, with_scratch_sandbox,
+    Layout, Loan, Runtime, Sandbox, SandboxSpec, Scratch, VolumeInfo, VolumeMount, WorkspaceError,
+    WorkspaceId, Workspaces, clear_leftover, debug, import_mount, info, maintenance_name,
+    mount_for, tail, warn, with_scratch_sandbox,
 };
 
 /// What [`Workspaces::import`] did.
@@ -52,14 +52,7 @@ impl Workspaces {
             .map_err(|e| WorkspaceError::runtime("look up the volume", id, e))?;
         let existed = existing.is_some();
         let result = self
-            .run_import(
-                rt,
-                id,
-                image,
-                existing.as_ref(),
-                size,
-                imports,
-            )
+            .run_import(rt, id, image, existing.as_ref(), size, imports)
             .await;
         // The create makes the volume; whether it got that far is read, not assumed.
         let made = if existed {

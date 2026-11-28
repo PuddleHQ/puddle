@@ -220,7 +220,7 @@ impl Backend {
     }
 
     /// The same backend whose shutdown first runs `seen` (a test says what stopped it).
-    #[cfg(test)]
+    #[cfg(all(test, feature = "fixture"))]
     #[must_use]
     pub(crate) fn on_shutdown(mut self, seen: impl FnOnce() + Send + 'static) -> Self {
         let stop = self.stop.get_mut();

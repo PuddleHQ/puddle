@@ -1289,8 +1289,9 @@ function Test-UninstallRunningApp([string]$Package, [string]$Policy) {
     $conn = Start-Installed
     try {
         # The development certificate's file, with a certificate that is in no store (the removal reads the
-        # file, then looks the certificate up by its thumbprint: not found is nothing to remove).
-        $key = [System.Security.Cryptography.ECDsa]::Create([System.Security.Cryptography.ECCurve]::NamedCurves.nistP256)
+        # file, then looks the certificate up by its thumbprint: not found is nothing to remove). Create() takes
+        # no argument: PowerShell binds an ECCurve argument to Create(string), which returns null.
+        $key = [System.Security.Cryptography.ECDsa]::Create()
         $request = New-Object System.Security.Cryptography.X509Certificates.CertificateRequest('CN=localhost', $key, [System.Security.Cryptography.HashAlgorithmName]::SHA256)
         $cert = $request.CreateSelfSigned([DateTimeOffset]::UtcNow.AddDays(-1), [DateTimeOffset]::UtcNow.AddDays(30))
         $pem = "-----BEGIN CERTIFICATE-----`n" + [Convert]::ToBase64String($cert.RawData, 'InsertLineBreaks') + "`n-----END CERTIFICATE-----`n"

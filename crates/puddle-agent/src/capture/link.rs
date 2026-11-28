@@ -3,9 +3,10 @@
 //!
 //! A connect to a stand-in address needs a route before the redirect can act, so the agent keeps a
 //! `dummy0` with the stub's address (`198.18.0.1/15`, which also routes the range). The guest's
-//! default route normally leaves by the network device the VM runtime attached (with its own
-//! deny policy); when there is none, the agent adds one through `dummy0`, so a connect to any
-//! address reaches the redirect instead of failing with "network unreachable".
+//! default route has no network device to leave by, because the VM has none (the runtime is built
+//! with its network off, `crates/puddle-compute-msb/src/spec.rs`); the agent adds one through
+//! `dummy0`, so a connect to any address reaches the redirect instead of failing with "network
+//! unreachable".
 //!
 //! Everything is idempotent and goes through netlink: no `ip` binary exists in the image.
 

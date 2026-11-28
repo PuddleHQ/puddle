@@ -6,7 +6,7 @@
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import type { components } from "#lib/api/schema.d.ts";
 import { isRulesChanged } from "#lib/rules/events.ts";
-import { sentence } from "#lib/rules/model.ts";
+import { sentence } from "#lib/format/sentence.ts";
 import type { Fill } from "#lib/rules/fill.ts";
 import type { EntryPage, RuleSet, SystemHost } from "#lib/rules/sets.ts";
 import { live, type LiveSource } from "./live.svelte.ts";

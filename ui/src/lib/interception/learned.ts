@@ -5,7 +5,7 @@
 import { workspaces } from "#lib/stores/workspaces.svelte.ts";
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import type { components } from "#lib/api/schema.d.ts";
-import { sentence } from "#lib/rules/model.ts";
+import { sentence } from "#lib/format/sentence.ts";
 import type { Notifier } from "#lib/notify/notifier.ts";
 import type { NoticeAction } from "#lib/notify/notices.svelte.ts";
 

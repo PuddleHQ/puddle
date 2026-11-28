@@ -109,6 +109,10 @@ impl Policy for AlwaysBlocked {
             reason: BlockReason::LocalAddress,
         })
     }
+
+    fn lookup(&self, _: &EgressRequest, _: SuffixAllows) -> Result<Option<Decision>, PolicyError> {
+        Ok(None)
+    }
 }
 
 #[test]

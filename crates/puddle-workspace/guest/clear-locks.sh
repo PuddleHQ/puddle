@@ -292,9 +292,12 @@ repair_repo() (
     # The checkout's config is guest-controlled and this runs as root: these command-level
     # settings beat it, so no hook folder and no fsmonitor program of the repository is run
     # (`read-tree` rewriting the index runs `post-index-change`).
-    export GIT_CONFIG_COUNT=3 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*'
+    export GIT_CONFIG_COUNT=4 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*'
     export GIT_CONFIG_KEY_1=core.hooksPath GIT_CONFIG_VALUE_1=/dev/null
     export GIT_CONFIG_KEY_2=core.fsmonitor GIT_CONFIG_VALUE_2=false
+    # A partial clone's remote can name a program (`uploadpack`) that git runs to fetch a missing
+    # object: no lazy fetch (git 2.44 and later) and, for an older git, no transport at all.
+    export GIT_NO_LAZY_FETCH=1 GIT_CONFIG_KEY_3=protocol.allow GIT_CONFIG_VALUE_3=never
     repair_head "$2" "$3" "$4"
     repair_index "$2" "$3" "$4"
 )

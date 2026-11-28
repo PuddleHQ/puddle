@@ -7,7 +7,8 @@
 #   ci/image-pins.sh check     every pin line holds `<name>:<tag>@sha256:<64 hex>` and all of them are the same reference
 #   ci/image-pins.sh refresh   ask the registry for the digest the tag points at now; when it moved, rewrite every pin
 #                              line, push the branch ci/refresh-image-pins as one commit and open (or update) one pull
-#                              request to develop with auto-merge armed (squash). Never pushes to develop.
+#                              request to develop. Auto-merge is not armed: a person reviews what changed upstream and merges.
+#                              Never pushes to develop.
 #   ci/image-pins.sh --self-test   ci/image-pins-test.sh
 #
 # DRY_RUN=1 makes `refresh` report and change nothing. The registry must answer an anonymous HEAD request on
@@ -140,7 +141,6 @@ refresh() {
 		fi
 		pr=${url##*/}
 	fi
-	"$gh_bin" pr merge -R "$GITHUB_REPOSITORY" --auto --squash "$pr" || echo "::warning::could not arm auto-merge on #$pr"
 	say "Image pins: pull request #$pr pins $ref at $what."
 }
 

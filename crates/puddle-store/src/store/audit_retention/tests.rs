@@ -277,6 +277,24 @@ fn a_shrink_frees_all_its_pages_and_reports_the_bytes_it_freed() {
     assert_eq!(pragma_u64(&lock(&store.conn), "freelist_count").unwrap(), 0);
 }
 
+#[test]
+fn a_shrink_of_more_free_pages_than_one_step_frees_takes_several_steps() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    let limits = Limits {
+        max_open_rows: 100_000,
+        ..Limits::default()
+    };
+    let store = store_with_records_pruned(&path, limits, "h", 20_000);
+    let free_pages = pragma_u64(&lock(&store.conn), "freelist_count").unwrap();
+    assert!(
+        free_pages > u64::from(SHRINK_STEP_PAGES),
+        "{free_pages} free pages: the test needs more than one step can free"
+    );
+    assert!(store.shrink_file(0).unwrap() > 0);
+    assert_eq!(pragma_u64(&lock(&store.conn), "freelist_count").unwrap(), 0);
+}
+
 fn a_store_with_old_records_only() -> (Arc<ManualClock>, Store) {
     let clock = Arc::new(ManualClock::new(1_800_000_000_000));
     let store = Store::open_in_memory(clock.clone(), Limits::default()).unwrap();
@@ -363,4 +381,76 @@ fn a_prune_logs_what_it_deleted_and_stays_quiet_when_it_deleted_nothing() {
         .find(|line| line.contains("audit records past their retention deleted"))
         .unwrap_or_else(|| panic!("a prune that deleted records says so: {lines:?}"));
     assert!(line.contains(&format!("deleted={records}")), "{line}");
+}
+
+#[test]
+fn audit_stats_reads_while_the_writer_is_held() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    let store = Arc::new(store_with_a_little_free(&path, "h"));
+    let expected = store.audit_stats().unwrap();
+    let held = lock(&store.conn);
+    let (done, finished) = std::sync::mpsc::channel();
+    let reader = Arc::clone(&store);
+    std::thread::spawn(move || {
+        let _ = done.send(reader.audit_stats());
+    });
+    // A read that waited for the writer would never finish while it is held.
+    let stats = finished
+        .recv_timeout(Duration::from_secs(30))
+        .expect("the stats were read while the writer was held")
+        .unwrap();
+    drop(held);
+    assert_eq!(stats, expected);
+}
+
+fn ask_n_hosts(store: &Store, tag: &str, count: u32) {
+    let workspace = WorkspaceId::new("a").unwrap();
+    crate::testing::own(store, &workspace);
+    for n in 0..count {
+        let host = Host::parse_normalised(&format!("{tag}{n}.example")).unwrap();
+        let request = EgressRequest::new(workspace.clone(), host, 443);
+        store.decide(&request, SuffixAllows::Count).unwrap();
+    }
+}
+
+#[test]
+fn the_log_checkpoint_never_waits_for_a_reader_and_truncates_once_none_is_left() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    let store = Store::open(
+        &path,
+        Arc::new(ManualClock::new(1_800_000_000_000)),
+        Limits::default(),
+    )
+    .unwrap();
+    ask_n_hosts(&store, "before", 20);
+    {
+        // A reader that began before the next writes holds the log open for as long as it lives.
+        let reader = store.audit_read();
+        reader.execute_batch("BEGIN").unwrap();
+        let _: i64 = reader
+            .query_row("SELECT count(*) FROM audit", [], |row| row.get(0))
+            .unwrap();
+        ask_n_hosts(&store, "during", 20);
+        let started = std::time::Instant::now();
+        store.checkpoint_wal().unwrap();
+        // flake-ok: the old code waited the whole 5 s busy timeout, always; the 2 s bar holds under load
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "the checkpoint waited {:?} for the reader",
+            started.elapsed()
+        );
+        assert!(wal_bytes(&path) > 0, "a held reader keeps the log");
+        let wait: i64 = lock(&store.conn)
+            .pragma_query_value(None, "busy_timeout", |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            wait, 5_000,
+            "the writer's wait is back after the checkpoint"
+        );
+        reader.execute_batch("COMMIT").unwrap();
+    }
+    store.checkpoint_wal().unwrap();
+    assert_eq!(wal_bytes(&path), 0, "no reader left: the log is truncated");
 }

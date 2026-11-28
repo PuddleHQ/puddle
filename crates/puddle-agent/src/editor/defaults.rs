@@ -10,6 +10,7 @@
 //!
 //! - Settings (`User/settings.json`, JSON with comments): `workbench.colorTheme`, with
 //!   `window.autoDetectColorScheme` off while a theme is set, and `editor.fontSize`.
+//!   The user's own custom settings (`EditorDefaults::settings`, top-level keys) take the same path.
 //! - Key bindings (`User/keybindings.json`, an array): each planned entry is added when the file
 //!   has none with the same key, command and `when`, and not added again once the user removed it.
 //! - Extensions: an id that is not installed and that Puddle did not install before is installed
@@ -166,20 +167,55 @@ struct Run<'a> {
 fn wanted_settings(
     defaults: &EditorDefaults,
     applied: &Applied,
-) -> Vec<(&'static str, Option<Value>)> {
+    current: &Value,
+) -> Vec<(String, Option<Value>)> {
+    // The theme goes back in this run only when the file still holds the one Puddle wrote.
+    let theme_handed_back = defaults.colour_theme.is_none()
+        && applied
+            .settings
+            .get(THEME)
+            .is_some_and(|last| current.get(THEME) == Some(last));
     let auto = if defaults.colour_theme.is_some() {
         Some(json!(false))
-    } else if applied.settings.get(AUTO_DETECT) == Some(&json!(false)) {
+    } else if theme_handed_back && applied.settings.get(AUTO_DETECT) == Some(&json!(false)) {
         // The theme is unset again: hand the colour scheme back to the system, as the first open does.
         Some(json!(true))
     } else {
         applied.settings.get(AUTO_DETECT).cloned()
     };
-    vec![
-        (THEME, defaults.colour_theme.as_ref().map(|t| json!(t))),
-        (AUTO_DETECT, auto),
-        (FONT_SIZE, defaults.font_size.map(|px| json!(px))),
-    ]
+    let mut wanted = vec![
+        (
+            THEME.to_owned(),
+            defaults.colour_theme.as_ref().map(|t| json!(t)),
+        ),
+        (AUTO_DETECT.to_owned(), auto),
+        (FONT_SIZE.to_owned(), defaults.font_size.map(|px| json!(px))),
+    ];
+    let custom = planned_custom_settings(defaults);
+    // A key Puddle wrote before that is no longer planned is handed back.
+    let gone = applied
+        .settings
+        .keys()
+        .filter(|k| !OWNED.contains(&k.as_str()) && !custom.contains_key(*k));
+    wanted.extend(gone.map(|k| (k.clone(), None)));
+    wanted.extend(custom.into_iter().map(|(k, v)| (k, Some(v))));
+    wanted
+}
+
+/// The keys Puddle owns through their own fields; a custom entry for one is ignored.
+const OWNED: [&str; 3] = [THEME, AUTO_DETECT, FONT_SIZE];
+
+/// The user's own planned settings (a text that is not a JSON object plans none), without the
+/// owned keys.
+fn planned_custom_settings(defaults: &EditorDefaults) -> BTreeMap<String, Value> {
+    defaults
+        .settings
+        .as_deref()
+        .and_then(|text| serde_json::from_str::<BTreeMap<String, Value>>(text).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(k, _)| !OWNED.contains(&k.as_str()))
+        .collect()
 }
 
 /// `bytes` as a JSON or JSONC value of one kind: `None` for a file that is not valid or holds
@@ -207,7 +243,8 @@ impl Run<'_> {
         };
         let mut sets = Vec::new();
         let mut removes = Vec::new();
-        for (key, wanted) in wanted_settings(self.defaults, &self.applied) {
+        for (key, wanted) in wanted_settings(self.defaults, &self.applied, &current) {
+            let key = key.as_str();
             let now = current.get(key);
             let last = self.applied.settings.get(key);
             // The first-open seed writes the colour scheme following; that is Puddle's own value.
@@ -254,9 +291,8 @@ impl Run<'_> {
             );
             return Ok(());
         };
-        let in_file = |entry: &Value| entries.iter().any(|e| identity(e) == identity(entry));
-        let was =
-            |list: &[Value], entry: &Value| list.iter().any(|a| identity(a) == identity(entry));
+        let in_file = |entry: &Value| entries.contains(entry);
+        let was = |list: &[Value], entry: &Value| list.contains(entry);
         let add: Vec<&Value> = wanted
             .iter()
             .filter(|w| !in_file(w) && !was(&self.applied.keybindings, w))
@@ -275,9 +311,7 @@ impl Run<'_> {
         // could not take out.
         let mut next: Vec<Value> = wanted
             .iter()
-            .filter(|w| {
-                was(&self.applied.keybindings, w) || add.iter().any(|a| identity(a) == identity(w))
-            })
+            .filter(|w| was(&self.applied.keybindings, w) || add.contains(w))
             .cloned()
             .collect();
         next.extend(
@@ -290,10 +324,7 @@ impl Run<'_> {
         let text = if drop.is_empty() {
             insert_entries(existing.as_deref(), &add)
         } else {
-            let mut kept: Vec<&Value> = entries
-                .iter()
-                .filter(|e| !drop.iter().any(|d| identity(d) == identity(e)))
-                .collect();
+            let mut kept: Vec<&Value> = entries.iter().filter(|e| !drop.contains(e)).collect();
             kept.extend(add.iter().copied());
             format!(
                 "{}\n",
@@ -377,22 +408,19 @@ fn with_sets(text: Vec<u8>, sets: &[MergeEntry]) -> Result<Vec<u8>, SettingsRefu
     Ok(written(merged, text))
 }
 
-/// One key binding's identity: its key, command and `when`.
-fn identity(entry: &Value) -> Option<(String, String, String)> {
-    let get = |k: &str| entry.get(k).and_then(Value::as_str).map(str::to_owned);
-    Some((
-        get("key")?,
-        get("command")?,
-        get("when").unwrap_or_default(),
-    ))
-}
-
 fn planned_keybindings(defaults: &EditorDefaults) -> Vec<Value> {
     defaults
         .keybindings
         .as_deref()
         .and_then(|text| serde_json::from_str::<Vec<Value>>(text).ok())
         .unwrap_or_default()
+        .into_iter()
+        .filter(|entry| {
+            ["key", "command"]
+                .iter()
+                .all(|k| entry.get(k).is_some_and(Value::is_string))
+        })
+        .collect()
 }
 
 /// `existing` (an array in JSON with comments, or no file) with `add` before its closing bracket.

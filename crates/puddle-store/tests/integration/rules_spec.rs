@@ -306,6 +306,36 @@ fn r08_changes_apply_to_the_next_request_without_restart() {
 }
 
 #[test]
+fn extending_an_expired_rule_closes_the_requests_it_decides_again() {
+    let (clock, store) = fixture();
+    let mut short = rule(Some("a"), "example.com", Effect::Allow);
+    short.expires_at = Some(T0 + 5);
+    let id = store
+        .as_user(puddle_store::UserId::OWNER)
+        .add_rule(&short)
+        .unwrap()
+        .id;
+    clock.advance(10);
+    let waiting = new_pending(decide(&store, "a", "example.com"));
+    let other_workspace = new_pending(decide(&store, "b", "example.com"));
+    store.set_rule_expiry(id, None, Actor::Ui).unwrap();
+    let state = |pending: PendingId| store.pending(pending).unwrap().state;
+    assert_eq!(state(waiting), PendingState::Allowed);
+    assert_eq!(state(other_workspace), PendingState::Requested);
+}
+
+#[test]
+fn an_unchanged_expiry_writes_no_record_and_sends_no_event() {
+    let (_, store) = fixture();
+    let id = add(&store, Some("a"), "example.com", Effect::Allow);
+    store.set_rule_expiry(id, None, Actor::Ui).unwrap();
+    assert_eq!(audit_of(&store, "rule_updated").len(), 0);
+    store.set_rule_expiry(id, Some(T0 + 10), Actor::Ui).unwrap();
+    store.set_rule_expiry(id, Some(T0 + 10), Actor::Ui).unwrap();
+    assert_eq!(audit_of(&store, "rule_updated").len(), 1);
+}
+
+#[test]
 fn r08_concurrent_decisions_never_see_half_a_change() {
     // An approve creates a rule and closes rows in one change. A decider racing it sees either
     // the old world (pending, the row still open) or the new one (allowed), never an allow while
@@ -541,6 +571,72 @@ fn r11_undoing_does_not_repeat_a_request_that_was_asked_again_meanwhile() {
         store.undo_decision(decided.rule.id, Actor::Ui),
         Err(StoreError::UnknownRule(_))
     ));
+}
+
+#[test]
+fn r11_undoing_does_not_reopen_a_request_that_another_rule_decides() {
+    let (_, store) = fixture();
+    let plain = new_pending(decide(&store, "a", "api.example.com"));
+    let local = new_pending(
+        store
+            .decide(&req("a", "db.corp.example", 5432), SuffixAllows::Ignore)
+            .unwrap(),
+    );
+    let first = store
+        .resolve_pending(plain, &Resolution::allow(), Actor::Ui)
+        .unwrap();
+    let second = store
+        .resolve_pending(local, &Resolution::allow(), Actor::Ui)
+        .unwrap();
+    // A wider rule arrives after both rows closed. It decides the plain request again, but a
+    // request that needs an exact allow ignores a suffix allow, so it still has to be asked.
+    add(&store, None, "*.example.com", Effect::Allow);
+    add(&store, None, "*.corp.example", Effect::Allow);
+
+    let (_, reopened) = store.undo_decision(first.rule.id, Actor::Ui).unwrap();
+    assert_eq!(reopened.len(), 0);
+    let (_, reopened) = store.undo_decision(second.rule.id, Actor::Ui).unwrap();
+    assert_eq!(
+        reopened
+            .iter()
+            .map(|r| r.host.to_string())
+            .collect::<Vec<_>>(),
+        ["db.corp.example"]
+    );
+    assert!(reopened[0].exact_only);
+    assert!(matches!(
+        decide(&store, "a", "api.example.com"),
+        Decision::Allow { .. }
+    ));
+}
+
+#[test]
+fn r21_undoing_a_global_rule_does_not_reopen_requests_of_a_deleted_workspace() {
+    let (_, store) = fixture();
+    let gone = new_pending(decide(&store, "a", "example.com"));
+    let kept = new_pending(decide(&store, "b", "example.com"));
+    let decided = store
+        .resolve_pending(
+            gone,
+            &Resolution {
+                scope: ScopeChoice::Global,
+                ..Resolution::allow()
+            },
+            Actor::Ui,
+        )
+        .unwrap();
+    assert_eq!(decided.also_closed, vec![kept]);
+    store.delete_workspace(&sb("a")).unwrap();
+
+    let (_, reopened) = store.undo_decision(decided.rule.id, Actor::Ui).unwrap();
+    assert_eq!(
+        reopened
+            .iter()
+            .map(|r| r.workspace.clone())
+            .collect::<Vec<_>>(),
+        [sb("b")]
+    );
+    assert_eq!(store.pending(gone).unwrap().state, PendingState::Allowed);
 }
 
 #[test]

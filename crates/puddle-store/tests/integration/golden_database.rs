@@ -30,6 +30,10 @@ const GOLDEN_VERSION: i64 = 23;
 /// all still be there.
 const GROWS_ON_OPEN: &str = "builtin_sets_seen";
 
+/// Version 35 counts the search and category text in the audit size, so opening recounts it; the
+/// check below recomputes the total from the rows instead of comparing it with the old one.
+const RECOUNTED_ON_OPEN: &str = "audit_size";
+
 fn golden_copy() -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("puddle.db");
@@ -138,6 +142,9 @@ fn every_row_of_the_old_database_reads_back_equal_after_the_migration() {
             differences.push(format!("{table}: table gone"));
             continue;
         };
+        if table == RECOUNTED_ON_OPEN {
+            continue;
+        }
         if table == GROWS_ON_OPEN {
             for old in rows_before.iter().filter(|old| !rows_after.contains(old)) {
                 differences.push(format!("{table}: row lost or changed: {old:?}"));
@@ -166,6 +173,33 @@ fn every_row_of_the_old_database_reads_back_equal_after_the_migration() {
         }
     }
     assert_eq!(differences, Vec::<String>::new());
+
+    let conn = Connection::open(&path).unwrap();
+    let (size, counted): (i64, i64) = conn
+        .query_row(
+            "SELECT (SELECT bytes FROM audit_size WHERE id = 1),
+                    (SELECT coalesce(sum(length(CAST(line AS BLOB))
+                                         + coalesce(length(CAST(search AS BLOB)), 0)
+                                         + coalesce(length(CAST(category AS BLOB)), 0)), 0)
+                     FROM audit)",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(size, counted, "the audit size counts every stored text");
+    let wrong: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM audit
+             WHERE category IS NOT (CASE type WHEN 'connection'
+                                    THEN nullif(json_extract(line, '$.category'), '') END)",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        wrong, 0,
+        "a connection's category is backfilled from its line"
+    );
 
     // A deleted row's id stays spent: the counters never move back.
     let sequences_after = sequences(&path);

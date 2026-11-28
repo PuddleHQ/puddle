@@ -6,6 +6,7 @@
 //! records it wants gone. The size only warns ([`super::Limits::audit_warn_bytes`]).
 
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -36,6 +37,9 @@ const SHRINK_MIN_FREE_PERCENT: u64 = 25;
 /// Pages freed per `incremental_vacuum` step, and steps per sweep, so one sweep gives back at
 /// most 2048 x 400 pages and never holds the writer for long at a time.
 const SHRINK_STEP_PAGES: u32 = 2048;
+/// Whether the audit holds records and all are older than `?1`.
+const ALL_AUDIT_OLDER: &str = "SELECT EXISTS (SELECT 1 FROM audit WHERE ts < ?1)
+                    AND NOT EXISTS (SELECT 1 FROM audit WHERE ts >= ?1)";
 const SHRINK_STEPS_PER_SWEEP: u32 = 400;
 
 /// The most the write-ahead log file keeps on disk once a checkpoint has emptied it (64 MiB).
@@ -112,20 +116,24 @@ fn written_since(conn: &Connection, since: i64) -> Result<(u64, u64), StoreError
 const WRITTEN_SINCE: &str = "SELECT count(*), coalesce(sum(length(CAST(line AS BLOB))), 0)
                              FROM audit WHERE ts >= ?1";
 
+fn retention_days(conn: &Connection) -> Result<u32, StoreError> {
+    let days: Option<i64> = conn
+        .query_row("SELECT days FROM audit_retention WHERE id = 1", [], |row| {
+            row.get(0)
+        })
+        .optional()?;
+    Ok(days
+        .and_then(|days| u32::try_from(days).ok())
+        .unwrap_or(DEFAULT_AUDIT_RETENTION_DAYS))
+}
+
 impl Store {
     /// The days the audit is kept ([`DEFAULT_AUDIT_RETENTION_DAYS`] until saved).
     ///
     /// # Errors
     /// A database error.
     pub fn audit_retention_days(&self) -> Result<u32, StoreError> {
-        let days: Option<i64> = lock(&self.conn)
-            .query_row("SELECT days FROM audit_retention WHERE id = 1", [], |row| {
-                row.get(0)
-            })
-            .optional()?;
-        Ok(days
-            .and_then(|days| u32::try_from(days).ok())
-            .unwrap_or(DEFAULT_AUDIT_RETENTION_DAYS))
+        retention_days(&lock(&self.conn))
     }
 
     /// Saves how many days the audit is kept. The sweeper deletes what is older at its next pass
@@ -153,9 +161,11 @@ impl Store {
     /// # Errors
     /// A database error.
     pub fn audit_stats(&self) -> Result<AuditStats, StoreError> {
-        let retention_days = self.audit_retention_days()?;
         let now = self.clock.now_ms();
-        let conn = lock(&self.conn);
+        // The scans run on the audit reader, so they never hold up the writes that wait on the
+        // writer's lock (RS-14).
+        let conn = self.audit_read();
+        let retention_days = retention_days(&conn)?;
         let records: i64 = conn.query_row("SELECT count(*) FROM audit", [], |row| row.get(0))?;
         let oldest: Option<i64> =
             conn.query_row("SELECT min(ts) FROM audit", [], |row| row.get(0))?;
@@ -230,12 +240,7 @@ impl Store {
     /// Whether a prune at `cutoff` would leave the audit empty: it holds records, and all are older.
     fn prune_would_empty_audit(&self, cutoff: i64) -> Result<bool, StoreError> {
         let conn = lock(&self.conn);
-        Ok(conn.query_row(
-            "SELECT EXISTS (SELECT 1 FROM audit WHERE ts < ?1)
-                    AND NOT EXISTS (SELECT 1 FROM audit WHERE ts >= ?1)",
-            [cutoff],
-            |row| row.get(0),
-        )?)
+        Ok(conn.query_row(ALL_AUDIT_OLDER, [cutoff], |row| row.get(0))?)
     }
 
     /// The sweeper's prune: by the saved retention, at most once an hour (and at once at start and
@@ -289,10 +294,22 @@ impl Store {
     /// that a long reader held back from checkpointing does not leave the log at its peak size.
     /// A reader still open at this moment leaves the log alone until the next sweep.
     ///
+    /// Runs under the writer's lock without waiting: a plain checkpoint first (it folds in what
+    /// no reader holds back), then the truncation, which a reader or another writer refuses at
+    /// once instead of making every decision wait out the busy timeout (RS-16).
+    ///
     /// # Errors
     /// A database error.
     pub fn checkpoint_wal(&self) -> Result<(), StoreError> {
-        lock(&self.conn).execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
+        let conn = lock(&self.conn);
+        let normal: i64 = conn.pragma_query_value(None, "busy_timeout", |row| row.get(0))?;
+        conn.busy_timeout(Duration::ZERO)?;
+        let result = ["PASSIVE", "TRUNCATE"].into_iter().try_for_each(|mode| {
+            // The row says whether the checkpoint finished; a refused one is retried at the next sweep.
+            conn.query_row(&format!("PRAGMA wal_checkpoint({mode})"), [], |_| Ok(()))
+        });
+        let restored = conn.busy_timeout(Duration::from_millis(u64::try_from(normal).unwrap_or(0)));
+        result.and(restored)?;
         Ok(())
     }
 

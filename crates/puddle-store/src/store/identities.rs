@@ -8,7 +8,7 @@ use puddle_types::StoredId;
 use puddle_types::{Event, WorkspaceId};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
-use super::{Store, lock, sql_ts, users};
+use super::{Store, lock, sql_ts, stored_ts, users};
 use crate::error::StoreError;
 use crate::identity::{
     Author, CredentialBinding, Identity, IdentityDraft, IdentityId, Signing, check_attachable,
@@ -69,8 +69,8 @@ fn identity_of(raw: Raw) -> Result<Identity, StoreError> {
         credentials,
         signing,
         is_default: raw.is_default,
-        created_at: u64::try_from(raw.created_at).unwrap_or(0),
-        changed_at: u64::try_from(raw.changed_at).unwrap_or(0),
+        created_at: stored_ts("identities", raw.id, raw.created_at)?,
+        changed_at: stored_ts("identities", raw.id, raw.changed_at)?,
     })
 }
 
@@ -195,6 +195,32 @@ pub(super) fn changed_for(fx: &mut Vec<Event>, workspaces: Vec<WorkspaceId>) {
             .into_iter()
             .map(|workspace| Event::WorkspaceGitChanged { workspace }),
     );
+}
+
+/// Replaces `ws`'s identity list with `ids` inside the caller's transaction (see
+/// [`Store::set_workspace_identities`] for the errors).
+fn set_list_in(
+    tx: &Transaction<'_>,
+    fx: &mut Vec<Event>,
+    ws: &WorkspaceId,
+    ids: &[IdentityId],
+) -> Result<(), StoreError> {
+    let user = users::owner_in(tx, ws)?;
+    let mut list = Vec::with_capacity(ids.len());
+    for id in ids {
+        if list.iter().any(|i: &Identity| i.id == *id) {
+            return Err(StoreError::IdentityInvalid(
+                "an identity is listed twice".into(),
+            ));
+        }
+        list.push(one(tx, user, *id)?);
+    }
+    check_list(&list)?;
+    write_list(tx, ws, ids)?;
+    fx.push(Event::WorkspaceGitChanged {
+        workspace: ws.clone(),
+    });
+    Ok(())
 }
 
 impl Store {
@@ -446,24 +472,7 @@ impl Store {
         ws: &WorkspaceId,
         ids: &[IdentityId],
     ) -> Result<WorkspaceGit, StoreError> {
-        self.change(|tx, _now, fx| {
-            let user = users::owner_in(tx, ws)?;
-            let mut list = Vec::with_capacity(ids.len());
-            for id in ids {
-                if list.iter().any(|i: &Identity| i.id == *id) {
-                    return Err(StoreError::IdentityInvalid(
-                        "an identity is listed twice".into(),
-                    ));
-                }
-                list.push(one(tx, user, *id)?);
-            }
-            check_list(&list)?;
-            write_list(tx, ws, ids)?;
-            fx.push(Event::WorkspaceGitChanged {
-                workspace: ws.clone(),
-            });
-            Ok(())
-        })?;
+        self.change(|tx, _now, fx| set_list_in(tx, fx, ws, ids))?;
         self.workspace_git(ws)
     }
 
@@ -478,20 +487,18 @@ impl Store {
         id: IdentityId,
         position: Option<usize>,
     ) -> Result<WorkspaceGit, StoreError> {
-        let current = {
-            let conn = lock(&self.conn);
-            let candidate = one(&conn, users::owner_in(&conn, ws)?, id)?;
-            let ids = attached_ids(&conn, ws)?;
+        self.change(|tx, _now, fx| {
+            let candidate = one(tx, users::owner_in(tx, ws)?, id)?;
+            let mut ids = attached_ids(tx, ws)?;
             if ids.contains(&id) {
                 return Err(StoreError::IdentityAttached {
                     label: candidate.label,
                 });
             }
-            ids
-        };
-        let mut ids = current;
-        ids.insert(position.unwrap_or(ids.len()).min(ids.len()), id);
-        self.set_workspace_identities(ws, &ids)
+            ids.insert(position.unwrap_or(ids.len()).min(ids.len()), id);
+            set_list_in(tx, fx, ws, &ids)
+        })?;
+        self.workspace_git(ws)
     }
 
     /// Takes an identity off the workspace.
@@ -503,13 +510,16 @@ impl Store {
         ws: &WorkspaceId,
         id: IdentityId,
     ) -> Result<WorkspaceGit, StoreError> {
-        let mut ids = attached_ids(&lock(&self.conn), ws)?;
-        let before = ids.len();
-        ids.retain(|i| *i != id);
-        if ids.len() == before {
-            return Err(StoreError::UnknownIdentity(id));
-        }
-        self.set_workspace_identities(ws, &ids)
+        self.change(|tx, _now, fx| {
+            let mut ids = attached_ids(tx, ws)?;
+            let before = ids.len();
+            ids.retain(|i| *i != id);
+            if ids.len() == before {
+                return Err(StoreError::UnknownIdentity(id));
+            }
+            set_list_in(tx, fx, ws, &ids)
+        })?;
+        self.workspace_git(ws)
     }
 }
 

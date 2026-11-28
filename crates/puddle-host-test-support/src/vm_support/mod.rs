@@ -38,7 +38,7 @@ use puddle_vm_tests::{RuntimePair, Settings, VmEnv, test_owner};
 use serde_json::json;
 
 /// The harness has set the environment and checked the runtime pair already.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct HarnessPlatform {
     /// The corporate roots the host reports (the guest trusts them, the upstream TLS leg uses them).
     pub roots: CorporateRoots,
@@ -287,6 +287,16 @@ pub struct VmHost {
     pub root: std::path::PathBuf,
     /// Where the host keeps the values of secrets: never the machine's own credential store.
     pub secrets: Arc<MemoryStore>,
+    /// What the host was started with, so [`restart_vm_host`] starts the same host again.
+    launch: Box<Launch>,
+}
+
+/// The configuration (after the test's tweak), options and platform a [`VmHost`] started with.
+#[derive(Clone)]
+struct Launch {
+    config: HostConfig,
+    options: HostOptions,
+    platform: HarnessPlatform,
 }
 
 /// The host configuration over `root`: what [`start_vm_host_with`] and the second process of the
@@ -379,6 +389,7 @@ pub async fn start_vm_host_platform(
     );
     let mut config = harness_config(&settings, &pair, &root, agent);
     tweak(&mut config);
+    let launch_config = config.clone();
     let factory = HarnessFactory {
         settings: settings.clone(),
         msb: pair.msb.clone(),
@@ -389,6 +400,11 @@ pub async fn start_vm_host_platform(
     let secrets = Arc::new(MemoryStore::new());
     let mut options = options;
     options.secret_store = Some(secrets.clone());
+    let launch = Box::new(Launch {
+        config: launch_config,
+        options: options.clone(),
+        platform: platform.clone(),
+    });
     let host = Host::start(prepared, &factory, options)
         .await
         .expect("the host starts");
@@ -400,38 +416,34 @@ pub async fn start_vm_host_platform(
         settings,
         root,
         secrets,
+        launch,
     }
 }
 
 /// Quits `vm`'s host and starts a new one over the same data folder and runtime, as a quit and a
 /// launch of Puddle do (or a reboot of the computer): the sandboxes stay in the runtime, stopped.
+/// The new host has the options, platform and configuration the old one started with.
 pub async fn restart_vm_host(vm: VmHost) -> VmHost {
     let VmHost {
         host,
         settings,
         root,
         secrets,
+        launch,
         ..
     } = vm;
     let down = host.shutdown().await;
     assert!(down.sandboxes.all_stopped(), "{down:?}");
     drop(host);
     let pair = settings.prepare().expect("msb runtime pair");
-    let agent = std::path::PathBuf::from(
-        std::env::var_os("PUDDLE_AGENT_BIN")
-            .expect("PUDDLE_AGENT_BIN: the static puddle-agent (ci/build-agent.sh)"),
-    );
-    let config = harness_config(&settings, &pair, &root, agent);
     let factory = HarnessFactory {
         settings: settings.clone(),
         msb: pair.msb.clone(),
         libkrunfw: pair.libkrunfw.clone(),
         opened: std::sync::Mutex::new(None),
     };
-    let prepared = prepare(config, &HarnessPlatform::default()).unwrap();
-    let mut options = crate::support::named_id_options();
-    options.secret_store = Some(secrets.clone());
-    let host = Host::start(prepared, &factory, options)
+    let prepared = prepare(launch.config.clone(), &launch.platform).unwrap();
+    let host = Host::start(prepared, &factory, launch.options.clone())
         .await
         .expect("the host starts again");
     let runtime = factory.opened.lock().unwrap().clone().unwrap();
@@ -441,6 +453,7 @@ pub async fn restart_vm_host(vm: VmHost) -> VmHost {
         settings,
         root,
         secrets,
+        launch,
     }
 }
 
@@ -522,6 +535,19 @@ fn split_word(value: &str) -> String {
     format!("\"{head}\"\"{tail}\"")
 }
 
+/// Filesystems that are not disk: the token search prunes these by mount type, never by folder
+/// name, so a `dev/` or `proc/` folder anywhere else is still searched.
+const PSEUDO_FS: &str = "proc|sysfs|devtmpfs|devpts|cgroup|cgroup2|mqueue|securityfs|debugfs|tracefs|binfmt_misc|configfs|fusectl|pstore|bpf|autofs|hugetlbfs|selinuxfs";
+
+/// Where the control plants the first token: a plain file, a nested `dev/proc/sys` folder, the
+/// tmpfs under `/dev/shm`, and the `Authorization` base64 form.
+const PLANTED_FILES: [&str; 4] = [
+    "/root/planted.txt",
+    "/root/dev/proc/sys/planted-nested.txt",
+    "/dev/shm/planted-shm.txt",
+    "/root/planted-b64.txt",
+];
+
 /// The guest holds none of `tokens`: not in any process's environment or command line, not in any
 /// file of the disk, neither plain nor in the two base64 forms a Git `Authorization` header takes.
 /// The control comes first: the first token planted in a file and in a process's environment must
@@ -540,19 +566,31 @@ pub async fn assert_guest_holds_no_token(vm: &VmHost, sandbox: &WorkspaceId, tok
     let search = format!(
         "rm -f /dev/shm/.p; {patterns}\
          echo procs=$(cat /proc/[0-9]*/environ /proc/[0-9]*/cmdline 2>/dev/null | tr '\\0' '\\n' | grep -cFf /dev/shm/.p); \
-         echo files=$(grep -rlaFf /dev/shm/.p --exclude-dir=proc --exclude-dir=sys --exclude-dir=dev --exclude=.p / 2>/dev/null | grep -v '^/dev/shm/.p$' | tr '\\n' ' '); \
+         echo files=$(while read -r _ mp fs _; do case $fs in {PSEUDO_FS}) ;; *) \
+         find \"$mp\" -xdev -type f ! -path /dev/shm/.p -exec grep -laFf /dev/shm/.p {{}} + 2>/dev/null;; esac; done </proc/mounts | tr '\\n' ' '); \
          rm -f /dev/shm/.p; echo done"
     );
     let planted = format!(
         "w={w}; printf '%s\\n' \"$w\" > /root/planted.txt; \
-         env PLANTED=\"$w\" sleep 120 & pid=$!; sleep 1; {search}; kill $pid; rm -f /root/planted.txt",
+         mkdir -p /root/dev/proc/sys /dev/shm; \
+         printf '%s\\n' \"$w\" > /root/dev/proc/sys/planted-nested.txt; \
+         printf '%s\\n' \"$w\" > /dev/shm/planted-shm.txt; \
+         printf 'x-access-token:%s' \"$w\" | base64 -w0 > /root/planted-b64.txt; \
+         env PLANTED=\"$w\" sleep 120 & pid=$!; sleep 1; {search}; kill $pid; \
+         rm -rf /root/planted.txt /root/planted-b64.txt /root/dev /dev/shm/planted-shm.txt",
         w = split_word(first)
     );
     let control = guest_within(&vm.runtime, sandbox, &planted, Duration::from_secs(600)).await;
     assert!(
-        !control.contains("procs=0") && control.contains("/root/planted.txt"),
-        "the search must find a planted token in a process and in a file: {control}"
+        !control.contains("procs=0"),
+        "the search must find a planted token in a process: {control}"
     );
+    for planted in PLANTED_FILES {
+        assert!(
+            control.contains(planted),
+            "the search must find a token planted at {planted}: {control}"
+        );
+    }
     let found = guest_within(&vm.runtime, sandbox, &search, Duration::from_secs(600)).await;
     assert!(
         found.contains("procs=0"),

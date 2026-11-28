@@ -49,6 +49,7 @@ pub mod notify;
 mod quit_shortcut;
 pub mod sandbox_window;
 pub mod shell;
+mod signals;
 pub mod tray;
 #[cfg(windows)]
 mod webview_environment;

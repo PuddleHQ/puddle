@@ -3,7 +3,7 @@
 // Nothing here is a credential: a device is a name and some times.
 import { api as defaultApi, type ApiClient } from "#lib/api/client.ts";
 import type { components } from "#lib/api/schema.d.ts";
-import { sentence } from "#lib/rules/model.ts";
+import { sentence } from "#lib/format/sentence.ts";
 import { readFailure, SERVICE_DOWN } from "./read-failure.ts";
 
 export type Device = components["schemas"]["DeviceView"];

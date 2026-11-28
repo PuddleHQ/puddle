@@ -330,10 +330,11 @@ impl SignIn {
             if !this.may_sign_in(holder.role) {
                 return Err(owner_only());
             }
-            let user = this.secrets.redeem_invite(&digest)?.ok_or_else(not_valid)?;
             let hash = password::hash(&password).map_err(weak)?;
-            let checked = this.secrets.set_password_hash(user, &hash)?;
-            let ended = this.store.revoke_devices_of(user, None)?;
+            let (checked, ended) = this
+                .secrets
+                .redeem_invite_with_password(&digest, &hash)?
+                .ok_or_else(not_valid)?;
             let granted = this
                 .make_session(&checked, device_name.as_deref())?
                 .ok_or_else(not_valid)?;
@@ -361,7 +362,9 @@ impl SignIn {
             return Ok(None);
         };
         let refresh = random_secret().map_err(|e| internal(&e))?;
-        self.secrets.put_session(device.id, &digest(&refresh))?;
+        if !self.secrets.put_session(device.id, &digest(&refresh))? {
+            return Ok(None);
+        }
         let grant = self.grant(checked.user(), &device)?;
         Ok(Some(Granted { grant, refresh }))
     }
@@ -464,10 +467,9 @@ impl SignIn {
         let ended = blocking(move || {
             let hash = password::hash(&new).map_err(weak)?;
             // A reset or deletion that landed after the check wins: no password is put back.
-            if !this.secrets.replace_password(&checked, &hash)? {
-                return Err(wrong_credentials());
-            }
-            Ok(this.store.revoke_devices_of(user, Some(device))?)
+            this.secrets
+                .change_password(&checked, &hash, Some(device))?
+                .ok_or_else(wrong_credentials)
         })
         .await?;
         self.end_devices(&ended);

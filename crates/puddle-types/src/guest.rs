@@ -281,14 +281,17 @@ pub struct GuestFile {
     mode: u32,
     #[serde(default)]
     apply: ApplyKind,
+    #[serde(default)]
+    session_owned: bool,
 }
 
 impl fmt::Debug for GuestFile {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // No bit set for group or others: an owner-only secret.
+        let owner_only = self.mode.trailing_zeros() >= 6;
         let mut shown = f.debug_struct("GuestFile");
         shown.field("path", &self.path);
-        // No bit set for group or others: an owner-only secret.
-        if self.mode.trailing_zeros() >= 6 {
+        if owner_only {
             shown.field(
                 "contents",
                 &format_args!("<{} bytes, owner-only>", self.contents.len()),
@@ -296,10 +299,21 @@ impl fmt::Debug for GuestFile {
         } else {
             shown.field("contents", &self.contents);
         }
-        shown
-            .field("mode", &self.mode)
-            .field("apply", &self.apply)
-            .finish()
+        shown.field("mode", &self.mode);
+        shown.field("session_owned", &self.session_owned);
+        match &self.apply {
+            // A merge spec holds the values of the keys it owns, as private as the contents.
+            ApplyKind::Merge(spec) if owner_only => shown.field(
+                "apply",
+                &format_args!(
+                    "Merge {{ format: {:?}, keys: {:?}, values hidden }}",
+                    spec.format(),
+                    spec.keys()
+                ),
+            ),
+            apply => shown.field("apply", apply),
+        };
+        shown.finish()
     }
 }
 
@@ -334,6 +348,7 @@ impl GuestFile {
             contents,
             mode: Self::DEFAULT_MODE,
             apply: ApplyKind::Replace,
+            session_owned: false,
         }
     }
 
@@ -354,6 +369,7 @@ impl GuestFile {
             contents: spec.fresh(),
             mode: Self::DEFAULT_MODE,
             apply: ApplyKind::Merge(spec),
+            session_owned: false,
         }
     }
 
@@ -371,6 +387,7 @@ impl GuestFile {
             contents: Vec::new(),
             mode: Self::DEFAULT_MODE,
             apply: ApplyKind::Keep,
+            session_owned: false,
         }
     }
 
@@ -379,6 +396,28 @@ impl GuestFile {
     pub fn with_mode(mut self, mode: FileMode) -> Self {
         self.mode = mode.bits();
         self
+    }
+
+    /// The same file, and the directories the hook makes for it, belonging to the session user
+    /// even outside that user's home (a path an image env variable moved there). Below the
+    /// home they always do.
+    ///
+    /// ```
+    /// use puddle_types::{GuestFile, GuestPath};
+    /// let f = GuestFile::new(GuestPath::new("/opt/gradle/init.d/a.gradle").unwrap(), Vec::new())
+    ///     .with_session_owner();
+    /// assert!(f.session_owned());
+    /// ```
+    #[must_use]
+    pub fn with_session_owner(mut self) -> Self {
+        self.session_owned = true;
+        self
+    }
+
+    /// Whether the file belongs to the session user wherever it is.
+    #[must_use]
+    pub fn session_owned(&self) -> bool {
+        self.session_owned
     }
 
     /// Where the file goes in the guest.

@@ -435,6 +435,29 @@ fn entrypoint_is_chained_once_with_puddle_env_and_workdir() {
     }
 }
 
+#[test]
+fn an_entrypoint_that_already_exited_is_not_started_again_by_a_hook_rerun() {
+    for sh in shells() {
+        let fr = FakeRoot::new(&sh);
+        let entry = fr.path("/entry.sh");
+        puddle_test_kit::write_executable(
+            &entry,
+            "#!/bin/sh\necho ran >>\"$PUDDLE_ROOT/entry.out\"\nexit 0\n",
+        );
+        let plan = BootPlan::builder(&image(&[entry.display().to_string()], &[]))
+            .build()
+            .unwrap();
+        let out = fr.run(&plan);
+        assert!(out.status.success(), "{}", show(&out));
+        eventually_blocking("the entrypoint finishes", Duration::from_secs(5), || {
+            fr.path("/run/puddle/entrypoint.exit").exists()
+        });
+        let out = fr.run(&plan);
+        assert!(out.status.success(), "{}", show(&out));
+        assert_eq!(fr.read("/entry.out"), "ran\n", "{}", show(&out));
+    }
+}
+
 /// Boots `script` as the image's entrypoint and returns what the hook said.
 fn entrypoint_report(sh: &std::path::Path, script: &str) -> String {
     let fr = FakeRoot::new(sh);
@@ -1489,6 +1512,60 @@ fn the_hook_adds_the_session_user_at_the_first_free_uid_and_keeps_it_after() {
         assert_eq!(fr.read("/etc/group"), group);
         assert!(
             fr.owned().contains(&format!("1001:1001 {machine}")),
+            "{:?}",
+            fr.owned()
+        );
+    }
+}
+
+#[test]
+fn per_user_files_an_image_variable_moved_out_of_the_home_still_belong_to_the_session_user() {
+    for sh in shells() {
+        let fr = FakeRoot::new(&sh);
+        user_database(&fr, true);
+        std::fs::create_dir_all(fr.path("/opt")).unwrap();
+        let spec = MergeSpec::new(
+            MergeFormat::Json,
+            vec![MergeEntry::json(&["proxies"], &serde_json::json!({}))],
+        )
+        .unwrap();
+        let plan = BootPlan::builder(&image(&[], &["bash"]))
+            .session_user(SessionUser::Agent)
+            .file(file("/opt/gradle/init.d/a.gradle", b"x\n").with_session_owner())
+            .file(
+                GuestFile::merged(GuestPath::new("/opt/docker/cli/config.json").unwrap(), spec)
+                    .with_session_owner(),
+            )
+            .file(file("/opt/other/b", b"y\n"))
+            .no_agent()
+            .build()
+            .unwrap();
+        let out = fr.run(&plan);
+        assert!(out.status.success(), "{}: {}", sh.display(), show(&out));
+        let owned = fr.owned();
+        for path in [
+            "/opt/gradle",
+            "/opt/gradle/init.d",
+            "/opt/gradle/init.d/a.gradle",
+            "/opt/docker",
+            "/opt/docker/cli",
+        ] {
+            assert!(
+                owned.contains(&format!("1001:1001 {path}")),
+                "{path}: {owned:?}"
+            );
+        }
+        // The directory that was there stays root's, and so does a file nobody gave away.
+        assert!(!owned.iter().any(|l| l.ends_with(" /opt")), "{owned:?}");
+        assert!(!owned.iter().any(|l| l.contains("/opt/other")), "{owned:?}");
+
+        // A merged file that exists is the user's on the next boot.
+        std::fs::write(fr.path("/opt/docker/cli/config.json"), "{}").unwrap();
+        let before = fr.owned().len();
+        let out = fr.run(&plan);
+        assert!(out.status.success(), "{}", show(&out));
+        assert!(
+            fr.owned()[before..].contains(&"1001:1001 /opt/docker/cli/config.json".to_owned()),
             "{:?}",
             fr.owned()
         );

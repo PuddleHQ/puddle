@@ -12,6 +12,7 @@ use std::path::Path;
 use rusqlite::config::DbConfig;
 use rusqlite::{Connection, OpenFlags};
 
+use crate::backup::utf8_path;
 use crate::error::StoreError;
 use crate::schema::{self, SCHEMA_VERSION};
 
@@ -87,11 +88,15 @@ pub fn check_staged_database(
         return Ok(Err(DatabaseRefusal::NotPuddle(why)));
     }
     conn.pragma_update(None, "foreign_keys", true)?;
-    schema::migrate(&mut conn)?;
+    schema::migrate_without_copy(&mut conn)?;
     Ok(Ok(StagedDatabase {
         schema_version: version,
     }))
 }
+
+/// The tables, views and triggers a database holds.
+const SCHEMA_OBJECTS: &str =
+    "SELECT type, name FROM sqlite_master WHERE type IN ('table', 'view', 'trigger')";
 
 /// The tables every Puddle schema version has.
 const CORE_TABLES: [&str; 3] = ["rules", "pending", "audit"];
@@ -99,9 +104,7 @@ const CORE_TABLES: [&str; 3] = ["rules", "pending", "audit"];
 /// Why the schema of `conn` is not one Puddle made: a core table missing or not a table, a view
 /// (Puddle has none), or a trigger no Puddle version creates.
 fn foreign_structure(conn: &Connection) -> Result<Option<String>, StoreError> {
-    let mut stmt = conn.prepare(
-        "SELECT type, name FROM sqlite_master WHERE type IN ('table', 'view', 'trigger')",
-    )?;
+    let mut stmt = conn.prepare(SCHEMA_OBJECTS)?;
     let found = stmt
         .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
         .collect::<Result<Vec<_>, _>>()?;
@@ -132,7 +135,8 @@ fn foreign_structure(conn: &Connection) -> Result<Option<String>, StoreError> {
 /// BK-14). Entries match by natural key.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PartCounts {
-    /// Entries in the backup.
+    /// Entries in the backup by key: a backup that holds one key twice counts it once, so
+    /// `in_backup` is `add + differ + same`.
     pub in_backup: usize,
     /// In the backup and not here: both modes add them.
     pub add: usize,
@@ -145,8 +149,7 @@ pub struct PartCounts {
 }
 
 impl PartCounts {
-    /// Compares two key-to-content maps; `in_backup` is the number of rows, which may exceed the
-    /// number of keys when a backup holds the same key twice.
+    /// Compares two key-to-content maps; `in_backup` is the number of keys of `backup`.
     fn compare(present: &BTreeMap<String, String>, backup: &BTreeMap<String, String>) -> Self {
         let mut counts = Self {
             in_backup: backup.len(),
@@ -273,8 +276,7 @@ fn stored_tokens(label: &str, credentials: &str) -> Vec<IdentityToken> {
 
 /// Attaches the backup database as `backup`.
 fn attach(conn: &Connection, backup: &Path) -> Result<(), StoreError> {
-    let path = backup.to_string_lossy();
-    conn.execute("ATTACH DATABASE ?1 AS backup", [path.as_ref()])?;
+    conn.execute("ATTACH DATABASE ?1 AS backup", [utf8_path(backup)?])?;
     Ok(())
 }
 
@@ -422,6 +424,9 @@ pub struct RestoredDatabase {
     pub user_map: Vec<(i64, i64)>,
     /// This machine's owner, who owns whatever the backup's owner owned.
     pub owner_id: i64,
+    /// Rows of the backup that the restore skipped because they broke a constraint of this
+    /// machine's database (a user or parent row they name is missing, a unique key is taken).
+    pub dropped_rows: u64,
 }
 
 /// Brings the database at `path` to [`SCHEMA_VERSION`] in place. A database from a newer Puddle is
@@ -518,6 +523,60 @@ fn tables() -> [Table; 21] {
     ]
 }
 
+/// The tables of the schema a restore does not copy row by row, with the reason; a test walks
+/// `sqlite_master` and fails for a table in neither this list nor [`tables`].
+#[cfg(test)]
+const NOT_CARRIED: [(&str, &str); 21] = [
+    ("users", "mapped by `map_users`, never copied row by row"),
+    (
+        "audit",
+        "loaded by `copy_audit` when this machine's log is empty",
+    ),
+    ("audit_size", "a running total of this machine's own log"),
+    ("audit_retention", "this machine's own retention choice"),
+    ("admin_audit", "this machine's user-management history"),
+    (
+        "learned_limits",
+        "learned limits of this machine's certificate refusals",
+    ),
+    (
+        "learned_hosts",
+        "hosts this machine's tools refused a certificate for",
+    ),
+    ("pending", "requests of connections that are gone"),
+    (
+        "ssh_agent_asks",
+        "questions of workspaces that are not running",
+    ),
+    (
+        "ssh_agent_grants",
+        "standing answers given on this machine's agent",
+    ),
+    ("devices", "sign-in state of this machine"),
+    ("account_passwords", "sign-in state, never in a backup"),
+    ("account_invites", "sign-in state, never in a backup"),
+    ("account_sessions", "sign-in state, never in a backup"),
+    ("account_setup", "whether this machine's owner was set up"),
+    ("sign_in_methods", "this machine's sign-in switches"),
+    (
+        "workspace_owners_adoption",
+        "a one-time marker of this machine's first start",
+    ),
+    (
+        "hidden_builtin_sets",
+        "derived from this machine's settings at start",
+    ),
+    (
+        "builtin_sets_seen",
+        "the built-in entries this database last saw",
+    ),
+    (
+        "system_reasons",
+        "derived from this machine's setup at start",
+    ),
+    ("sqlite_sequence", "SQLite's own counters"),
+];
+
 /// The table names a Replace clears, children first.
 const CLEAR_ORDER: [&str; 21] = [
     "workspace_identities",
@@ -572,8 +631,9 @@ fn value_of(table: &str, col: &str) -> String {
     }
 }
 
-/// Copies the rows of `t` that the present side lacks (all of them after a clear).
-fn copy_rows(conn: &Connection, t: &Table) -> Result<(), StoreError> {
+/// Copies the rows of `t` that the present side lacks (all of them after a clear). Returns how
+/// many of those rows the insert dropped (`INSERT OR IGNORE` skips a row that breaks a constraint).
+fn copy_rows(conn: &Connection, t: &Table) -> Result<u64, StoreError> {
     let main = columns(conn, "main", t.name)?;
     let backup = columns(conn, "backup", t.name)?;
     let cols: Vec<&String> = main
@@ -581,7 +641,7 @@ fn copy_rows(conn: &Connection, t: &Table) -> Result<(), StoreError> {
         .filter(|c| backup.contains(c) && !t.skip.contains(&c.as_str()))
         .collect();
     if cols.is_empty() {
-        return Ok(());
+        return Ok(0);
     }
     let list = cols
         .iter()
@@ -604,13 +664,18 @@ fn copy_rows(conn: &Connection, t: &Table) -> Result<(), StoreError> {
         })
         .collect::<Vec<_>>()
         .join(" AND ");
-    let sql = format!(
-        "INSERT OR IGNORE INTO main.{name} ({list}) SELECT {values} FROM backup.{name} b \
-         WHERE NOT EXISTS (SELECT 1 FROM main.{name} m WHERE {same})",
+    let missing = format!(
+        "FROM backup.{name} b WHERE NOT EXISTS (SELECT 1 FROM main.{name} m WHERE {same})",
         name = t.name
     );
-    conn.execute(&sql, [])?;
-    Ok(())
+    let wanted: i64 = scalar(conn, &format!("SELECT count(*) {missing}"))?;
+    let sql = format!(
+        "INSERT OR IGNORE INTO main.{name} ({list}) SELECT {values} {missing}",
+        name = t.name
+    );
+    let added = conn.execute(&sql, [])?;
+    let wanted = u64::try_from(wanted).unwrap_or(0);
+    Ok(wanted.saturating_sub(u64::try_from(added).unwrap_or(0)))
 }
 
 /// How a row of the backup and one here are the same row, for the id maps.
@@ -667,8 +732,8 @@ fn map_users(conn: &Connection) -> Result<(), StoreError> {
 /// a row is added only when its natural key is missing here; in [`RestoreMode::Replace`] the
 /// carried tables are cleared first.
 ///
-/// Neither input is changed beyond the migration of `present`. `dest` is checked (integrity and
-/// foreign keys) before this returns.
+/// Neither input is changed beyond the migration of `present`. `dest` is checked for integrity before
+/// this returns; a row of the backup that breaks a foreign key is skipped and counted, never kept.
 ///
 /// # Errors
 ///
@@ -680,11 +745,12 @@ pub fn restore_database(
     dest: &Path,
     mode: RestoreMode,
 ) -> Result<RestoredDatabase, StoreError> {
+    let target = utf8_path(dest)?;
     migrate_database(present)?;
     {
         let source = Connection::open_with_flags(present, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         source.busy_timeout(std::time::Duration::from_secs(5))?;
-        source.execute("VACUUM INTO ?1", [dest.to_string_lossy().as_ref()])?;
+        source.execute("VACUUM INTO ?1", [target])?;
     }
     let result = merge_into(dest, backup, mode);
     if result.is_err() {
@@ -708,9 +774,10 @@ fn merge_into(
         }
     }
     let carried = tables();
+    let mut dropped_rows = 0;
     // The maps are built after the table they map is merged and before the tables that use them.
     for t in &carried {
-        copy_rows(&tx, t)?;
+        dropped_rows += copy_rows(&tx, t)?;
         match t.name {
             "rule_sets" => map_rows(&tx, "smap", "rule_sets", SAME_SET)?,
             "env_vars" => map_rows(&tx, "emap", "env_vars", SAME_ENV)?,
@@ -727,21 +794,16 @@ fn merge_into(
         stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
             .collect::<Result<Vec<(i64, i64)>, _>>()?
     };
-    let broken: i64 = scalar(&tx, "SELECT count(*) FROM pragma_foreign_key_check")?;
-    if broken > 0 {
-        return Err(StoreError::Database(rusqlite::Error::SqliteFailure(
-            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CONSTRAINT_FOREIGNKEY),
-            Some(format!(
-                "the restored data left {broken} rows without their parent row"
-            )),
-        )));
-    }
     let owner_id: i64 = scalar(&tx, "SELECT id FROM main.users WHERE role = 'owner'")?;
     tx.commit()?;
     conn.execute("DETACH DATABASE backup", [])?;
     let check: String = scalar(&conn, "PRAGMA integrity_check")?;
     verdict(&check)?;
-    Ok(RestoredDatabase { user_map, owner_id })
+    Ok(RestoredDatabase {
+        user_map,
+        owner_id,
+        dropped_rows,
+    })
 }
 
 fn copy_audit(conn: &Connection) -> Result<(), StoreError> {

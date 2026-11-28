@@ -141,6 +141,20 @@ struct Inner {
     /// last. The tool may still hold one of them when the next exchange answers, so each stays
     /// swapped, with the real token of its own exchange, until [`RETIRED_KEPT`] newer ones exist.
     retired: Mutex<BTreeMap<(&'static str, Slot), VecDeque<String>>>,
+    /// The profiles whose slots the start's load could not read because the store did not answer
+    /// and that have not been asked again: the first exchange of each one does.
+    unread: Mutex<BTreeSet<&'static str>>,
+}
+
+/// What reading a profile's slots from the store found.
+#[derive(Default)]
+struct Read {
+    /// Some slot holds a login.
+    kept: bool,
+    /// A login was there and cannot be used.
+    unreadable: bool,
+    /// A call did not answer.
+    store_down: bool,
 }
 
 /// A token found in an answer: its field, the real token, its stand-in and whether that is new.
@@ -289,6 +303,7 @@ impl Logins {
                 store_timeouts: AtomicU64::new(0),
                 slots: Mutex::new(BTreeMap::new()),
                 retired: Mutex::new(BTreeMap::new()),
+                unread: Mutex::new(BTreeSet::new()),
             }),
         }
     }
@@ -434,29 +449,23 @@ impl Logins {
         let mut store_down = false;
         let mut kept: BTreeSet<String> = BTreeSet::new();
         for profile in self.inner.profiles {
-            for slot in profile.slots() {
-                if store_down {
-                    // One call that did not answer is enough to know; the next would wait as long.
-                    continue;
-                }
-                match self.store(move |vault| vault.read(profile, slot.0)).await {
-                    Ok(Some(saved)) => {
-                        kept.insert(profile.id.to_owned());
-                        if self
-                            .install(profile, slot, &saved.stand_in, &saved.real, 0)
-                            .is_err()
-                        {
-                            unreadable.push(profile);
-                        }
-                    }
-                    Ok(None) => {}
-                    Err(VaultError::Damaged) => {
-                        kept.insert(profile.id.to_owned());
-                        unreadable.push(profile);
-                    }
-                    Err(VaultError::Unavailable) => store_down = true,
-                }
+            // One call that did not answer is enough to know; the next would wait as long.
+            if store_down {
+                continue;
             }
+            let read = self.read_missing(profile).await;
+            if read.kept {
+                kept.insert(profile.id.to_owned());
+            }
+            if read.unreadable {
+                unreadable.push(profile);
+            }
+            store_down = read.store_down;
+        }
+        if store_down {
+            // The first exchange of each service asks again.
+            self.unread()
+                .extend(self.inner.profiles.iter().map(|p| p.id));
         }
         // Only an answer from every slot says what is kept.
         if !store_down {
@@ -480,6 +489,60 @@ impl Logins {
                     self.notify(profile, problem);
                 }
             }
+        }
+    }
+
+    /// Reads the slots of `profile` that hold no stand-in yet and registers what the store keeps.
+    /// Stops at the first call the store does not answer.
+    async fn read_missing(&self, profile: &'static Profile) -> Read {
+        let mut read = Read::default();
+        for slot in profile.slots() {
+            if self.slots().contains_key(&(profile.id, slot.0)) {
+                read.kept = true;
+                continue;
+            }
+            match self.store(move |vault| vault.read(profile, slot.0)).await {
+                Ok(Some(saved)) => {
+                    read.kept = true;
+                    if self
+                        .install(profile, slot, &saved.stand_in, &saved.real, 0)
+                        .is_err()
+                    {
+                        read.unreadable = true;
+                    }
+                }
+                Ok(None) => {}
+                Err(VaultError::Damaged) => {
+                    read.kept = true;
+                    read.unreadable = true;
+                }
+                Err(VaultError::Unavailable) => {
+                    read.store_down = true;
+                    break;
+                }
+            }
+        }
+        read
+    }
+
+    fn unread(&self) -> std::sync::MutexGuard<'_, BTreeSet<&'static str>> {
+        self.inner
+            .unread
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Asks the store again for `profile`'s logins, the one time after a start where it did not
+    /// answer. It runs before the exchange's request is read, under the capture lock, so a
+    /// sign-in's capture does not write over a login kept earlier that is still good.
+    pub(crate) async fn read_again(&self, profile: &'static Profile) {
+        let _one_at_a_time = self.inner.capture.lock().await;
+        let read = self.read_missing(profile).await;
+        if read.kept {
+            self.inner.marker.note(profile.id, true);
+        }
+        if read.unreadable {
+            self.notify(profile, Problem::Unreadable);
         }
     }
 
@@ -1131,6 +1194,11 @@ impl ExchangeRewriter for Logins {
         let route = on_host
             .find(|route| route.method.accepts(method) && path_matches(&route.path, &path))?;
         let mut exchange = Exchange::new();
+        if self.unread().remove(route.profile.id) {
+            let logins = self.clone();
+            let profile = route.profile;
+            exchange = exchange.after(Box::pin(async move { logins.read_again(profile).await }));
+        }
         for field in route.endpoint.request_fields {
             exchange = exchange.swapping(*field);
         }

@@ -26,6 +26,7 @@ impl Store {
     /// A database or audit error.
     pub fn record_connection(&self, event: &ConnectionEvent) -> Result<(), StoreError> {
         let now = self.clock.now_ms();
+        let monotonic = self.clock.monotonic_ms();
         let limit = self.limits.connection_records_per_second;
         let (admitted, summary) = match &event.workspace {
             Some(workspace) => {
@@ -38,9 +39,9 @@ impl Store {
                 {
                     state.allowed.bump(now);
                 }
-                state.connections.admit(now, limit)
+                state.connections.admit(now, monotonic, limit)
             }
-            None => lock(&self.puddle_connections).admit(now, limit),
+            None => lock(&self.puddle_connections).admit(now, monotonic, limit),
         };
         if !admitted && summary.is_none() {
             return Ok(());
@@ -115,7 +116,7 @@ impl Store {
         }
     }
 
-    /// Whether the audit's lines are over [`Limits::audit_warn_bytes`].
+    /// Whether the audit's lines are over [`super::Limits::audit_warn_bytes`].
     ///
     /// # Errors
     /// A database error.
@@ -161,6 +162,7 @@ impl Store {
         let rules_expired = settle(rules_expired, &mut first_error);
         settle(self.flush_limits(), &mut first_error);
         let waiting_records_merged = settle(self.merge_waiting_connections(), &mut first_error);
+        let devices_removed = settle(self.prune_stopped_devices(), &mut first_error);
         let audit_records_pruned = settle(self.prune_audit_if_due(), &mut first_error);
         // Before the shrink, so that a shrink that fails (a full disk) never hides the warning.
         let audit_over_warn_size = settle(self.audit_over_warn_size(), &mut first_error);
@@ -180,6 +182,7 @@ impl Store {
             audit_file_shrunk_bytes,
             audit_over_warn_size,
             waiting_records_merged,
+            devices_removed,
         })
     }
 
@@ -239,17 +242,17 @@ impl Store {
     /// Writes the summaries of `connection` records over the limit that are due. They are taken
     /// out of memory first; when the write fails they are put back, so the next sweep writes them.
     fn flush_limits(&self) -> Result<(), StoreError> {
-        let now = self.clock.now_ms();
+        let monotonic = self.clock.monotonic_ms();
         let mut records = Vec::new();
         let mut taken = Vec::new();
         for (workspace, state) in lock(&self.workspaces).iter_mut() {
-            if let Some((ts, count)) = state.connections.roll(now) {
+            if let Some((ts, count)) = state.connections.roll(monotonic) {
                 let record = ConnectionRecord::suppressed_summary(ts, Some(workspace), count);
                 records.push(AuditRecord::connection(record));
                 taken.push(Flushed(Some(workspace.clone()), ts, count));
             }
         }
-        let rolled = lock(&self.puddle_connections).roll(now);
+        let rolled = lock(&self.puddle_connections).roll(monotonic);
         if let Some((ts, count)) = rolled {
             let record = ConnectionRecord::suppressed_summary(ts, None, count);
             records.push(AuditRecord::connection(record));
@@ -482,7 +485,7 @@ pub(super) fn audit_query_sql(
     if let Some(needle) = &filter.host_contains {
         clause(
             "instr(host, ?) > 0",
-            Some(Value::Text(needle.to_lowercase())),
+            Some(Value::Text(needle.to_ascii_lowercase())),
         );
     }
     if let Some(needle) = &filter.q {
@@ -492,11 +495,7 @@ pub(super) fn audit_query_sql(
         );
     }
     if let Some(category) = filter.category {
-        // The category is one whole line of the search text, never a part of another.
-        clause(
-            "instr(char(10) || search || char(10), char(10) || ? || char(10)) > 0",
-            Some(Value::Text(category.to_owned())),
-        );
+        clause("category = ?", Some(Value::Text(category.to_owned())));
     }
     sql.push_str(match cursor {
         AuditCursor::After(_) => " ORDER BY id LIMIT ?",
@@ -551,9 +550,9 @@ pub(super) fn append_by(
 ) -> Result<(), StoreError> {
     let line = record.to_line()?;
     conn.execute(
-        "INSERT INTO audit (ts, type, workspace_id, host, outcome, line, search, workspace_name,
-                            user_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,
+        "INSERT INTO audit (ts, type, workspace_id, host, outcome, line, search, category,
+                            workspace_name, user_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?10,
                  (SELECT name FROM workspace_names WHERE workspace_id = ?3),
                  coalesce((SELECT user_id FROM workspace_owners WHERE workspace_id = ?3),
                           CASE WHEN ?3 IS NULL THEN coalesce(?8, 1) ELSE ?9 END))",
@@ -566,7 +565,8 @@ pub(super) fn append_by(
             line,
             record.search_text(),
             user.map(UserId::get),
-            NOBODY
+            NOBODY,
+            record.category()
         ],
     )?;
     Ok(())

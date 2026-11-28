@@ -126,8 +126,9 @@ fn reseed(conn: &rusqlite::Connection, records: &[AuditRecord]) {
     {
         let mut insert = tx
             .prepare(
-                "INSERT INTO audit (ts, type, workspace_id, host, outcome, line, search, user_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)",
+                "INSERT INTO audit (ts, type, workspace_id, host, outcome, line, search, category,
+                                    user_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1)",
             )
             .unwrap();
         for record in records {
@@ -140,6 +141,7 @@ fn reseed(conn: &rusqlite::Connection, records: &[AuditRecord]) {
                     record.outcome().map(AuditOutcome::as_str),
                     record.to_line().unwrap(),
                     record.search_text(),
+                    record.category(),
                 ])
                 .unwrap();
         }
@@ -163,7 +165,7 @@ fn naive(records: &[AuditRecord], filter: &AuditFilter) -> Vec<i64> {
                 && filter.to.is_none_or(|t| r.ts() < t)
                 && filter.host_contains.as_ref().is_none_or(|h| {
                     r.host()
-                        .is_some_and(|host| host.contains(&h.to_lowercase()))
+                        .is_some_and(|host| host.contains(&h.to_ascii_lowercase()))
                 })
                 && filter.q.as_ref().is_none_or(|q| {
                     r.search_text()
@@ -391,6 +393,32 @@ fn filters_combine_and_the_host_is_case_folded() {
 }
 
 #[test]
+fn the_host_needle_folds_ascii_only_like_the_column_it_matches() {
+    let (_dir, store) = seeded(&[connection(
+        T0,
+        "a",
+        "kite.example.com",
+        ConnectionDecision::Allow,
+    )]);
+    let q = |needle: &str| {
+        ids(store
+            .audit_query_every_user(
+                &puddle_store::testing::all_users(),
+                &AuditFilter {
+                    host_contains: Some(needle.into()),
+                    ..AuditFilter::default()
+                },
+                AuditCursor::After(0),
+                100,
+            )
+            .unwrap())
+    };
+    assert_eq!(q("KITE"), [1]);
+    // The Kelvin sign lower-cases to an ASCII `k` under Unicode folding, and no host has it.
+    assert_eq!(q("\u{212A}ite"), Vec::<i64>::new());
+}
+
+#[test]
 fn the_category_filter_matches_company_network_connections_only() {
     let mut company = connection(T0, "a", "nexus.corp.example", ConnectionDecision::Allow);
     let mut refused = connection(T0 + 1, "a", "10.8.0.9", ConnectionDecision::Deny);
@@ -417,6 +445,12 @@ fn the_category_filter_matches_company_network_connections_only() {
         refused,
         lookalike,
         connection(T0 + 3, "a", "api.example.com", ConnectionDecision::Allow),
+        // A guest chooses its request method: one named like the category is not in it.
+        with_request(
+            connection(T0 + 4, "a", "api.example.com", ConnectionDecision::Allow),
+            "COMPANY_NETWORK",
+            "/",
+        ),
     ];
     let (_dir, store) = seeded(&records);
     let found = |category: Option<&'static str>| {
@@ -433,7 +467,7 @@ fn the_category_filter_matches_company_network_connections_only() {
             .unwrap())
     };
     assert_eq!(found(Some("company_network")), [1, 2]);
-    assert_eq!(found(None), [1, 2, 3, 4]);
+    assert_eq!(found(None), [1, 2, 3, 4, 5]);
 }
 
 #[test]
@@ -727,7 +761,10 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
                 ..AuditFilter::default()
             },
             AuditCursor::Before(None),
-            "USING INDEX audit_outcome (outcome=?)",
+            // Several filters have an index to search by, and with no statistics SQLite's pick
+            // among them follows the width of the table, which a column added to it moved. Any
+            // of them bounds the work; the plan must not be a scan.
+            "SEARCH audit USING INDEX audit_",
         ),
         (
             "last hour (all of it)",
@@ -837,7 +874,10 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
                 to: Some(last),
             },
             AuditCursor::Before(None),
-            "USING INDEX audit_outcome (outcome=?)",
+            // Several filters have an index to search by, and with no statistics SQLite's pick
+            // among them follows the width of the table, which a column added to it moved. Any
+            // of them bounds the work; the plan must not be a scan.
+            "SEARCH audit USING INDEX audit_",
         ),
         (
             "tail",

@@ -46,16 +46,34 @@ pub(super) type Violation = (String, Option<i64>, String, i64);
 pub(super) const UPGRADE_WAIT: std::time::Duration = std::time::Duration::from_secs(300);
 
 pub(super) fn migrate_with(conn: &mut Connection, migrations: &[&str]) -> Result<u32, StoreError> {
+    migrate_with_copy(conn, migrations, true)
+}
+
+/// Like [`migrate`], and leaves no `.pre-v<N>` copy: for a database that is itself a throwaway
+/// copy (a staged backup), where the rollback copy would only be one more file to clean up.
+pub(crate) fn migrate_without_copy(conn: &mut Connection) -> Result<u32, StoreError> {
+    migrate_with_copy(conn, MIGRATIONS, false)
+}
+
+fn migrate_with_copy(
+    conn: &mut Connection,
+    migrations: &[&str],
+    keep_copy: bool,
+) -> Result<u32, StoreError> {
     let normal: i64 = conn.pragma_query_value(None, "busy_timeout", |row| row.get(0))?;
     conn.busy_timeout(UPGRADE_WAIT)?;
-    let result = migrate_loop(conn, migrations);
+    let result = migrate_loop(conn, migrations, keep_copy);
     let restored = conn.busy_timeout(std::time::Duration::from_millis(
         u64::try_from(normal).unwrap_or(0),
     ));
     result.and_then(|start| restored.map(|()| start).map_err(StoreError::from))
 }
 
-pub(super) fn migrate_loop(conn: &mut Connection, migrations: &[&str]) -> Result<u32, StoreError> {
+fn migrate_loop(
+    conn: &mut Connection,
+    migrations: &[&str],
+    keep_copy: bool,
+) -> Result<u32, StoreError> {
     let supported = u32::try_from(migrations.len()).unwrap_or(u32::MAX);
     loop {
         let start = current_version(conn, supported)?;
@@ -66,7 +84,7 @@ pub(super) fn migrate_loop(conn: &mut Connection, migrations: &[&str]) -> Result
         // transaction) and only put in place under it, once the version is seen unchanged: a
         // process that lost the race to another one must not replace that one's copy with the
         // file it already upgraded.
-        let copy = if start > 0 {
+        let copy = if start > 0 && keep_copy {
             copy_before(conn, supported)?
         } else {
             None
@@ -99,7 +117,8 @@ pub(super) fn current_version(conn: &Connection, supported: u32) -> Result<u32, 
 }
 
 /// Runs the steps after `start` in one write transaction. Returns `false`, changing nothing,
-/// when the file is no longer at `start` once the lock is held.
+/// when the file is no longer at `start` once the lock is held, or another process has committed
+/// since `copy` was taken.
 pub(super) fn run_steps(
     conn: &mut Connection,
     migrations: &[&str],
@@ -109,6 +128,11 @@ pub(super) fn run_steps(
     let supported = u32::try_from(migrations.len()).unwrap_or(u32::MAX);
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     if current_version(&tx, supported)? != start {
+        return Ok(false);
+    }
+    // A commit by another process of the same version since the copy was taken is missing from
+    // it: take the copy again.
+    if copy.is_some_and(|copy| copy.data_version != data_version(&tx).unwrap_or(-1)) {
         return Ok(false);
     }
     // Violations a step did not cause (an older bug, a hand edit) never block the upgrade.
@@ -149,16 +173,27 @@ pub(super) struct PreUpgradeCopy {
     pub(super) made: PathBuf,
     pub(super) db: PathBuf,
     pub(super) target: u32,
+    /// `PRAGMA data_version` of the connection before the copy was taken; it changes when another
+    /// connection commits.
+    pub(super) data_version: i64,
+}
+
+fn data_version(conn: &Connection) -> rusqlite::Result<i64> {
+    conn.pragma_query_value(None, "data_version", |row| row.get(0))
 }
 
 impl PreUpgradeCopy {
     /// Renames the copy to `<file>.pre-v<target>` (replacing a copy a failed earlier run left)
-    /// and deletes all but the newest [`BACKUPS_KEPT`] copies.
+    /// and deletes all but the newest [`BACKUPS_KEPT`] copies. An old copy that cannot be deleted
+    /// (on Windows, one another program holds open) is logged: it must not stop the host starting.
     fn put_in_place(&self) -> Result<(), StoreError> {
         let backup = backup_path(&self.db, self.target);
         std::fs::rename(&self.made, &backup)
             .map_err(|err| StoreError::Backup(format!("{}: {err}", backup.display())))?;
-        prune_backups(&self.db).map_err(|err| StoreError::Backup(err.to_string()))
+        if let Err(error) = prune_backups(&self.db) {
+            tracing::warn!(%error, "old upgrade copy not deleted");
+        }
+        Ok(())
     }
 
     /// Deletes the copy if it was not put in place.
@@ -182,6 +217,7 @@ pub(super) fn copy_before(
         return Ok(None);
     };
     let db = PathBuf::from(path);
+    let data_version = data_version(conn)?;
     let mut name = backup_path(&db, target).into_os_string();
     name.push(format!(
         ".{}-{}.partial",
@@ -192,6 +228,7 @@ pub(super) fn copy_before(
         made: PathBuf::from(name),
         db,
         target,
+        data_version,
     };
     // `VACUUM INTO` refuses an existing file.
     copy.discard();

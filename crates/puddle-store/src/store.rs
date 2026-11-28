@@ -6,6 +6,7 @@
 //! the same transaction (R-8). Lock order, where two are held: `conn`, then `workspaces`.
 
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
@@ -38,10 +39,12 @@ mod admin;
 mod audit;
 mod audit_retention;
 mod devices;
-pub(crate) use devices::insert_device;
+pub(crate) use devices::{insert_device, revoke_devices_in};
+#[cfg(test)]
+mod decision_tests;
 mod environment;
 #[cfg(test)]
-mod failures;
+mod failure_tests;
 mod identities;
 mod interception;
 mod learned;
@@ -54,6 +57,8 @@ mod sets;
 mod shell_init;
 mod ssh_agent;
 mod ssh_agent_asks;
+#[cfg(test)]
+mod test_fixtures;
 pub(crate) mod users;
 mod workspace_git;
 mod workspaces;
@@ -181,6 +186,8 @@ pub struct SweepReport {
     pub audit_over_warn_size: bool,
     /// Records of waiting requests merged into summaries by the per-workspace cap.
     pub waiting_records_merged: u64,
+    /// Revoked and expired devices deleted once they had been stopped for 30 days.
+    pub devices_removed: u64,
 }
 
 /// What deleting a workspace removed (R-21).
@@ -850,18 +857,28 @@ fn open_pending_sql() -> String {
 
 /// Open rows, most recent first, grouped by registrable domain in that order.
 fn group_by_domain(rows: Vec<PendingRow>) -> Vec<InboxGroup> {
-    let mut groups: Vec<InboxGroup> = Vec::new();
+    // Per domain, the rows in order; `order` keeps the domains by their first row.
+    let mut by_domain: HashMap<String, Vec<PendingRow>> = HashMap::new();
+    let mut order: Vec<String> = Vec::new();
     for row in rows {
         let domain = registrable_domain(&row.host);
-        match groups.iter_mut().find(|g| g.registrable_domain == domain) {
-            Some(group) => group.rows.push(row),
-            None => groups.push(InboxGroup {
-                registrable_domain: domain,
-                rows: vec![row],
-            }),
+        match by_domain.entry(domain) {
+            Entry::Occupied(mut group) => group.get_mut().push(row),
+            Entry::Vacant(slot) => {
+                order.push(slot.key().clone());
+                slot.insert(vec![row]);
+            }
         }
     }
-    groups
+    order
+        .into_iter()
+        .filter_map(|domain| {
+            by_domain.remove(&domain).map(|rows| InboxGroup {
+                registrable_domain: domain,
+                rows,
+            })
+        })
+        .collect()
 }
 
 impl Policy for Store {

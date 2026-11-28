@@ -15,16 +15,18 @@ use first_steps::{V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V
 
 #[cfg(test)]
 pub(crate) use migrations::migrate_up_to;
-pub(crate) use migrations::{known_trigger_names, migrate, remove_stale_partial_copies};
+pub(crate) use migrations::{
+    known_trigger_names, migrate, migrate_without_copy, remove_stale_partial_copies,
+};
 
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
 const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24, V25, V26, V27, V28, V29, V30, V31, V32, V33, V34,
+    V22, V23, V24, V25, V26, V27, V28, V29, V30, V31, V32, V33, V34, V35,
 ];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 34;
+pub const SCHEMA_VERSION: u32 = 35;
 
 /// The name a workspace had when an audit record was written, so a record of a renamed or
 /// deleted workspace still reads as the user knew it. `workspace_names` holds the current name
@@ -589,5 +591,33 @@ const V34: &str = "
 ALTER TABLE workspace_repos ADD COLUMN push_block TEXT
     CHECK (push_block IS NULL OR push_block IN ('archived', 'read'));
 ";
+/// The destination category of a connection record gets a column of its own, so the category
+/// filter compares a column instead of matching a line of the search text (a guest chooses its
+/// request method, which is a line there). Existing rows are backfilled from their lines. The
+/// audit size now counts the `search` and `category` text as well as the line, which a guest's
+/// path could fill without being counted; the total is recomputed.
+const V35: &str = "
+ALTER TABLE audit ADD COLUMN category TEXT;
+UPDATE audit SET category = nullif(json_extract(line, '$.category'), '') WHERE type = 'connection';
+DROP TRIGGER audit_size_insert;
+DROP TRIGGER audit_size_delete;
+CREATE TRIGGER audit_size_insert AFTER INSERT ON audit
+BEGIN
+    UPDATE audit_size SET bytes = bytes + length(CAST(NEW.line AS BLOB))
+        + coalesce(length(CAST(NEW.search AS BLOB)), 0)
+        + coalesce(length(CAST(NEW.category AS BLOB)), 0) WHERE id = 1;
+END;
+CREATE TRIGGER audit_size_delete AFTER DELETE ON audit
+BEGIN
+    UPDATE audit_size SET bytes = bytes - length(CAST(OLD.line AS BLOB))
+        - coalesce(length(CAST(OLD.search AS BLOB)), 0)
+        - coalesce(length(CAST(OLD.category AS BLOB)), 0) WHERE id = 1;
+END;
+UPDATE audit_size SET bytes = (
+    SELECT coalesce(sum(length(CAST(line AS BLOB)) + coalesce(length(CAST(search AS BLOB)), 0)
+                        + coalesce(length(CAST(category AS BLOB)), 0)), 0) FROM audit
+) WHERE id = 1;
+";
+
 #[cfg(test)]
 mod tests;

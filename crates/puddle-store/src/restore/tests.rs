@@ -178,6 +178,11 @@ fn an_older_schema_is_accepted_and_migrated_forward() {
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
     assert_eq!(version, SCHEMA_VERSION);
+    let files: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(files, ["puddle.db"], "no rollback copy of a staged file");
 }
 
 #[test]
@@ -439,6 +444,34 @@ fn replace_makes_the_carried_rows_the_backups_and_keeps_the_people() {
 }
 
 #[test]
+fn replace_drops_the_per_workspace_rows_that_only_this_machine_has_and_add_keeps_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let (here, there) = pair(dir.path());
+    sql(
+        &here,
+        "INSERT INTO workspace_names (workspace_id, name) VALUES ('w9', 'Nine');
+         INSERT INTO env_vars (user_id, workspace_id, name, kind, value, changed_at)
+             VALUES (1, 'w9', 'KEEP', 'plain', 'v', 1);",
+    );
+    let names = "SELECT group_concat(workspace_id) FROM (SELECT workspace_id FROM workspace_names ORDER BY 1)";
+    let env = "SELECT count(*) FROM env_vars WHERE name = 'KEEP'";
+    let text = |path: &Path| -> String {
+        Connection::open(path)
+            .unwrap()
+            .query_row(names, [], |r| r.get(0))
+            .unwrap()
+    };
+    let added = dir.path().join("added.db");
+    restore_database(&here, &there, &added, RestoreMode::Add).unwrap();
+    assert_eq!(text(&added), "w1,w9");
+    assert_eq!(count(&added, env), 1);
+    let replaced = dir.path().join("replaced.db");
+    restore_database(&here, &there, &replaced, RestoreMode::Replace).unwrap();
+    assert_eq!(text(&replaced), "w1");
+    assert_eq!(count(&replaced, env), 0);
+}
+
+#[test]
 fn a_users_password_here_survives_a_restore_of_the_same_name() {
     let dir = tempfile::tempdir().unwrap();
     let (here, there) = pair(dir.path());
@@ -539,7 +572,7 @@ fn a_backup_missing_a_table_this_schema_has_adds_nothing_from_it() {
 }
 
 #[test]
-fn a_present_database_with_a_dangling_reference_is_not_restored_over() {
+fn a_dangling_reference_already_here_does_not_stop_a_restore() {
     let dir = tempfile::tempdir().unwrap();
     let (here, there) = pair(dir.path());
     // A rule that names a rule set that is not there, as a damaged file might hold.
@@ -550,12 +583,89 @@ fn a_present_database_with_a_dangling_reference_is_not_restored_over() {
              VALUES ('set', 999, 'exact', 'dangling.example.org', 'allow', 1, 'cli', 1);",
     );
     let dest = dir.path().join("new.db");
-    let err = restore_database(&here, &there, &dest, RestoreMode::Add).unwrap_err();
-    assert!(
-        err.to_string().contains("without their parent row"),
-        "{err}"
+    let outcome = restore_database(&here, &there, &dest, RestoreMode::Add).unwrap();
+    assert_eq!(outcome.dropped_rows, 0);
+    assert_eq!(
+        count(
+            &dest,
+            "SELECT count(*) FROM rules WHERE pattern = 'new.example.org'"
+        ),
+        1,
+        "the backup's rows are added"
     );
-    assert!(!dest.exists());
+    assert_eq!(
+        count(
+            &dest,
+            "SELECT count(*) FROM rules WHERE pattern = 'dangling.example.org'"
+        ),
+        1,
+        "the old orphan is left as it was"
+    );
+}
+
+#[test]
+fn a_backup_row_that_breaks_a_constraint_is_counted_not_hidden() {
+    let dir = tempfile::tempdir().unwrap();
+    let (here, there) = pair(dir.path());
+    // Two rules of a damaged backup that name a user the backup does not have.
+    sql(
+        &there,
+        "PRAGMA foreign_keys = OFF;
+         INSERT INTO rules (scope, pattern_kind, pattern, effect, created_at, created_by, user_id)
+             VALUES ('global', 'exact', 'orphan-1.example.org', 'allow', 1, 'cli', 999),
+                    ('global', 'exact', 'orphan-2.example.org', 'allow', 1, 'cli', 999);",
+    );
+    let dest = dir.path().join("new.db");
+    let outcome = restore_database(&here, &there, &dest, RestoreMode::Add).unwrap();
+    assert_eq!(outcome.dropped_rows, 2);
+    assert_eq!(
+        count(
+            &dest,
+            "SELECT count(*) FROM rules WHERE pattern LIKE 'orphan-%'"
+        ),
+        0
+    );
+}
+
+#[test]
+fn every_table_of_the_schema_is_carried_or_named_as_not_carried() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    open(&path);
+    let conn = Connection::open(&path).unwrap();
+    let mut stmt = conn
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+        .unwrap();
+    let schema: Vec<String> = stmt
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    let carried: Vec<&str> = tables().iter().map(|t| t.name).collect();
+    let mut cleared = CLEAR_ORDER.to_vec();
+    cleared.sort_unstable();
+    let mut carried_sorted = carried.clone();
+    carried_sorted.sort_unstable();
+    assert_eq!(cleared, carried_sorted, "Replace clears what Add carries");
+    let unclassified: Vec<&String> = schema
+        .iter()
+        .filter(|n| {
+            !carried.contains(&n.as_str()) && !NOT_CARRIED.iter().any(|(name, _)| name == n)
+        })
+        .collect();
+    assert!(
+        unclassified.is_empty(),
+        "put each in tables() or NOT_CARRIED in restore.rs: {unclassified:?}"
+    );
+    let stale: Vec<&str> = NOT_CARRIED
+        .iter()
+        .map(|(name, _)| *name)
+        .filter(|name| !schema.iter().any(|n| n == name) || carried.contains(name))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "NOT_CARRIED names a table that is gone or carried: {stale:?}"
+    );
 }
 
 #[test]

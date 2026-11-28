@@ -37,6 +37,9 @@ pub enum StoreError {
     /// The copy made before migrating could not be written or pruned.
     #[error("could not back up the database before migrating: {0}")]
     Backup(String),
+    /// A file path SQLite takes as text is not valid UTF-8, so SQLite would open another file.
+    #[error("the path {} is not valid UTF-8", .0.display())]
+    PathNotUtf8(std::path::PathBuf),
     /// A stored row doesn't parse (edited by hand, or a bug).
     #[error("stored {table} row {id} is invalid: {reason}")]
     Corrupt {

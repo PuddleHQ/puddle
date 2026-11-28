@@ -178,6 +178,11 @@ fn an_older_schema_is_accepted_and_migrated_forward() {
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
     assert_eq!(version, SCHEMA_VERSION);
+    let files: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(files, ["puddle.db"], "no rollback copy of a staged file");
 }
 
 #[test]

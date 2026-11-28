@@ -56,6 +56,40 @@ fn destination_path_with_a_quote_works() {
 }
 
 #[test]
+fn a_failure_after_the_copy_removes_the_copy() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("puddle.db");
+    drop(open(&src));
+    Connection::open(&src)
+        .unwrap()
+        .execute_batch(
+            "CREATE TRIGGER keep_hashes BEFORE DELETE ON account_passwords
+             BEGIN SELECT RAISE(ABORT, 'no'); END;
+             INSERT INTO account_passwords (user_id, hash, changed_at)
+             SELECT id, 'CANARY-hash', 0 FROM users;",
+        )
+        .unwrap();
+    let dest = dir.path().join("copy.db");
+    assert!(backup_database(&src, &dest).is_err());
+    assert!(!dest.exists(), "a copy with password hashes was left");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_destination_that_is_not_utf8_is_refused_and_creates_nothing() {
+    use std::os::unix::ffi::OsStrExt;
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("puddle.db");
+    drop(open(&src));
+    let dest = dir.path().join(std::ffi::OsStr::from_bytes(b"copy-\xff.db"));
+    assert!(matches!(
+        backup_database(&src, &dest),
+        Err(StoreError::PathNotUtf8(_))
+    ));
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+}
+
+#[test]
 fn integrity_answer_other_than_ok_is_corruption() {
     assert!(verdict("ok").is_ok());
     let err = verdict("row 3 missing from index i").unwrap_err();

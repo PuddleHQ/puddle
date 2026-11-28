@@ -2,6 +2,8 @@
 //! Starting the host, serving the API, and the system checks.
 
 use super::*;
+use puddle_services::owned::OwnedWorkspace;
+use puddle_store::UserId;
 
 #[cfg(target_os = "linux")]
 #[test]
@@ -425,7 +427,10 @@ async fn a_workspace_that_is_not_running_cannot_be_stopped_or_attached_to_and_an
     // So does the check that runs before a delete, for a workspace the host does not know.
     let unknown = host
         .workspaces()
-        .delete_check(&WorkspaceId::new("nobody").unwrap())
+        .delete_check(&OwnedWorkspace::for_test(
+            UserId::OWNER,
+            &WorkspaceId::new("nobody").unwrap(),
+        ))
         .await;
     assert!(
         matches!(

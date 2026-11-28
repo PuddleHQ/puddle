@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use puddle_host::{
     HostError, HostOptions, HostShutdown, MsbFactory, RuntimeFactory, SystemPlatform,
 };
-use puddle_lifecycle::LifecycleError;
+use puddle_lifecycle::{LifecycleError, ShutdownSignals};
 use puddle_log::ScopedFilter;
 use puddle_types::Problems;
 use tauri::{AppHandle, Manager, RunEvent, Runtime};
@@ -21,6 +21,7 @@ use puddle_settings::ClipboardRead;
 use puddle_types::WorkspaceId;
 
 use crate::sandbox_window::{self, Hooks, NewWindowReport, SandboxWindows, Target, WindowSettings};
+use crate::signals::quit_on_signals;
 use crate::window::{MAIN_LABEL, OpenExternal, Refused, open_main};
 use crate::{crash, desktop, links};
 
@@ -336,6 +337,24 @@ where
     let mut host = HostOptions::system();
     if let Some(launcher) = &launcher {
         host.launcher = launcher.clone();
+    }
+    // Before the host starts: a signal during the start would end the process the default way.
+    let signals = tauri::async_runtime::block_on(async { ShutdownSignals::install() });
+    match signals {
+        Err(err) => tracing::warn!(%err, "a shutdown signal will not stop the VMs"),
+        Ok(signals) => {
+            let quitting = app.clone();
+            #[expect(
+                clippy::exit,
+                reason = "a second signal means the stop hangs; the next start reconciles the VMs"
+            )]
+            let give_up = || std::process::exit(1);
+            tauri::async_runtime::spawn(quit_on_signals(
+                signals,
+                move || quitting.exit(0),
+                give_up,
+            ));
+        }
     }
     let backend = tauri::async_runtime::block_on(source.start_with(options, factory, host))?;
     if let Some(launcher) = launcher {

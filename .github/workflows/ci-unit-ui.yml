@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The UI unit tier of ci.yml (job `unit-ui`), a reusable workflow so ci.yml stays under 1000 lines.
+# Called from ci.yml; its `if` (scope verdict, event) lives on the calling job. The environment below is a copy of ci.yml's,
+# because a called workflow does not inherit it: change both together.
+name: ci-unit-ui
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  # Line tables only: backtraces and coverage keep file:line, while the test binaries that link
+  # the msb SDK (puddle-vm-tests) stay small enough for the runner's disk (full debug info filled
+  # it: `ld terminated with signal 7 [Bus error]`).
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  # The commit the diff-coverage gate measures from: the PR's base, the merge queue's base, or the push's
+  # previous head (empty or unknown, e.g. a new branch or a manual run: scripts/check.sh uses the merge
+  # base with origin/develop).
+  DIFF_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+
+jobs:
+  # The light CI mode's UI unit tier (scope `unit_ui`): the `ui` job's UI gate (format, lint, types, unit and component tests
+  # with coverage, build) without the licences and end-to-end steps. Off the mode it skips.
+  unit-ui:
+    name: unit (UI format, lint, types, unit tests)
+    permissions:
+      contents: read
+      actions: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the diff-coverage gate needs the base commit
+      - name: Toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install && rustc --version
+      - name: Node for the UI
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Playwright browsers cache
+        id: browsers
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
+      - name: apt package cache
+        uses: ./.github/actions/apt-debs-cache
+        with:
+          name: ui-chromium
+      - name: Playwright Chromium and its system libraries
+        timeout-minutes: 10
+        run: |
+          ci/apt-setup.sh
+          cd ui
+          npm ci --ignore-scripts --no-audit --no-fund
+          ../ci/apt-retry.sh npx playwright install-deps chromium
+          if [ "${{ steps.browsers.outputs.cache-hit }}" != true ]; then
+            npx playwright install chromium
+          fi
+      - name: UI (format, lint, types, unit and component tests with coverage, build)
+        run: scripts/check.sh ui
+      - name: Cancel the rest of the merge group
+        if: ${{ failure() && github.event_name == 'merge_group' }}
+        continue-on-error: true
+        uses: ./.github/actions/cancel-group

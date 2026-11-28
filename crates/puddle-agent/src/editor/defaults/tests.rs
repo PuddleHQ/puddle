@@ -475,6 +475,95 @@ fn a_removal_alone_edits_the_file_without_a_merge() {
     assert!(text.contains("\"b\": 2"), "{text}");
 }
 
+#[test]
+fn a_refused_settings_merge_is_not_remembered_and_the_defaults_come_back_once_the_file_is_fixed() {
+    let rig = Rig::new();
+    let twice = r#"{"window.autoDetectColorScheme": false, "window.autoDetectColorScheme": true}"#;
+    std::fs::write(rig.user("settings.json"), twice).unwrap();
+    rig.plan(&dark(None));
+    apply(&rig.server);
+    assert_eq!(read_applied(&state_path(&rig.server)), Applied::default());
+    std::fs::write(rig.user("settings.json"), "{}").unwrap();
+    apply(&rig.server);
+    let settings = rig.settings();
+    assert_eq!(settings["workbench.colorTheme"], "Solarized Dark");
+    assert_eq!(settings["window.autoDetectColorScheme"], false);
+}
+
+#[test]
+#[cfg(unix)]
+fn a_settings_write_that_fails_is_not_remembered_and_is_tried_again() {
+    use std::os::unix::fs::PermissionsExt;
+    let rig = Rig::new();
+    rig.plan(&dark(Some(14)));
+    let folder = rig.user("");
+    let open = std::fs::metadata(&folder).unwrap().permissions();
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o500)).unwrap();
+    assert!(
+        std::fs::write(rig.user("probe"), "").is_err(),
+        "the folder must refuse writes for this test"
+    );
+    apply(&rig.server);
+    assert_eq!(read_applied(&state_path(&rig.server)), Applied::default());
+    std::fs::set_permissions(&folder, open).unwrap();
+    apply(&rig.server);
+    let settings = rig.settings();
+    assert_eq!(settings["workbench.colorTheme"], "Solarized Dark");
+    assert_eq!(settings["editor.fontSize"], 14);
+}
+
+#[test]
+#[cfg(unix)]
+fn a_key_bindings_write_that_fails_is_not_remembered_and_is_tried_again() {
+    use std::os::unix::fs::PermissionsExt;
+    let rig = Rig::new();
+    rig.plan(&EditorDefaults {
+        keybindings: Some(bindings(&[("ctrl+k", "b")])),
+        ..EditorDefaults::default()
+    });
+    let folder = rig.user("");
+    let open = std::fs::metadata(&folder).unwrap().permissions();
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o500)).unwrap();
+    assert!(
+        std::fs::write(rig.user("probe"), "").is_err(),
+        "the folder must refuse writes for this test"
+    );
+    apply(&rig.server);
+    assert_eq!(
+        read_applied(&state_path(&rig.server)).keybindings,
+        Vec::<Value>::new()
+    );
+    std::fs::set_permissions(&folder, open).unwrap();
+    apply(&rig.server);
+    let list: Value =
+        serde_json::from_slice(&std::fs::read(rig.user("keybindings.json")).unwrap()).unwrap();
+    assert_eq!(list.as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn an_extension_whose_id_starts_another_installed_one_is_still_installed() {
+    let rig = Rig::new();
+    rig.plan(&EditorDefaults {
+        extensions: vec!["acme.tool".to_owned(), "acme.other".to_owned()],
+        ..EditorDefaults::default()
+    });
+    let extensions = rig.dir.path().join("data/extensions");
+    std::fs::create_dir(extensions.join("acme.tool-extra-1.0.0")).unwrap();
+    std::fs::create_dir(extensions.join("acme.other-2.1.0-linux-x64")).unwrap();
+    let outcome = apply(&rig.server);
+    assert_eq!(outcome.install, vec!["acme.tool".to_owned()]);
+}
+
+#[test]
+fn a_folder_names_an_extension_only_as_id_dash_version() {
+    assert!(is_folder_of("acme.tool-1.0.0", "acme.tool"));
+    assert!(!is_folder_of("acme.tool-extra-1.0.0", "acme.tool"));
+    assert!(!is_folder_of("acme.tool", "acme.tool"));
+    assert!(!is_folder_of("acme.tool-", "acme.tool"));
+    assert!(!is_folder_of("acme.tool1.0.0", "acme.tool"));
+    assert!(!is_folder_of("other.acme.tool-1.0.0", "acme.tool"));
+}
+
 fn custom(text: &str) -> EditorDefaults {
     EditorDefaults {
         settings: Some(text.to_owned()),

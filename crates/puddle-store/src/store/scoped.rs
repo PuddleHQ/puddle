@@ -99,8 +99,9 @@ impl UserStore<'_> {
     /// transaction.
     ///
     /// # Errors
-    /// [`StoreError::UnknownPending`] for a row of another user's workspace, and the errors of
-    /// [`Store::resolve_pending_by`] for the rest.
+    /// [`StoreError::UnknownPending`] for a row of another user's workspace, and, for the rest,
+    /// [`StoreError::PendingNotOpen`], [`StoreError::Pattern`], [`StoreError::ExpiryNotInFuture`],
+    /// [`StoreError::ExactAllowOnly`], [`StoreError::SystemActor`], or a database error.
     pub fn resolve_pending(
         &self,
         id: PendingId,
@@ -129,8 +130,8 @@ impl UserStore<'_> {
     /// Switches this user's rule on method and path on or off (R-65).
     ///
     /// # Errors
-    /// [`StoreError::UnknownRequestRule`] for a rule that is not theirs, and the errors of
-    /// [`Store::set_request_rule_enabled_by`] for the rest.
+    /// [`StoreError::UnknownRequestRule`] for a rule that is not theirs, and, for the rest,
+    /// [`StoreError::SystemActor`] or a database error.
     pub fn set_request_rule_enabled(
         &self,
         id: i64,

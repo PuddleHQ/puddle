@@ -64,7 +64,10 @@ tests run with fakes.
 
 Each table lists a crate's responsibility, the interfaces other crates use, and the Puddle crates
 it depends on under `[dependencies]` (dev-dependencies left out). The last column is taken from the
-crate's `Cargo.toml`; `cargo tree -p <crate> -e normal --depth 1` shows the same list.
+crate's `Cargo.toml`; `cargo tree -p <crate> -e normal --depth 1` shows the same list. The column is generated: `scripts/check-layering.py --write` rewrites it, and the `layering` gate
+(`scripts/check.sh layering`) fails a cell that differs from Cargo and an edge the pages forbid: `puddle-proxy`
+to `puddle-store`, `puddle-inject` or `puddle-logins`; the msb SDK in `[dependencies]` of any product crate but
+`puddle-compute-msb`; a product crate to a test crate; `puddle-agent` beyond its list.
 
 ### 5.2.1 Entry points
 

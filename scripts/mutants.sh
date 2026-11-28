@@ -29,7 +29,7 @@
 # it depends on (normal, build and dev, transitively), Cargo.lock, rust-toolchain.toml,
 # .cargo/mutants.toml, .config/nextest.toml, this script and the cargo-mutants version. The key is
 # conservative on purpose (a change to a dependency re-runs every crate above it) and a dirty tree
-# never uses it. Only a passing run is recorded, so a cache never hides a survivor. `--uncached` runs
+# never uses it. A failed or empty `cargo tree` gives no key: `--key` exits 1 and a sweep runs that crate uncached and records nothing. Only a passing run is recorded, so a cache never hides a survivor. `--uncached` runs
 # everything and, when a crate has a cache entry, says so if the two outcomes differ (the weekly run).
 #
 # Cargo home: `diff` and `sweep` run cargo with a private CARGO_HOME, a fresh directory per run that is removed
@@ -105,14 +105,23 @@ check_list() {
 
 # The workspace crates a crate depends on, itself included, one per line.
 closure() {
-    "$cargo" tree -p "$1" -e normal,build,dev --prefix none --offline 2>/dev/null |
-        awk '$1 ~ /^puddle/ { print $1 }' | sort -u
+    tree=$("$cargo" tree -p "$1" -e normal,build,dev --prefix none --offline 2>/dev/null) || {
+        echo "mutants: cargo tree -p $1 failed, so the crate has no cache key" >&2
+        return 1
+    }
+    list=$(echo "$tree" | awk '$1 ~ /^puddle/ { print $1 }' | sort -u)
+    [ -n "$list" ] || {
+        echo "mutants: cargo tree -p $1 lists no puddle crate, so the crate has no cache key" >&2
+        return 1
+    }
+    echo "$list"
 }
 
 # The cache key of a crate, or of one file unit of it ($2, `-` for none), or of one shard of it ($3): a hash of the committed trees of its closure and the shared inputs.
 crate_key() {
+    deps=$(closure "$1") || return 1
     {
-        for c in $(closure "$1"); do
+        for c in $deps; do
             printf '%s %s\n' "$c" "$(git rev-parse "HEAD:crates/$c")"
         done
         # The files the run covers (the unit's one file, else every listed file): a unit's key does not
@@ -263,8 +272,9 @@ sweep)
         fi
         key=
         if [ -n "$cache" ] && [ -z "$(git status --porcelain --untracked-files=no)" ]; then
-            key=$(crate_key "$c" "${f:--}" "$us")
-            if [ "$uncached" = 0 ] && [ -e "$cache/$name-$key.ok" ]; then
+            # No usable key (cargo tree failed): run the crate uncached and record nothing.
+            key=$(crate_key "$c" "${f:--}" "$us") || key=
+            if [ -n "$key" ] && [ "$uncached" = 0 ] && [ -e "$cache/$name-$key.ok" ]; then
                 echo "mutants: $name unchanged since a passing run ($key), skipped"
                 continue
             fi

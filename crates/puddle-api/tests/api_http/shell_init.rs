@@ -20,6 +20,12 @@ async fn stopped(api: &Api, name: &str) {
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
     api.workspaces.idle().await;
+    // A create ends running; this one is to be stopped.
+    let reply = api
+        .send("POST", &format!("/api/workspaces/{name}/stop"), None)
+        .await;
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    api.workspaces.idle().await;
 }
 
 /// A workspace that is running.

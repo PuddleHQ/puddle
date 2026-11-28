@@ -583,6 +583,21 @@ fn merged_files_render_their_spec_and_are_counted() {
 }
 
 #[test]
+fn a_session_owned_file_is_announced_just_before_its_own_line() {
+    let plan = BootPlan::builder(&ImageConfig::default())
+        .file(file("/opt/g/a", "x").with_session_owner())
+        .file(file("/opt/g/b", "y"))
+        .build()
+        .unwrap();
+    let r = String::from_utf8(plan.render()).unwrap();
+    assert!(
+        r.contains("\npuddle_session_owned '/opt/g/a'\npuddle_file '/opt/g/a' 0644 "),
+        "{r}"
+    );
+    assert_eq!(r.matches("puddle_session_owned").count(), 1, "{r}");
+}
+
+#[test]
 fn a_kept_file_renders_as_its_path_alone() {
     let plan = BootPlan::builder(&ImageConfig::default())
         .file(GuestFile::kept(

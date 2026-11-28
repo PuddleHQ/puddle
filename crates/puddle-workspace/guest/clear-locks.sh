@@ -108,17 +108,32 @@ renamed_since_checkout() {
     tail -n +"${first:-1}" "$1" | grep -aq "$(printf '\t')Branch: renamed "
 }
 
-# True when commit $2 exists in the object store of git dir $1. HEAD is zero-filled, so git
-# cannot open the repository itself: a scratch git dir borrows the object store instead.
+# Whether commit $2 exists in the object store of git dir $1: 0 yes, 1 no, 2 git itself failed
+# (killed, not started, any other error), which says nothing about the commit. HEAD is zero-filled,
+# so git cannot open the repository itself: a scratch git dir borrows the object store instead.
+# Git says a missing object with exit 128 and "Not a valid object name".
 commit_exists() {
-    t=$(mktemp -d) || return 1
+    t=$(mktemp -d) || return 2
     mkdir "$t/refs"
     printf 'ref: refs/heads/x\n' >"$t/HEAD"
-    GIT_DIR=$t GIT_OBJECT_DIRECTORY=$1/objects git cat-file -e "${2}^{commit}" 2>/dev/null
+    err=$(GIT_DIR=$t GIT_OBJECT_DIRECTORY=$1/objects git cat-file -e "${2}^{commit}" 2>&1)
     rc=$?
     rm -f "$t/HEAD"
     rmdir "$t/refs" "$t"
-    return $rc
+    case $rc in
+        0) return 0 ;;
+        1) return 1 ;;
+        128) case $err in *'Not a valid object name'*) return 1 ;; esac ;;
+    esac
+    return 2
+}
+
+# Whether $1 is a valid branch name: 0 yes, 1 no, 2 git itself failed.
+branch_name_ok() {
+    git check-ref-format "refs/heads/$1" 2>/dev/null
+    rc=$?
+    [ $rc -le 1 ] && return $rc
+    return 2
 }
 
 # Moves the finished file $1 over $2, owned like the git dir $3 (the script runs as root).
@@ -157,10 +172,18 @@ repair_head() {
         problem "$shown" "HEAD is damaged and logs/HEAD has no readable last entry"
         return 0
     fi
-    if ! commit_exists "$cd_" "$sha"; then
-        problem "$shown" "HEAD is damaged and the last commit in logs/HEAD ($sha) is not in the repository"
-        return 0
-    fi
+    commit_exists "$cd_" "$sha"
+    case $? in
+        0) ;;
+        1)
+            problem "$shown" "HEAD is damaged and the last commit in logs/HEAD ($sha) is not in the repository"
+            return 0
+            ;;
+        *)
+            fail "$shown" "git failed while looking for the last commit in logs/HEAD ($sha), so HEAD was left alone"
+            return 0
+            ;;
+    esac
     entry=$(grep -a "$(printf '\t')checkout: moving from .* to " "$log" | tail -n 1 | cut -f 2- | sed 's/^checkout: moving from .* to //')
     named=no
     if [ -z "$entry" ]; then
@@ -175,9 +198,18 @@ repair_head() {
     else
         branch=$entry
         tip=
-        if [ "$branch" != HEAD ] && git check-ref-format "refs/heads/$branch" 2>/dev/null; then
-            tip=$(ref_value "$cd_" "refs/heads/$branch")
-            named=yes
+        if [ "$branch" != HEAD ]; then
+            branch_name_ok "$branch"
+            case $? in
+                0)
+                    tip=$(ref_value "$cd_" "refs/heads/$branch")
+                    named=yes
+                    ;;
+                2)
+                    fail "$shown" "git failed while checking the branch name in logs/HEAD, so HEAD was left alone"
+                    return 0
+                    ;;
+            esac
         fi
         # Otherwise the entry is a revision (`HEAD`, `HEAD~1`, `v1^`), not a branch: git only
         # attaches HEAD to a branch name, so that checkout was detached.

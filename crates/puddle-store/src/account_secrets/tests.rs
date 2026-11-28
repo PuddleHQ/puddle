@@ -183,12 +183,14 @@ fn a_refresh_digest_finds_its_device_until_that_is_revoked_or_expires() {
     let device = store.add_device(UserId::OWNER, "desktop", 5_000).unwrap();
     assert!(matches!(
         secrets.put_session(device.id, &[1; 4]),
-        Err(StoreError::InviteInvalid)
+        Err(StoreError::SessionDigestInvalid)
     ));
-    secrets
-        .put_session(device.id, &[9; MIN_INVITE_DIGEST_BYTES])
-        .unwrap();
-    secrets.put_session(device.id, &[1; 32]).unwrap();
+    assert!(
+        secrets
+            .put_session(device.id, &[9; MIN_INVITE_DIGEST_BYTES])
+            .unwrap()
+    );
+    assert!(secrets.put_session(device.id, &[1; 32]).unwrap());
     let found = secrets.session_for(&[1; 32]).unwrap().unwrap();
     assert_eq!(found.device, device.id);
     assert_eq!(found.user, UserId::OWNER);
@@ -203,6 +205,17 @@ fn a_refresh_digest_finds_its_device_until_that_is_revoked_or_expires() {
     clock.set(1_000);
     store.revoke_device(UserId::OWNER, device.id).unwrap();
     assert_eq!(secrets.session_for(&[3; 32]).unwrap(), None, "revoked");
+    assert!(
+        !secrets.put_session(device.id, &[6; 32]).unwrap(),
+        "a revoked device gets no token"
+    );
+    assert_eq!(secrets.session_for(&[6; 32]).unwrap(), None);
+    assert!(
+        !secrets
+            .put_session(DeviceId::from_stored(9_999), &[7; 32])
+            .unwrap(),
+        "an unknown device gets no token"
+    );
 }
 
 #[test]
@@ -310,7 +323,12 @@ fn a_step_that_depends_on_a_checked_password_loses_to_a_reset_a_change_or_a_dele
     assert!(!secrets.has_password(ann).unwrap());
     // The deletion began.
     let checked = secrets.set_password_hash(ann, "$argon2id$five").unwrap();
+    assert!(secrets.has_password(ann).unwrap());
     store.begin_user_delete(UserId::OWNER, ann).unwrap();
+    assert!(
+        !secrets.has_password(ann).unwrap(),
+        "a user being deleted has no password to find, so sign-in runs the decoy check"
+    );
     assert!(
         secrets
             .add_device(&checked, "desktop", 9_000)

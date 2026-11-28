@@ -23,11 +23,12 @@ use tokio::sync::{Notify, watch};
 
 use crate::signin::SignIn;
 use puddle_services::error::{ApiError, ErrorCode, blocking};
+use puddle_services::owned::OwnedWorkspace;
 use puddle_services::wire::{
     AdminActionKind, AdminAuditLine, AdminAuditList, AdminStats, AdminUser, AdminUserList,
     AdminUserState, InviteIssued,
 };
-use puddle_services::workspaces::{WorkspaceRecord, WorkspaceService};
+use puddle_services::workspaces::{WorkspaceError, WorkspaceRecord, WorkspaceService};
 
 /// How often the reaper looks for deletions to finish when nobody asks, unless the
 /// configuration says otherwise.
@@ -304,14 +305,20 @@ impl AdminService {
             if record.busy.is_some() {
                 continue;
             }
+            let store = self.store.clone();
+            let id = record.id.clone();
+            let handle = blocking(move || {
+                Ok(OwnedWorkspace::resolve(&*store, user, &id).map_err(WorkspaceError::from)?)
+            })
+            .await?;
             let step = if is_up(record.status) {
-                self.workspaces.stop(&record.id).await.map(|_| ())
+                self.workspaces.stop(&handle).await.map(|_| ())
             } else {
                 // The owner confirmed in the dialog that this loses everything of the user's,
                 // so the delete goes ahead with the fingerprint of what it found.
-                let check = self.workspaces.delete_check(&record.id).await?;
+                let check = self.workspaces.delete_check(&handle).await?;
                 self.workspaces
-                    .delete(&record.id, Some(&check.fingerprint))
+                    .delete(&handle, Some(&check.fingerprint))
                     .await
                     .map(|_| ())
             };

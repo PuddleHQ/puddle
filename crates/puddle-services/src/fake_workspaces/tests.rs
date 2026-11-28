@@ -33,7 +33,9 @@ fn the_fake_finds_a_checkout_by_its_head_and_its_origin_by_a_url_line() {
         .to_string();
     assert!(err.contains("has no .git"), "{err}");
 }
+use crate::owned::OwnedWorkspace;
 use puddle_store::ManualClock;
+use puddle_store::UserId;
 use puddle_types::CollectingSink;
 
 use super::*;
@@ -93,14 +95,26 @@ async fn a_rename_changes_only_the_label_and_works_on_a_running_workspace() {
     let (fake, sink) = fake();
     seeded(&fake, "w", WorkspaceStatus::Running);
     let shown = DisplayName::parse("Web shop").unwrap();
-    let renamed = fake.rename(&id("w"), shown.clone()).await.unwrap();
+    let renamed = fake
+        .rename(
+            &OwnedWorkspace::for_test(UserId::OWNER, &id("w")),
+            shown.clone(),
+        )
+        .await
+        .unwrap();
     assert_eq!(renamed.label(), "Web shop");
     assert_eq!(
         (renamed.id.as_str(), renamed.name.as_str()),
         ("w", "Web shop")
     );
     assert_eq!(renamed.status, WorkspaceStatus::Running);
-    assert_eq!(fake.get(&id("w")).await.unwrap().name, shown);
+    assert_eq!(
+        fake.get(&OwnedWorkspace::for_test(UserId::OWNER, &id("w")))
+            .await
+            .unwrap()
+            .name,
+        shown
+    );
     assert!(
         sink.events().is_empty(),
         "a rename restarts and announces nothing"
@@ -112,20 +126,36 @@ async fn a_rename_clash_is_refused_and_a_create_cannot_take_a_label_in_use() {
     let (fake, _) = fake();
     seeded(&fake, "a", WorkspaceStatus::Stopped);
     seeded(&fake, "b", WorkspaceStatus::Stopped);
-    fake.rename(&id("a"), DisplayName::parse("Shop").unwrap())
-        .await
-        .unwrap();
+    fake.rename(
+        &OwnedWorkspace::for_test(UserId::OWNER, &id("a")),
+        DisplayName::parse("Shop").unwrap(),
+    )
+    .await
+    .unwrap();
     let clash = fake
-        .rename(&id("b"), DisplayName::parse("shop").unwrap())
+        .rename(
+            &OwnedWorkspace::for_test(UserId::OWNER, &id("b")),
+            DisplayName::parse("shop").unwrap(),
+        )
         .await;
     assert!(matches!(clash, Err(WorkspaceError::Conflict(_))));
-    assert_eq!(fake.get(&id("b")).await.unwrap().name.as_str(), "b");
+    assert_eq!(
+        fake.get(&OwnedWorkspace::for_test(UserId::OWNER, &id("b")))
+            .await
+            .unwrap()
+            .name
+            .as_str(),
+        "b"
+    );
     // `a` now answers to "Shop", so a new workspace named "shop" is not free.
     let taken = fake.create(new_ws("shop"), &NoGitSetup).await;
     assert!(matches!(taken, Err(WorkspaceError::Conflict(_))));
     assert!(matches!(
-        fake.rename(&id("nope"), DisplayName::parse("x").unwrap())
-            .await,
+        fake.rename(
+            &OwnedWorkspace::for_test(UserId::OWNER, &id("nope")),
+            DisplayName::parse("x").unwrap()
+        )
+        .await,
         Err(WorkspaceError::NotFound(_))
     ));
 }
@@ -137,7 +167,10 @@ async fn a_create_ends_running_as_the_lifecycle_table_says() {
     assert_eq!(made.status, WorkspaceStatus::Created);
     assert_eq!(made.busy, Some(Operation::Creating));
     fake.idle().await;
-    let done = fake.get(&made.id).await.unwrap();
+    let done = fake
+        .get(&OwnedWorkspace::for_test(UserId::OWNER, &made.id))
+        .await
+        .unwrap();
     assert_eq!(done.status, WorkspaceStatus::Running);
     assert_eq!(done.busy, None);
 }
@@ -146,9 +179,12 @@ async fn a_create_ends_running_as_the_lifecycle_table_says() {
 async fn a_restored_disk_takes_a_numbered_name_when_its_name_is_in_use() {
     let (fake, _) = fake();
     seeded(&fake, "other", WorkspaceStatus::Stopped);
-    fake.rename(&id("other"), DisplayName::parse("Disk").unwrap())
-        .await
-        .unwrap();
+    fake.rename(
+        &OwnedWorkspace::for_test(UserId::OWNER, &id("other")),
+        DisplayName::parse("Disk").unwrap(),
+    )
+    .await
+    .unwrap();
     let url = RepoUrl::parse("https://example.com/a/b").unwrap();
     fake.add_orphan_volume(&id("disk"), None);
     let restored = fake
@@ -183,10 +219,15 @@ async fn a_failed_stop_leaves_the_workspace_running() {
     let (fake, sink) = fake();
     seeded(&fake, "w", WorkspaceStatus::Running);
     fake.fail_next(Operation::Stopping, "the VM would not stop");
-    fake.stop(&id("w")).await.unwrap();
+    fake.stop(&OwnedWorkspace::for_test(UserId::OWNER, &id("w")))
+        .await
+        .unwrap();
     fake.idle().await;
     assert_eq!(
-        fake.get(&id("w")).await.unwrap().status,
+        fake.get(&OwnedWorkspace::for_test(UserId::OWNER, &id("w")))
+            .await
+            .unwrap()
+            .status,
         WorkspaceStatus::Running
     );
     assert_eq!(steps(&sink).last(), Some(&WorkspaceStep::Failed));
@@ -197,12 +238,19 @@ async fn failed_reclaim_and_delete_change_nothing() {
     let (fake, sink) = fake();
     seeded(&fake, "w", WorkspaceStatus::Stopped);
     fake.fail_next(Operation::Reclaiming, "trim failed");
-    fake.reclaim(&id("w")).await.unwrap();
+    fake.reclaim(&OwnedWorkspace::for_test(UserId::OWNER, &id("w")))
+        .await
+        .unwrap();
     fake.idle().await;
     fake.fail_next(Operation::Deleting, "volume busy");
-    fake.delete(&id("w"), None).await.unwrap();
+    fake.delete(&OwnedWorkspace::for_test(UserId::OWNER, &id("w")), None)
+        .await
+        .unwrap();
     fake.idle().await;
-    let record = fake.get(&id("w")).await.unwrap();
+    let record = fake
+        .get(&OwnedWorkspace::for_test(UserId::OWNER, &id("w")))
+        .await
+        .unwrap();
     assert_eq!(record.busy, None);
     assert_eq!(record.status, WorkspaceStatus::Stopped);
     let failed = steps(&sink)
@@ -224,9 +272,17 @@ async fn a_reclaim_gives_back_half_the_used_disk() {
     record.status = WorkspaceStatus::Stopped;
     record.disk_used_mib = Some(100);
     fake.seed(record, Unsaved::default());
-    fake.reclaim(&id("w")).await.unwrap();
+    fake.reclaim(&OwnedWorkspace::for_test(UserId::OWNER, &id("w")))
+        .await
+        .unwrap();
     fake.idle().await;
-    assert_eq!(fake.get(&id("w")).await.unwrap().disk_used_mib, Some(50));
+    assert_eq!(
+        fake.get(&OwnedWorkspace::for_test(UserId::OWNER, &id("w")))
+            .await
+            .unwrap()
+            .disk_used_mib,
+        Some(50)
+    );
 }
 
 #[tokio::test]
@@ -237,11 +293,16 @@ async fn reclaim_waits_out_a_boot_or_shutdown() {
     seeded(&fake, "c", WorkspaceStatus::Running);
     for name in ["a", "b"] {
         assert!(matches!(
-            fake.reclaim(&id(name)).await,
+            fake.reclaim(&OwnedWorkspace::for_test(UserId::OWNER, &id(name)))
+                .await,
             Err(WorkspaceError::Conflict(_))
         ));
     }
-    assert!(fake.reclaim(&id("c")).await.is_ok());
+    assert!(
+        fake.reclaim(&OwnedWorkspace::for_test(UserId::OWNER, &id("c")))
+            .await
+            .is_ok()
+    );
     fake.idle().await;
 }
 
@@ -287,15 +348,18 @@ async fn operations_on_unknown_workspaces_are_not_found() {
     let (fake, _) = fake();
     let ghost = id("ghost");
     assert!(matches!(
-        fake.get(&ghost).await,
+        fake.get(&OwnedWorkspace::for_test(UserId::OWNER, &ghost))
+            .await,
         Err(WorkspaceError::NotFound(_))
     ));
     assert!(matches!(
-        fake.start(&ghost).await,
+        fake.start(&OwnedWorkspace::for_test(UserId::OWNER, &ghost))
+            .await,
         Err(WorkspaceError::NotFound(_))
     ));
     assert!(matches!(
-        fake.delete(&ghost, None).await,
+        fake.delete(&OwnedWorkspace::for_test(UserId::OWNER, &ghost), None)
+            .await,
         Err(WorkspaceError::NotFound(_))
     ));
     assert!(!fake.set_unsaved(&ghost, Unsaved::default()));
@@ -328,7 +392,10 @@ async fn steps_pause_for_the_configured_delay() {
 async fn the_fingerprint_follows_every_part_of_the_report() {
     let (fake, _) = fake();
     seeded(&fake, "w", WorkspaceStatus::Stopped);
-    let base = fake.delete_check(&id("w")).await.unwrap();
+    let base = fake
+        .delete_check(&OwnedWorkspace::for_test(UserId::OWNER, &id("w")))
+        .await
+        .unwrap();
     let mut seen = vec![base.fingerprint.clone()];
     let variants = [
         Unsaved {
@@ -363,7 +430,12 @@ async fn the_fingerprint_follows_every_part_of_the_report() {
     ];
     for unsaved in variants {
         assert!(fake.set_unsaved(&id("w"), unsaved));
-        seen.push(fake.delete_check(&id("w")).await.unwrap().fingerprint);
+        seen.push(
+            fake.delete_check(&OwnedWorkspace::for_test(UserId::OWNER, &id("w")))
+                .await
+                .unwrap()
+                .fingerprint,
+        );
     }
     let unique: std::collections::BTreeSet<_> = seen.iter().collect();
     assert_eq!(unique.len(), seen.len(), "{seen:?}");

@@ -8,6 +8,7 @@ use puddle_store::{IdentityId, UserId};
 use super::repositories::draw_entry_id;
 use super::*;
 use crate::checkouts::AddRepository;
+use crate::owned::OwnedWorkspace;
 use puddle_types::{OriginRefusal, ToolName, ToolVersion, ToolsFileHash};
 
 struct SecretLogin(String);
@@ -330,22 +331,42 @@ async fn the_empty_service_says_it_is_unavailable() {
     }];
     let all = [
         svc.list().await.map(|_| ()),
-        svc.get(&id).await.map(|_| ()),
+        svc.get(&OwnedWorkspace::for_test(UserId::OWNER, &id))
+            .await
+            .map(|_| ()),
         svc.create(NewWorkspace::new(UserId::OWNER, name, repos), &NoGitSetup)
             .await
             .map(|_| ()),
-        svc.start(&id).await.map(|_| ()),
-        svc.stop(&id).await.map(|_| ()),
-        svc.reclaim(&id).await.map(|_| ()),
-        svc.reset_root_disk(&id).await.map(|_| ()),
-        svc.delete_check(&id).await.map(|_| ()),
-        svc.delete(&id, None).await.map(|_| ()),
-        svc.rename(&id, DisplayName::parse("x").unwrap())
+        svc.start(&OwnedWorkspace::for_test(UserId::OWNER, &id))
             .await
             .map(|_| ()),
-        svc.set_session_user(&id, SessionUser::Root)
+        svc.stop(&OwnedWorkspace::for_test(UserId::OWNER, &id))
             .await
             .map(|_| ()),
+        svc.reclaim(&OwnedWorkspace::for_test(UserId::OWNER, &id))
+            .await
+            .map(|_| ()),
+        svc.reset_root_disk(&OwnedWorkspace::for_test(UserId::OWNER, &id))
+            .await
+            .map(|_| ()),
+        svc.delete_check(&OwnedWorkspace::for_test(UserId::OWNER, &id))
+            .await
+            .map(|_| ()),
+        svc.delete(&OwnedWorkspace::for_test(UserId::OWNER, &id), None)
+            .await
+            .map(|_| ()),
+        svc.rename(
+            &OwnedWorkspace::for_test(UserId::OWNER, &id),
+            DisplayName::parse("x").unwrap(),
+        )
+        .await
+        .map(|_| ()),
+        svc.set_session_user(
+            &OwnedWorkspace::for_test(UserId::OWNER, &id),
+            SessionUser::Root,
+        )
+        .await
+        .map(|_| ()),
         svc.attach(&id, AttachMode::Browser).await.map(|_| ()),
         svc.checkouts(&id).await.map(|_| ()),
         svc.add_repository(
@@ -402,7 +423,9 @@ async fn a_service_that_keeps_no_workspace_disks_lists_none_and_restores_none() 
 #[tokio::test]
 async fn the_empty_service_refuses_a_start_folder_change() {
     let id = WorkspaceId::new("w").unwrap();
-    let changed = NoWorkspaces.set_start_folder(&id, None).await;
+    let changed = NoWorkspaces
+        .set_start_folder(&OwnedWorkspace::for_test(UserId::OWNER, &id), None)
+        .await;
     assert!(
         matches!(changed, Err(WorkspaceError::Unavailable(_))),
         "{changed:?}"

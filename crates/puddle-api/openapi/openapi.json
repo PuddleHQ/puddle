@@ -17468,7 +17468,8 @@
           "colour_theme",
           "font_size",
           "extensions",
-          "keybindings"
+          "keybindings",
+          "settings"
         ],
         "properties": {
           "colour_theme": {
@@ -17507,6 +17508,14 @@
             ],
             "description": "Key bindings to merge into the editor: the text of a JSON array of `{key, command}`\nobjects (at most 64 KiB).",
             "maxLength": 65536
+          },
+          "settings": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The user's own editor settings, merged into new workspaces: the text of a JSON object of\nsetting keys to values (at most 64 KiB). Keys Puddle owns (`workbench.colorTheme`,\n`window.autoDetectColorScheme`, `editor.fontSize`) are refused.",
+            "maxLength": 65536
           }
         },
         "additionalProperties": false
@@ -17526,7 +17535,8 @@
           "colour_theme",
           "font_size",
           "extensions",
-          "keybindings"
+          "keybindings",
+          "settings"
         ],
         "properties": {
           "colour_theme": {
@@ -17544,6 +17554,10 @@
           "keybindings": {
             "$ref": "#/components/schemas/ResolvedText",
             "description": "The key bindings text; `null` adds none."
+          },
+          "settings": {
+            "$ref": "#/components/schemas/ResolvedText",
+            "description": "The custom editor settings text; `null` adds none."
           }
         }
       },

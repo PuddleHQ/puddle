@@ -561,3 +561,58 @@ fn a_folder_names_an_extension_only_as_id_dash_version() {
     assert!(!is_folder_of("acme.tool1.0.0", "acme.tool"));
     assert!(!is_folder_of("other.acme.tool-1.0.0", "acme.tool"));
 }
+
+fn custom(text: &str) -> EditorDefaults {
+    EditorDefaults {
+        settings: Some(text.to_owned()),
+        ..EditorDefaults::default()
+    }
+}
+
+#[test]
+fn custom_settings_are_merged_and_a_key_the_user_changed_stays_theirs() {
+    let rig = Rig::new();
+    std::fs::write(rig.user("settings.json"), "{\n  // mine\n  \"a.b\": 5\n}\n").unwrap();
+    rig.plan(&custom(r#"{"a.b": 1, "c.d": "x"}"#));
+    apply(&rig.server);
+    let s = rig.settings();
+    assert_eq!(s["c.d"], json!("x"));
+    // `a.b` was never written by Puddle and the user has a value: it stays.
+    assert_eq!(s["a.b"], json!(5));
+    // A default that changes is followed while the user left the key alone.
+    rig.plan(&custom(r#"{"a.b": 1, "c.d": "y"}"#));
+    apply(&rig.server);
+    assert_eq!(rig.settings()["c.d"], json!("y"));
+    // The user edits `c.d`: the next change leaves it.
+    let edited = std::fs::read_to_string(rig.user("settings.json"))
+        .unwrap()
+        .replace("\"y\"", "\"mine\"");
+    std::fs::write(rig.user("settings.json"), edited).unwrap();
+    rig.plan(&custom(r#"{"a.b": 1, "c.d": "z"}"#));
+    apply(&rig.server);
+    assert_eq!(rig.settings()["c.d"], json!("mine"));
+}
+
+#[test]
+fn a_custom_key_that_is_no_longer_planned_is_handed_back_unless_changed() {
+    let rig = Rig::new();
+    rig.plan(&custom(r#"{"c.d": 1, "e.f": 2}"#));
+    apply(&rig.server);
+    let edited = std::fs::read_to_string(rig.user("settings.json"))
+        .unwrap()
+        .replace("\"e.f\": 2", "\"e.f\": 3");
+    std::fs::write(rig.user("settings.json"), edited).unwrap();
+    rig.plan(&custom("{}"));
+    apply(&rig.server);
+    let s = rig.settings();
+    assert!(s.get("c.d").is_none());
+    assert_eq!(s["e.f"], json!(3));
+}
+
+#[test]
+fn a_custom_entry_for_an_owned_key_is_ignored() {
+    let rig = Rig::new();
+    rig.plan(&custom(r#"{"editor.fontSize": 30}"#));
+    apply(&rig.server);
+    assert!(!rig.user("settings.json").exists() || rig.settings().get("editor.fontSize").is_none());
+}

@@ -102,6 +102,9 @@ pub struct EditorDefaults {
     /// The key bindings: the text of a JSON array of `{key, command}` objects.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keybindings: Option<String>,
+    /// The user's own editor settings: the text of a JSON object of setting keys to values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings: Option<String>,
 }
 
 impl EditorDefaults {

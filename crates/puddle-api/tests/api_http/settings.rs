@@ -22,7 +22,7 @@ fn null_layer() -> Value {
         "direct_ssh": null,
         "capture_logins": null,
         "warn_foreign_credentials": null,
-        "editor": {"colour_theme": null, "font_size": null, "extensions": null, "keybindings": null}
+        "editor": {"colour_theme": null, "font_size": null, "extensions": null, "keybindings": null, "settings": null}
     })
 }
 
@@ -336,6 +336,8 @@ async fn out_of_range_and_unknown_settings_are_refused() {
         json!({"workspace_defaults": {"editor": {"font_size": 7}}}),
         json!({"workspace_defaults": {"editor": {"extensions": ["not an id"]}}}),
         json!({"workspace_defaults": {"editor": {"keybindings": "{}"}}}),
+        json!({"workspace_defaults": {"editor": {"settings": "[]"}}}),
+        json!({"workspace_defaults": {"editor": {"settings": "{\"editor.fontSize\": 12}"}}}),
         json!({"workspace_defaults": {"editor": {"fonts": 1}}}),
         json!({"workspace_defaults": {"editor": {"extensions": (0..51).map(|n| format!("p.e{n}")).collect::<Vec<_>>()}}}),
         json!({"consents": {}}),
@@ -895,6 +897,10 @@ async fn editor_defaults_resolve_field_by_field_with_their_source() {
     assert_eq!(
         editor["keybindings"],
         json!({"value": keys, "source": "global"})
+    );
+    assert_eq!(
+        editor["settings"],
+        json!({"value": null, "source": "default"})
     );
 
     let reply = api

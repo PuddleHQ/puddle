@@ -3,16 +3,14 @@
 //! personal access token `desktop-generate` mints from the access token (a nested field), and the
 //! revoke request that carries the refresh token back.
 
-use base64::Engine as _;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use puddle_proxy::ExchangeRewriter as _;
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 
 use crate::logins::MEMORY_KEPT;
 use crate::profile::{DOCKER, Role, Scope, Slot};
+use crate::test_rig::{Rig, answered, host, part, rig_for};
 use crate::vault::Vault;
-use crate::widened_tests::{Rig, answered, host, rig_for};
 
 static PROFILES: [crate::profile::Profile; 1] = [DOCKER];
 
@@ -20,17 +18,7 @@ const REFRESH: &str = "v1.CANARY0docker0refresh0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 const PAT: &str = "dckr_pat_CANARY0docker0pat0AAAAAAA";
 
 fn jwt(claims: &Value) -> String {
-    format!(
-        "{}.{}.{}",
-        URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256","typ":"JWT","kid":"k1"}"#),
-        URL_SAFE_NO_PAD.encode(claims.to_string()),
-        "S".repeat(342),
-    )
-}
-
-fn part(token: &str, index: usize) -> Value {
-    let segment = token.split('.').nth(index).unwrap();
-    serde_json::from_slice(&URL_SAFE_NO_PAD.decode(segment).unwrap()).unwrap()
+    crate::test_rig::jwt(claims, 342)
 }
 
 fn access_token() -> String {

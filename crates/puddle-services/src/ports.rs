@@ -10,6 +10,7 @@ use std::sync::{Mutex, PoisonError};
 use futures_util::future::BoxFuture;
 use puddle_types::WorkspaceId;
 
+use crate::owned::OwnedWorkspace;
 use crate::wire::{PortEntry, WorkspacePorts};
 
 /// Why a request about ports was refused.
@@ -41,14 +42,14 @@ pub trait PortsService: Send + Sync {
     /// The workspace's ports now.
     fn list(
         &self,
-        workspace: &WorkspaceId,
+        workspace: &OwnedWorkspace,
     ) -> BoxFuture<'_, Result<WorkspacePorts, PortsServiceError>>;
 
     /// Forwards `guest_port` to `host_port` of this computer (the same number when `None`) and
     /// pins it or not; returns the port's row.
     fn forward(
         &self,
-        workspace: &WorkspaceId,
+        workspace: &OwnedWorkspace,
         guest_port: u16,
         host_port: Option<u16>,
         pinned: bool,
@@ -57,7 +58,7 @@ pub trait PortsService: Send + Sync {
     /// Stops the forward of `guest_port` and unpins it.
     fn release(
         &self,
-        workspace: &WorkspaceId,
+        workspace: &OwnedWorkspace,
         guest_port: u16,
     ) -> BoxFuture<'_, Result<(), PortsServiceError>>;
 }
@@ -75,13 +76,13 @@ fn unavailable<T>() -> BoxFuture<'static, Result<T, PortsServiceError>> {
 }
 
 impl PortsService for NoPorts {
-    fn list(&self, _: &WorkspaceId) -> BoxFuture<'_, Result<WorkspacePorts, PortsServiceError>> {
+    fn list(&self, _: &OwnedWorkspace) -> BoxFuture<'_, Result<WorkspacePorts, PortsServiceError>> {
         unavailable()
     }
 
     fn forward(
         &self,
-        _: &WorkspaceId,
+        _: &OwnedWorkspace,
         _: u16,
         _: Option<u16>,
         _: bool,
@@ -89,7 +90,7 @@ impl PortsService for NoPorts {
         unavailable()
     }
 
-    fn release(&self, _: &WorkspaceId, _: u16) -> BoxFuture<'_, Result<(), PortsServiceError>> {
+    fn release(&self, _: &OwnedWorkspace, _: u16) -> BoxFuture<'_, Result<(), PortsServiceError>> {
         unavailable()
     }
 }
@@ -140,13 +141,13 @@ fn blank(guest_port: u16) -> PortEntry {
 impl PortsService for FakePorts {
     fn list(
         &self,
-        workspace: &WorkspaceId,
+        workspace: &OwnedWorkspace,
     ) -> BoxFuture<'_, Result<WorkspacePorts, PortsServiceError>> {
         let ports = self
             .state
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .get(workspace)
+            .get(workspace.id())
             .map(|rows| rows.values().cloned().collect())
             .unwrap_or_default();
         Box::pin(async move {
@@ -159,7 +160,7 @@ impl PortsService for FakePorts {
 
     fn forward(
         &self,
-        workspace: &WorkspaceId,
+        workspace: &OwnedWorkspace,
         guest_port: u16,
         host_port: Option<u16>,
         pinned: bool,
@@ -175,7 +176,7 @@ impl PortsService for FakePorts {
                 rows.values()
                     .find(|r| {
                         r.host_port == Some(host_port)
-                            && (name != workspace || r.guest_port != guest_port)
+                            && (name != workspace.id() || r.guest_port != guest_port)
                     })
                     .map(|r| (name.clone(), r.guest_port))
             });
@@ -185,7 +186,7 @@ impl PortsService for FakePorts {
                 )))
             } else {
                 let row = state
-                    .entry(workspace.clone())
+                    .entry(workspace.id().clone())
                     .or_default()
                     .entry(guest_port)
                     .or_insert_with(|| blank(guest_port));
@@ -200,11 +201,11 @@ impl PortsService for FakePorts {
 
     fn release(
         &self,
-        workspace: &WorkspaceId,
+        workspace: &OwnedWorkspace,
         guest_port: u16,
     ) -> BoxFuture<'_, Result<(), PortsServiceError>> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        let rows = state.entry(workspace.clone()).or_default();
+        let rows = state.entry(workspace.id().clone()).or_default();
         let result = match rows.get_mut(&guest_port) {
             Some(row) if row.forwarded || row.pinned => {
                 row.forwarded = false;

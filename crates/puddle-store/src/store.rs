@@ -39,13 +39,11 @@ mod audit;
 mod audit_retention;
 mod devices;
 pub(crate) use devices::{insert_device, revoke_devices_in};
+#[cfg(test)]
+mod decision_tests;
 mod environment;
 #[cfg(test)]
 mod failure_tests;
-#[cfg(test)]
-mod decision_tests;
-#[cfg(test)]
-mod test_fixtures;
 mod identities;
 mod interception;
 mod learned;
@@ -58,6 +56,8 @@ mod sets;
 mod shell_init;
 mod ssh_agent;
 mod ssh_agent_asks;
+#[cfg(test)]
+mod test_fixtures;
 pub(crate) mod users;
 mod workspace_git;
 mod workspaces;

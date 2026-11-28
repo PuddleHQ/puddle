@@ -81,7 +81,9 @@ fn a_destination_that_is_not_utf8_is_refused_and_creates_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let src = dir.path().join("puddle.db");
     drop(open(&src));
-    let dest = dir.path().join(std::ffi::OsStr::from_bytes(b"copy-\xff.db"));
+    let dest = dir
+        .path()
+        .join(std::ffi::OsStr::from_bytes(b"copy-\xff.db"));
     assert!(matches!(
         backup_database(&src, &dest),
         Err(StoreError::PathNotUtf8(_))

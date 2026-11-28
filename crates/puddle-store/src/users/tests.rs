@@ -16,6 +16,29 @@ fn a_user_name_is_one_to_64_visible_characters_with_no_outer_space() {
 }
 
 #[test]
+fn names_refuse_the_characters_that_do_not_show() {
+    // Zero-width space, joiner, left-to-right mark, bidi override and isolate, word joiner,
+    // byte-order mark, soft hyphen, tag character.
+    for hidden in [
+        '\u{200B}',
+        '\u{200D}',
+        '\u{200E}',
+        '\u{202E}',
+        '\u{2066}',
+        '\u{2060}',
+        '\u{FEFF}',
+        '\u{00AD}',
+        '\u{E0041}',
+    ] {
+        let name = format!("an{hidden}n");
+        assert!(UserName::new(&name).is_err(), "{name:?}");
+        assert!(device_name(&name).is_err(), "{name:?}");
+    }
+    assert!(UserName::new("Zoë 名前").is_ok());
+    assert_eq!(device_name(" Ann's laptop ").unwrap(), "Ann's laptop");
+}
+
+#[test]
 fn a_role_reads_back_as_written() {
     for role in [Role::Owner, Role::User] {
         assert_eq!(Role::parse(role.as_str()), Some(role));

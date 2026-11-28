@@ -32,7 +32,7 @@ pub(crate) fn hosts_of<'a>(urls: impl IntoIterator<Item = &'a str>) -> Vec<Host>
     for url in urls {
         let host = RepoRef::from_https_url(url)
             .ok()
-            .and_then(|repo| Host::parse_normalised(repo.host.as_str()).ok());
+            .and_then(|repo| Host::parse_normalised(repo.host().as_str()).ok());
         if let Some(host) = host
             && !hosts.contains(&host)
         {

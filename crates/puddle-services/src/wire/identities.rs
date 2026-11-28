@@ -506,12 +506,12 @@ pub struct GitRepoView {
 impl GitRepoView {
     /// Builds the wire form from the store.
     #[must_use]
-    pub fn from_store(entry: store::RepoEntry) -> Self {
+    pub fn from_store(entry: &store::RepoEntry) -> Self {
         Self {
             id: entry.id,
-            host: entry.repo.host.to_string(),
-            owner: entry.repo.owner.to_string(),
-            repo: entry.repo.repo,
+            host: entry.repo.host().to_string(),
+            owner: entry.repo.owner().to_string(),
+            repo: entry.repo.repo().to_owned(),
             pull: entry.pull,
             push: entry.push,
             push_block: entry.push_block.map(PushBlock::from),
@@ -749,7 +749,7 @@ impl NewWorkspaceIdentity {
     /// Builds the wire form from the store.
     #[must_use]
     pub fn from_store(start: &store::GitStart, repo: &store::RepoRef) -> Self {
-        let place = format!("{}/{}", repo.host, repo.owner);
+        let place = format!("{}/{}", repo.host(), repo.owner());
         let (basis, warning) = match (start.basis, &start.identity) {
             (store::StartBasis::Default, Some((_, label))) => (
                 NewWorkspaceIdentityBasis::Default,

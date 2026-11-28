@@ -23,7 +23,7 @@ fn ssh_addresses_name_the_repository_the_ui_also_reads() {
                     .map(|v| v.as_str().unwrap())
                     .collect();
                 assert_eq!(
-                    [got.host.as_str(), got.owner.as_str(), got.repo.as_str()],
+                    [got.host().as_str(), got.owner().as_str(), got.repo()],
                     [want[0], want[1], want[2]],
                     "{url:?}"
                 );

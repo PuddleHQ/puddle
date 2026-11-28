@@ -392,9 +392,18 @@ impl EnvValue {
     }
 }
 
-/// What to store under a name.
+/// What to store under a name. Only [`EnvDraft::plain`], [`EnvDraft::secret`] and
+/// [`EnvDraft::secret_in`] make one, so a draft in hand has passed their checks.
+///
+/// ```compile_fail
+/// let _ = puddle_store::EnvDraft::Plain("a\0b".to_owned());
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EnvDraft {
+pub struct EnvDraft(pub(crate) DraftKind);
+
+/// The two kinds of draft, behind [`EnvDraft`]'s checked constructors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DraftKind {
     /// A plain variable.
     Plain(String),
     /// A secret whose value is already in the credential store under `id`.
@@ -422,7 +431,7 @@ impl EnvDraft {
                 "a value is at most {MAX_PLAIN_VALUE_BYTES} bytes"
             )));
         }
-        Ok(Self::Plain(value.to_owned()))
+        Ok(Self(DraftKind::Plain(value.to_owned())))
     }
 
     /// A secret under `id` for `hosts`, swapped in header values.
@@ -442,11 +451,11 @@ impl EnvDraft {
         hosts: Vec<SecretHost>,
         place: SecretPlace,
     ) -> Result<Self, StoreError> {
-        Ok(Self::Secret {
+        Ok(Self(DraftKind::Secret {
             id,
             hosts: checked_hosts(hosts)?,
             place,
-        })
+        }))
     }
 }
 

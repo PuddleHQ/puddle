@@ -4,7 +4,7 @@
 //! They carry a precedence like every rule (R-59), which the proxy weighs against the host
 //! rule that allowed the request (R-60).
 
-use puddle_types::{Event, Methods, PathPattern, WorkspaceId};
+use puddle_types::{Event, HostPattern, Methods, PathPattern, WorkspaceId};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use super::{AllUsers, Store, append_for, lock, users};
@@ -28,7 +28,7 @@ pub struct RequestRule {
     /// The workspace it applies to; `None` for every workspace of [`RequestRule::user`].
     pub workspace: Option<WorkspaceId>,
     /// The host pattern, `example.com` or `*.example.com`, as the proxy takes it.
-    pub host: String,
+    pub host: HostPattern,
     /// The methods it names; none for every method.
     pub methods: Methods,
     /// The paths it names.
@@ -53,7 +53,7 @@ impl RequestRule {
                 RequestRuleWireScope::Global
             },
             workspace_id: self.workspace.as_ref().map(ToString::to_string),
-            host: self.host.clone(),
+            host: self.host.to_string(),
             methods: self.methods.names().to_vec(),
             path: self.path.to_string(),
             created_at: self.created_at,
@@ -63,14 +63,13 @@ impl RequestRule {
     }
 }
 
-/// A rule on method and path to create. The host pattern is the caller's to have checked (the
-/// proxy's pattern grammar); methods and path are checked types.
+/// A rule on method and path to create. Host pattern, methods and path are checked types.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewRequestRule {
     /// The workspace it applies to; `None` for every workspace.
     pub workspace: Option<WorkspaceId>,
     /// The host pattern.
-    pub host: String,
+    pub host: HostPattern,
     /// The methods; none for every method.
     pub methods: Methods,
     /// The paths.
@@ -110,7 +109,7 @@ fn row_to_rule(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<RequestRule, 
             workspace: workspace
                 .map(|w| WorkspaceId::new(&w).map_err(|e| corrupt(id, e.to_string())))
                 .transpose()?,
-            host,
+            host: HostPattern::parse_normalised(&host).map_err(|e| corrupt(id, e.to_string()))?,
             methods: Methods::parse(methods.split(',').filter(|m| !m.is_empty()))
                 .map_err(|e| corrupt(id, e.to_string()))?,
             path: PathPattern::parse(&path).map_err(|e| corrupt(id, e.to_string()))?,
@@ -250,8 +249,8 @@ impl Store {
     /// [`Store::as_user`].
     ///
     /// # Errors
-    /// [`StoreError::SystemActor`], [`StoreError::RequestRuleInvalid`] over the per-scope limit
-    /// or an empty host, [`StoreError::UnknownWorkspace`] for a workspace that is not `user`'s,
+    /// [`StoreError::SystemActor`], [`StoreError::RequestRuleInvalid`] over the per-scope limit,
+    /// [`StoreError::UnknownWorkspace`] for a workspace that is not `user`'s,
     /// or a database error.
     pub(super) fn add_request_rule_by(
         &self,
@@ -260,9 +259,6 @@ impl Store {
     ) -> Result<RequestRule, StoreError> {
         if new.created_by == Actor::System {
             return Err(StoreError::SystemActor);
-        }
-        if new.host.trim().is_empty() {
-            return Err(StoreError::RequestRuleInvalid("a rule names a host".into()));
         }
         let rule = self.change(|tx, now, fx| {
             if let Some(workspace) = &new.workspace {
@@ -292,7 +288,7 @@ impl Store {
                         "global"
                     },
                     scope,
-                    new.host,
+                    new.host.to_string(),
                     new.methods.to_string(),
                     new.path.to_string(),
                     now_i,
@@ -349,7 +345,7 @@ impl Store {
                     kind: RuleSwitchKind::RequestRule,
                     id: Some(id),
                     set_id: None,
-                    pattern: rule.host.clone(),
+                    pattern: rule.host.to_string(),
                     workspace_id: rule.workspace.as_ref().map(ToString::to_string),
                     enabled,
                     actor: actor_str(actor),

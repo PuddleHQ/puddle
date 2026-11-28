@@ -307,7 +307,7 @@ async fn the_rules_on_method_and_path_follow_the_store_and_their_hosts_are_decry
             .as_user(puddle_store::UserId::OWNER)
             .add_request_rule(&puddle_store::NewRequestRule {
                 workspace: workspace.cloned(),
-                host: host.to_owned(),
+                host: puddle_types::HostPattern::parse_normalised(host).unwrap(),
                 methods: puddle_types::Methods::parse(["DELETE"]).unwrap(),
                 path: puddle_types::PathPattern::parse(path).unwrap(),
                 created_by: puddle_store::Actor::Api,

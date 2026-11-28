@@ -8,7 +8,9 @@
 //! request that cannot be read cannot be judged: [`RequestRules::hosts`] is added to the hosts a
 //! workspace decrypts.
 
-use puddle_types::{CanonicalPath, Host, Methods, PathPattern, RuleId, percent_decoded};
+use puddle_types::{
+    CanonicalPath, Host, HostPattern, Methods, PathPattern, RuleId, percent_decoded,
+};
 
 use super::{PatternError, RequestView, TerminationSet};
 use crate::proxy::Refusal;
@@ -55,6 +57,24 @@ impl RequestRule {
             methods,
             path,
         })
+    }
+
+    /// A rule for requests to the checked `host`. It cannot fail.
+    #[must_use]
+    pub fn for_pattern(
+        id: RuleId,
+        host: &HostPattern,
+        methods: Methods,
+        path: PathPattern,
+    ) -> Self {
+        let mut hosts = TerminationSet::new();
+        hosts.insert_pattern(host);
+        Self {
+            id,
+            hosts,
+            methods,
+            path,
+        }
     }
 
     /// `paths` is `None` for a path too long to read ([`MAX_JUDGED_PATH`]), which every path

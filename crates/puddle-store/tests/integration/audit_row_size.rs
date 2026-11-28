@@ -5,7 +5,6 @@
 //! Run by hand: `cargo test -p puddle-store --test integration audit_row_size -- --ignored --nocapture`.
 #![expect(
     clippy::unwrap_used,
-    clippy::print_stderr,
     reason = "a measurement that prints its numbers and fails by panicking"
 )]
 
@@ -82,6 +81,10 @@ fn file_bytes(db: &std::path::Path) -> u64 {
 
 #[test]
 #[ignore = "a measurement; prints the bytes per record, run by hand"]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "byte counts far below 2^52, printed as rounded ratios"
+)]
 fn bytes_per_connection_record_by_shape_and_database_growth_a_day_at_the_cap() {
     let mut shapes = Vec::new();
     for shape in ["tunnel", "http", "denied"] {

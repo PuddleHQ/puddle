@@ -146,7 +146,6 @@ const AUDIT_RECORDS_AT_VOLUME: u32 = 5_000_000;
 /// each call's CPU time; fails on none, because the decision is the reader's.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "5 million records (several GiB), meaningful only in a release build; run by hand"]
-#[expect(clippy::print_stderr, reason = "the log is the measurement")]
 async fn the_activity_screen_calls_on_five_million_audit_records() {
     let rig = Rig::named_ids();
     let built = std::time::Instant::now();

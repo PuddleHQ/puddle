@@ -1,35 +1,26 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Linux gates on every push to develop/main, every pull request and every merge queue run
-# (docs/STANDARDS.md, "CI").
-# Six jobs run side by side so a run takes about as long as the longest: the Rust tests with coverage,
-# the Rust and repository gates, the script self-tests (`hooks`), the UI gates with the Chromium end-to-end tests, and the WebKit
-# end-to-end tests. A last job, `linux (all gates)`, waits for all of them and is the one result to
-# require. Every gate runs even when an earlier one fails, so one run shows every problem.
-# A pull request to develop runs only the jobs its changed files can affect (ci/scope.sh, the `scope`
-# job): a docs-only or UI-only change runs a light job (typos, spdx, shellcheck, standalone, secrets)
-# instead of the Rust gates, and a change with no UI-relevant path skips the UI job. Every other
+# Linux gates on every push to develop/main, every pull request and every merge queue run (docs/STANDARDS.md, "CI").
+# Six jobs run side by side so a run takes about as long as the longest: the Rust tests with coverage, the Rust and repository gates, the script self-tests (`hooks`), the UI gates with the Chromium end-to-end tests, and the WebKit end-to-end tests. A last job, `linux (all gates)`, waits for all of
+# them and is the one result to require. Every gate runs even when an earlier one fails, so one run shows every problem.
+# A pull request to develop runs only the jobs its changed files can affect (ci/scope.sh, the `scope` job): a docs-only or UI-only change runs a light
+# job (typos, spdx, shellcheck, standalone, secrets) instead of the Rust gates, and a change with no UI-relevant path skips the UI job. Every other
 # event, and any doubt, runs everything. `linux (all gates)` accepts a skip only when `scope` said so.
 # A merge queue run (`merge_group`) is scoped the same way, by the group's diff against develop.
-# With the repository variable PUDDLE_QUEUE set to `on`, a pull request to develop runs in the light
-# mode (ci/scope.sh): the `git-env` and `notices` gates and the WebKit job skip; the merge queue runs
-# them all on the commit that lands. Unset, every pull request runs the full set. With PUDDLE_TIER set
-# to `on`, a merge queue run also skips the WebKit job, unless the diff touches markup, styles or the
-# browser test setup (ci/scope.sh);
-# webkit.yml runs WebKit nightly, and a pull request to main runs both browsers here.
-# With PUDDLE_QUEUE_SKIP_PUSH set to `on`, a push to develop whose commit a green merge queue run of
-# this workflow tested skips the Rust, msvc and UI jobs when their caches exist (the `queue-tested`
-# job); it still runs the advisories.
-# Advisories (RustSec, npm) are not one of those gates: a new advisory fails every pull request at once, whatever
-# the pull request changes. The separate `advisories` and `advisories-npm` jobs run on pull requests to main, on
-# pushes, nightly and by hand, never on a pull request to develop or a merge queue run (the `cargo-deny` step
-# there checks bans, licences and sources).
-# With PUDDLE_LIGHT_CI set to `on` (the light CI mode, ci/scope.sh), a pull request to develop and a
-# merge queue run skip every heavy job here and in windows.yml, vm-linux.yml and vm-windows.yml: only
-# the `light` job and the unit tier (`unit`: fmt, clippy, deny, quick gates, Rust unit tests;
-# `unit-ui`: the UI gate without its end-to-end tests) run, and the result jobs accept the skips. The
-# full set then runs on every push to develop and by hand (`workflow_dispatch`).
-# The `unit` and `unit-ui` tiers and the `queue-tested` lookup live in ci-unit.yml, ci-unit-ui.yml and
-# ci-queue-tested.yml (reusable workflows; ci/workflow-split-test.sh keeps every file under 1000 lines).
+# With the repository variable PUDDLE_QUEUE set to `on`, a pull request to develop runs in the light mode (ci/scope.sh): the `git-env` and `notices`
+# gates and the WebKit job skip; the merge queue runs them all on the commit that lands. Unset, every pull request runs the full set. With PUDDLE_TIER
+# set to `on`, a merge queue run also skips the WebKit job, unless the diff touches markup, styles or the browser test setup (ci/scope.sh); webkit.yml
+# runs WebKit nightly, and a pull request to main runs both browsers here.
+# With PUDDLE_QUEUE_SKIP_PUSH set to `on`, a push to develop whose commit a green merge queue run of this workflow tested skips the Rust, msvc and UI
+# jobs when their caches exist (the `queue-tested` job); it still runs the advisories.
+# Advisories (RustSec, npm) are not one of those gates: a new advisory fails every pull request at once, whatever the pull request changes. The
+# separate `advisories` and `advisories-npm` jobs run on pull requests to main, on pushes, nightly and by hand, never on a pull request to develop or
+# a merge queue run (the `cargo-deny` step there checks bans, licences and sources).
+# With PUDDLE_LIGHT_CI set to `on` (the light CI mode, ci/scope.sh), a pull request to develop and a merge queue run skip every heavy job here and in
+# windows.yml, vm-linux.yml and vm-windows.yml: only the `light` job and the unit tier (`unit`: fmt, clippy, deny, quick gates, Rust unit tests;
+# `unit-ui`: the UI gate without its end-to-end tests) run, and the result jobs accept the skips. The full set then runs on every push to develop and
+# by hand (`workflow_dispatch`).
+# The `unit` and `unit-ui` tiers and the `queue-tested` lookup live in ci-unit.yml, ci-unit-ui.yml and ci-queue-tested.yml (reusable workflows;
+# ci/workflow-split-test.sh keeps every file under 1000 lines).
 name: ci
 
 on:
@@ -339,6 +330,11 @@ jobs:
             cargo llvm-cov report --summary-only --ignore-filename-regex "$(python3 -I scripts/coverage-crates.py)"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+      # guest/boot.sh as root (ci/boot-sh-root.sh). Light CI mode skips this job on pull requests; it runs on the push to develop and by hand.
+      - name: boot.sh as root
+        if: ${{ !cancelled() }}
+        timeout-minutes: 3
+        run: ci/boot-sh-root.sh
       - name: disk after the tests with coverage (evidence, never a gate)
         if: ${{ always() }}
         timeout-minutes: 3

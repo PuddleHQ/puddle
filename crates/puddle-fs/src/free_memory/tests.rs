@@ -16,7 +16,10 @@ fn a_text_without_the_line_or_with_a_bad_figure_gives_nothing() {
 
 #[test]
 fn a_figure_too_large_for_bytes_gives_nothing() {
-    assert_eq!(mem_available_bytes("MemAvailable: 18446744073709551615 kB\n"), None);
+    assert_eq!(
+        mem_available_bytes("MemAvailable: 18446744073709551615 kB\n"),
+        None
+    );
 }
 
 #[cfg(target_os = "linux")]

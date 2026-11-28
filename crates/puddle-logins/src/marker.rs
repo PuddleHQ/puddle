@@ -140,6 +140,40 @@ impl Marker {
         }
     }
 
+    /// Runs `call` on a blocking thread: the marker is a file, and its folder may be on a slow or
+    /// network disk, which must not stall the async thread of a proxy worker. `None` when the
+    /// call panicked.
+    async fn off_thread<T: Send + 'static>(
+        &self,
+        call: impl FnOnce(&Self) -> T + Send + 'static,
+    ) -> Option<T> {
+        let marker = self.clone();
+        tokio::task::spawn_blocking(move || call(&marker))
+            .await
+            .ok()
+    }
+
+    /// [`Marker::read`] off the async threads.
+    pub(crate) async fn read_off_thread(&self) -> Option<BTreeSet<String>> {
+        self.off_thread(Self::read).await.flatten()
+    }
+
+    /// [`Marker::read_since`] off the async threads.
+    pub(crate) async fn read_since_off_thread(&self) -> Option<KeptSince> {
+        self.off_thread(Self::read_since).await.flatten()
+    }
+
+    /// [`Marker::write`] off the async threads.
+    pub(crate) async fn write_off_thread(&self, kept: BTreeSet<String>) {
+        self.off_thread(move |marker| marker.write(&kept)).await;
+    }
+
+    /// [`Marker::note`] off the async threads.
+    pub(crate) async fn note_off_thread(&self, id: &str, kept: bool) {
+        let id = id.to_owned();
+        self.off_thread(move |marker| marker.note(&id, kept)).await;
+    }
+
     fn write_now(&self, kept: &BTreeSet<String>) {
         let Some(path) = &self.path else {
             return;

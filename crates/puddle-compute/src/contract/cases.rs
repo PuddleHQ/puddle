@@ -73,6 +73,7 @@ cases! {
     remove_needs_a_stopped_sandbox_and_frees_the_name => "remove refuses a running sandbox and frees the name of a stopped one",
     kill_ends_a_vm_by_name_and_is_idempotent => "kill ends a running VM without a handle's help, a down one is a no-op, an unknown name is not found",
     exec_exit_codes_are_exact => "exit codes 0, 3 and 127 come through exactly",
+    exec_as_an_unknown_user_is_refused => "an exec as a user the image does not have fails (msb: \"guest user not found\"); root works",
     signal_killed_exec_is_a_failure => "a SIGKILLed command reports a failure code, not success",
     exec_timeout_is_enforced => "a command that outlives its timeout fails with ExecTimeout",
     exec_needs_a_running_sandbox => "exec on a stopped sandbox is refused",
@@ -443,6 +444,21 @@ async fn exec_exit_codes_are_exact<R: Runtime>(c: &Case<'_, R>) -> Outcome {
             "success() wrong for {script:?}"
         );
     }
+    Ok(())
+}
+
+async fn exec_as_an_unknown_user_is_refused<R: Runtime>(c: &Case<'_, R>) -> Outcome {
+    let sb = step("create", c.runtime().create(spec(c, &c.sandbox("a")?))).await?;
+    let ghost = sb.exec(ExecRequest::sh("true").as_user("no-such-user-xyz"));
+    check!(
+        matches!(tokio::time::timeout(STEP_TIMEOUT, ghost).await, Ok(Err(_))),
+        "an exec as a user the image lacks did not fail"
+    );
+    let out = sh(&sb, "true").await?;
+    check!(
+        out.status.success(),
+        "an exec as root failed after the refusal"
+    );
     Ok(())
 }
 

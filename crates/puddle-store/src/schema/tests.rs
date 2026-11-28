@@ -1427,3 +1427,42 @@ fn v35_backfills_the_category_and_counts_the_search_text_in_the_audit_size() {
     conn.execute("DELETE FROM audit WHERE ts = 3", []).unwrap();
     assert_eq!(size(&conn), line + search + category - 15);
 }
+
+#[test]
+fn v36_counts_the_records_and_the_records_of_each_minute_and_keeps_them_current() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    migrate_up_to(&mut conn, 35).unwrap();
+    conn.execute_batch(
+        "INSERT INTO audit (ts, type, line, user_id) VALUES
+             (60000, 'x', 'ab', 1), (119999, 'x', 'abc', 1), (120000, 'x', 'abcd', 1);",
+    )
+    .unwrap();
+    assert_eq!(migrate(&mut conn).unwrap(), 35);
+    let one =
+        |conn: &Connection, sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+    assert_eq!(one(&conn, "SELECT records FROM audit_size"), 3);
+    let minutes = |conn: &Connection| -> Vec<(i64, i64, i64)> {
+        conn.prepare("SELECT minute, records, bytes FROM audit_minutes ORDER BY minute")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+    };
+    assert_eq!(
+        minutes(&conn),
+        [(1, 2, 5), (2, 1, 4)],
+        "backfilled by minute"
+    );
+    conn.execute(
+        "INSERT INTO audit (ts, type, line, user_id) VALUES (60001, 'x', 'z', 1)",
+        [],
+    )
+    .unwrap();
+    assert_eq!(one(&conn, "SELECT records FROM audit_size"), 4);
+    assert_eq!(minutes(&conn), [(1, 3, 6), (2, 1, 4)]);
+    conn.execute("DELETE FROM audit WHERE ts = 120000", [])
+        .unwrap();
+    assert_eq!(one(&conn, "SELECT records FROM audit_size"), 3);
+    assert_eq!(minutes(&conn), [(1, 3, 6), (2, 0, 0)]);
+}

@@ -39,7 +39,10 @@ impl RequestRule {
     /// `rule` on the wire; `never` is every never-decrypt name as (workspace, name), the global
     /// ones with no workspace.
     #[must_use]
-    pub fn new(rule: puddle_store::RequestRule, never: &[(Option<String>, String)]) -> Self {
+    pub fn new(
+        rule: puddle_store::RequestRule,
+        never: &[(Option<String>, puddle_types::HostPattern)],
+    ) -> Self {
         let warning = overridden_warning(&rule, never);
         Self {
             id: rule.id,
@@ -73,7 +76,7 @@ fn overlap(a: &str, b: &str) -> bool {
 /// The warning for `rule` when it overrides some of the names in `never` that it applies under.
 fn overridden_warning(
     rule: &puddle_store::RequestRule,
-    never: &[(Option<String>, String)],
+    never: &[(Option<String>, puddle_types::HostPattern)],
 ) -> Option<String> {
     let scope = rule.workspace.as_ref().map(WorkspaceId::as_str);
     let rule_host = rule.host.to_string();
@@ -81,7 +84,7 @@ fn overridden_warning(
         .iter()
         .filter(|(workspace, name)| {
             (workspace.is_none() || scope.is_none() || workspace.as_deref() == scope)
-                && overlap(&rule_host, name)
+                && overlap(&rule_host, &name.to_string())
         })
         .map(|(workspace, name)| match workspace {
             None => format!("{name} (every workspace)"),

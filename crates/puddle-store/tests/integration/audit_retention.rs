@@ -161,7 +161,7 @@ fn one_workspace_flooding_its_log_cannot_push_out_another_workspaces_records() {
         clock.advance(1);
         ask(&store, "a", &format!("flood{n}.example"));
     }
-    assert!(store.audit_bytes().unwrap() > 1000);
+    assert!(store.audit_file_in_use_bytes().unwrap() > 1000);
     let before = audit(&store).len();
     let report = store.sweep().unwrap();
     assert_eq!(report.audit_records_pruned, 0);
@@ -254,6 +254,33 @@ fn the_stats_say_what_the_audit_holds_and_how_fast_it_grows() {
         lines.len()
     );
     assert!(stats.file_bytes > 0);
+}
+
+#[test]
+fn the_stats_count_the_records_of_the_boundary_minute_exactly_and_follow_a_prune() {
+    let (clock, store) = fixture();
+    // Records within one minute, the stats' day window starting inside it.
+    ask(&store, "a", "before.example");
+    clock.set(T0 + 30_000);
+    ask(&store, "a", "inside-one.example");
+    clock.set(T0 + 40_000);
+    ask(&store, "a", "inside-two.example");
+    let now = T0 + DAY + 20_000;
+    clock.set(now);
+    let in_window = |store: &Store| {
+        audit(store)
+            .iter()
+            .filter(|v| v["ts"].as_u64().unwrap() >= now - DAY)
+            .count() as u64
+    };
+    let stats = store.audit_stats().unwrap();
+    assert!(in_window(&store) > 0 && in_window(&store) < stats.records);
+    assert_eq!(stats.records_last_day, in_window(&store), "{stats:?}");
+    assert_eq!(stats.records, audit(&store).len() as u64);
+    store.prune_audit(1).unwrap();
+    let stats = store.audit_stats().unwrap();
+    assert_eq!(stats.records, audit(&store).len() as u64);
+    assert_eq!(stats.records_last_day, in_window(&store), "{stats:?}");
 }
 
 fn auto_vacuum(path: &std::path::Path) -> i64 {
@@ -349,11 +376,11 @@ fn the_sweeper_looks_again_exactly_an_hour_after_its_last_look() {
 }
 
 #[test]
-fn a_log_exactly_at_the_warning_size_is_not_over_it() {
+fn a_file_exactly_at_the_warning_size_is_not_over_it() {
     let bytes = {
         let (_, store) = fixture();
         ask(&store, "a", "x.example");
-        store.audit_bytes().unwrap()
+        store.audit_file_in_use_bytes().unwrap()
     };
     for (warn, over) in [(bytes, false), (bytes - 1, true)] {
         let (_, store) = fixture_with(Limits {
@@ -361,7 +388,7 @@ fn a_log_exactly_at_the_warning_size_is_not_over_it() {
             ..Limits::default()
         });
         ask(&store, "a", "x.example");
-        assert_eq!(store.audit_bytes().unwrap(), bytes);
+        assert_eq!(store.audit_file_in_use_bytes().unwrap(), bytes);
         assert_eq!(store.sweep().unwrap().audit_over_warn_size, over, "{warn}");
     }
 }

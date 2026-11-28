@@ -107,7 +107,7 @@ fn mib(bytes: u64) -> String {
 
 /// What `status` prints, with a warning when the log is over its warning size.
 fn status_text(s: &puddle_host::AuditStats) -> String {
-    let over = if s.bytes > s.warn_bytes {
+    let over = if s.file_in_use_bytes() > s.warn_bytes {
         format!(
             "\nIt is over the {} where Puddle warns. Nothing is deleted for its size; \
              shorten the days or run `audit prune`.",

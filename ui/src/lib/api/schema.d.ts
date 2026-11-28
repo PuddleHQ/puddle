@@ -3564,7 +3564,7 @@ export interface components {
             retention_days: number;
             /**
              * Format: int64
-             * @description Size of the lines above which Puddle shows a warning.
+             * @description Size of the file less its free space, above which Puddle shows a warning.
              */
             warn_bytes: number;
         };

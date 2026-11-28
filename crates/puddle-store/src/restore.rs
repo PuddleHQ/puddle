@@ -526,13 +526,17 @@ fn tables() -> [Table; 21] {
 /// The tables of the schema a restore does not copy row by row, with the reason; a test walks
 /// `sqlite_master` and fails for a table in neither this list nor [`tables`].
 #[cfg(test)]
-const NOT_CARRIED: [(&str, &str); 21] = [
+const NOT_CARRIED: [(&str, &str); 22] = [
     ("users", "mapped by `map_users`, never copied row by row"),
     (
         "audit",
         "loaded by `copy_audit` when this machine's log is empty",
     ),
     ("audit_size", "a running total of this machine's own log"),
+    (
+        "audit_minutes",
+        "the rows of this machine's own log per minute, kept by the audit triggers",
+    ),
     ("audit_retention", "this machine's own retention choice"),
     ("admin_audit", "this machine's user-management history"),
     (

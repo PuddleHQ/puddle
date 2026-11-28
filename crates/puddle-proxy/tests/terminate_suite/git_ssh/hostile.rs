@@ -574,15 +574,17 @@ async fn hostile_hg50_a_key_exchange_storm_ends_the_connection_and_the_next_one_
 }
 
 #[tokio::test]
-async fn hostile_hg50_thousands_of_authentication_attempts_are_bounded_and_none_is_logged() {
+async fn hostile_hg50_no_authentication_method_leaves_its_secret_in_a_log_or_an_event() {
     let t = SshRig::new().await;
     let mut guest = t.git.rig.guest();
-    let mut ssh = t.client(&mut guest, "bound.test:22").await;
     let key = russh::keys::PrivateKey::random(&mut Os, Algorithm::Ed25519).unwrap();
     let key = Arc::new(key);
-    for round in 0..3000 {
+    // One fresh connection per method: a server past a successful authentication never sees the
+    // next attempt, so a shared connection would leave the later canaries unsent.
+    for method in 0..3 {
+        let mut ssh = t.client(&mut guest, "bound.test:22").await;
         let attempt = async {
-            match round % 3 {
+            match method {
                 0 => ssh
                     .authenticate_password("git", "CANARY-PASSWORD-50")
                     .await
@@ -603,17 +605,14 @@ async fn hostile_hg50_thousands_of_authentication_attempts_are_bounded_and_none_
                     .map(|_| true),
             }
         };
-        // A server that stops answering after the first success, or ends the connection, is the
-        // bound; one that keeps answering must do it quickly.
-        match tokio::time::timeout(Duration::from_millis(300), attempt).await {
-            Ok(Ok(_)) => {}
-            Ok(Err(_)) | Err(_) => break,
-        }
+        // The attempt must be answered (accepted or refused) before the connection ends, so the
+        // canary reached the server.
+        let answered = tokio::time::timeout(Duration::from_secs(5), attempt).await;
+        assert!(answered.is_ok(), "method {method} was not answered");
+        drop(ssh);
     }
-    drop(ssh);
-    // Either the server went on answering, each attempt cheap, or it ended the connection;
-    // what it may not do is keep anything of them.
-    let events = t.events(1).await;
+    // Each connection logs its event; what none may do is keep a secret.
+    let events = t.events(3).await;
     let text = format!("{events:?}");
     let logs = crate::terminate_support::captured_logs();
     for canary in [

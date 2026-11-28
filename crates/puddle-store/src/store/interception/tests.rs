@@ -20,8 +20,12 @@ fn ws(text: &str) -> WorkspaceId {
     WorkspaceId::new(text).unwrap()
 }
 
-fn strings(items: &[&str]) -> Vec<String> {
-    items.iter().map(|s| (*s).to_owned()).collect()
+fn pat(text: &str) -> HostPattern {
+    HostPattern::parse_normalised(text).unwrap()
+}
+
+fn strings(items: &[&str]) -> Vec<HostPattern> {
+    items.iter().map(|s| pat(s)).collect()
 }
 
 fn store() -> (Store, Arc<Seen>) {
@@ -126,7 +130,7 @@ fn never_decrypt_names_are_per_workspace_sorted_and_replaced_as_a_whole() {
             .workspace_interception(&ws("a"))
             .unwrap()
             .never_decrypt,
-        ["*.a.example", "b.example"]
+        strings(&["*.a.example", "b.example"])
     );
     assert_eq!(
         store
@@ -164,7 +168,10 @@ fn the_global_list_tells_every_workspace_even_one_with_no_settings_row() {
     store
         .set_global_never_decrypt(&strings(&["bank.example"]))
         .unwrap();
-    assert_eq!(store.global_never_decrypt().unwrap(), ["bank.example"]);
+    assert_eq!(
+        store.global_never_decrypt().unwrap(),
+        strings(&["bank.example"])
+    );
     assert_eq!(changes(&seen) - before, OWNED);
     store.set_global_never_decrypt(&[]).unwrap();
     assert_eq!(store.global_never_decrypt().unwrap(), strings(&[]));
@@ -223,7 +230,10 @@ fn deleting_a_workspace_deletes_its_settings_and_keeps_the_global_list() {
         store.workspace_interception(&ws("a")).unwrap(),
         WorkspaceInterception::default()
     );
-    assert_eq!(store.global_never_decrypt().unwrap(), ["g.example"]);
+    assert_eq!(
+        store.global_never_decrypt().unwrap(),
+        strings(&["g.example"])
+    );
 }
 
 #[test]
@@ -264,16 +274,34 @@ fn every_never_decrypt_name_of_a_user_is_listed_with_its_workspace() {
 #[test]
 fn adding_a_never_decrypt_name_keeps_the_others_and_stops_at_the_limit() {
     let (store, seen) = store();
-    assert!(store.add_never_decrypt(&ws("a"), "x.example", 2).unwrap());
+    assert!(
+        store
+            .add_never_decrypt(&ws("a"), &pat("x.example"), 2)
+            .unwrap()
+    );
     assert_eq!(changes(&seen), 1, "a new name is a change");
-    assert!(store.add_never_decrypt(&ws("a"), "x.example", 2).unwrap());
+    assert!(
+        store
+            .add_never_decrypt(&ws("a"), &pat("x.example"), 2)
+            .unwrap()
+    );
     assert_eq!(changes(&seen), 1, "a name already held is not");
-    assert!(store.add_never_decrypt(&ws("a"), "y.example", 2).unwrap());
+    assert!(
+        store
+            .add_never_decrypt(&ws("a"), &pat("y.example"), 2)
+            .unwrap()
+    );
     assert_eq!(changes(&seen), 2);
-    assert!(!store.add_never_decrypt(&ws("a"), "z.example", 2).unwrap());
+    assert!(
+        !store
+            .add_never_decrypt(&ws("a"), &pat("z.example"), 2)
+            .unwrap()
+    );
     assert_eq!(changes(&seen), 2, "a refused name is not a change");
     assert!(
-        store.add_never_decrypt(&ws("a"), "y.example", 2).unwrap(),
+        store
+            .add_never_decrypt(&ws("a"), &pat("y.example"), 2)
+            .unwrap(),
         "a name already held needs no room"
     );
     assert_eq!(
@@ -285,11 +313,23 @@ fn adding_a_never_decrypt_name_keeps_the_others_and_stops_at_the_limit() {
     );
     store.set_workspace_mode(&ws("known"), None).unwrap();
     let before = changes(&seen);
-    assert!(store.add_global_never_decrypt("g.example", 1).unwrap());
+    assert!(
+        store
+            .add_global_never_decrypt(&pat("g.example"), 1)
+            .unwrap()
+    );
     let grew = changes(&seen) - before;
     assert!(grew > 0, "the first add tells the workspaces");
-    assert!(store.add_global_never_decrypt("g.example", 1).unwrap());
-    assert!(!store.add_global_never_decrypt("h.example", 1).unwrap());
+    assert!(
+        store
+            .add_global_never_decrypt(&pat("g.example"), 1)
+            .unwrap()
+    );
+    assert!(
+        !store
+            .add_global_never_decrypt(&pat("h.example"), 1)
+            .unwrap()
+    );
     assert_eq!(
         changes(&seen) - before,
         grew,
@@ -312,14 +352,18 @@ fn a_workspace_patch_changes_only_the_parts_it_gives_and_returns_the_result() {
         .patch_workspace_interception(&ws("a"), Some(Some(InterceptionMode::All)), None)
         .unwrap();
     assert_eq!(got.mode, Some(InterceptionMode::All));
-    assert_eq!(got.never_decrypt, ["keep.example"], "names untouched");
+    assert_eq!(
+        got.never_decrypt,
+        strings(&["keep.example"]),
+        "names untouched"
+    );
     assert_eq!(changes(&seen) - before, 1);
 
     let got = store
         .patch_workspace_interception(&ws("a"), None, Some(&strings(&["new.example"])))
         .unwrap();
     assert_eq!(got.mode, Some(InterceptionMode::All), "mode untouched");
-    assert_eq!(got.never_decrypt, ["new.example"]);
+    assert_eq!(got.never_decrypt, strings(&["new.example"]));
     assert_eq!(changes(&seen) - before, 2);
 
     let got = store
@@ -401,4 +445,32 @@ fn a_settings_patch_changes_only_the_parts_it_gives() {
         .unwrap();
     assert_eq!(got.mode, Some(InterceptionMode::All));
     assert!(got.learn_from_rejections && got.notice_seen);
+}
+
+#[test]
+fn a_stored_never_decrypt_name_outside_the_grammar_is_corrupt_on_every_read() {
+    for bad in ["*.com", "Bank.Example", "", "203.0.113.7"] {
+        let (store, _) = store();
+        store
+            .run_sql_for_testing(&format!(
+                "INSERT INTO never_decrypt (workspace_id, pattern) VALUES ('a', '{bad}');
+                 INSERT INTO never_decrypt_global (pattern) VALUES ('{bad}');"
+            ))
+            .unwrap();
+        let own = store.workspace_interception(&ws("a")).unwrap_err();
+        assert!(
+            matches!(&own, StoreError::Corrupt { table: "never_decrypt", reason, .. } if reason.contains("host pattern")),
+            "{bad:?}: {own:?}"
+        );
+        let global = store.global_never_decrypt().unwrap_err();
+        assert!(
+            matches!(&global, StoreError::Corrupt { table: "never_decrypt_global", reason, .. } if reason.contains("host pattern")),
+            "{bad:?}: {global:?}"
+        );
+        let names = store.never_decrypt_names(UserId::OWNER).unwrap_err();
+        assert!(
+            matches!(&names, StoreError::Corrupt { table: "never_decrypt", reason, .. } if reason.contains("host pattern")),
+            "{bad:?}: {names:?}"
+        );
+    }
 }

@@ -466,14 +466,20 @@ async fn control_characters_in_a_header_or_the_path_are_refused() {
             *kind == 1 && *stream == 1 && payload.first() == Some(&0x88)
         });
         assert!(!answered_ok, "{what}: answered 200");
-        let _ = closed;
+        // The path cases reset the stream, the header cases end the connection; both are a
+        // PROTOCOL_ERROR (1).
+        let refused = seen.iter().any(|(kind, stream, payload)| {
+            (*kind == 3 && *stream == 1 && payload == &[0, 0, 0, 1])
+                || (*kind == 7 && payload.get(4..8) == Some(&[0, 0, 0, 1][..]))
+        });
+        assert!(
+            refused,
+            "{what}: not refused with PROTOCOL_ERROR: closed={closed} {seen:?}"
+        );
     }
     assert!(
-        server
-            .recorded()
-            .iter()
-            .all(|r| r.header("x-injected").is_none() && r.header("x-evil").is_none()),
-        "{:?}",
+        server.recorded().is_empty(),
+        "a refused request reached the server: {:?}",
         server.recorded()
     );
 }

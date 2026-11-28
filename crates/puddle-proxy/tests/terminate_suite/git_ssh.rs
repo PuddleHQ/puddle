@@ -839,6 +839,13 @@ async fn a_git_host_the_rules_do_not_allow_is_not_served() {
     let mut guest = t.git.rig.guest();
     assert!(t.try_client(&mut guest, "bound.test:22").await.is_err());
     assert_eq!(t.upstream.calls().len(), 0);
+    let e = t.events(1).await;
+    crate::terminate_support::assert_record(
+        &e[0],
+        ConnectionDecision::Deny,
+        None,
+        ConnectionReason::Rule,
+    );
 }
 
 #[tokio::test]

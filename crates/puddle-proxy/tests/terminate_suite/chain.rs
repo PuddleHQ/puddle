@@ -69,9 +69,14 @@ async fn a_terminated_connection_goes_through_a_basic_company_proxy_by_name() {
             .any(|s| s.method == "CONNECT" && s.target == "bound.test:443"),
         "{seen:?}"
     );
+    let answer = base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        format!("corp:{proxy_password}"),
+    );
     assert!(
-        seen.iter().any(|s| s.proxy_authorization.is_some()),
-        "the 407 was answered"
+        seen.iter()
+            .any(|s| s.proxy_authorization.as_deref() == Some(&format!("Basic {answer}"))),
+        "the 407 was answered with the proxy's credentials: {seen:?}"
     );
     // The injected header travels inside the tunnel only; the company proxy never sees it.
     assert!(
@@ -104,6 +109,15 @@ async fn a_bad_certificate_behind_the_company_proxy_is_still_a_502_with_nothing_
     let response = client.get("bound.test", "/x").await;
     assert_eq!(response.status, 502);
     assert!(server.recorded().is_empty());
+    drop(client);
+    drop(guest);
+    let e = rig.events_exactly(1).await;
+    terminate_support::assert_record(
+        &e[0],
+        puddle_types::ConnectionDecision::Allow,
+        Some(puddle_types::ConnectionOutcome::ConnectFailed),
+        puddle_types::ConnectionReason::Rule,
+    );
 }
 
 #[tokio::test]
@@ -126,6 +140,15 @@ async fn a_company_proxy_that_refuses_the_tunnel_has_its_refusal_passed_on_and_n
     // The company proxy's own refusal, as on a spliced tunnel.
     assert_eq!(response.status, 403);
     assert!(server.recorded().is_empty());
+    drop(client);
+    drop(guest);
+    let e = rig.events_exactly(1).await;
+    terminate_support::assert_record(
+        &e[0],
+        puddle_types::ConnectionDecision::Allow,
+        Some(puddle_types::ConnectionOutcome::UpstreamRefused),
+        puddle_types::ConnectionReason::Rule,
+    );
 }
 
 /// A scripted NTLM client (the Windows build uses SSPI behind the same seam).

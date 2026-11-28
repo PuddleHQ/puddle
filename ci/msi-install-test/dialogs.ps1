@@ -252,13 +252,18 @@ function Test-CustomSetupAndLog([string]$Package) {
     Stop-Installed
 }
 
-# The upgrade over a running Puddle as a person meets it: the refusal is in a dialog the screen reader
-# (UI Automation) reads, and nothing is changed.
+# The upgrade over a running Puddle as a person meets it: the first dialog is the refusal (before the
+# wizard's first page, so no Install button to press), the text is read by UI Automation, the run ends there (no
+# "setup was interrupted" or failure page after it) and nothing is changed.
 function Assert-UpgradeRefusalDialog([string]$UpgradeMsi, [string]$FirstVersion) {
     $digest = Get-TreeDigest
     $ui = Invoke-MsiexecWithUi @('/i', "`"$UpgradeMsi`"") 'msi-upgrade-refused-ui.log' 180
     Expect ($ui.Code -ne 0) 'the interactive upgrade went ahead with the program running; it must refuse'
-    Expect (Test-RefusalShown $ui.Dialogs) "no dialog showed '$RefusalText'; the dialogs: $(($ui.Dialogs | ForEach-Object { "'$($_.Title)': $($_.Texts -join ' / ')" }) -join ' || ')"
+    $dialogs = @($ui.Dialogs)
+    $shown = ($dialogs | ForEach-Object { "'$($_.Title)': $($_.Texts -join ' / ')" }) -join ' || '
+    Expect ($dialogs.Count -ge 1 -and (Test-RefusalShown @($dialogs[0]))) "the first dialog did not show '$RefusalText'; the dialogs: $shown"
+    Expect (-not (@($dialogs[0].Buttons) | Where-Object { $_.Name -match '^&?(Install|Custom setup)$' })) "the first dialog offers Install; the refusal must come before the wizard's first page: $shown"
+    Expect ($dialogs.Count -eq 1) "the refusal is not the last page; the dialogs: $shown"
     Expect (((Get-TreeDigest) -join "`n") -eq ($digest -join "`n")) 'the refused interactive upgrade changed the install folder'
     $entries = @(Get-UninstallEntries)
     Expect ($entries.Count -eq 1 -and $entries[0].Version -eq $FirstVersion) "the refused interactive upgrade changed the installed version: $(($entries | ForEach-Object Version) -join ', ')"

@@ -17,6 +17,7 @@
 
 #![forbid(unsafe_code)]
 
+mod detect;
 #[cfg(test)]
 mod docker_tests;
 #[cfg(test)]
@@ -37,6 +38,7 @@ mod vault;
 #[cfg(test)]
 mod widened_tests;
 
+pub use detect::{Detected, Place, Signal, detect};
 pub use logins::{
     ForgetError, Kept, KeptList, KeptLogin, LoginNotices, Logins, Problem, token_endpoint_of,
 };

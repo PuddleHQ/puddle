@@ -99,12 +99,11 @@ async fn a_leg_is_recorded_when_its_connection_ends_though_nothing_waits_for_it(
     drop(done);
     assert!(legs.lock().unwrap().is_empty(), "nothing has ended yet");
     end.send(()).unwrap();
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while legs.lock().unwrap().is_empty() {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("the leg's task records the outcome by itself");
+    puddle_test_kit::eventually(
+        "the leg's task records the outcome by itself",
+        Duration::from_secs(5),
+        || !legs.lock().unwrap().is_empty(),
+    )
+    .await;
     assert_eq!(legs.lock().unwrap().len(), 1);
 }

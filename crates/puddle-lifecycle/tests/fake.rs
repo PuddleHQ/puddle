@@ -563,6 +563,53 @@ async fn an_orphan_whose_get_says_it_is_down_is_not_stopped() {
 }
 
 #[tokio::test]
+async fn a_known_sandbox_that_crashed_after_the_listing_is_reported_crashed() {
+    let rt = FakeRuntime::new();
+    let left = rt.create(spec("racing")).await.unwrap();
+    // The listing says Running; by the time `get` asks, the VM has crashed.
+    rt.inject(
+        Op::Get,
+        Fault::once(ComputeError::InvalidState {
+            sandbox: "racing".into(),
+            op: "connect to",
+            status: WorkspaceStatus::Crashed,
+        }),
+    );
+    let inventory = Inventory {
+        sandboxes: BTreeSet::from([name("racing")]),
+        ..Inventory::default()
+    };
+    let report = reconcile(&rt, &inventory, &ShutdownConfig::default())
+        .await
+        .unwrap();
+    assert_eq!(report.crashed, [name("racing")]);
+    drop(left);
+}
+
+#[tokio::test]
+async fn a_known_sandbox_that_stopped_after_the_listing_is_not_reported_crashed() {
+    let rt = FakeRuntime::new();
+    let left = rt.create(spec("racing")).await.unwrap();
+    rt.inject(
+        Op::Get,
+        Fault::once(ComputeError::InvalidState {
+            sandbox: "racing".into(),
+            op: "connect to",
+            status: WorkspaceStatus::Stopped,
+        }),
+    );
+    let inventory = Inventory {
+        sandboxes: BTreeSet::from([name("racing")]),
+        ..Inventory::default()
+    };
+    let report = reconcile(&rt, &inventory, &ShutdownConfig::default())
+        .await
+        .unwrap();
+    assert_eq!(report.crashed, []);
+    drop(left);
+}
+
+#[tokio::test]
 async fn an_orphan_left_starting_draining_or_paused_is_killed_and_its_record_removed() {
     for held in [
         WorkspaceStatus::Starting,

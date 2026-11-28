@@ -238,7 +238,7 @@ async fn reconcile_sandbox<R: Runtime>(
     inventory: &Inventory,
     config: &ShutdownConfig,
     name: SandboxName,
-    status: WorkspaceStatus,
+    mut status: WorkspaceStatus,
     report: &mut ReconcileReport,
 ) {
     let mut down = status.is_down();
@@ -267,7 +267,11 @@ async fn reconcile_sandbox<R: Runtime>(
                 StopOutcome::Panicked => {}
             },
             // The VM went down between list and get: nothing left to stop.
-            Err(ComputeError::InvalidState { status, .. }) if status.is_down() => down = true,
+            // What `get` found is newer than the listing, so it is what crashed is judged from.
+            Err(ComputeError::InvalidState { status: fresh, .. }) if fresh.is_down() => {
+                status = fresh;
+                down = true;
+            }
             // `get` refuses a VM that is not running (starting, draining, paused: a dead Puddle
             // left it mid-stop), and stop needs a connection. End it by name instead.
             Err(ComputeError::InvalidState { status: held, .. }) => {

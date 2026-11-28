@@ -18,7 +18,10 @@ use crate::guest_text::clean;
 use crate::{Layout, WorkspaceError};
 
 /// The check script (POSIX sh, run as root with the mount point as `$1`).
-pub const DELETE_CHECK_SH: &str = include_str!("../guest/delete-check.sh");
+pub const DELETE_CHECK_SH: &str = concat!(
+    include_str!("../guest/git-guard.sh"),
+    include_str!("../guest/delete-check.sh")
+);
 
 /// How long the check may take.
 pub const CHECK_TIMEOUT: Duration = Duration::from_secs(300);

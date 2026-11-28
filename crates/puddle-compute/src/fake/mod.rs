@@ -250,7 +250,7 @@ impl SandboxRecord {
             MEMINFO.to_owned(),
             format!("MemTotal:       {kib} kB\n").into_bytes(),
         );
-        let last = self.spec.cpus.unwrap_or(1).saturating_sub(1);
+        let last = self.spec.cpus.map_or(1, CpuCount::get).saturating_sub(1);
         let online = if last == 0 {
             "0\n".to_owned()
         } else {
@@ -658,7 +658,7 @@ impl Runtime for FakeRuntime {
                 .ok_or_else(|| ComputeError::NotFound {
                     sandbox: name.to_string(),
                 })?;
-        record.spec.cpus = Some(cpus.get());
+        record.spec.cpus = Some(cpus);
         Ok(())
     }
 

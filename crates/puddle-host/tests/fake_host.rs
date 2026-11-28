@@ -283,6 +283,8 @@ struct Guest {
     fail_trim: AtomicBool,
     /// Runs once, inside the next run of the boot hook: a change made while the guest boots.
     during_boot: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    /// How long the boot hook stays busy after it ran `during_boot`.
+    boot_busy: Mutex<Duration>,
     /// What the shell-init check answers, as exit code and stdout, instead of "quiet".
     check_answer: Mutex<Option<(i32, &'static str)>>,
     /// What `puddle-agent mise-fetch` answers on standard error with exit code 1, instead of
@@ -397,7 +399,7 @@ impl Guest {
         runtime.on_exec(move |ctx: &mut ExecContext<'_>, r: &ExecRequest| guest.answer(ctx, r));
     }
 
-    fn answer(&self, ctx: &ExecContext<'_>, r: &ExecRequest) -> Option<ExecOutput> {
+    fn answer(&self, ctx: &mut ExecContext<'_>, r: &ExecRequest) -> Option<ExecOutput> {
         let second = r.args.get(1).map(String::as_str);
         if let Some(answer) = self
             .answer_volume_question(r)
@@ -441,6 +443,7 @@ impl Guest {
             "boot" if self.during_boot.lock().unwrap().is_some() => {
                 let change = self.during_boot.lock().unwrap().take().unwrap();
                 change();
+                ctx.delay(*self.boot_busy.lock().unwrap());
                 self.boot_ok()
             }
             "boot" => self.boot_ok(),

@@ -128,7 +128,9 @@ fn limited(now_ms: u64, wait_ms: u64, primary: bool) -> Verdict {
 }
 
 /// Azure DevOps' answer to one request. It answers a bad or expired token with its sign-in page
-/// (`203`, or a redirect, or a `200` of HTML) rather than `401`, so those count as rejected.
+/// (`203`, or a redirect, or a `200` of HTML) rather than `401`, so those count as rejected. A
+/// `203` or `200` page that is not Azure's (a company proxy's block or sign-in page) says nothing
+/// about the token: it is an answer Puddle has no rule for.
 pub(crate) fn azure(reply: &ApiReply, now_ms: u64, strikes: u32) -> Verdict {
     if let Some(seconds) = number(reply, "retry-after")
         && reply.status >= 400
@@ -137,12 +139,21 @@ pub(crate) fn azure(reply: &ApiReply, now_ms: u64, strikes: u32) -> Verdict {
     }
     match reply.status {
         200 if is_json(reply) => Verdict::Ok,
-        200 | 203 | 301 | 302 | 303 | 307 | 308 | 401 => Verdict::Rejected,
+        200 | 203 if looks_like_azure_sign_in(reply) => Verdict::Rejected,
+        200 | 203 => Verdict::Other(reply.status),
+        301 | 302 | 303 | 307 | 308 | 401 => Verdict::Rejected,
         403 => Verdict::Forbidden(message_of(reply)),
         404 => Verdict::NotFound,
         429 => limited(now_ms, backoff_ms(strikes), false),
         other => Verdict::Other(other),
     }
+}
+
+/// Whether a page is Azure DevOps' sign-in page: it names the service and asks to sign in.
+fn looks_like_azure_sign_in(reply: &ApiReply) -> bool {
+    let head = &reply.body[..reply.body.len().min(16 * 1024)];
+    let page = String::from_utf8_lossy(head).to_ascii_lowercase();
+    page.contains("sign in") && (page.contains("azure devops") || page.contains("visualstudio.com"))
 }
 
 fn is_json(reply: &ApiReply) -> bool {

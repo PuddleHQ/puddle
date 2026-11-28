@@ -18,7 +18,7 @@
 //! name) the login fails: the tool gets a `502` that names the reason, never the real answer, and
 //! the user is told. A real token never reaches the workspace by this path.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -133,6 +133,8 @@ struct Inner {
     /// Held by the blocking thread of each store call until the call returns, so a call that was
     /// given up on keeps the next one waiting: its write cannot land after a later one.
     store_gate: Arc<tokio::sync::Mutex<()>>,
+    /// When each problem was last reported, by profile and kind.
+    told: Mutex<HashMap<(&'static str, Problem), tokio::time::Instant>>,
     /// How many store calls were given up on.
     store_timeouts: AtomicU64,
     /// The stand-in of each slot that has one.
@@ -300,6 +302,7 @@ impl Logins {
                     u64::try_from(STORE_TIMEOUT.as_millis()).unwrap_or(u64::MAX),
                 ),
                 store_gate: Arc::default(),
+                told: Mutex::new(HashMap::new()),
                 store_timeouts: AtomicU64::new(0),
                 slots: Mutex::new(BTreeMap::new()),
                 retired: Mutex::new(BTreeMap::new()),
@@ -338,7 +341,26 @@ impl Logins {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Tells the user of a problem, at most once in `NOTICE_EVERY` for each service and kind of
+    /// problem: a client that retries would otherwise raise one event for every request.
     fn notify(&self, profile: &Profile, problem: Problem) {
+        let now = tokio::time::Instant::now();
+        {
+            let mut told = self
+                .inner
+                .told
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let key = (profile.id, problem);
+            if told
+                .get(&key)
+                .is_some_and(|at| now.duration_since(*at) < NOTICE_EVERY)
+            {
+                return;
+            }
+            // few services and kinds exist, so the map stays small
+            told.insert(key, now);
+        }
         tracing::warn!(
             workspace = %self.inner.workspace,
             profile = profile.id,
@@ -387,6 +409,23 @@ impl Logins {
         let _ = tokio::time::timeout(limit, self.inner.store_gate.lock()).await;
     }
 
+    /// The registry entry of a pair: what [`Self::install`] puts in, and what a capture checks for
+    /// every pair before it writes anything.
+    fn entry(
+        profile: &'static Profile,
+        (slot, scope): (Slot, Scope),
+        stand_in: &str,
+        real: &str,
+    ) -> Result<StandIn, StandInError> {
+        StandIn::new(
+            StandInOrigin::CapturedLogin,
+            &profile.slot_name_of(slot),
+            stand_in,
+            SecretValue::new(real),
+            profile.hosts_for(scope),
+        )
+    }
+
     /// Puts a pair into the registry and the slots: the stand-in the workspace holds and the real
     /// token behind it, swapped toward the hosts `scope` names. The slot's stand-in it replaces
     /// stays swapped as one of the last `keep_earlier` (none: it goes at once). The registry is the
@@ -399,13 +438,7 @@ impl Logins {
         real: &str,
         keep_earlier: usize,
     ) -> Result<(), StandInError> {
-        let entry = StandIn::new(
-            StandInOrigin::CapturedLogin,
-            &profile.slot_name_of(slot),
-            stand_in,
-            SecretValue::new(real),
-            profile.hosts_for(scope),
-        )?;
+        let entry = Self::entry(profile, (slot, scope), stand_in, real)?;
         let old = self.slots().insert((profile.id, slot), stand_in.to_owned());
         if let Some(old) = old {
             if keep_earlier > 0 {
@@ -744,9 +777,18 @@ impl Logins {
         let mut parsed =
             TokenBody::parse(content_type, body).map_err(|_| Problem::UnexpectedAnswer)?;
         let mut fields = parsed.fields();
-        // An identifier in a field named like a credential (a `token_uuid`) is no credential.
+        // An identifier in a field named like a credential (a `token_uuid`) is no credential, but
+        // only a field that says so (`_id`, `_uuid`) and that the profile does not name: a UUID
+        // can be a token, and a field called `token` holding one is a token.
         fields.retain(|field| {
+            let says_identifier = {
+                let name = field.name.to_ascii_lowercase();
+                name.ends_with("_id") || name.ends_with("_uuid")
+            };
+            let named = endpoint.fields.iter().any(|f| f.path == field.path);
             !matches!(field.kind, FieldKind::Text(_))
+                || named
+                || !says_identifier
                 || !parsed
                     .text_at(&field.path)
                     .is_some_and(|text| is_uuid(&text))
@@ -804,6 +846,12 @@ impl Logins {
         }
         let mut one_at_a_time = Some(Arc::clone(&self.inner.capture).lock_owned().await);
         let planned = self.plan(profile, found)?;
+        // Every pair is checked before the store is written: a pair the registry refuses must not
+        // leave the others swapped in and everything in the store.
+        for (field, real, stand_in, _) in &planned {
+            Self::entry(profile, (field.slot(), field.scope), stand_in, real)
+                .map_err(|_| Problem::UnusableToken)?;
+        }
         // The credential store first: a token that was not kept is not replaced in the answer.
         self.keep_stored(profile, &planned, &mut one_at_a_time)
             .await?;
@@ -1043,6 +1091,10 @@ pub enum ForgetError {
 /// counts and flags that happen to carry the word in their name.
 const MIN_TOKEN_LEN: usize = 16;
 
+/// A problem is reported at most once in this long for each service and kind (the injector does
+/// the same for its notices).
+const NOTICE_EVERY: Duration = Duration::from_secs(10);
+
 /// Name endings of fields that carry a count, a kind or an address, not a credential.
 const NOT_TOKENS: [&str; 8] = [
     "_type",
@@ -1061,16 +1113,25 @@ fn token_like(name: &str) -> bool {
     if NOT_TOKENS.iter().any(|suffix| name.ends_with(suffix)) {
         return false;
     }
-    name.contains("token")
-        || name.contains("secret")
-        || name.contains("password")
+    [
+        "token",
+        "secret",
+        "password",
+        "jwt",
+        "credential",
+        "session",
+        "cookie",
+        "assertion",
+    ]
+    .iter()
+    .any(|word| name.contains(word))
         || name.ends_with("key")
 }
 
 /// Whether the answer holds a credential Puddle would not replace: a token-like text in a field
 /// the endpoint does not name (at any depth), or a named field that is repeated or structured
-/// (the tool may read the one Puddle did not). A UUID is an identifier, not a credential, and is
-/// removed from `fields` by the caller.
+/// (the tool may read the one Puddle did not). A UUID in a field named `..._id` or `..._uuid` is an
+/// identifier, not a credential, and is removed from `fields` by the caller.
 fn holds_unnamed_token<'a>(endpoint: &Endpoint, fields: &'a [BodyField]) -> Option<&'a BodyField> {
     let named = |field: &BodyField| endpoint.fields.iter().any(|f| f.path == field.path);
     fields.iter().find(|field| {

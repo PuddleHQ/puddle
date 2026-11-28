@@ -109,6 +109,11 @@ pub(crate) async fn list(
     })
 }
 
+/// `name` without its control characters.
+fn printable(name: &str) -> String {
+    name.chars().filter(|c| !c.is_control()).collect()
+}
+
 fn repository(row: RepoJson, organisation: &str) -> Result<Repository, Problem> {
     let project = row
         .project
@@ -118,18 +123,22 @@ fn repository(row: RepoJson, organisation: &str) -> Result<Repository, Problem> 
         Some("private") => Visibility::Private,
         _ => Visibility::Unknown,
     };
+    // The names are shown and put in lists as text: a control character (a newline, an escape
+    // sequence) in a name the host sent has no place there. The address keeps the name as sent,
+    // escaped, because that is the one that clones.
+    let (shown_project, shown_name) = (printable(&project.name), printable(&row.name));
     Ok(Repository {
         host: HOST.to_owned(),
         owner: organisation.to_owned(),
-        full_name: format!("{organisation}/{}/{}", project.name, row.name),
+        full_name: format!("{organisation}/{shown_project}/{shown_name}"),
         url: format!(
             "https://{HOST}/{}/{}/_git/{}",
             segment(organisation),
             segment(&project.name),
             segment(&row.name)
         ),
-        project: Some(project.name),
-        name: row.name,
+        project: Some(shown_project),
+        name: shown_name,
         visibility,
         role: Role::Unknown,
         archived: row.is_disabled == Some(true),

@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 const STOP_WAIT: Duration = Duration::from_secs(10);
 
 /// Owns a child process and ends it when dropped, also when the test panicked first: it asks for a
-/// stop (the stop file, when one was given), waits at most [`STOP_WAIT`], then kills and reaps the
+/// stop (the stop file, when one was given), waits at most `STOP_WAIT`, then kills and reaps the
 /// child. A child that already exited is only reaped.
 #[derive(Debug)]
 pub struct ProcessGuard {

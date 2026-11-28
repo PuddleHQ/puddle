@@ -198,6 +198,7 @@ async fn a_token_the_store_writes_after_it_timed_out_does_not_outlast_the_put_ba
         &given.expect("the tool waited for the late write instead of being answered first"),
     );
     // The put back task starts its own wait on the store.
+    // flake-ok: lets the spawned task run until it waits on the store gate; there is no condition to poll
     for _ in 0..50 {
         tokio::task::yield_now().await;
     }

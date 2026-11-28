@@ -148,6 +148,9 @@ pub enum StoreError {
     /// A workspace has the SSH agent on for as many hosts as it may.
     #[error("at most {0} hosts may use the SSH agent in one workspace")]
     TooManySshAgentHosts(usize),
+    /// The keys given for an SSH agent host were refused; the text says why.
+    #[error("{0}")]
+    SshAgentKeys(String),
     /// A workspace has as many SSH agent questions open as it may.
     #[error("at most {0} SSH agent questions may wait in one workspace")]
     TooManySshAgentAsks(usize),

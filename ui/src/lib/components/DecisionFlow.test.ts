@@ -126,6 +126,26 @@ describe("confirming a decision for every workspace", () => {
   });
 });
 
+describe("a decision that is still being sent", () => {
+  it("is sent once however often the button is pressed, and shows no error toast", async () => {
+    inbox.add(request(1, { host: "a.example.com" }), "example.com");
+    let release = () => {};
+    inbox.gate = new Promise<void>((resolve) => (release = resolve));
+    render(InboxPage);
+    await screen.findByRole("heading", { name: "example.com" });
+    const allow = screen.getByRole("button", {
+      name: /^Allow a\.example\.com/,
+    });
+    await fireEvent.click(allow);
+    await fireEvent.click(allow);
+    release();
+    await vi.waitFor(() => expect(inbox.rules).toHaveLength(1));
+    inbox.gate = null;
+    expect(inbox.calls.filter((c) => c.endsWith("/approve"))).toHaveLength(1);
+    expect(toasts.items.filter((t) => t.tone === "error")).toHaveLength(0);
+  });
+});
+
 describe("the more-choices popover", () => {
   it("closes when the more-choices button of the row it hangs from is pressed again", async () => {
     inbox.add(request(1, { host: "a.example.com" }), "example.com");

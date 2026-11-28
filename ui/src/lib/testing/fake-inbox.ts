@@ -38,6 +38,8 @@ export class FakeInbox {
   allowedToday = 0;
   /** Status for the next decision (`approve`/`deny`), then back to success. */
   nextDecisionStatus: number | null = null;
+  /** While set, a decision call waits for it before it is answered. */
+  gate: Promise<void> | null = null;
   rules: components["schemas"]["Rule"][] = [];
   #rule = 100;
   /** The requests each rule closed, so an undo can reopen them. */
@@ -94,6 +96,7 @@ export class FakeInbox {
     this.calls.push(`POST ${path}`);
     if (this.down) throw new TypeError("down");
     if (path === "/api/rules/{id}/undo") return this.undo(init.params.path.id);
+    if (this.gate) await this.gate;
     const status = this.nextDecisionStatus;
     this.nextDecisionStatus = null;
     if (status !== null) return this.reply(status);

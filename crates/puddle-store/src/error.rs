@@ -189,6 +189,9 @@ pub enum StoreError {
     /// An invite's digest was refused (too short to be a hash).
     #[error("an invite digest must be at least 16 bytes")]
     InviteInvalid,
+    /// A refresh token's digest was refused (too short to be a hash).
+    #[error("a refresh token digest must be at least 16 bytes")]
+    SessionDigestInvalid,
     /// A device name was refused; the text says why.
     #[error("{0}")]
     DeviceName(String),

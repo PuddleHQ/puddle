@@ -96,11 +96,13 @@ impl Store {
     }
 
     /// A new device for `user`, valid until `expires_at` (epoch ms). A user whose deletion has
-    /// begun gets none.
+    /// begun gets none. For tests: it makes a device without a checked password; sign-in goes
+    /// through [`crate::AccountSecrets::add_device`].
     ///
     /// # Errors
     /// [`StoreError::DeviceName`], [`StoreError::UnknownUser`] (also for a user being deleted), or
     /// a database error.
+    #[cfg(test)]
     pub fn add_device(
         &self,
         user: UserId,

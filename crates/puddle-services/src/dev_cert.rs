@@ -6,6 +6,7 @@
 //! The certificate itself is made and trusted by `puddle-certs`; the host wires the real service,
 //! so this crate never names a certificate store.
 
+#[cfg(any(test, feature = "testing"))]
 use std::sync::{Mutex, PoisonError};
 
 use crate::wire::{DevCertTrustResult, DevCertificate};
@@ -42,6 +43,7 @@ impl DevCertService for NoDevCert {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 /// An in-memory [`DevCertService`] for tests and the UI fixture: it serves the state it was
 /// given, and [`FakeDevCert::set`] replaces it. Trusting it answers what
 /// [`FakeDevCert::set_trust_answer`] says (a yes by default) and keeps that as the state.
@@ -50,6 +52,7 @@ pub struct FakeDevCert {
     inner: Mutex<Inner>,
 }
 
+#[cfg(any(test, feature = "testing"))]
 #[derive(Debug)]
 struct Inner {
     status: DevCertificate,
@@ -57,6 +60,7 @@ struct Inner {
     trusts: u32,
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl FakeDevCert {
     /// Serves `status` until [`FakeDevCert::set`] says otherwise.
     #[must_use]
@@ -99,6 +103,7 @@ impl FakeDevCert {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl DevCertService for FakeDevCert {
     fn status(&self) -> DevCertificate {
         self.inner().status

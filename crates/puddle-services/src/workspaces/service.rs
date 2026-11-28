@@ -234,16 +234,16 @@ pub trait WorkspaceService: Send + Sync {
     /// Opens the workspace in an editor. The workspace must be running.
     fn attach<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
         mode: AttachMode,
     ) -> BoxFuture<'a, Result<Attached, WorkspaceError>>;
 
-    /// Runs a shell init `script` once in a throwaway shell in the running workspace `id` and says
+    /// Runs a shell init `script` once in a throwaway shell in the running workspace and says
     /// whether it parsed and printed nothing. The default does not check: a build with no guest
     /// to run it in.
     fn check_shell_init<'a>(
         &'a self,
-        _id: &'a WorkspaceId,
+        _workspace: &'a OwnedWorkspace,
         _script: &'a str,
     ) -> BoxFuture<'a, Result<ShellInitCheck, WorkspaceError>> {
         Box::pin(async {
@@ -253,7 +253,7 @@ pub trait WorkspaceService: Send + Sync {
         })
     }
 
-    /// The logins Puddle keeps for workspace `id`, from its own record of them (the credential
+    /// The logins Puddle keeps for the workspace, from its own record of them (the credential
     /// store is asked only when there is none yet), so a locked store does not stall the answer.
     ///
     /// # Errors
@@ -261,7 +261,7 @@ pub trait WorkspaceService: Send + Sync {
     /// this Puddle keeps no logins.
     fn kept_logins<'a>(
         &'a self,
-        _id: &'a WorkspaceId,
+        _workspace: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<KeptLogins, WorkspaceError>> {
         Box::pin(async {
             Err(WorkspaceError::Unavailable(
@@ -270,7 +270,7 @@ pub trait WorkspaceService: Send + Sync {
         })
     }
 
-    /// Forgets the login Puddle kept for `service` (`claude`, `github`) in workspace `id`: the
+    /// Forgets the login Puddle kept for `service` (`claude`, `github`) in the workspace: the
     /// real tokens leave the credential store, and a notice that the login is kept but unused
     /// ends with it. The workspace's own copy is only a stand-in and is left alone.
     ///
@@ -280,7 +280,7 @@ pub trait WorkspaceService: Send + Sync {
     /// deleted stays deleted; ask again after it answers).
     fn forget_login<'a>(
         &'a self,
-        _id: &'a WorkspaceId,
+        _workspace: &'a OwnedWorkspace,
         _service: &'a str,
     ) -> BoxFuture<'a, Result<(), WorkspaceError>> {
         Box::pin(async {
@@ -328,7 +328,10 @@ pub trait WorkspaceService: Send + Sync {
     /// The branch each checkout of the workspace had at the last listing this run made, by
     /// directory. Reads what is kept and lists nothing, so the workspaces list stays cheap; empty
     /// before the first listing.
-    fn known_branches(&self, _id: &WorkspaceId) -> std::collections::BTreeMap<String, String> {
+    fn known_branches(
+        &self,
+        _workspace: &OwnedWorkspace,
+    ) -> std::collections::BTreeMap<String, String> {
         std::collections::BTreeMap::new()
     }
 
@@ -339,7 +342,7 @@ pub trait WorkspaceService: Send + Sync {
     /// error.
     fn checkouts<'a>(
         &'a self,
-        _id: &'a WorkspaceId,
+        _workspace: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<Checkouts, WorkspaceError>> {
         unavailable()
     }
@@ -349,7 +352,7 @@ pub trait WorkspaceService: Send + Sync {
     /// that cannot be made is [`ToolsListing::problem`], not an error.
     fn tools<'a>(
         &'a self,
-        _id: &'a WorkspaceId,
+        _workspace: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<ToolsListing, WorkspaceError>> {
         unavailable()
     }
@@ -360,7 +363,7 @@ pub trait WorkspaceService: Send + Sync {
     /// the file's hash is not `_hash` (changed by hand since the user looked).
     fn set_tool<'a>(
         &'a self,
-        _id: &'a WorkspaceId,
+        _workspace: &'a OwnedWorkspace,
         _name: &'a ToolName,
         _version: &'a ToolVersion,
         _hash: &'a ToolsFileHash,
@@ -372,7 +375,7 @@ pub trait WorkspaceService: Send + Sync {
     /// [`WorkspaceService::set_tool`].
     fn remove_tool<'a>(
         &'a self,
-        _id: &'a WorkspaceId,
+        _workspace: &'a OwnedWorkspace,
         _name: &'a ToolName,
         _hash: &'a ToolsFileHash,
     ) -> BoxFuture<'a, Result<ToolsListing, WorkspaceError>> {
@@ -384,7 +387,7 @@ pub trait WorkspaceService: Send + Sync {
     /// [`ToolRegistry::problem`].
     fn tool_registry<'a>(
         &'a self,
-        _id: &'a WorkspaceId,
+        _workspace: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<ToolRegistry, WorkspaceError>> {
         unavailable()
     }
@@ -393,7 +396,7 @@ pub trait WorkspaceService: Send + Sync {
     /// a mise that cannot list them is [`ToolVersions::reason`].
     fn tool_versions<'a>(
         &'a self,
-        _id: &'a WorkspaceId,
+        _workspace: &'a OwnedWorkspace,
         _name: &'a ToolName,
     ) -> BoxFuture<'a, Result<ToolVersions, WorkspaceError>> {
         unavailable()
@@ -403,7 +406,7 @@ pub trait WorkspaceService: Send + Sync {
     /// retry of a failed one). Errors as [`WorkspaceService::tool_registry`].
     fn install_tools<'a>(
         &'a self,
-        _id: &'a WorkspaceId,
+        _workspace: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<(), WorkspaceError>> {
         unavailable()
     }
@@ -417,7 +420,7 @@ pub trait WorkspaceService: Send + Sync {
     /// has no usable remote (existing); [`WorkspaceError::NotFound`] for an unknown workspace.
     fn add_repository<'a>(
         &'a self,
-        _id: &'a WorkspaceId,
+        _workspace: &'a OwnedWorkspace,
         _add: AddRepository,
         _git: &'a dyn GitSetup,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
@@ -428,7 +431,7 @@ pub trait WorkspaceService: Send + Sync {
     /// like [`WorkspaceService::add_repository`] with a clone.
     fn clone_again<'a>(
         &'a self,
-        _id: &'a WorkspaceId,
+        _workspace: &'a OwnedWorkspace,
         _entry: &'a EntryId,
         _git: &'a dyn GitSetup,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
@@ -440,7 +443,7 @@ pub trait WorkspaceService: Send + Sync {
     /// entry; [`WorkspaceError::Conflict`] while the workspace is being created or deleted.
     fn remove_repository<'a>(
         &'a self,
-        _id: &'a WorkspaceId,
+        _workspace: &'a OwnedWorkspace,
         _entry: &'a EntryId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         unavailable()
@@ -554,7 +557,7 @@ impl WorkspaceService for NoWorkspaces {
     }
     fn attach<'a>(
         &'a self,
-        _: &'a WorkspaceId,
+        _: &'a OwnedWorkspace,
         _: AttachMode,
     ) -> BoxFuture<'a, Result<Attached, WorkspaceError>> {
         unavailable()

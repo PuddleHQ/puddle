@@ -12,7 +12,7 @@ use puddle_types::EntryId;
 
 use crate::authz::Principal;
 use crate::extract::Path;
-use crate::routes::workspaces::{StoreGitSetup, git_request, owned, view, workspace_id};
+use crate::routes::workspaces::{StoreGitSetup, git_request, owned, view};
 use crate::routes::{AppState, record_op, repository_hosts};
 use puddle_services::checkouts::AddRepository;
 use puddle_services::error::ApiErrorBody;
@@ -41,9 +41,11 @@ fn entry_id(raw: &str) -> Result<EntryId, ApiError> {
 )]
 pub(crate) async fn list_checkouts(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
 ) -> Result<Json<Checkouts>, ApiError> {
-    let checkouts = state.workspaces.checkouts(&workspace_id(&id)?).await?;
+    let workspace = owned(&state, principal, &id).await?;
+    let checkouts = state.workspaces.checkouts(&workspace).await?;
     Ok(Json(checkouts.into()))
 }
 
@@ -76,7 +78,6 @@ pub(crate) async fn add_repository(
     crate::extract::Json(body): crate::extract::Json<AddRepositoryRequest>,
 ) -> Result<(StatusCode, Json<Workspace>), ApiError> {
     let workspace = owned(&state, principal, &id).await?;
-    let id = workspace.id().clone();
     let store = state.store.clone();
     let known: BTreeSet<IdentityId> = blocking(move || {
         Ok(store
@@ -118,7 +119,10 @@ pub(crate) async fn add_repository(
         AddRepository::Clone(new) => new.repository.directory.to_string(),
         AddRepository::Existing { directory, .. } => directory.to_string(),
     };
-    let record = state.workspaces.add_repository(&id, add, &git).await?;
+    let record = state
+        .workspaces
+        .add_repository(&workspace, add, &git)
+        .await?;
     let (store, name) = (state.store.clone(), record.id.clone());
     blocking(move || {
         record_op(
@@ -134,7 +138,7 @@ pub(crate) async fn add_repository(
     Ok((
         status,
         Json(
-            view(&state, record)
+            view(&state, &workspace, record)
                 .await
                 .with_identities(git.take())
                 .with_allowed_hosts(git.take_allowed()),
@@ -160,14 +164,22 @@ pub(crate) async fn add_repository(
 )]
 pub(crate) async fn clone_again(
     State(state): State<AppState>,
+    principal: Principal,
     Path((id, entry)): Path<(String, String)>,
 ) -> Result<(StatusCode, Json<Workspace>), ApiError> {
-    let (id, entry) = (workspace_id(&id)?, entry_id(&entry)?);
+    let (workspace, entry) = (owned(&state, principal, &id).await?, entry_id(&entry)?);
     let git = StoreGitSetup::new(state.store.clone());
-    let record = state.workspaces.clone_again(&id, &entry, &git).await?;
+    let record = state
+        .workspaces
+        .clone_again(&workspace, &entry, &git)
+        .await?;
     Ok((
         StatusCode::ACCEPTED,
-        Json(view(&state, record).await.with_identities(git.take())),
+        Json(
+            view(&state, &workspace, record)
+                .await
+                .with_identities(git.take()),
+        ),
     ))
 }
 
@@ -195,7 +207,6 @@ pub(crate) async fn remove_repository(
     Path((id, entry)): Path<(String, String)>,
 ) -> Result<Json<Workspace>, ApiError> {
     let (workspace, entry) = (owned(&state, principal, &id).await?, entry_id(&entry)?);
-    let id = workspace.id().clone();
     let directory = state
         .workspaces
         .get(&workspace)
@@ -204,7 +215,10 @@ pub(crate) async fn remove_repository(
         .iter()
         .find(|r| r.entry == entry)
         .map_or_else(|| entry.to_string(), |r| r.directory.to_string());
-    let record = state.workspaces.remove_repository(&id, &entry).await?;
+    let record = state
+        .workspaces
+        .remove_repository(&workspace, &entry)
+        .await?;
     let (store, name) = (state.store.clone(), record.id.clone());
     blocking(move || {
         record_op(
@@ -217,5 +231,5 @@ pub(crate) async fn remove_repository(
         Ok(())
     })
     .await?;
-    Ok(Json(view(&state, record).await))
+    Ok(Json(view(&state, &workspace, record).await))
 }

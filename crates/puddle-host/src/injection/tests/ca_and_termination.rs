@@ -75,7 +75,7 @@ async fn the_rules_on_method_and_path_follow_the_store_and_their_hosts_are_decry
             .as_user(puddle_store::UserId::OWNER)
             .add_request_rule(&puddle_store::NewRequestRule {
                 workspace: workspace.cloned(),
-                host: host.to_owned(),
+                host: puddle_types::HostPattern::parse_normalised(host).unwrap(),
                 methods: puddle_types::Methods::parse(["DELETE"]).unwrap(),
                 path: puddle_types::PathPattern::parse(path).unwrap(),
                 created_by: puddle_store::Actor::Api,
@@ -93,8 +93,6 @@ async fn the_rules_on_method_and_path_follow_the_store_and_their_hosts_are_decry
     };
     add(None, "global.example", "/a");
     add(Some(&workspace("beta")), "beta.example", "/a");
-    // Too wide for the proxy's grammar: the row is left out, the others still apply.
-    add(Some(&ws), "*.com", "/a");
     let own = add(Some(&ws), "own.example", "/b/**");
     injection.begin(&ws, false).await.unwrap();
     assert!(delete_refused(&terminations, "global.example", "/a").is_some());

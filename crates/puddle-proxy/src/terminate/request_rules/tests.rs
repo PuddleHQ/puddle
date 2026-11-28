@@ -189,3 +189,17 @@ fn a_path_too_long_to_read_in_every_form_is_refused_by_a_rule_on_its_host_and_me
     let query = format!("/public?q={}", "a".repeat(64 << 10));
     assert_eq!(refusing(&rules, "api.example.com", "DELETE", &query), None);
 }
+
+#[test]
+fn a_rule_for_a_checked_pattern_is_the_rule_for_its_text() {
+    for text in ["api.example.com", "*.example.org"] {
+        let pattern = HostPattern::parse_normalised(text).unwrap();
+        let built = RequestRule::for_pattern(
+            RuleId(4),
+            &pattern,
+            Methods::parse(["DELETE"]).unwrap(),
+            PathPattern::parse("/x").unwrap(),
+        );
+        assert_eq!(built, rule(4, text, &["DELETE"], "/x"), "{text}");
+    }
+}

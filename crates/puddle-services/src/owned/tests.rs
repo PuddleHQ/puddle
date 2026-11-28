@@ -53,3 +53,22 @@ async fn a_service_call_takes_the_handle_so_another_users_id_cannot_reach_it() {
     // The owner has no handle for ann's workspace, so no forward or release can be written for it.
     assert!(OwnedWorkspace::resolve(&store, UserId::OWNER, &ws("anns")).is_err());
 }
+
+#[test]
+fn owners_read_once_for_a_list_make_the_same_handles() {
+    let store = store();
+    let ann = store.add_user(&UserName::new("ann").unwrap()).unwrap().id;
+    store.set_workspace_owner(&ws("anns"), ann).unwrap();
+    store
+        .set_workspace_owner(&ws("owners"), UserId::OWNER)
+        .unwrap();
+    let owners = store.workspace_owners().unwrap();
+
+    assert_eq!(
+        OwnedWorkspace::resolve(&owners, ann, &ws("anns")).unwrap(),
+        OwnedWorkspace::resolve(&store, ann, &ws("anns")).unwrap()
+    );
+    for (user, workspace) in [(ann, "owners"), (UserId::OWNER, "anns"), (ann, "nobodys")] {
+        assert!(OwnedWorkspace::resolve(&owners, user, &ws(workspace)).is_err());
+    }
+}

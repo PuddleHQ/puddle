@@ -443,7 +443,7 @@ async fn a_workspace_that_is_not_running_cannot_be_stopped_or_attached_to_and_an
     let attached = host
         .workspaces()
         .attach(
-            &WorkspaceId::new("idle").unwrap(),
+            &OwnedWorkspace::for_test(UserId::OWNER, &WorkspaceId::new("idle").unwrap()),
             puddle_services::workspaces::AttachMode::Browser,
         )
         .await;

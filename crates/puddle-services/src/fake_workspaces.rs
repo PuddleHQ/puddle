@@ -1149,9 +1149,10 @@ impl WorkspaceService for FakeWorkspaces {
 
     fn kept_logins<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<KeptLogins, WorkspaceError>> {
         Box::pin(async move {
+            let id = workspace.id();
             self.record_of(id)?;
             Ok(lock(&self.inner.state)
                 .kept_logins
@@ -1166,10 +1167,11 @@ impl WorkspaceService for FakeWorkspaces {
 
     fn forget_login<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
         service: &'a str,
     ) -> BoxFuture<'a, Result<(), WorkspaceError>> {
         Box::pin(async move {
+            let id = workspace.id();
             self.record_of(id)?;
             if !matches!(service, "claude" | "github" | "Claude Code" | "GitHub") {
                 return Err(WorkspaceError::NotFound(format!(
@@ -1195,10 +1197,11 @@ impl WorkspaceService for FakeWorkspaces {
 
     fn check_shell_init<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
         script: &'a str,
     ) -> BoxFuture<'a, Result<ShellInitCheck, WorkspaceError>> {
         Box::pin(async move {
+            let id = workspace.id();
             let record = self.record_of(id)?;
             if record.status != WorkspaceStatus::Running {
                 return Ok(ShellInitCheck::NotRun(format!(
@@ -1217,10 +1220,11 @@ impl WorkspaceService for FakeWorkspaces {
 
     fn attach<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
         mode: AttachMode,
     ) -> BoxFuture<'a, Result<Attached, WorkspaceError>> {
         Box::pin(async move {
+            let id = workspace.id();
             let record = self.record_of(id)?;
             admit(&record, Action::Attach)?;
             match mode {
@@ -1267,35 +1271,44 @@ impl WorkspaceService for FakeWorkspaces {
 
     fn tools<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<ToolsListing, WorkspaceError>> {
-        Box::pin(async move { self.tools_listing(id) })
+        Box::pin(async move { self.tools_listing(workspace.id()) })
     }
 
     fn set_tool<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
         name: &'a ToolName,
         version: &'a ToolVersion,
         hash: &'a ToolsFileHash,
     ) -> BoxFuture<'a, Result<ToolsListing, WorkspaceError>> {
-        Box::pin(async move { self.tools_edit(id, |tools| tools.set(id, name, version, hash)) })
+        Box::pin(async move {
+            self.tools_edit(workspace.id(), |tools| {
+                tools.set(workspace.id(), name, version, hash)
+            })
+        })
     }
 
     fn remove_tool<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
         name: &'a ToolName,
         hash: &'a ToolsFileHash,
     ) -> BoxFuture<'a, Result<ToolsListing, WorkspaceError>> {
-        Box::pin(async move { self.tools_edit(id, |tools| tools.remove(id, name, hash)) })
+        Box::pin(async move {
+            self.tools_edit(workspace.id(), |tools| {
+                tools.remove(workspace.id(), name, hash)
+            })
+        })
     }
 
     fn tool_registry<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<ToolRegistry, WorkspaceError>> {
         Box::pin(async move {
+            let id = workspace.id();
             let running = self.is_running(id)?;
             let state = lock(&self.inner.state);
             state.tools.require(id, running)?;
@@ -1305,10 +1318,11 @@ impl WorkspaceService for FakeWorkspaces {
 
     fn tool_versions<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
         name: &'a ToolName,
     ) -> BoxFuture<'a, Result<ToolVersions, WorkspaceError>> {
         Box::pin(async move {
+            let id = workspace.id();
             let running = self.is_running(id)?;
             let state = lock(&self.inner.state);
             state.tools.require(id, running)?;
@@ -1318,9 +1332,10 @@ impl WorkspaceService for FakeWorkspaces {
 
     fn install_tools<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<(), WorkspaceError>> {
         Box::pin(async move {
+            let id = workspace.id();
             let running = self.is_running(id)?;
             let mut state = lock(&self.inner.state);
             state.tools.require(id, running)?;
@@ -1329,10 +1344,10 @@ impl WorkspaceService for FakeWorkspaces {
         })
     }
 
-    fn known_branches(&self, id: &WorkspaceId) -> BTreeMap<String, String> {
+    fn known_branches(&self, workspace: &OwnedWorkspace) -> BTreeMap<String, String> {
         lock(&self.inner.state)
             .last_listing
-            .get(id)
+            .get(workspace.id())
             .map(|(_, list)| {
                 list.checkouts
                     .iter()
@@ -1344,9 +1359,10 @@ impl WorkspaceService for FakeWorkspaces {
 
     fn checkouts<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<Checkouts, WorkspaceError>> {
         Box::pin(async move {
+            let id = workspace.id();
             let now = self.inner.clock.now_ms();
             let mut state = lock(&self.inner.state);
             let entry = state.entries.get(id).ok_or_else(|| not_found(id))?;
@@ -1373,11 +1389,12 @@ impl WorkspaceService for FakeWorkspaces {
 
     fn add_repository<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
         add: AddRepository,
         git: &'a dyn GitSetup,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
+            let id = workspace.id();
             match add {
                 AddRepository::Clone(new) => self.clone_into(id, new, true, git).await,
                 AddRepository::Existing {
@@ -1402,11 +1419,12 @@ impl WorkspaceService for FakeWorkspaces {
 
     fn clone_again<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
         entry_id: &'a EntryId,
         git: &'a dyn GitSetup,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
+            let id = workspace.id();
             let repository = {
                 let state = lock(&self.inner.state);
                 let entry = state.entries.get(id).ok_or_else(|| not_found(id))?;
@@ -1434,10 +1452,11 @@ impl WorkspaceService for FakeWorkspaces {
 
     fn remove_repository<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
         entry_id: &'a EntryId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
+            let id = workspace.id();
             let record = {
                 let mut state = lock(&self.inner.state);
                 let entry = state.entries.get_mut(id).ok_or_else(|| not_found(id))?;

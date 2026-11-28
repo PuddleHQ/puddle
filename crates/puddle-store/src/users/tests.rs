@@ -35,7 +35,7 @@ fn names_refuse_the_characters_that_do_not_show() {
         assert!(device_name(&name).is_err(), "{name:?}");
     }
     assert!(UserName::new("Zoë 名前").is_ok());
-    assert_eq!(device_name(" Ann's laptop ").unwrap(), "Ann's laptop");
+    assert_eq!(device_name(" Ann's phone ").unwrap(), "Ann's phone");
 }
 
 #[test]

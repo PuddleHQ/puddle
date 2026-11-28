@@ -43,7 +43,7 @@ async fn a_credential_store_that_does_not_answer_is_given_up_on_and_the_start_go
         notices.clone(),
         Marker::none(),
     );
-    logins.set_store_timeout(std::time::Duration::from_millis(50));
+    logins.set_store_timeout(Duration::from_millis(50));
     logins.load().await;
     assert!(
         notices
@@ -173,7 +173,7 @@ async fn a_token_the_store_writes_after_it_timed_out_does_not_outlast_the_put_ba
     let first = capture_claude(&logins, REAL_ACCESS, REAL_REFRESH)
         .await
         .unwrap();
-    let limit = std::time::Duration::from_millis(100);
+    let limit = Duration::from_millis(100);
     logins.set_store_timeout(limit);
     // The refresh's new refresh token is written late: after the capture gave up on it.
     let (started, parked) = tokio::sync::oneshot::channel();
@@ -188,7 +188,7 @@ async fn a_token_the_store_writes_after_it_timed_out_does_not_outlast_the_put_ba
         _ = &mut capture => panic!("the capture ended with its write parked"),
         parked = parked => parked.unwrap(),
     }
-    tokio::time::advance(limit + std::time::Duration::from_millis(1)).await;
+    tokio::time::advance(limit + Duration::from_millis(1)).await;
     // The tool is answered while the late write is still parked, not after it.
     let given = tokio::select! {
         given = &mut capture => Some(given),
@@ -205,9 +205,9 @@ async fn a_token_the_store_writes_after_it_timed_out_does_not_outlast_the_put_ba
     // The write lands 300 ms after it started, long after the capture gave up on it; the put
     // back runs behind it. The clock moves on only once the blocking threads are done, so the
     // sleep below is the whole window.
-    tokio::time::advance(std::time::Duration::from_millis(200)).await;
+    tokio::time::advance(Duration::from_millis(200)).await;
     let _ = go.send(());
-    tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+    tokio::time::sleep(Duration::from_millis(700)).await;
     let vault = Vault::new(store.clone(), &workspace());
     for (role, real, given) in [
         (Role::Access, REAL_ACCESS, &first["access_token"]),
@@ -239,7 +239,7 @@ async fn a_write_that_times_out_with_nothing_to_put_back_refuses_after_one_timeo
     let store = Arc::new(Scripted::new([]));
     let registry = Arc::new(StandIns::new());
     let logins = logins_on(&store, &registry);
-    let limit = std::time::Duration::from_secs(10);
+    let limit = Duration::from_secs(10);
     logins.set_store_timeout(limit);
     let (started, parked) = tokio::sync::oneshot::channel();
     let (go, wait) = std::sync::mpsc::channel();
@@ -253,7 +253,7 @@ async fn a_write_that_times_out_with_nothing_to_put_back_refuses_after_one_timeo
         _ = &mut capture => panic!("the capture ended with its write parked"),
         parked = parked => parked.unwrap(),
     }
-    tokio::time::advance(limit + std::time::Duration::from_millis(1)).await;
+    tokio::time::advance(limit + Duration::from_millis(1)).await;
     let given = tokio::select! {
         given = &mut capture => Some(given),
         () = async { for _ in 0..200 { tokio::task::yield_now().await } } => None,
@@ -330,7 +330,7 @@ async fn a_login_forgotten_while_it_is_being_captured_stays_forgotten() {
         async move { logins.forget("claude").await }
     });
     // A forget that does not wait for the capture is over well within this.
-    let early = tokio::time::timeout(std::time::Duration::from_millis(200), &mut forget).await;
+    let early = tokio::time::timeout(Duration::from_millis(200), &mut forget).await;
     go.send(()).unwrap();
     capture.await.unwrap();
     let result = match early {

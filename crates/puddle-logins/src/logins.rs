@@ -18,7 +18,7 @@
 //! name) the login fails: the tool gets a `502` that names the reason, never the real answer, and
 //! the user is told. A real token never reaches the workspace by this path.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -124,6 +124,8 @@ struct Inner {
     /// Held by the blocking thread of each store call until the call returns, so a call that was
     /// given up on keeps the next one waiting: its write cannot land after a later one.
     store_gate: Arc<tokio::sync::Mutex<()>>,
+    /// When each problem was last reported, by profile and kind.
+    told: Mutex<HashMap<(&'static str, Problem), tokio::time::Instant>>,
     /// How many store calls were given up on.
     store_timeouts: AtomicU64,
     /// The stand-in of each slot that has one.
@@ -259,6 +261,7 @@ impl Logins {
                     u64::try_from(STORE_TIMEOUT.as_millis()).unwrap_or(u64::MAX),
                 ),
                 store_gate: Arc::default(),
+                told: Mutex::new(HashMap::new()),
                 store_timeouts: AtomicU64::new(0),
                 slots: Mutex::new(BTreeMap::new()),
                 retired: Mutex::new(BTreeMap::new()),
@@ -297,7 +300,26 @@ impl Logins {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Tells the user of a problem, at most once in `NOTICE_EVERY` for each service and kind of
+    /// problem: a client that retries would otherwise raise one event for every request.
     fn notify(&self, profile: &Profile, problem: Problem) {
+        let now = tokio::time::Instant::now();
+        {
+            let mut told = self
+                .inner
+                .told
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let key = (profile.id, problem);
+            if told
+                .get(&key)
+                .is_some_and(|at| now.duration_since(*at) < NOTICE_EVERY)
+            {
+                return;
+            }
+            // few services and kinds exist, so the map stays small
+            told.insert(key, now);
+        }
         tracing::warn!(
             workspace = %self.inner.workspace,
             profile = profile.id,
@@ -369,5 +391,9 @@ mod refusal;
 mod store;
 
 use capture::Capture;
+
+/// A problem is reported at most once in this long for each service and kind (the injector does
+/// the same for its notices).
+const NOTICE_EVERY: Duration = Duration::from_secs(10);
 #[cfg(test)]
 pub(crate) use store::{MEMORY_KEPT, RETIRED_KEPT};

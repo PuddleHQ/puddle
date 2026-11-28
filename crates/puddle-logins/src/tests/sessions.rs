@@ -194,17 +194,20 @@ async fn a_restart_gets_the_last_session_stand_in_back() {
     assert_eq!(kept.stand_in, given["token"].as_str().unwrap());
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn hostile_a_session_token_without_a_mac_is_never_given_to_the_guest_and_the_user_is_told() {
     let rig = rig();
     for token in [
         "tid=1;exp=2;sku=free_limited_copilot;chat=1",
         "not-fields-and-no-colon-0123456789abcdef",
     ] {
+        // each in its own notice window
+        tokio::time::advance(NOTICE_WINDOW).await;
         let kept = copilot_exchange(&rig, "GET", token).await;
         assert!(kept.is_none(), "{token:?} is not replaced");
     }
     // An empty token holds nothing real, so the answer goes through as sent.
+    tokio::time::advance(NOTICE_WINDOW).await;
     let exchange = rig
         .logins
         .begin(&host("api.github.com"), "GET", "/copilot_internal/v2/token");

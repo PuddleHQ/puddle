@@ -30,16 +30,25 @@ fn token_like(name: &str) -> bool {
     if NOT_TOKENS.iter().any(|suffix| name.ends_with(suffix)) {
         return false;
     }
-    name.contains("token")
-        || name.contains("secret")
-        || name.contains("password")
+    [
+        "token",
+        "secret",
+        "password",
+        "jwt",
+        "credential",
+        "session",
+        "cookie",
+        "assertion",
+    ]
+    .iter()
+    .any(|word| name.contains(word))
         || name.ends_with("key")
 }
 
 /// Whether the answer holds a credential Puddle would not replace: a token-like text in a field
 /// the endpoint does not name (at any depth), or a named field that is repeated or structured
-/// (the tool may read the one Puddle did not). A UUID is an identifier, not a credential, and is
-/// removed from `fields` by the caller.
+/// (the tool may read the one Puddle did not). A UUID in a field named `..._id` or `..._uuid` is an
+/// identifier, not a credential, and is removed from `fields` by the caller.
 pub(super) fn holds_unnamed_token<'a>(
     endpoint: &Endpoint,
     fields: &'a [BodyField],

@@ -216,17 +216,22 @@ fn azure_devops_takes_its_sign_in_page_for_a_rejected_token() {
     let json = [("content-type", "application/json; charset=utf-8")];
     assert_eq!(azure(&reply(200, &json, "{}"), NOW, 1), Verdict::Ok);
     let html = [("content-type", "text/html; charset=utf-8")];
+    let page = "<html><title>Azure DevOps Services | Sign In</title></html>";
+    assert_eq!(azure(&reply(200, &html, page), NOW, 1), Verdict::Rejected);
+    assert_eq!(azure(&reply(203, &html, page), NOW, 1), Verdict::Rejected);
+    // Not Azure's page: a proxy's block or sign-in page says nothing about the token.
+    let proxy = "<html><title>Blocked</title>Sign in to the company network</html>";
     assert_eq!(
-        azure(&reply(200, &html, "<html>"), NOW, 1),
-        Verdict::Rejected
+        azure(&reply(200, &html, proxy), NOW, 1),
+        Verdict::Other(200)
     );
     assert_eq!(
-        azure(&reply(203, &html, "<html>"), NOW, 1),
-        Verdict::Rejected
+        azure(&reply(203, &html, proxy), NOW, 1),
+        Verdict::Other(203)
     );
     assert_eq!(azure(&reply(302, &[], ""), NOW, 1), Verdict::Rejected);
     assert_eq!(azure(&reply(401, &[], ""), NOW, 1), Verdict::Rejected);
-    assert_eq!(azure(&reply(200, &[], "{}"), NOW, 1), Verdict::Rejected);
+    assert_eq!(azure(&reply(200, &[], "{}"), NOW, 1), Verdict::Other(200));
 }
 
 #[test]

@@ -41,6 +41,11 @@ pub struct Config {
     /// window size that we allow for a stream.
     /// Must be greater than or equal to 256 * 1024
     pub max_stream_window_size: u32,
+
+    /// puddle: the most stream data the session holds on its way to the socket, summed over its
+    /// streams: bytes the streams wrote that the socket has not yet taken. A stream's write waits
+    /// once it is reached. Streams x window is the bound without it.
+    pub max_send_budget: usize,
 }
 
 impl Default for Config {
@@ -52,6 +57,7 @@ impl Default for Config {
             connection_write_timeout: DEFAULT_WRITE_TIMEOUT,
             max_stream_count: DEFAULT_MAX_STREAM_COUNT,
             max_stream_window_size: INITIAL_STREAM_WINDOW,
+            max_send_budget: usize::MAX,
         }
     }
 }

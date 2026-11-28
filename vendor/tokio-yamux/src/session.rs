@@ -7,6 +7,7 @@ use std::{
     collections::{BTreeMap, HashMap, VecDeque, hash_map::Entry},
     io,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
@@ -27,6 +28,7 @@ use tokio_util::codec::Framed;
 
 use crate::{
     StreamId,
+    budget::SendBudget,
     config::Config,
     control::{Command, Control},
     error::Error,
@@ -127,6 +129,10 @@ pub struct Session<T> {
     pending_streams: VecDeque<StreamHandle>,
     // The buffer which will send to underlying network
     write_pending_frames: VecDeque<Frame>,
+    // puddle: what the streams may still queue for the socket, and the data bytes handed to the
+    // framed sink that its flush has not yet confirmed (released together once it has).
+    send_budget: Arc<SendBudget>,
+    unflushed: usize,
     // puddle: frames for streams whose channel was full, per stream, to distribute in order
     backlogs: HashMap<StreamId, Backlog>,
 
@@ -164,6 +170,13 @@ pub struct Session<T> {
     /// yamux's timeout statistics are session independent
     #[cfg(all(target_family = "wasm", not(target_os = "unknown")))]
     time_mock: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl<T> Drop for Session<T> {
+    fn drop(&mut self) {
+        // puddle: streams parked on the send budget must fail on the closed session, not wait.
+        self.send_budget.end();
+    }
 }
 
 /// Session type, client or server
@@ -233,6 +246,8 @@ where
             streams: HashMap::default(),
             pending_streams: VecDeque::default(),
             write_pending_frames: VecDeque::default(),
+            send_budget: Arc::new(SendBudget::new(config.max_send_budget)),
+            unflushed: 0,
             backlogs: HashMap::default(),
             event_sender,
             event_receiver,
@@ -262,9 +277,20 @@ where
         }
 
         // Ignore frames remaining in pending queue
-        self.write_pending_frames.clear();
+        self.drop_pending_frames();
         self.send_go_away(cx)?;
         Ok(())
+    }
+
+    /// puddle: drops the frames waiting for the socket and gives back the data they held.
+    fn drop_pending_frames(&mut self) {
+        let data: usize = self
+            .write_pending_frames
+            .iter()
+            .map(Backlog::data_of)
+            .sum();
+        self.write_pending_frames.clear();
+        self.send_budget.release(data);
     }
 
     // Send all pending frames to remote streams
@@ -314,7 +340,7 @@ where
         code: GoAwayCode,
     ) -> Result<(), io::Error> {
         // clear all pending write and then send go away to close session
-        self.write_pending_frames.clear();
+        self.drop_pending_frames();
         let frame = Frame::new_go_away(code);
         self.send_frame(cx, frame)?;
         self.local_go_away = true;
@@ -391,6 +417,7 @@ where
             state,
             self.config.max_stream_window_size,
         );
+        stream.set_budget(Arc::clone(&self.send_budget));
         if let Err(err) = stream.send_window_update() {
             debug!("[{:?}] stream.send_window_update error={:?}", self.ty, err);
         }
@@ -410,7 +437,9 @@ where
 
             match sink.as_mut().poll_ready(cx)? {
                 Poll::Ready(()) => {
+                    let data = Backlog::data_of(&frame);
                     sink.as_mut().start_send(frame)?;
+                    self.unflushed += data;
                 }
                 Poll::Pending => {
                     debug!("[{:?}] framed_stream NotReady, frame: {:?}", self.ty, frame);
@@ -434,7 +463,11 @@ where
     fn poll_complete(&mut self, cx: &mut Context) -> Result<bool, io::Error> {
         match Pin::new(&mut self.framed_stream).poll_flush(cx) {
             Poll::Pending => Ok(true),
-            Poll::Ready(res) => res.map(|_| false),
+            Poll::Ready(res) => {
+                // Everything handed to the sink has been written: the streams may queue that much more.
+                self.send_budget.release(std::mem::take(&mut self.unflushed));
+                res.map(|_| false)
+            }
         }
     }
 
@@ -641,7 +674,7 @@ where
     fn handle_go_away(&mut self, cx: &mut Context, frame: &Frame) -> Result<(), io::Error> {
         let mut close = || -> Result<(), io::Error> {
             self.remote_go_away = true;
-            self.write_pending_frames.clear();
+            self.drop_pending_frames();
             if !self.local_go_away {
                 self.send_go_away(cx)?;
             }

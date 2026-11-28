@@ -12,6 +12,7 @@ use std::path::Path;
 use rusqlite::config::DbConfig;
 use rusqlite::{Connection, OpenFlags};
 
+use crate::backup::utf8_path;
 use crate::error::StoreError;
 use crate::schema::{self, SCHEMA_VERSION};
 
@@ -87,7 +88,7 @@ pub fn check_staged_database(
         return Ok(Err(DatabaseRefusal::NotPuddle(why)));
     }
     conn.pragma_update(None, "foreign_keys", true)?;
-    schema::migrate(&mut conn)?;
+    schema::migrate_without_copy(&mut conn)?;
     Ok(Ok(StagedDatabase {
         schema_version: version,
     }))
@@ -132,7 +133,8 @@ fn foreign_structure(conn: &Connection) -> Result<Option<String>, StoreError> {
 /// BK-14). Entries match by natural key.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PartCounts {
-    /// Entries in the backup.
+    /// Entries in the backup by key: a backup that holds one key twice counts it once, so
+    /// `in_backup` is `add + differ + same`.
     pub in_backup: usize,
     /// In the backup and not here: both modes add them.
     pub add: usize,
@@ -145,8 +147,7 @@ pub struct PartCounts {
 }
 
 impl PartCounts {
-    /// Compares two key-to-content maps; `in_backup` is the number of rows, which may exceed the
-    /// number of keys when a backup holds the same key twice.
+    /// Compares two key-to-content maps; `in_backup` is the number of keys of `backup`.
     fn compare(present: &BTreeMap<String, String>, backup: &BTreeMap<String, String>) -> Self {
         let mut counts = Self {
             in_backup: backup.len(),
@@ -273,8 +274,7 @@ fn stored_tokens(label: &str, credentials: &str) -> Vec<IdentityToken> {
 
 /// Attaches the backup database as `backup`.
 fn attach(conn: &Connection, backup: &Path) -> Result<(), StoreError> {
-    let path = backup.to_string_lossy();
-    conn.execute("ATTACH DATABASE ?1 AS backup", [path.as_ref()])?;
+    conn.execute("ATTACH DATABASE ?1 AS backup", [utf8_path(backup)?])?;
     Ok(())
 }
 
@@ -743,11 +743,12 @@ pub fn restore_database(
     dest: &Path,
     mode: RestoreMode,
 ) -> Result<RestoredDatabase, StoreError> {
+    let target = utf8_path(dest)?;
     migrate_database(present)?;
     {
         let source = Connection::open_with_flags(present, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         source.busy_timeout(std::time::Duration::from_secs(5))?;
-        source.execute("VACUUM INTO ?1", [dest.to_string_lossy().as_ref()])?;
+        source.execute("VACUUM INTO ?1", [target])?;
     }
     let result = merge_into(dest, backup, mode);
     if result.is_err() {

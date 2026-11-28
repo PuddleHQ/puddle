@@ -80,6 +80,16 @@ fn runtime_error(op: &'static str) -> ComputeError {
     }
 }
 
+#[test]
+fn a_lifecycle_reports_the_time_limits_it_was_built_with() {
+    let config = ShutdownConfig {
+        trim_timeout: std::time::Duration::from_secs(7),
+        stop_timeout: std::time::Duration::from_secs(11),
+    };
+    let lc = Lifecycle::new(FakeRuntime::new(), config.clone());
+    assert_eq!(lc.config(), &config);
+}
+
 #[tokio::test]
 async fn every_sandbox_is_trimmed_then_stopped_and_records_stopped() {
     let rt = FakeRuntime::new();

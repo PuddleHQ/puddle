@@ -186,14 +186,16 @@ mod imp {
 
     use super::ShutdownCause;
 
+    pub(super) type Signals = UnixSignals;
+
     #[derive(Debug)]
-    pub(super) struct Signals {
+    pub(super) struct UnixSignals {
         int: Signal,
         term: Signal,
         hup: Signal,
     }
 
-    impl Signals {
+    impl UnixSignals {
         pub(super) fn install() -> std::io::Result<Self> {
             Ok(Self {
                 int: signal(SignalKind::interrupt())?,
@@ -225,8 +227,10 @@ mod imp {
 
     use super::{ShutdownCause, spawn_request_reader};
 
+    pub(super) type Signals = ConsoleSignals;
+
     #[derive(Debug)]
-    pub(super) enum Signals {
+    pub(super) enum ConsoleSignals {
         /// Under the front: its request arrives on stdin, read by a thread started at install.
         Worker(Option<tokio::sync::oneshot::Receiver<ShutdownCause>>),
         Console {
@@ -238,7 +242,7 @@ mod imp {
         },
     }
 
-    impl Signals {
+    impl ConsoleSignals {
         pub(super) fn install() -> std::io::Result<Self> {
             if crate::supervise::is_worker() {
                 return Ok(Self::Worker(Some(spawn_request_reader(std::io::stdin())?)));

@@ -1309,7 +1309,8 @@ impl State {
         }
         let new = NewRequestRule {
             workspace: scoped,
-            host: seed.host.clone(),
+            host: puddle_types::HostPattern::parse_normalised(&seed.host)
+                .map_err(|err| err.to_string())?,
             methods: Methods::parse(seed.methods.iter().map(String::as_str))
                 .map_err(|err| err.to_string())?,
             path: PathPattern::parse(&seed.path).map_err(|err| err.to_string())?,

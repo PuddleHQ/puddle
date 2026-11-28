@@ -479,8 +479,13 @@ async fn a_tunnel_cut_with_its_agent_session_is_still_recorded() {
     drop(guest);
 
     let events = rig.events(1).await;
-    // Nothing else follows: the cut is recorded once.
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // Nothing else follows: at zero open connections every record is already written.
+    puddle_test_kit::eventually(
+        "the cut connection is closed",
+        Duration::from_secs(10),
+        || rig.proxy.open_guest_streams() == 0,
+    )
+    .await;
     assert_eq!(rig.log.events().len(), 1, "one record per connection");
     let event = &events[0];
     assert_eq!(

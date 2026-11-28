@@ -8,7 +8,7 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use puddle_store::{Actor, NewRequestRule, Precedence};
-use puddle_types::{Methods, PathPattern, WorkspaceId};
+use puddle_types::{HostPattern, Methods, PathPattern, WorkspaceId};
 use serde::Deserialize;
 
 use crate::authz::{self, Principal};
@@ -86,6 +86,8 @@ pub(crate) async fn create_request_rule(
     let (action, resource) = authz::rule_scope(body.workspace.as_ref());
     authz::check(&state, principal, action, resource).await?;
     let host = pattern(&body.host)?;
+    let host = HostPattern::parse_normalised(&host)
+        .map_err(|err| ApiError::invalid(format!("host: {err}")))?;
     let methods = Methods::parse(body.methods.iter().map(String::as_str))
         .map_err(|err| ApiError::invalid(format!("methods: {err}")))?;
     let path =

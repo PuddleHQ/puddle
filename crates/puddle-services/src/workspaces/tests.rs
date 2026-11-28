@@ -316,6 +316,7 @@ fn a_missing_volume_changes_the_fingerprint() {
 async fn the_empty_service_says_it_is_unavailable() {
     let svc = NoWorkspaces;
     let id = WorkspaceId::new("w").unwrap();
+    let mine = OwnedWorkspace::for_test(UserId::OWNER, &id);
     let name = DisplayName::parse("w").unwrap();
     let dir = CheckoutDir::new("a").unwrap();
     let entry = EntryId::from_random([1; 5]);
@@ -331,46 +332,26 @@ async fn the_empty_service_says_it_is_unavailable() {
     }];
     let all = [
         svc.list().await.map(|_| ()),
-        svc.get(&OwnedWorkspace::for_test(UserId::OWNER, &id))
-            .await
-            .map(|_| ()),
+        svc.get(&mine).await.map(|_| ()),
         svc.create(NewWorkspace::new(UserId::OWNER, name, repos), &NoGitSetup)
             .await
             .map(|_| ()),
-        svc.start(&OwnedWorkspace::for_test(UserId::OWNER, &id))
+        svc.start(&mine).await.map(|_| ()),
+        svc.stop(&mine).await.map(|_| ()),
+        svc.reclaim(&mine).await.map(|_| ()),
+        svc.reset_root_disk(&mine).await.map(|_| ()),
+        svc.delete_check(&mine).await.map(|_| ()),
+        svc.delete(&mine, None).await.map(|_| ()),
+        svc.rename(&mine, DisplayName::parse("x").unwrap())
             .await
             .map(|_| ()),
-        svc.stop(&OwnedWorkspace::for_test(UserId::OWNER, &id))
+        svc.set_session_user(&mine, SessionUser::Root)
             .await
             .map(|_| ()),
-        svc.reclaim(&OwnedWorkspace::for_test(UserId::OWNER, &id))
-            .await
-            .map(|_| ()),
-        svc.reset_root_disk(&OwnedWorkspace::for_test(UserId::OWNER, &id))
-            .await
-            .map(|_| ()),
-        svc.delete_check(&OwnedWorkspace::for_test(UserId::OWNER, &id))
-            .await
-            .map(|_| ()),
-        svc.delete(&OwnedWorkspace::for_test(UserId::OWNER, &id), None)
-            .await
-            .map(|_| ()),
-        svc.rename(
-            &OwnedWorkspace::for_test(UserId::OWNER, &id),
-            DisplayName::parse("x").unwrap(),
-        )
-        .await
-        .map(|_| ()),
-        svc.set_session_user(
-            &OwnedWorkspace::for_test(UserId::OWNER, &id),
-            SessionUser::Root,
-        )
-        .await
-        .map(|_| ()),
-        svc.attach(&id, AttachMode::Browser).await.map(|_| ()),
-        svc.checkouts(&id).await.map(|_| ()),
+        svc.attach(&mine, AttachMode::Browser).await.map(|_| ()),
+        svc.checkouts(&mine).await.map(|_| ()),
         svc.add_repository(
-            &id,
+            &mine,
             AddRepository::Existing {
                 directory: dir.clone(),
                 seen: RepoUrl::parse("https://github.com/o/r").unwrap(),
@@ -382,23 +363,25 @@ async fn the_empty_service_says_it_is_unavailable() {
         )
         .await
         .map(|_| ()),
-        svc.clone_again(&id, &entry, &NoGitSetup).await.map(|_| ()),
-        svc.remove_repository(&id, &entry).await.map(|_| ()),
-        svc.tools(&id).await.map(|_| ()),
+        svc.clone_again(&mine, &entry, &NoGitSetup)
+            .await
+            .map(|_| ()),
+        svc.remove_repository(&mine, &entry).await.map(|_| ()),
+        svc.tools(&mine).await.map(|_| ()),
         svc.set_tool(
-            &id,
+            &mine,
             &tool,
             &ToolVersion::new("22").unwrap(),
             &ToolsFileHash::absent(),
         )
         .await
         .map(|_| ()),
-        svc.remove_tool(&id, &tool, &ToolsFileHash::absent())
+        svc.remove_tool(&mine, &tool, &ToolsFileHash::absent())
             .await
             .map(|_| ()),
-        svc.tool_registry(&id).await.map(|_| ()),
-        svc.tool_versions(&id, &tool).await.map(|_| ()),
-        svc.install_tools(&id).await,
+        svc.tool_registry(&mine).await.map(|_| ()),
+        svc.tool_versions(&mine, &tool).await.map(|_| ()),
+        svc.install_tools(&mine).await,
     ];
     for result in all {
         assert!(matches!(result, Err(WorkspaceError::Unavailable(_))));
@@ -435,12 +418,16 @@ async fn the_empty_service_refuses_a_start_folder_change() {
 #[tokio::test]
 async fn a_service_with_no_credential_store_keeps_no_logins_to_list_or_forget() {
     let id = WorkspaceId::new("w").unwrap();
-    let listed = NoWorkspaces.kept_logins(&id).await;
+    let listed = NoWorkspaces
+        .kept_logins(&OwnedWorkspace::for_test(UserId::OWNER, &id))
+        .await;
     assert!(
         matches!(listed, Err(WorkspaceError::Unavailable(ref why)) if why.contains("no logins")),
         "{listed:?}"
     );
-    let forgotten = NoWorkspaces.forget_login(&id, "claude").await;
+    let forgotten = NoWorkspaces
+        .forget_login(&OwnedWorkspace::for_test(UserId::OWNER, &id), "claude")
+        .await;
     assert!(
         matches!(forgotten, Err(WorkspaceError::Unavailable(ref why)) if why.contains("no logins")),
         "{forgotten:?}"
@@ -450,7 +437,9 @@ async fn a_service_with_no_credential_store_keeps_no_logins_to_list_or_forget() 
 #[tokio::test]
 async fn a_service_with_no_guest_does_not_check_shell_init() {
     let id = WorkspaceId::new("w").unwrap();
-    let check = NoWorkspaces.check_shell_init(&id, "echo hi\n").await;
+    let check = NoWorkspaces
+        .check_shell_init(&OwnedWorkspace::for_test(UserId::OWNER, &id), "echo hi\n")
+        .await;
     assert!(
         matches!(check, Ok(ShellInitCheck::NotRun(ref why)) if why.contains("no workspace")),
         "{check:?}"

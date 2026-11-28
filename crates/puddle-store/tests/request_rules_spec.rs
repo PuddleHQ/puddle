@@ -15,7 +15,8 @@ use puddle_store::{
 };
 use puddle_types::{
     CollectingSink, ConnectionDecision, ConnectionEvent, ConnectionLog, ConnectionReason,
-    EgressRequest, Event, Host, HttpRequestLine, Methods, PathPattern, RuleId, WorkspaceId,
+    EgressRequest, Event, Host, HostPattern, HttpRequestLine, Methods, PathPattern, RuleId,
+    WorkspaceId,
 };
 use serde_json::{Value, json};
 
@@ -39,7 +40,7 @@ fn fixture() -> (Arc<CollectingSink>, Store) {
 fn new_rule(workspace: Option<&str>, host: &str, methods: &[&str], path: &str) -> NewRequestRule {
     NewRequestRule {
         workspace: workspace.map(sb),
-        host: host.to_owned(),
+        host: HostPattern::parse_normalised(host).unwrap(),
         methods: Methods::parse(methods.iter().copied()).unwrap(),
         path: PathPattern::parse(path).unwrap(),
         created_by: Actor::Api,
@@ -102,7 +103,7 @@ fn a_rule_is_kept_with_its_own_numbering_and_listed_by_scope() {
 }
 
 #[test]
-fn a_rule_is_refused_from_the_system_with_no_host_or_over_the_limit() {
+fn a_rule_is_refused_from_the_system_or_over_the_limit() {
     let (sink, store) = fixture();
     let mut system = new_rule(None, "a.example.com", &[], "/");
     system.created_by = Actor::System;
@@ -111,12 +112,6 @@ fn a_rule_is_refused_from_the_system_with_no_host_or_over_the_limit() {
             .as_user(puddle_store::UserId::OWNER)
             .add_request_rule(&system),
         Err(StoreError::SystemActor)
-    ));
-    assert!(matches!(
-        store
-            .as_user(puddle_store::UserId::OWNER)
-            .add_request_rule(&new_rule(None, "  ", &[], "/")),
-        Err(StoreError::RequestRuleInvalid(_))
     ));
     for i in 0..MAX_REQUEST_RULES {
         store
@@ -215,7 +210,7 @@ fn deleting_a_workspace_takes_its_rules_and_keeps_the_global_ones() {
         .request_rules_every_user(&puddle_store::testing::all_users())
         .unwrap();
     assert_eq!(left.len(), 1);
-    assert_eq!(left[0].host, "g.example.com");
+    assert_eq!(left[0].host.to_string(), "g.example.com");
     let log = records(&store);
     let deletions: Vec<&Value> = log
         .iter()
@@ -280,6 +275,9 @@ fn a_row_that_cannot_be_read_back_is_reported_as_corrupt_and_not_dropped() {
         ("path = 'no-slash'", "path"),
         ("methods = 'GE T'", "method"),
         ("created_at = -1", "negative time"),
+        ("host = '*.com'", "host pattern"),
+        ("host = 'Not A Host'", "host pattern"),
+        ("host = ''", "host pattern"),
     ] {
         conn.execute(&format!("UPDATE request_rules SET {damage}"), [])
             .unwrap();
@@ -293,7 +291,8 @@ fn a_row_that_cannot_be_read_back_is_reported_as_corrupt_and_not_dropped() {
         );
         drop(store);
         conn.execute(
-            "UPDATE request_rules SET path = '/x', methods = 'GET', created_at = 1",
+            "UPDATE request_rules SET path = '/x', methods = 'GET', created_at = 1,
+                 host = 'a.example.com'",
             [],
         )
         .unwrap();

@@ -8,7 +8,7 @@
 //! user's workspaces. An [`OwnedWorkspace`] can only be made by [`OwnedWorkspace::resolve`], which
 //! asks who owns the workspace, so a method that takes one is scoped by its signature.
 
-use puddle_store::{Store, StoreError, UserId};
+use puddle_store::{Store, StoreError, UserId, WorkspaceOwners};
 use puddle_types::WorkspaceId;
 
 use crate::workspaces::WorkspaceError;
@@ -25,6 +25,13 @@ pub trait WorkspaceOwnership {
 impl WorkspaceOwnership for Store {
     fn owner_of(&self, workspace: &WorkspaceId) -> Result<Option<UserId>, StoreError> {
         self.workspace_owner(workspace)
+    }
+}
+
+/// Every owner read at once, as a list needs them: one lookup, then a handle per workspace.
+impl WorkspaceOwnership for WorkspaceOwners {
+    fn owner_of(&self, workspace: &WorkspaceId) -> Result<Option<UserId>, StoreError> {
+        Ok(self.of(workspace))
     }
 }
 

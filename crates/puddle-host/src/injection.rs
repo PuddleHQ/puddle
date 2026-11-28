@@ -695,23 +695,18 @@ impl Injection {
         Ok(crate::ssh_agent::allowed_hosts(rows))
     }
 
-    /// The rules on method and path that apply to `workspace`, global and its own. A row the
-    /// proxy cannot take (a host that is no longer valid) is left out and logged.
+    /// The rules on method and path that apply to `workspace`, global and its own. A stored
+    /// host that is not a valid pattern is an error of the read, not a rule that checks nothing.
     fn request_rules(&self, workspace: &WorkspaceId) -> Result<RequestRules, InjectionError> {
         let rows = self
             .inputs
             .store
             .request_rules_for(workspace)
             .map_err(InjectionError::settings("the rules on method and path"))?;
-        let mut rules = Vec::with_capacity(rows.len());
-        for row in rows {
-            match RequestRule::new(RuleId(row.id), &row.host, row.methods, row.path) {
-                Ok(rule) => rules.push(rule),
-                Err(e) => {
-                    tracing::warn!(id = row.id, host = %row.host, error = %e, "a rule on method and path is not valid");
-                }
-            }
-        }
+        let rules = rows
+            .into_iter()
+            .map(|row| RequestRule::for_pattern(RuleId(row.id), &row.host, row.methods, row.path))
+            .collect();
         Ok(RequestRules::new(rules))
     }
 

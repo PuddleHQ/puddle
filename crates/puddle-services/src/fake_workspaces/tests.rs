@@ -543,12 +543,18 @@ async fn an_attach_names_the_origin_and_the_ssh_alias_by_the_id() {
     );
     record.status = WorkspaceStatus::Running;
     fake.seed(record, Unsaved::default());
-    fake.attach(&id("k7m2x9qa"), AttachMode::Browser)
-        .await
-        .unwrap();
-    fake.attach(&id("k7m2x9qa"), AttachMode::Desktop)
-        .await
-        .unwrap();
+    fake.attach(
+        &OwnedWorkspace::for_test(UserId::OWNER, &id("k7m2x9qa")),
+        AttachMode::Browser,
+    )
+    .await
+    .unwrap();
+    fake.attach(
+        &OwnedWorkspace::for_test(UserId::OWNER, &id("k7m2x9qa")),
+        AttachMode::Desktop,
+    )
+    .await
+    .unwrap();
     let seen = seen.0.lock().unwrap().clone();
     assert!(
         seen[0].starts_with("http://k7m2x9qa.localhost:"),

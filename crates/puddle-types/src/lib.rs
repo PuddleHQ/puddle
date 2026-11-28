@@ -33,6 +33,7 @@ pub mod fixture;
 mod guest;
 mod hex;
 mod host;
+mod host_pattern;
 mod interception;
 mod local;
 mod memory;
@@ -68,6 +69,7 @@ pub use event::{
 pub use fill::{Fill, Rgb, SET_PALETTE};
 pub use guest::{ApplyKind, FileMode, GuestEnv, GuestFile, GuestPath, GuestPathLit};
 pub use host::{DomainName, Host, MAX_LABEL_LEN, MAX_NAME_LEN};
+pub use host_pattern::HostPattern;
 pub use interception::{CURATED_PASS_THROUGH, InterceptionMode};
 pub use local::{CompanySignal, LocalCategory};
 pub use memory::MemoryMib;

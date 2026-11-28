@@ -270,6 +270,8 @@ const CPUS_ONLINE: &str = "/sys/devices/system/cpu/online";
 #[derive(Default)]
 struct State {
     images: BTreeMap<String, ImageConfig>,
+    /// Accounts added to an image beyond `root` and its `USER` ([`FakeRuntime::add_guest_user`]).
+    guest_users: BTreeMap<String, BTreeSet<String>>,
     sandboxes: BTreeMap<String, SandboxRecord>,
     /// Sandboxes Puddle didn't create ([`FakeRuntime::add_foreign_sandbox`]): listed only.
     foreign: BTreeMap<String, WorkspaceStatus>,

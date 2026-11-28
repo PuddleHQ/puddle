@@ -746,7 +746,7 @@ pub struct AuditSize {
     pub records_last_week: u64,
     /// Bytes written in the last 7 days.
     pub bytes_last_week: u64,
-    /// Size of the lines above which Puddle shows a warning.
+    /// Size of the file less its free space, above which Puddle shows a warning.
     pub warn_bytes: u64,
     /// Size of the database file (the log and everything else Puddle keeps).
     pub file_bytes: u64,

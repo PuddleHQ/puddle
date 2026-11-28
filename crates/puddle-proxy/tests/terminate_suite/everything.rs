@@ -122,8 +122,9 @@ async fn a_host_with_a_credential_is_decrypted_even_when_the_never_decrypt_list_
     let mut guest = rig.guest();
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     assert_eq!(client.get("bound.test", "/").await.status, 200);
-    assert!(
-        server.recorded()[0].header("authorization").is_some(),
+    assert_eq!(
+        server.recorded()[0].headers_named("authorization"),
+        [format!("Basic {}", terminate_support::CANARY)],
         "the credential was added"
     );
     client.close().await;
@@ -178,8 +179,9 @@ async fn a_host_with_a_credential_is_decrypted_for_a_client_in_a_container_too()
     let mut container = rig.guest().in_container();
     let mut client = container.tls("bound.test:443", None).await.unwrap();
     assert_eq!(client.get("bound.test", "/").await.status, 200);
-    assert!(
-        server.recorded()[0].header("authorization").is_some(),
+    assert_eq!(
+        server.recorded()[0].headers_named("authorization"),
+        [format!("Basic {}", terminate_support::CANARY)],
         "the credential was added"
     );
     client.close().await;
@@ -313,8 +315,9 @@ async fn a_certificate_alert_on_a_host_with_a_credential_never_teaches_the_host_
     // The next connection is still decrypted and its credential added, not passed through.
     let mut client = guest.tls("bound.test:443", None).await.unwrap();
     assert_eq!(client.get("bound.test", "/").await.status, 200);
-    assert!(
-        server.recorded()[0].header("authorization").is_some(),
+    assert_eq!(
+        server.recorded()[0].headers_named("authorization"),
+        [format!("Basic {}", terminate_support::CANARY)],
         "the credential was added"
     );
     client.close().await;
@@ -671,9 +674,9 @@ async fn an_answered_ssh_tunnel_whose_server_cannot_be_reached_just_ends_with_no
         String::from_utf8_lossy(&rest)
     );
     let events = rig.events(1).await;
-    assert_ne!(
+    assert_eq!(
         events[0].outcome,
-        Some(puddle_types::ConnectionOutcome::Connected)
+        Some(puddle_types::ConnectionOutcome::ConnectFailed)
     );
 }
 

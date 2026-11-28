@@ -356,8 +356,13 @@ pub(crate) async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
         };
         filter = back;
         log(&workspace, filter.host(), &outcome);
-        if stream.write_all(&answer).await.is_err() {
-            return;
+        match tokio::time::timeout(idle, stream.write_all(&answer)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => return,
+            Err(_) => {
+                tracing::info!(workspace = %workspace, idle_secs = idle.as_secs(), "ssh agent answer not read, stream closed");
+                return;
+            }
         }
     }
 }

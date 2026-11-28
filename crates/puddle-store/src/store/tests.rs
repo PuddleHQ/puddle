@@ -823,7 +823,7 @@ fn a_workspace_mode_already_saved_by_another_writer_sends_no_event() {
 
 #[test]
 fn never_decrypt_names_already_saved_by_another_writer_send_no_event() {
-    let names = vec!["bank.example".to_owned()];
+    let names = vec![puddle_types::HostPattern::parse_normalised("bank.example").unwrap()];
     let other_names = names.clone();
     let (_, events) = race(
         move |other| other.set_never_decrypt(&ws_a(), &other_names).unwrap(),

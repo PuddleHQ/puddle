@@ -22,11 +22,11 @@ pub(crate) use migrations::{
 /// Schema migrations; entry `n` takes the database from version `n` to `n + 1`.
 const MIGRATIONS: &[&str] = &[
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24, V25, V26, V27, V28, V29, V30, V31, V32, V33, V34, V35,
+    V22, V23, V24, V25, V26, V27, V28, V29, V30, V31, V32, V33, V34, V35, V36,
 ];
 
 /// The schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 35;
+pub const SCHEMA_VERSION: u32 = 36;
 
 /// The name a workspace had when an audit record was written, so a record of a renamed or
 /// deleted workspace still reads as the user knew it. `workspace_names` holds the current name
@@ -617,6 +617,45 @@ UPDATE audit_size SET bytes = (
     SELECT coalesce(sum(length(CAST(line AS BLOB)) + coalesce(length(CAST(search AS BLOB)), 0)
                         + coalesce(length(CAST(category AS BLOB)), 0)), 0) FROM audit
 ) WHERE id = 1;
+";
+
+/// The activity screen and the admin stats read the audit at millions of rows, so they read
+/// maintained figures instead of scanning it. `audit_size.records` counts the rows, and
+/// `audit_minutes` holds the rows and line bytes written in each minute of their `ts` (what the
+/// last-day and last-week figures sum); the insert and delete triggers keep both. The category
+/// filter gets an index to walk, like the other equality filters have.
+const V36: &str = "
+ALTER TABLE audit_size ADD COLUMN records INTEGER NOT NULL DEFAULT 0;
+UPDATE audit_size SET records = (SELECT count(*) FROM audit) WHERE id = 1;
+CREATE TABLE audit_minutes (
+    minute  INTEGER PRIMARY KEY,
+    records INTEGER NOT NULL,
+    bytes   INTEGER NOT NULL
+) STRICT;
+INSERT INTO audit_minutes (minute, records, bytes)
+    SELECT ts / 60000, count(*), sum(length(CAST(line AS BLOB))) FROM audit GROUP BY ts / 60000;
+CREATE INDEX audit_category ON audit (category, id) WHERE category IS NOT NULL;
+DROP TRIGGER audit_size_insert;
+DROP TRIGGER audit_size_delete;
+CREATE TRIGGER audit_size_insert AFTER INSERT ON audit
+BEGIN
+    UPDATE audit_size SET records = records + 1,
+        bytes = bytes + length(CAST(NEW.line AS BLOB))
+        + coalesce(length(CAST(NEW.search AS BLOB)), 0)
+        + coalesce(length(CAST(NEW.category AS BLOB)), 0) WHERE id = 1;
+    INSERT INTO audit_minutes (minute, records, bytes)
+        VALUES (NEW.ts / 60000, 1, length(CAST(NEW.line AS BLOB)))
+        ON CONFLICT (minute) DO UPDATE SET records = records + 1, bytes = bytes + excluded.bytes;
+END;
+CREATE TRIGGER audit_size_delete AFTER DELETE ON audit
+BEGIN
+    UPDATE audit_size SET records = records - 1,
+        bytes = bytes - length(CAST(OLD.line AS BLOB))
+        - coalesce(length(CAST(OLD.search AS BLOB)), 0)
+        - coalesce(length(CAST(OLD.category AS BLOB)), 0) WHERE id = 1;
+    UPDATE audit_minutes SET records = records - 1,
+        bytes = bytes - length(CAST(OLD.line AS BLOB)) WHERE minute = OLD.ts / 60000;
+END;
 ";
 
 #[cfg(test)]

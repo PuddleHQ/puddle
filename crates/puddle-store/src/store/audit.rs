@@ -116,12 +116,20 @@ impl Store {
         }
     }
 
-    /// Whether the audit's lines are over [`super::Limits::audit_warn_bytes`].
+    /// Whether the database file, less its free pages, is over [`super::Limits::audit_warn_bytes`].
     ///
     /// # Errors
     /// A database error.
     pub fn audit_over_warn_size(&self) -> Result<bool, StoreError> {
-        Ok(self.audit_bytes()? > self.limits.audit_warn_bytes)
+        Ok(self.audit_file_in_use_bytes()? > self.limits.audit_warn_bytes)
+    }
+
+    /// The database file's size less its free pages (indexes and other tables included).
+    ///
+    /// # Errors
+    /// A database error.
+    pub fn audit_file_in_use_bytes(&self) -> Result<u64, StoreError> {
+        super::audit_retention::file_in_use_bytes(&lock(&self.conn))
     }
 
     /// One sweeper pass (R-19, R-22), each step its own short transaction.
@@ -341,8 +349,9 @@ impl Store {
         cursor: AuditCursor,
         limit: u32,
     ) -> Result<Vec<(i64, String)>, StoreError> {
-        let (sql, args) = audit_query_sql(filter, cursor, limit);
         let conn = self.audit_read();
+        let (sql, args) =
+            audit_query_sql(filter, cursor, limit, time_window_is_narrow(&conn, filter)?);
         let mut stmt = conn.prepare_cached(&sql)?;
         let rows = stmt.query_map(rusqlite::params_from_iter(args), |row| {
             Ok((row.get(0)?, row.get(1)?))
@@ -409,8 +418,9 @@ impl Store {
         cursor: AuditCursor,
         limit: u32,
     ) -> Result<Vec<String>, StoreError> {
-        let (sql, args) = audit_query_sql(filter, cursor, limit);
         let conn = self.audit_read();
+        let (sql, args) =
+            audit_query_sql(filter, cursor, limit, time_window_is_narrow(&conn, filter)?);
         let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
         let rows = stmt.query_map(rusqlite::params_from_iter(args), |row| row.get(3))?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -430,8 +440,9 @@ impl Store {
         cursor: AuditCursor,
         limit: u32,
     ) -> Result<i32, StoreError> {
-        let (sql, args) = audit_query_sql(filter, cursor, limit);
         let conn = self.audit_read();
+        let (sql, args) =
+            audit_query_sql(filter, cursor, limit, time_window_is_narrow(&conn, filter)?);
         let mut stmt = conn.prepare(&sql)?;
         let mut rows = stmt.query(rusqlite::params_from_iter(args))?;
         while rows.next()?.is_some() {}
@@ -440,14 +451,44 @@ impl Store {
     }
 }
 
+/// A time window holding fewer records than this is read through the `audit_ts` index and sorted
+/// by id; any wider one is read in id order, newest first, which finds a page quickly when the
+/// records it wants are common.
+const NARROW_WINDOW_RECORDS: i64 = 10_000;
+
+/// Whether `filter`'s `from`/`to` window holds under [`NARROW_WINDOW_RECORDS`] records. SQLite
+/// walks `id` for a page whatever the window, which reads the whole table when few records fall
+/// in it (732 ms at 5 million rows for an hour that had none); a probe of at most that many
+/// index entries tells the two cases apart for the cost of reading them.
+fn time_window_is_narrow(conn: &Connection, filter: &AuditFilter) -> Result<bool, StoreError> {
+    if filter.from.is_none() && filter.to.is_none() {
+        return Ok(false);
+    }
+    let from = filter.from.map_or(0, sql_ts);
+    let to = filter.to.map_or(i64::MAX, sql_ts);
+    let found: i64 = conn.query_row(
+        "SELECT count(*) FROM (SELECT 1 FROM audit INDEXED BY audit_ts
+                                WHERE ts >= ?1 AND ts < ?2 LIMIT ?3)",
+        params![from, to, NARROW_WINDOW_RECORDS],
+        |row| row.get(0),
+    )?;
+    Ok(found < NARROW_WINDOW_RECORDS)
+}
+
 /// The SQL and bound values for one audit page; every value is bound, never spliced in.
+/// `by_time` reads the page through the `audit_ts` index (see [`time_window_is_narrow`]).
 pub(super) fn audit_query_sql(
     filter: &AuditFilter,
     cursor: AuditCursor,
     limit: u32,
+    by_time: bool,
 ) -> (String, Vec<rusqlite::types::Value>) {
     use rusqlite::types::Value;
-    let mut sql = String::from("SELECT id, line FROM audit WHERE 1");
+    let mut sql = String::from(if by_time {
+        "SELECT id, line FROM audit INDEXED BY audit_ts WHERE 1"
+    } else {
+        "SELECT id, line FROM audit WHERE 1"
+    });
     let mut args: Vec<Value> = Vec::new();
     let mut clause = |text: &str, value: Option<Value>| {
         sql.push_str(" AND ");

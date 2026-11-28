@@ -767,6 +767,25 @@ fn a_hundred_thousand_records_answer_every_filter_quickly() {
             "SEARCH audit USING INDEX audit_",
         ),
         (
+            "category",
+            AuditFilter {
+                category: Some("company_network"),
+                ..AuditFilter::default()
+            },
+            AuditCursor::Before(None),
+            "USING INDEX audit_category (category=?)",
+        ),
+        (
+            "an hour with no record in it",
+            AuditFilter {
+                from: Some(last + 1),
+                to: Some(last + 3_600_000),
+                ..AuditFilter::default()
+            },
+            AuditCursor::Before(None),
+            "USING INDEX audit_ts (ts>? AND ts<?)",
+        ),
+        (
             "last hour (all of it)",
             AuditFilter {
                 from: Some(last - 3_600_000),

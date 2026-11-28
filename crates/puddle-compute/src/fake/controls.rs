@@ -17,6 +17,16 @@ impl FakeRuntime {
         self.lock().images.insert(image.to_string(), config);
     }
 
+    /// Adds `user` to the accounts `image` has. Every image has `root` and the account its `USER`
+    /// names; an exec as any other user fails like the real guest's ("guest user not found").
+    pub fn add_guest_user(&self, image: &ImageRef, user: &str) {
+        self.lock()
+            .guest_users
+            .entry(image.to_string())
+            .or_default()
+            .insert(user.to_owned());
+    }
+
     /// Arms `fault` for calls of `op`. Faults are checked in the order they were added; the
     /// first one that matches the call decides.
     pub fn inject(&self, op: Op, fault: Fault) {

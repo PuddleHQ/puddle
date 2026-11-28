@@ -111,14 +111,21 @@ def kit_self_test():
         "crates/prod/Cargo.toml": '[dependencies]\npuddle-test-kit = { workspace = true }\n',
         "crates/buildscript/Cargo.toml": '[build-dependencies]\nkit = { package = "puddle-test-kit", path = "../x" }\n',
         "crates/pertarget/Cargo.toml": '[target.\'cfg(windows)\'.dependencies]\npuddle-test-kit = { workspace = true }\n',
+        "crates/e2e-dep/Cargo.toml": '[dependencies]\npuddle-e2e = { workspace = true }\n',
+        "crates/vm-dep/Cargo.toml": '[dependencies]\npuddle-vm-tests = { workspace = true }\n',
+        "crates/renamed/Cargo.toml": '[dependencies]\nharness = { workspace = true }\n',
+        "crates/innocent/Cargo.toml": '[dependencies]\nother = { workspace = true }\n[dev-dependencies]\nharness = { workspace = true }\n',
+        "crates/broken/Cargo.toml": '[dependencies\npuddle-test-kit = 1\n',
+        "Cargo.toml": '[workspace.dependencies]\nharness = { package = "puddle-vm-tests", path = "crates/x" }\nother = "1"\n',
     }
     with tempfile.TemporaryDirectory() as d:
         for name, text in manifests.items():
-            os.makedirs(os.path.dirname(os.path.join(d, name)))
+            os.makedirs(os.path.dirname(os.path.join(d, name)), exist_ok=True)
             with open(os.path.join(d, name), "w", encoding="utf-8") as h:
                 h.write(text)
         flagged = sorted(r[2].split(":")[0] for r in gate.scan(d) if r[0] == "noreason")
-    want = ["crates/buildscript/Cargo.toml", "crates/pertarget/Cargo.toml", "crates/prod/Cargo.toml"]
+    want = ["crates/broken/Cargo.toml", "crates/buildscript/Cargo.toml", "crates/e2e-dep/Cargo.toml", "crates/pertarget/Cargo.toml",
+            "crates/prod/Cargo.toml", "crates/renamed/Cargo.toml", "crates/vm-dep/Cargo.toml"]
     return [] if flagged == want else [f"flagged {flagged}, wanted {want}"]
 
 

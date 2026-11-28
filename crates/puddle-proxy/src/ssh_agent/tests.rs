@@ -516,6 +516,26 @@ async fn a_silent_stream_is_closed_after_the_idle_limit() {
     closed(&mut guest, served).await;
 }
 
+#[tokio::test(start_paused = true)]
+async fn a_guest_that_never_reads_its_answer_has_its_stream_closed_after_the_idle_limit() {
+    let w = world();
+    // A buffer smaller than the key list's answer: the write parks until the guest reads.
+    let (mut guest, host_end) = duplex(8);
+    let served = tokio::spawn(serve(
+        Arc::clone(&w.agents),
+        Some(w.terminations.clone()),
+        workspace("box"),
+        host_end,
+        Duration::from_secs(1),
+    ));
+    guest
+        .write_all(&puddle_ssh_agent::wire::request_identities())
+        .await
+        .unwrap();
+    // Paused time runs ahead while every task waits: the write limit (1 s) ends the stream.
+    tokio::time::timeout(WAIT, served).await.unwrap().unwrap();
+}
+
 /// A one-way latch: threads wait on it (at most 10 s) until it is opened.
 #[derive(Default)]
 struct Latch(Mutex<bool>, std::sync::Condvar);
@@ -578,12 +598,13 @@ async fn a_workspace_holds_at_most_its_cap_of_blocking_threads_however_many_stre
     let cap = MAX_BLOCKED_PER_WORKSPACE;
     let streams = cap * 3;
     let mut open = Vec::new();
-    for _ in 0..streams {
+    // Two workspaces: each holds its own cap, so a cap shared by all of them fails the wait below.
+    for ws in ["box", "other"].into_iter().cycle().take(streams * 2) {
         let (mut guest, host_end) = duplex(64 * 1024);
         let served = tokio::spawn(serve(
             Arc::clone(&agents),
             None,
-            workspace("box"),
+            workspace(ws),
             host_end,
             IDLE_LIMIT,
         ));
@@ -593,17 +614,25 @@ async fn a_workspace_holds_at_most_its_cap_of_blocking_threads_however_many_stre
             .unwrap();
         open.push((guest, served));
     }
-    puddle_test_kit::eventually("the cap of requests hold a thread", WAIT, || {
-        gate.active.lock().unwrap().get(&workspace("box")).copied() == Some(cap)
-    })
+    puddle_test_kit::eventually(
+        "the cap of requests hold a thread per workspace",
+        WAIT,
+        || {
+            let active = gate.active.lock().unwrap();
+            active.get(&workspace("box")).copied() == Some(cap)
+                && active.get(&workspace("other")).copied() == Some(cap)
+        },
+    )
     .await;
     // Absence window: no signal says another request did not start, so give it time to.
     tokio::time::sleep(Duration::from_millis(300)).await;
-    assert_eq!(
-        gate.active.lock().unwrap().get(&workspace("box")).copied(),
-        Some(cap),
-        "the rest wait without a thread"
-    );
+    for ws in ["box", "other"] {
+        assert_eq!(
+            gate.active.lock().unwrap().get(&workspace(ws)).copied(),
+            Some(cap),
+            "the rest of {ws} wait without a thread"
+        );
+    }
     gate.release.open();
     for (mut guest, served) in open {
         let mut len = [0_u8; 4];
@@ -614,5 +643,7 @@ async fn a_workspace_holds_at_most_its_cap_of_blocking_threads_however_many_stre
         drop(guest);
         tokio::time::timeout(WAIT, served).await.unwrap().unwrap();
     }
-    assert_eq!(gate.peak.lock().unwrap()[&workspace("box")], cap);
+    for ws in ["box", "other"] {
+        assert_eq!(gate.peak.lock().unwrap()[&workspace(ws)], cap);
+    }
 }

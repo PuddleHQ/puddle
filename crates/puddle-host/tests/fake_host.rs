@@ -54,6 +54,8 @@ mod grow_room;
 mod guest_boot_plan;
 #[path = "fake_host/guest_problems_and_variables.rs"]
 mod guest_problems_and_variables;
+#[path = "fake_host/kill_points.rs"]
+mod kill_points;
 #[path = "fake_host/lifecycle_refusals.rs"]
 mod lifecycle_refusals;
 #[path = "fake_host/live_settings_changes.rs"]

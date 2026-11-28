@@ -44,10 +44,14 @@ describe("the activity log card", () => {
   });
 
   it("warns when the log is over its warning size", async () => {
-    api.auditSize = { ...api.auditSize, bytes: 3_000_000_000 };
+    api.auditSize = {
+      ...api.auditSize,
+      file_bytes: 3_000_000_000,
+      free_bytes: 0,
+    };
     show();
     expect(await screen.findByRole("status")).toHaveTextContent(
-      "The activity log is getting large: 2.8 GB",
+      "The activity log is getting large: its file holds 2.8 GB",
     );
   });
 

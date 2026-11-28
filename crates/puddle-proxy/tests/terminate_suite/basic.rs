@@ -622,6 +622,15 @@ async fn the_host_policy_still_applies_and_a_denied_bound_host_is_not_terminated
     let response = client.get("bound.test", "/x").await;
     assert_eq!(response.status, 403);
     assert_eq!(server.accepted(), 0);
+    drop(client);
+    drop(guest);
+    let e = rig.events_exactly(1).await;
+    terminate_support::assert_record(
+        &e[0],
+        ConnectionDecision::Pending,
+        None,
+        puddle_types::ConnectionReason::NoRule,
+    );
     let _ = (
         host("bound.test"),
         ProxyConfig::default(),

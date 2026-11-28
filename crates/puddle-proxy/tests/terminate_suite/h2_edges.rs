@@ -100,7 +100,11 @@ async fn an_http11_server_that_was_down_at_the_handshake_is_used_from_the_next_s
     assert_eq!(second.text(), "back");
     client.close().await;
     let events = rig.events(1).await;
-    assert!(events[0].resolved_ip.is_some(), "the audit has the address");
+    assert_eq!(
+        events[0].resolved_ip,
+        Some(server.addr.ip()),
+        "the audit has the address"
+    );
 }
 
 #[tokio::test]
@@ -420,7 +424,13 @@ async fn a_guest_that_stops_its_handshake_after_the_hello_is_dropped_at_the_hand
     let mut sink = Vec::new();
     let ended = tokio::time::timeout(Duration::from_secs(10), tcp.read_to_end(&mut sink)).await;
     assert!(ended.is_ok(), "the proxy hung up");
-    assert_eq!(rig.events(1).await.len(), 1);
+    let e = rig.events_exactly(1).await;
+    terminate_support::assert_record(
+        &e[0],
+        puddle_types::ConnectionDecision::Allow,
+        Some(puddle_types::ConnectionOutcome::Connected),
+        puddle_types::ConnectionReason::Rule,
+    );
 }
 
 #[tokio::test]
@@ -445,7 +455,13 @@ async fn a_guest_that_sends_no_hello_at_all_is_dropped_at_the_handshake_timeout(
     let ended = tokio::time::timeout(Duration::from_secs(10), tunnel.read_to_end(&mut sink)).await;
     assert!(ended.is_ok(), "the proxy hung up");
     assert!(server.recorded().is_empty());
-    assert_eq!(rig.events(1).await.len(), 1);
+    let e = rig.events_exactly(1).await;
+    terminate_support::assert_record(
+        &e[0],
+        puddle_types::ConnectionDecision::Allow,
+        None,
+        puddle_types::ConnectionReason::Rule,
+    );
 }
 
 /// A client socket that pauses before its first write after the server's flight has arrived: a

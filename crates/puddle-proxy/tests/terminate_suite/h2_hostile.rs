@@ -383,6 +383,7 @@ async fn headers_that_only_exist_to_smuggle_are_refused_before_the_server_sees_a
         &ProxyConfig::default(),
         TestInjector::always(),
     );
+    // The `h2` client refuses these headers itself, so each goes out as a raw HEADERS frame.
     for (name, value) in [
         ("transfer-encoding", "chunked"),
         ("connection", "keep-alive, x-evil"),
@@ -392,33 +393,27 @@ async fn headers_that_only_exist_to_smuggle_are_refused_before_the_server_sees_a
         ("proxy-connection", "keep-alive"),
     ] {
         let mut guest = rig.guest();
-        let client = guest
-            .tls_with("bound.test:443", None, &[b"h2"], true)
+        let mut tls = raw(&mut guest).await;
+        let mut block = get_block(b"/");
+        block.extend(literal(name, value.as_bytes()));
+        tls.write_all(&frame(1, 0x4 | 0x1, 1, &block))
             .await
             .unwrap();
-        let (mut send, connection) = h2::client::handshake(client.stream.into_inner())
-            .await
-            .unwrap();
-        tokio::spawn(connection);
-        let request = Request::builder()
-            .uri("https://bound.test/")
-            .header(name, value)
-            .body(())
-            .unwrap();
-        let outcome = match send.send_request(request, true) {
-            Ok((response, _)) => tokio::time::timeout(Duration::from_secs(5), response)
-                .await
-                .unwrap()
-                .map(|r| r.status().as_u16())
-                .map_err(|e| e.to_string()),
-            Err(err) => Err(err.to_string()),
-        };
-        // Either a 400, or the stream was reset.
-        if let Ok(status) = outcome {
-            assert_eq!(status, 400, "{name}");
-        }
+        let (seen, closed) = frames_until_end(&mut tls, Duration::from_secs(2)).await;
+        let answered_ok = seen.iter().any(|(kind, stream, payload)| {
+            *kind == 1 && *stream == 1 && payload.first() == Some(&0x88)
+        });
+        assert!(!answered_ok, "{name}: answered 200");
+        // Refused is a 400 (HPACK static index 12), a reset of the stream, or the end of the
+        // connection; silence until the deadline is none of them.
+        let refused = seen.iter().any(|(kind, stream, payload)| {
+            (*kind == 1 && *stream == 1 && payload.first() == Some(&0x8c))
+                || (*kind == 3 && *stream == 1)
+                || *kind == 7
+        }) || closed;
+        assert!(refused, "{name}: not refused: {seen:?}");
     }
-    assert!(server.recorded().is_empty());
+    assert!(server.recorded().is_empty(), "{:?}", server.recorded());
 }
 
 #[tokio::test]

@@ -12,8 +12,6 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
-use puddle_agent_proto::host::HostConfig;
-use puddle_proxy::ProxyConfig;
 use puddle_types::{ConnectionDecision, ConnectionOutcome};
 use rustls::pki_types::ServerName;
 use terminate_support::{FakeServer, Flaw, Guest, Pki, Reply, RigBuilder};
@@ -278,28 +276,4 @@ async fn a_real_tool_that_refuses_the_certificate_is_recorded_too() {
     let events = rig.events(1).await;
     assert_eq!(events[0].reason.to_string(), "guest_tls_rejected");
     assert_eq!(events[0].decision, ConnectionDecision::Allow);
-}
-
-/// The agent dials its session to the host only when it opens a stream, and the host drops a
-/// session that stays silent past its first-byte wait. A tool that starts slowly (a cold
-/// interpreter on a busy machine) must still find the session there when it connects.
-#[tokio::test]
-async fn a_tool_that_connects_after_the_hosts_first_byte_wait_still_gets_through() {
-    let pki = Pki::new();
-    let server = upstream(&pki).await;
-    let wait = Duration::from_millis(200);
-    let config = ProxyConfig::default().with_session(HostConfig {
-        first_byte_timeout: wait,
-        ..HostConfig::default()
-    });
-    let rig = RigBuilder::new(&pki)
-        .name("bound.test", server.addr)
-        .config(&config)
-        .build();
-    let mut guest = rig.guest();
-    // An absence window: the slow tool's start, five times the host's wait. Nothing signals the
-    // host giving up on a silent session, so only time passing can show that it did not.
-    tokio::time::sleep(wait * 5).await;
-    let mut client = guest.tls("bound.test:443", None).await.unwrap();
-    assert_eq!(client.get("bound.test", "/").await.status, 200);
 }

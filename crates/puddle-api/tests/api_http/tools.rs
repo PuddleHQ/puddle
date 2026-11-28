@@ -33,11 +33,12 @@ async fn workspace(api: &Api, workspace: &str, running: bool) {
         .await;
     assert_eq!(reply.status, 202, "{}", reply.body);
     api.workspaces.idle().await;
-    if running {
+    // A create ends running; stop it when the test wants it down.
+    if !running {
         let reply = api
-            .send("POST", &format!("/api/workspaces/{workspace}/start"), None)
+            .send("POST", &format!("/api/workspaces/{workspace}/stop"), None)
             .await;
-        assert!(reply.status == 202 || reply.status == 200, "{}", reply.body);
+        assert_eq!(reply.status, 202, "{}", reply.body);
         api.workspaces.idle().await;
     }
 }

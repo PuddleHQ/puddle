@@ -2,7 +2,9 @@
 //! The ports the API serves: the [`PortsService`] trait the routes call, [`NoPorts`] for a build
 //! without it, and [`FakePorts`] for tests and the UI fixture.
 
+#[cfg(any(test, feature = "testing"))]
 use std::collections::BTreeMap;
+#[cfg(any(test, feature = "testing"))]
 use std::sync::{Mutex, PoisonError};
 
 use futures_util::future::BoxFuture;
@@ -92,6 +94,7 @@ impl PortsService for NoPorts {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 /// An in-memory service for tests and the UI fixture: every workspace runs, the ports it listens on
 /// are what the test set, and a forward is a row. Nothing is bound.
 #[derive(Debug, Default)]
@@ -99,6 +102,7 @@ pub struct FakePorts {
     state: Mutex<BTreeMap<WorkspaceId, BTreeMap<u16, PortEntry>>>,
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl FakePorts {
     /// A fake with nothing listening.
     #[must_use]
@@ -120,6 +124,7 @@ impl FakePorts {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 fn blank(guest_port: u16) -> PortEntry {
     PortEntry {
         guest_port,
@@ -131,6 +136,7 @@ fn blank(guest_port: u16) -> PortEntry {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl PortsService for FakePorts {
     fn list(
         &self,

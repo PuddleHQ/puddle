@@ -430,7 +430,13 @@ test.describe("keyboard only", () => {
     await page.keyboard.press("Enter");
     await expect(dialog).toHaveCount(0);
     const created = card(page, "keys");
-    await expect(created).toContainText("Not started");
+    // A create ends running: stop it, then start it again, all from the keyboard.
+    await expect(created).toContainText("Running");
+    await created.getByRole("button", { name: "More about keys" }).focus();
+    await page.keyboard.press("Enter");
+    await page.getByRole("menuitem", { name: "Stop keys" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(created).toContainText("Stopped");
 
     await created.getByRole("button", { name: "Start keys" }).focus();
     await page.keyboard.press("Enter");

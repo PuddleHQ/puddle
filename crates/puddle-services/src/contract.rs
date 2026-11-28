@@ -56,8 +56,24 @@ fn expect_status(case: &str, step: &str, reply: &Reply, status: u16) {
     assert_eq!(reply.status, status, "{case}: {step}: {}", text(reply));
 }
 
+/// The stable error code each refusal status carries.
+fn code_of(status: u16) -> &'static str {
+    match status {
+        404 => "not_found",
+        409 => "conflict",
+        422 => "invalid",
+        other => panic!("no error code is named for status {other}"),
+    }
+}
+
 fn expect_refusal(case: &str, step: &str, reply: &Reply, status: u16, words: &str) {
     expect_status(case, step, reply, status);
+    assert_eq!(
+        field(reply, "error"),
+        code_of(status),
+        "{case}: {step}: the error code: {}",
+        text(reply)
+    );
     let shown = text(reply);
     assert!(
         shown.contains(words),
@@ -96,26 +112,26 @@ async fn created(subject: &dyn Subject, case: &str) -> String {
         .as_str()
         .unwrap_or_else(|| panic!("{case}: create returned no id: {}", text(&reply)))
         .to_owned();
-    let mut idle = settled(subject, case, &id).await;
-    // The real service starts what it creates and the in-memory one leaves it `created`: a known
-    // difference (see the brief's follow-ups), so a case begins from a workspace that is down.
-    if field(&idle, "status") == "running" {
-        expect_status(
-            case,
-            "stop after create",
-            &op(subject, &id, "stop", json!({})).await,
-            202,
-        );
-        idle = settled(subject, case, &id).await;
-    }
-    let status = field(&idle, "status")
-        .as_str()
-        .unwrap_or_default()
-        .to_owned();
-    let shown = text(&idle);
-    assert!(
-        matches!(status.as_str(), "created" | "stopped"),
-        "{case}: a created workspace is down once it settles: {shown}"
+    let idle = settled(subject, case, &id).await;
+    // The lifecycle table ends a create in `running` (`phase::ended`), so both services do.
+    assert_eq!(
+        field(&idle, "status"),
+        "running",
+        "{case}: a create ends running: {}",
+        text(&idle)
+    );
+    expect_status(
+        case,
+        "stop after create",
+        &op(subject, &id, "stop", json!({})).await,
+        202,
+    );
+    let idle = settled(subject, case, &id).await;
+    assert_eq!(
+        field(&idle, "status"),
+        "stopped",
+        "{case}: a case begins from a workspace that is down: {}",
+        text(&idle)
     );
     id
 }
@@ -364,6 +380,30 @@ async fn a_name_belongs_to_one_workspace(subject: &dyn Subject) {
     expect_status(case, "rename to its own name", &own, 200);
 }
 
+/// A workspace that was stopped starts again, and each stop and start leaves it settled in the
+/// status the API names.
+async fn a_stopped_workspace_starts_again(subject: &dyn Subject) {
+    let case = "restart";
+    let id = running(subject, case).await;
+    expect_status(
+        case,
+        "stop",
+        &op(subject, &id, "stop", json!({})).await,
+        202,
+    );
+    let down = settled(subject, case, &id).await;
+    assert_eq!(field(&down, "status"), "stopped", "{case}: {}", text(&down));
+    expect_status(
+        case,
+        "start again",
+        &op(subject, &id, "start", json!({})).await,
+        202,
+    );
+    let up = settled(subject, case, &id).await;
+    assert_eq!(field(&up, "status"), "running", "{case}: {}", text(&up));
+    assert_eq!(field(&up, "id"), id.as_str(), "{case}: {}", text(&up));
+}
+
 /// Runs every case against `subject`.
 ///
 /// # Panics
@@ -376,4 +416,8 @@ pub async fn run(subject: &dyn Subject) {
     a_settled_workspace_reclaims_space(subject).await;
     delete_checks_what_the_caller_confirmed(subject).await;
     a_name_belongs_to_one_workspace(subject).await;
+    a_stopped_workspace_starts_again(subject).await;
 }
+
+#[cfg(test)]
+mod tests;

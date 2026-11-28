@@ -2,7 +2,6 @@
 //! The front process: starts the worker with a hidden console, relays its output, and turns
 //! console events into a shutdown request on the worker's stdin.
 
-use std::io::Write as _;
 use std::process::{ChildStdin, Stdio};
 use std::sync::{Condvar, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
@@ -89,13 +88,6 @@ fn cause(ctrl_type: u32) -> Option<ShutdownCause> {
     }
 }
 
-/// Whether the front lets the default handler end it: a repeated interrupt or break once the
-/// shutdown was requested (a hung shutdown can be cut short). A deadline event (the console
-/// closes, the user logs off, the system shuts down) never does: the front must stay to wait.
-fn ends_front_by_default(cause: ShutdownCause, requested_before: bool) -> bool {
-    requested_before && !cause.is_deadline()
-}
-
 /// The console handler's work (on a thread Windows creates for it). Returns whether the event
 /// was handled; `false` lets the default handler end the front.
 pub(crate) fn on_console_event(ctrl_type: u32) -> bool {
@@ -115,14 +107,7 @@ pub(crate) fn on_console_event(ctrl_type: u32) -> bool {
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .take();
-    let requested_before = control.is_none();
-    if let Some(mut control) = control {
-        // Closing the pipe right after is the request too, so a failed write changes nothing.
-        let _ = writeln!(control, "{cause}");
-        drop(control);
-        tracing::info!(%cause, "front: shutdown requested");
-    }
-    if ends_front_by_default(cause, requested_before) {
+    if crate::signal::request_worker_shutdown(control, cause) {
         // A second Ctrl-C of a shutdown that hangs: the default handler ends the front, and the
         // kill-on-close job ends the worker.
         return false;

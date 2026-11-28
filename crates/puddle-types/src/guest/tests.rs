@@ -239,3 +239,18 @@ fn a_file_mode_within_the_permission_bits_is_accepted() {
 fn a_file_mode_beyond_the_permission_bits_panics_which_stops_a_const_build() {
     let _ = FileMode::new(0o10000);
 }
+
+#[test]
+fn the_sudo_keep_line_lists_the_kept_names_in_order() {
+    let mut env = GuestEnv::new();
+    env.set("A", "1").unwrap();
+    env.set("B_C", "2").unwrap();
+    assert_eq!(
+        env.sudo_keep_line(|_| true),
+        "Defaults env_keep += \"A B_C\"\n"
+    );
+    assert_eq!(
+        env.sudo_keep_line(|n| n.starts_with('B')),
+        "Defaults env_keep += \"B_C\"\n"
+    );
+}

@@ -289,6 +289,40 @@ async fn after_shutdown_new_sandboxes_are_handed_back() {
     back.stop().await.unwrap();
 }
 
+/// The second Ctrl-C drops the shutdown future (`ShutdownSignals::until_again`): what it leaves.
+#[tokio::test]
+async fn a_cancelled_shutdown_is_not_retried_and_still_refuses_new_sandboxes() {
+    let rt = FakeRuntime::new();
+    let lc = Lifecycle::new(rt.clone(), ShutdownConfig::default());
+    for n in ["a", "b"] {
+        let sb = rt.create(spec(n)).await.unwrap();
+        assert!(lc.manage(sb, Vec::new()).unwrap().is_none());
+    }
+
+    // On a current-thread runtime the stop tasks have not run when the first poll returns, so
+    // dropping the future there cancels the shutdown before any sandbox was stopped.
+    let mut shutdown = Box::pin(lc.shutdown());
+    std::future::poll_fn(|cx| {
+        assert!(shutdown.as_mut().poll(cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    drop(shutdown);
+
+    assert!(
+        lc.managed().is_empty(),
+        "the handles were taken for the stop"
+    );
+    let late = rt.create(spec("late")).await.unwrap();
+    assert_eq!(
+        lc.manage(late, Vec::new()).unwrap_err().name(),
+        &name("late")
+    );
+    // Nothing is left to stop: the sandboxes the cut-short run held are the next start's
+    // reconcile to clean up.
+    assert_eq!(lc.shutdown().await.sandboxes.len(), 0);
+}
+
 #[tokio::test]
 async fn released_and_replaced_handles_are_not_stopped_by_shutdown() {
     let rt = FakeRuntime::new();

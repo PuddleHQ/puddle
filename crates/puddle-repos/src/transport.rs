@@ -53,6 +53,7 @@ pub struct HostApi {
     chain: Arc<Chain>,
     tls: TlsClient,
     timeout: Duration,
+    max_body: usize,
     log: Arc<dyn ConnectionLog>,
     /// Answered connections by `host[:port]`, newest last.
     idle: Mutex<HashMap<String, Vec<Idle>>>,
@@ -73,6 +74,7 @@ impl HostApi {
             chain,
             tls,
             timeout: REQUEST_TIMEOUT,
+            max_body: MAX_BODY,
             log: Arc::new(NullConnectionLog),
             idle: Mutex::new(HashMap::new()),
             idle_for: IDLE_FOR,
@@ -94,6 +96,14 @@ impl HostApi {
         self
     }
 
+    /// The same with another largest answer than [`MAX_BODY`], for a test that must not push
+    /// sixteen megabytes through a socket to cross the limit.
+    #[must_use]
+    pub fn with_max_body(mut self, max_body: usize) -> Self {
+        self.max_body = max_body;
+        self
+    }
+
     /// The same with another time an answered connection waits for its next request.
     #[must_use]
     pub fn with_idle_time(mut self, idle_for: Duration) -> Self {
@@ -109,7 +119,7 @@ impl HostApi {
         // A kept connection the host closed meanwhile fails before it answers anything: a `GET`
         // is safe to send again, once, on a new connection.
         if let Some(mut sender) = self.take_idle(&request.host) {
-            match send(&mut sender, &request, authorization.clone()).await {
+            match send(&mut sender, &request, authorization.clone(), self.max_body).await {
                 Ok(reply) => {
                     self.keep(&request.host, sender, &reply);
                     return Ok(reply);
@@ -119,7 +129,7 @@ impl HostApi {
             }
         }
         let mut sender = self.open(&request.host).await?;
-        let reply = send(&mut sender, &request, authorization).await?;
+        let reply = send(&mut sender, &request, authorization, self.max_body).await?;
         self.keep(&request.host, sender, &reply);
         Ok(reply)
     }
@@ -270,6 +280,7 @@ async fn send(
     sender: &mut SendRequest<Empty<Bytes>>,
     request: &ApiRequest,
     authorization: HeaderValue,
+    max_body: usize,
 ) -> Result<ApiReply, TransportError> {
     sender.ready().await.map_err(protocol)?;
     let mut builder = Request::builder()
@@ -288,7 +299,7 @@ async fn send(
     let request = builder.body(Empty::<Bytes>::new()).map_err(protocol)?;
     let response = sender.send_request(request).await.map_err(protocol)?;
     let (parts, body) = response.into_parts();
-    let body = Limited::new(body, MAX_BODY)
+    let body = Limited::new(body, max_body)
         .collect()
         .await
         .map_err(|err| {

@@ -5,9 +5,10 @@ use axum::Json;
 use axum::extract::State;
 use puddle_types::{Event, EventSink as _};
 
+use crate::authz::Principal;
 use crate::extract::Path;
 use crate::routes::AppState;
-use crate::routes::workspaces::workspace_id;
+use crate::routes::workspaces::owned;
 use puddle_services::error::ApiError;
 use puddle_services::error::ApiErrorBody;
 use puddle_services::wire::{StartFolderRequest, StartFolderSet};
@@ -32,12 +33,16 @@ use puddle_services::wire::{StartFolderRequest, StartFolderSet};
 )]
 pub(crate) async fn put_start_folder(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
     crate::extract::Json(body): crate::extract::Json<StartFolderRequest>,
 ) -> Result<Json<StartFolderSet>, ApiError> {
-    let id = workspace_id(&id)?;
+    let workspace = owned(&state, principal, &id).await?;
     let start_folder = body.into_start_folder()?;
-    let change = state.workspaces.set_start_folder(&id, start_folder).await?;
+    let change = state
+        .workspaces
+        .set_start_folder(&workspace, start_folder)
+        .await?;
     state.events.emit(Event::WorkspaceRepositoriesChanged {
         workspace: change.record.id.clone(),
     });

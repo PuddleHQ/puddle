@@ -419,28 +419,57 @@ async fn two_identities_with_the_same_credential_share_one_read() {
     assert_ne!(lists[0].identity, lists[1].identity);
 }
 
-/// An API that holds every request until released, to see how many arrive.
+/// An API that holds every request until released, to see how many arrive. Once released it
+/// answers at once: `[]`, or a failure when `fails`.
 struct Gate {
     arrived: AtomicUsize,
+    open: std::sync::atomic::AtomicBool,
     release: tokio::sync::Notify,
+    fails: bool,
+}
+
+impl Gate {
+    fn new(fails: bool) -> Arc<Self> {
+        Arc::new(Self {
+            arrived: AtomicUsize::new(0),
+            open: std::sync::atomic::AtomicBool::new(false),
+            release: tokio::sync::Notify::new(),
+            fails,
+        })
+    }
+
+    fn let_go(&self) {
+        self.open.store(true, Ordering::SeqCst);
+        self.release.notify_waiters();
+    }
 }
 
 impl Api for Gate {
     fn get(&self, _request: ApiRequest) -> BoxFuture<'_, Result<ApiReply, TransportError>> {
         Box::pin(async move {
             self.arrived.fetch_add(1, Ordering::SeqCst);
-            self.release.notified().await;
-            Ok(ApiReply::new(200, "[]"))
+            loop {
+                let released = self.release.notified();
+                if self.open.load(Ordering::SeqCst) {
+                    break;
+                }
+                released.await;
+            }
+            if self.fails {
+                Err(TransportError::Protocol("the host hung up".to_owned()))
+            } else {
+                Ok(ApiReply::new(200, "[]"))
+            }
         })
     }
 }
 
-#[tokio::test]
-async fn many_screens_asking_at_once_cause_one_read() {
-    let gate = Arc::new(Gate {
-        arrived: AtomicUsize::new(0),
-        release: tokio::sync::Notify::new(),
-    });
+/// Eight screens ask for the one list at once while the first read is held; returns how many
+/// reads reached the host after the answer was let go.
+async fn reads_after_eight_asks_at_once(
+    gate: Arc<Gate>,
+    freshness: Freshness,
+) -> (usize, Vec<ListState>) {
     let tokens = Arc::new(Tokens::default());
     tokens.set(&gh("github.com", "octocat"), CANARY);
     let repos = Arc::new(Repos::new(
@@ -458,7 +487,7 @@ async fn many_screens_asking_at_once_cause_one_read() {
                         &ids,
                         Read {
                             only: None,
-                            freshness: Freshness::Cached,
+                            freshness,
                         },
                     )
                     .await
@@ -474,12 +503,28 @@ async fn many_screens_asking_at_once_cause_one_read() {
     for _ in 0..50 {
         tokio::task::yield_now().await;
     }
-    gate.release.notify_waiters();
+    gate.let_go();
+    let mut states = Vec::new();
     for ask in asks {
-        let lists = ask.await.unwrap();
-        assert_eq!(lists[0].state, ListState::Ok);
+        states.extend(ask.await.unwrap().iter().map(|list| list.state));
     }
-    assert_eq!(gate.arrived.load(Ordering::SeqCst), 1);
+    (gate.arrived.load(Ordering::SeqCst), states)
+}
+
+#[tokio::test]
+async fn many_screens_asking_at_once_cause_one_read() {
+    let (reads, states) = reads_after_eight_asks_at_once(Gate::new(false), Freshness::Cached).await;
+    assert!(states.iter().all(|state| *state == ListState::Ok));
+    assert_eq!(reads, 1);
+}
+
+/// After a failed read a refresh is always due, so only the caller that waited its turn and saw
+/// another read finish keeps the eight screens from reading eight times.
+#[tokio::test]
+async fn many_refreshes_at_once_after_a_failing_read_cause_one_read() {
+    let (reads, states) = reads_after_eight_asks_at_once(Gate::new(true), Freshness::Reload).await;
+    assert_eq!(states.len(), 8);
+    assert_eq!(reads, 1);
 }
 
 /// An API that never answers.

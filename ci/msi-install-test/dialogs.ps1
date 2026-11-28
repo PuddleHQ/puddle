@@ -60,13 +60,16 @@ public static class PuddleWin {
 }
 '@
 
-# What the installer's buttons are pressed in, first match wins: a person clicks through Next, Install and
-# Finish, dismisses a message with OK and confirms the uninstall prompt with Yes. Cancel and Back are never pressed.
+# What the installer's buttons are pressed in, first match wins: a person clicks Install on the first page (the
+# Default setup), Finish at the end, dismisses a message with OK and confirms the uninstall prompt with Yes. Cancel,
+# Back and Custom setup are never pressed here (a run that wants Custom setup passes its own order).
 $DialogButtonOrder = @('^&?Install$', '^&?Remove$', '^&?Next\b', '^&?Finish$', '^&?OK$', '^&?Close$', '^&?Yes$')
+# The order of a run that takes the Custom setup path: that button first, then Install on its page.
+$CustomSetupButtonOrder = @('^&?Custom setup$') + $DialogButtonOrder
 
 # The enabled button to press on a dialog, or $null when there is none (the progress page has only Cancel).
-function Select-DialogButton($Buttons) {
-    foreach ($pattern in $DialogButtonOrder) {
+function Select-DialogButton($Buttons, [string[]]$Order = $DialogButtonOrder) {
+    foreach ($pattern in $Order) {
         $hit = @($Buttons | Where-Object { $_.Enabled -and $_.Name -match $pattern }) | Select-Object -First 1
         if ($hit) { return $hit }
     }
@@ -120,13 +123,16 @@ function Invoke-DialogButton($Button) {
 # new dialog (title, text, buttons) to <LogName>-dialogs.log, presses its button, and returns the
 # exit code, the seconds the whole run took and every dialog seen. $OnDialog (a scriptblock) sees
 # each new dialog before its button is pressed.
-function Invoke-MsiexecWithUi([string[]]$Arguments, [string]$LogName, [int]$TimeoutSec = 300, [scriptblock]$OnDialog = $null) {
+# -OwnLogOff leaves out /l*v, so the package's own logging (MsiLogging) is what writes the log, as for a person
+# who double-clicks the MSI; the run then reports no Log.
+function Invoke-MsiexecWithUi([string[]]$Arguments, [string]$LogName, [int]$TimeoutSec = 300, [scriptblock]$OnDialog = $null, [string[]]$ButtonOrder = $DialogButtonOrder, [switch]$OwnLogOff) {
     $log = Join-Path $LogDir $LogName
     $dialogLog = Join-Path $LogDir ($LogName -replace '\.log$', '-dialogs.log')
     Set-Content -LiteralPath $dialogLog -Value @()
     Step "msiexec $($Arguments -join ' ') with the installer's dialogs  (log: $log)"
     $clock = [System.Diagnostics.Stopwatch]::StartNew()
-    $p = Start-Process -FilePath 'msiexec.exe' -ArgumentList ($Arguments + @('/norestart', '/l*v', "`"$log`"")) -PassThru
+    $logArguments = if ($OwnLogOff) { @() } else { @('/l*v', "`"$log`"") }
+    $p = Start-Process -FilePath 'msiexec.exe' -ArgumentList ($Arguments + @('/norestart') + $logArguments) -PassThru
     $seen = [ordered]@{}
     $dumped = $false
     while (-not $p.HasExited) {
@@ -145,7 +151,7 @@ function Invoke-MsiexecWithUi([string[]]$Arguments, [string]$LogName, [int]$Time
             Write-Host $line
             Add-Content -LiteralPath $dialogLog -Value $line
             if ($OnDialog) { & $OnDialog $d }
-            $button = Select-DialogButton $d.Buttons
+            $button = Select-DialogButton $d.Buttons $ButtonOrder
             if ($button) {
                 Invoke-DialogButton $button
                 Add-Content -LiteralPath $dialogLog -Value "           pressed '$($button.Name)'"
@@ -171,8 +177,8 @@ function Invoke-MsiexecWithUi([string[]]$Arguments, [string]$LogName, [int]$Time
 
 # What is wrong with the dialogs a run showed: too few, one with no text, a raw "[1]" placeholder.
 function Find-DialogProblems($Dialogs) {
-    # The pages of WixUI_InstallDir without the licence page: welcome, folder, ready, progress, finish.
-    if (@($Dialogs).Count -lt 4) { "only $(@($Dialogs).Count) dialogs were seen; a person sees at least four (welcome, folder, ready, finish)" }
+    # The Default setup: the first page, the progress page, the finish page.
+    if (@($Dialogs).Count -lt 3) { "only $(@($Dialogs).Count) dialogs were seen; a person sees at least three (first page, installing, finished)" }
     foreach ($d in $Dialogs) {
         if ($d.Texts.Count -eq 0) { "the dialog '$($d.Title)' shows no text" }
         foreach ($t in $d.Texts) {
@@ -184,6 +190,26 @@ function Find-DialogProblems($Dialogs) {
     if (-not (@($Dialogs) | Where-Object { ($_.Texts -join ' ') -match 'Puddle' })) { 'no dialog names Puddle' }
 }
 
+# What is wrong with the pages of the installer's own wizard (crates/puddle-app/wix/main.wxs): the first page
+# offers Install and Custom setup, the Custom setup path shows its page, WixUI's folder and ready pages never
+# appear (Default setup has three pages), and the last page says Puddle is installed. $Flow is 'default' or 'custom'.
+function Find-WizardProblems($Dialogs, [string]$Flow) {
+    $all = @($Dialogs)
+    $first = $all | Select-Object -First 1
+    $names = if ($first) { @($first.Buttons | ForEach-Object { $_.Name }) } else { @() }
+    if (-not ($names -match '^&?Install$') -or -not ($names -match '^&?Custom setup$')) {
+        "the first page does not offer Install and Custom setup; its buttons: $($names -join ', ')"
+    }
+    if (-not ($all | Where-Object { ($_.Texts -join ' ') -match 'Install Puddle' })) { "no page is titled 'Install Puddle'" }
+    $custom = @($all | Where-Object { ($_.Texts -join ' ') -match 'Install Puddle in this folder' -or ($_.Texts -join ' ') -match 'Custom setup' -and ($_.Buttons | Where-Object { $_.Name -match '^&?Back$' }) })
+    if ($Flow -eq 'custom' -and $custom.Count -eq 0) { 'the Custom setup path never showed its page (folder and options)' }
+    if ($Flow -eq 'default' -and $all.Count -gt 0 -and $custom.Count -gt 0) { 'the Default setup showed the Custom setup page' }
+    foreach ($d in $all) {
+        if (($d.Texts -join ' ') -match 'Destination Folder|Ready to install') { "WixUI's own page '$(($d.Texts -join ' '))' is shown; the wizard has its own pages" }
+    }
+    if (-not ($all | Where-Object { ($_.Texts -join ' ') -match 'Puddle is installed' })) { "no page says 'Puddle is installed'" }
+}
+
 function Test-RefusalShown($Dialogs) {
     [bool](@($Dialogs) | Where-Object { (($_.Texts -join ' ') -replace '\s+', ' ').Contains($RefusalText) })
 }
@@ -193,7 +219,7 @@ function Install-WithUi([string]$Package, [string]$LogName, [string]$Plant) {
     $slow = { param($d) if ($Plant -eq 'slow-install' -and (@($d.Buttons) | Where-Object { $_.Name -match '^&?Install$' })) { Start-Sleep -Seconds 65 } }
     $ui = Invoke-MsiexecWithUi @('/i', "`"$Package`"") $LogName 300 $slow
     Expect ($ui.Code -eq 0) "msiexec /i exited with $($ui.Code); see $($ui.Log)"
-    $problems = @(Find-DialogProblems $ui.Dialogs)
+    $problems = @(Find-DialogProblems $ui.Dialogs) + @(Find-WizardProblems $ui.Dialogs 'default')
     Expect ($problems.Count -eq 0) "the installer's dialogs: $($problems -join '; ')"
     Expect ($ui.Seconds -lt $InstallBudgetSec) ("the install with the dialogs took {0:N0} s, over the {1} s bar" -f $ui.Seconds, $InstallBudgetSec)
     Write-Host ("installed through {0} dialogs in {1:N0} s" -f $ui.Dialogs.Count, $ui.Seconds)
@@ -201,6 +227,30 @@ function Install-WithUi([string]$Package, [string]$LogName, [string]$Plant) {
     Stop-Installed
 }
 $InstallBudgetSec = 60
+
+# The Custom setup path, and the setup log, the way a person who double-clicks the MSI meets them: the package
+# is removed (silently), then installed through its dialogs with Custom setup, with no /l on the command line,
+# so Windows Installer's own log (the package turns it on) is the only one. The finish page must name that log
+# (a file under the Temp folder), and the install must work as the Default setup's does. The package stays installed.
+function Test-CustomSetupAndLog([string]$Package) {
+    Step 'the Custom setup path installs, and the finish page names the setup log'
+    Invoke-Msiexec @('/x', "`"$Package`"") 'msi-custom-setup-remove.log'
+    $started = Get-Date
+    $ui = Invoke-MsiexecWithUi @('/i', "`"$Package`"") 'msi-custom-setup.log' 300 $null $CustomSetupButtonOrder -OwnLogOff
+    Expect ($ui.Code -eq 0) "msiexec /i with Custom setup exited with $($ui.Code)"
+    $problems = @(Find-DialogProblems $ui.Dialogs) + @(Find-WizardProblems $ui.Dialogs 'custom')
+    Expect ($problems.Count -eq 0) "the installer's dialogs on the Custom setup path: $($problems -join '; ')"
+    $temp = [System.IO.Path]::GetFullPath($env:TEMP)
+    $logs = @(Get-ChildItem -LiteralPath $temp -Filter 'MSI*.LOG' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $started.AddSeconds(-5) } | Sort-Object LastWriteTime)
+    Expect ($logs.Count -ge 1) "the run, started without /l, left no MSI*.LOG in $temp (the package's MsiLogging)"
+    $finish = @($ui.Dialogs | Where-Object { ($_.Texts -join ' ') -match 'Puddle is installed' }) | Select-Object -Last 1
+    $named = @($logs | Where-Object { ($finish.Texts -join ' ').Contains($_.FullName) })
+    Expect ($named.Count -ge 1) "the finish page does not name the setup log; it reads: $($finish.Texts -join ' / '); logs found: $(($logs | ForEach-Object FullName) -join ', ')"
+    Expect (@($finish.Buttons | Where-Object { $_.Name -match 'Open the &?log' }).Count -eq 1) "the finish page has no 'Open the log' button; its buttons: $(($finish.Buttons | ForEach-Object Name) -join ', ')"
+    Copy-Item -LiteralPath $named[0].FullName -Destination (Join-Path $LogDir 'msi-custom-setup-package.log') -Force
+    Write-Host "the finish page names the setup log $($named[0].FullName)"
+    Stop-Installed
+}
 
 # The upgrade over a running Puddle as a person meets it: the refusal is in a dialog the screen reader
 # (UI Automation) reads, and nothing is changed.

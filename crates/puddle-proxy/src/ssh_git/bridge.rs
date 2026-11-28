@@ -44,6 +44,11 @@ const PIECE: usize = 65_536;
 /// a limit. A pack is streamed and not counted.
 const MAX_REQUEST: usize = 16 * 1024 * 1024;
 
+/// Most rounds of `have` lines one protocol version 0 fetch posts. Real clients stop near ten; each
+/// round posts every `have` so far, so without a limit a guest sends one large batch and then
+/// flushes, and Puddle uploads that batch to the Git host once per flush.
+const MAX_FETCH_ROUNDS: usize = 32;
+
 /// Appends `bytes` to the request being built; `elsewhere` is what the same `POST` holds in
 /// other buffers.
 fn add(into: &mut Vec<u8>, elsewhere: usize, bytes: &[u8]) -> Result<(), GitSshFailure> {
@@ -307,7 +312,7 @@ async fn fetch_v0<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
         }
     }
     let mut haves = Vec::new();
-    loop {
+    for _ in 0..MAX_FETCH_ROUNDS {
         let done = loop {
             match input.next().await.map_err(|err| not_git(&err))? {
                 // The client gave up between rounds: nothing more to ask.
@@ -331,6 +336,9 @@ async fn fetch_v0<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
             return Ok(());
         }
     }
+    Err(GitSshFailure::new(format!(
+        "the Git client asked for more than {MAX_FETCH_ROUNDS} rounds of a fetch, more than Puddle carries over SSH"
+    )))
 }
 
 fn unexpected() -> io::Error {

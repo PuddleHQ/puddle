@@ -163,10 +163,11 @@ scan_ts() {
 # Fails when a PUDDLE_REQUIRE_ name used in the Rust files $1 is set by no workflow under $2.
 check_flags() {
     # shellcheck disable=SC2086 # a list of paths, see above
-    used=$(grep -ho 'PUDDLE_REQUIRE_[A-Z0-9_]*' $1 | sort -u)
+    used=$(grep -ho 'PUDDLE_REQUIRE_[A-Z0-9_]*' $1 | sort -u | grep -v '^PUDDLE_REQUIRE_$' || true)
     flags_status=0
     for flag in $used; do
-        if ! grep -rq -e "$flag" "$2"; then
+        # an env key (`FLAG:`) or an env-file line (`FLAG=1`), not a longer name, a mention in a comment or a value
+        if ! grep -rEq -e "^[^#]*(^|[^A-Za-z0-9_])${flag}[:=]" "$2"; then
             echo "unset-flag: $flag is checked by a test but no workflow sets it"
             flags_status=1
         fi
@@ -211,7 +212,9 @@ self_test() {
     case_run() {
         rm -rf "$tmp/t"
         mkdir -p "$tmp/t/crates/x/tests" "$tmp/t/ui/e2e" "$tmp/t/.github/workflows"
-        printf 'env:\n  PUDDLE_REQUIRE_TOOL: "1"\n' >"$tmp/t/.github/workflows/ci.yml"
+        printf '%s' "${SELF_WF-env:
+  PUDDLE_REQUIRE_TOOL: \"1\"
+}" >"$tmp/t/.github/workflows/ci.yml"
         cat >"$tmp/t/${SELF_PATH:-crates/x/tests/t.rs}"
         if out=$(SILENT_SKIPS_NO_GIT=1 scan_tree "$tmp/t" 2>&1); then got=pass; else got=catch; fi
         if [ "$got" != "$2" ]; then
@@ -293,6 +296,23 @@ EOF
     case_run "a flag no workflow sets" catch unset-flag <<'EOF'
 fn tool() -> bool {
     assert!(std::env::var_os("PUDDLE_REQUIRE_NEVER_SET").is_none(), "needed");
+    true
+}
+EOF
+    SELF_WF='env:
+  PUDDLE_REQUIRE_TOOL_V2: "1"
+' case_run "a workflow that sets only a longer flag name" catch unset-flag <<'EOF'
+fn tool() -> bool {
+    assert!(std::env::var_os("PUDDLE_REQUIRE_TOOL").is_none(), "needed");
+    true
+}
+EOF
+    SELF_WF='# PUDDLE_REQUIRE_TOOL is not set here
+env:
+  OTHER: "1"
+' case_run "a workflow that names the flag only in a comment" catch unset-flag <<'EOF'
+fn tool() -> bool {
+    assert!(std::env::var_os("PUDDLE_REQUIRE_TOOL").is_none(), "needed");
     true
 }
 EOF

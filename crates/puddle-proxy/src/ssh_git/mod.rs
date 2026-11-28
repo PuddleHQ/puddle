@@ -125,7 +125,7 @@ fn no_identity(host: &Host) -> GitSshGreeting {
 #[derive(Debug)]
 pub struct GitSshContext {
     pub(crate) handler: WorkspaceHandler,
-    legs: Mutex<Vec<Outcome>>,
+    legs: Arc<Mutex<Vec<Outcome>>>,
     refused: Mutex<Option<ConnectionEvent>>,
 }
 
@@ -133,7 +133,7 @@ impl GitSshContext {
     pub(crate) fn new(handler: WorkspaceHandler) -> Self {
         Self {
             handler,
-            legs: Mutex::new(Vec::new()),
+            legs: Arc::new(Mutex::new(Vec::new())),
             refused: Mutex::new(None),
         }
     }
@@ -144,13 +144,11 @@ impl GitSshContext {
         &self.handler.workspace
     }
 
-    /// Keeps what an upstream's HTTPS leg did, for the connection's record. A connection runs
-    /// at most [`MAX_LEGS`] legs the record reads.
-    pub(crate) fn leg_closed(&self, outcome: Outcome) {
-        keep_leg(
-            &mut self.legs.lock().unwrap_or_else(PoisonError::into_inner),
-            outcome,
-        );
+    /// Where a leg's own task keeps what the leg did when its connection ends, whether or not the
+    /// command that opened it is still there to ask. A connection runs at most [`MAX_LEGS`] legs
+    /// the record reads.
+    pub(crate) fn leg_log(&self) -> Arc<Mutex<Vec<Outcome>>> {
+        Arc::clone(&self.legs)
     }
 
     /// Keeps the decision that refused an HTTPS leg before it opened (the Git host's HTTPS name can
@@ -183,7 +181,7 @@ impl GitSshContext {
 const MAX_LEGS: usize = 64;
 
 /// Adds `outcome` to `legs` unless [`MAX_LEGS`] are kept already.
-fn keep_leg(legs: &mut Vec<Outcome>, outcome: Outcome) {
+pub(crate) fn keep_leg(legs: &mut Vec<Outcome>, outcome: Outcome) {
     if legs.len() < MAX_LEGS {
         legs.push(outcome);
     }

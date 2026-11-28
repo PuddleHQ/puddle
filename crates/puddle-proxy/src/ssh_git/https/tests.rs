@@ -86,3 +86,24 @@ fn a_name_that_is_not_one_a_host_spells_is_left_out() {
         );
     }
 }
+
+#[tokio::test]
+async fn a_leg_is_recorded_when_its_connection_ends_though_nothing_waits_for_it() {
+    let legs = Arc::new(Mutex::new(Vec::new()));
+    let (end, ended) = tokio::sync::oneshot::channel::<()>();
+    let done = record_when_done(Arc::clone(&legs), async move {
+        let _ = ended.await;
+        Outcome::default()
+    });
+    // The command task that opened the leg is gone: only the leg's own task is left.
+    drop(done);
+    assert!(legs.lock().unwrap().is_empty(), "nothing has ended yet");
+    end.send(()).unwrap();
+    puddle_test_kit::eventually(
+        "the leg's task records the outcome by itself",
+        Duration::from_secs(5),
+        || !legs.lock().unwrap().is_empty(),
+    )
+    .await;
+    assert_eq!(legs.lock().unwrap().len(), 1);
+}

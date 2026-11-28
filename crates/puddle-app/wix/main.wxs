@@ -196,8 +196,9 @@
             <RegistrySearch Id="PrevInstallDir" Root="HKCU" Key="Software\\{{manufacturer}}\\{{product_name}}" Name="InstallDir" Type="raw" />
         </Property>
 
-        <!-- Launch checkbox on the last page. -->
-        <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="!(loc.LaunchApp)" />
+        <!-- The "Open Puddle when setup ends" box lives on PuddleCustomDlg only: the CheckBox table is keyed by
+             Property, so a second control on the same property (the last page) fails to link (LGHT0091). The
+             last page's Finish button reads the property. -->
         <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1"/>
         <CustomAction Id="RemoveStartAtSignIn" Directory="TARGETDIR" ExeCommand="&quot;[SystemFolder]reg.exe&quot; delete &quot;HKCU\Software\Microsoft\Windows\CurrentVersion\Run&quot; /v &quot;{{product_name}}&quot; /f" Impersonate="yes" Return="ignore" />
         <CustomAction Id="LaunchApplication" Impersonate="yes" FileKey="Path" ExeCommand="" Return="asyncNoWait" />
@@ -329,8 +330,7 @@
                 </Control>
             </Dialog>
 
-            <!-- Last page of a run that worked (an install, an upgrade or a removal): what happened, the box that
-                 opens Puddle, where the log is and a button that opens it. -->
+            <!-- Last page of a run that worked (an install, an upgrade or a removal): what happened, where the log is and a button that opens it. -->
             <Dialog Id="PuddleFinishDlg" Width="370" Height="270" Title="[ProductName] Setup">
                 <Control Id="Bitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="234" TabSkip="no" Text="WixUI_Bmp_Dialog" />
                 <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
@@ -341,9 +341,6 @@
                     <Condition Action="show"><![CDATA[REMOVE~="ALL"]]></Condition>
                 </Control>
                 <Control Id="Description" Type="Text" X="135" Y="56" Width="220" Height="40" Transparent="yes" NoPrefix="yes" Text="Choose Finish to close setup. You can start Puddle from the Start menu." />
-                <Control Id="OptionalCheckBox" Type="CheckBox" X="135" Y="104" Width="220" Height="18" Hidden="yes" Property="WIXUI_EXITDIALOGOPTIONALCHECKBOX" CheckBoxValue="1" Text="[WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT]">
-                    <Condition Action="show"><![CDATA[NOT Installed AND NOT (REMOVE~="ALL")]]></Condition>
-                </Control>
                 <Control Id="LogLabel" Type="Text" X="135" Y="140" Width="220" Height="12" Transparent="yes" NoPrefix="yes" Hidden="yes" Text="The setup log is saved here:">
                     <Condition Action="show">MsiLogFileLocation</Condition>
                 </Control>

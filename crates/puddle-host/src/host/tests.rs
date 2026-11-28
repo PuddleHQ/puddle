@@ -10,6 +10,7 @@ use puddle_types::{Event, LocalCategory};
 use serde_json::json;
 
 use super::egress::{announce_renewals, distribution_points};
+use super::reconcile::reconcile_problems;
 use super::*;
 
 fn name() -> WorkspaceId {

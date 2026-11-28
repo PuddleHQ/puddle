@@ -269,7 +269,7 @@ in one transaction with foreign keys off and checks them afterwards; a step that
 aborts the whole upgrade. A database newer than the program is refused (`StoreError::SchemaTooNew`),
 never downgraded, and the desktop app says so in words at start-up.
 
-**JSON state files** (`crates/puddle-host/src/files.rs`) are written atomically and owner-only. A file
+**JSON state files** (`crates/puddle-host/src/state_files.rs`) are written atomically and owner-only. A file
 that exists but does not parse is an error, never read as empty, so a damaged settings file cannot
 silently reset the user's choices. Settings documents carry their own version and migrate the same
 way (append-only steps in `crates/puddle-settings/src/migrate.rs`; unknown fields are kept; a newer
@@ -389,7 +389,7 @@ configuration file or a rebuild.
 global, then the built-in default, in one function, `resolve`, so every screen and every consumer
 agrees on the effective value. Documents are versioned and migrated (section 8.4).
 
-**Storage and API.** `FileSettings` in `crates/puddle-host/src/files.rs` keeps them as JSON files under
+**Storage and API.** `FileSettings` in `crates/puddle-host/src/state_files.rs` keeps them as JSON files under
 `settings/`. `GET` and `PUT /api/settings` and `/api/settings/workspaces/{workspace}`
 (`crates/puddle-api/src/routes/settings.rs`) carry a `revision`: a save over settings changed since
 the page read them gets `409 settings_changed` instead of overwriting another window's change.

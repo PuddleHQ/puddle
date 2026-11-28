@@ -145,8 +145,9 @@ for wf, (rid, rname, want_specs) in results.items():
             for part in ("github.event_name=='push'", "github.ref=='refs/heads/develop'", "vars.PUDDLE_QUEUE_SKIP_PUSH=='on'"):
                 if part not in cond:
                     bad.append(f"ci: job queue-tested if={cond!r} lacks {part}")
-            # In the light CI mode a green queue run tested only the unit tier: the lookup must know the mode.
-            if "PUDDLE_LIGHT_CI: ${{ vars.PUDDLE_LIGHT_CI }}" not in yaml.safe_dump(jobs[j]["steps"], width=1000).replace("'", ""):
+            # In the light CI mode a green queue run tested only the unit tier: the lookup must know the mode
+            # (the job is a call of ci-queue-tested.yml, whose step holds the variable).
+            if "PUDDLE_LIGHT_CI: ${{ vars.PUDDLE_LIGHT_CI }}" not in yaml.safe_dump(yaml.safe_load(open(f"{d}/ci-queue-tested.yml"))["jobs"]["queue-tested"]["steps"], width=1000).replace("'", ""):
                 bad.append("ci: the queue-tested lookup step needs PUDDLE_LIGHT_CI from vars")
         elif not (wf == "windows" and j == "release"):
             bad.append(f"{wf}: needed job {j} is neither scoped nor the release build")
@@ -198,7 +199,7 @@ for wf, (rid, rname, want_specs) in results.items():
                 bad.append(f"ci: job {j} does not run the ui-e2e gate")
         # The two browser entries have their own keys (a shared one would give the WebKit job a Chromium-only hit),
         # webkit.yml restores the WebKit one, and the queue-tested lookup covers both.
-        text = open(f"{d}/ci.yml").read()
+        text = open(f"{d}/ci.yml").read() + open(f"{d}/ci-queue-tested.yml").read()
         if text.count("key: playwright-webkit-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}") < 3:
             bad.append("ci: the ui-webkit job and queue-tested must use the key playwright-webkit-... for the WebKit browsers")
         if "key: playwright-webkit-${{ runner.os }}" not in open(f"{d}/webkit.yml").read():
@@ -279,6 +280,8 @@ for wf, (rid, rname, want_specs) in results.items():
     wjobs = yaml.safe_load(open(f"{d}/{wf}.yml"))["jobs"]
     for j, spec in wjobs.items():
         steps = spec.get("steps") or []
+        if "uses" in spec:  # a call of a reusable workflow (one job): its steps are in the called file
+            steps = list(yaml.safe_load(open(f"{d}/../../{spec['uses']}"))["jobs"].values())[0].get("steps") or []
         last = steps[-1] if steps else {}
         has = last.get("uses") == "./.github/actions/cancel-group"
         exempt = j == rid or (wf == "ci" and j in ("queue-tested", "advisories", "advisories-npm"))

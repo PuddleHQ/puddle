@@ -57,6 +57,7 @@ function reset() {
     font_size: null,
     extensions: null,
     keybindings: null,
+    settings: null,
   };
   api.miseAvailable = true;
   api.unknown = {};

@@ -103,12 +103,13 @@ fn claude_answer(access: &str, refresh: &str) -> Vec<u8> {
 }
 
 /// What the proxy does with an answer: asks the rewriter, shows it the head, gives it the body.
-async fn answered(
+/// The result is what the guest would get: the body as sent (`Keep`), a replacement, or a refusal.
+async fn rewritten(
     exchange: Option<Exchange>,
     status: u16,
     content_type: Option<&str>,
     body: &[u8],
-) -> Option<Bytes> {
+) -> Rewrite {
     let mut exchange = exchange.expect("the request is an exchange");
     let answer = exchange.answer_mut().expect("an exchange reads the answer");
     let head = AnswerHead {
@@ -117,13 +118,54 @@ async fn answered(
         content_encoding: None,
         content_length: Some(body.len() as u64),
     };
-    if answer.wants(&head) != Want::Read {
-        return None;
+    match answer.wants(&head) {
+        Want::Read => answer.rewrite(&head, body).await,
+        Want::Pass => Rewrite::Keep,
+        Want::Refuse(refusal) => Rewrite::Refuse(refusal),
     }
-    match answer.rewrite(&head, body).await {
+}
+
+/// The replacement body the guest gets, or `None` when the answer reaches it as sent. A refusal
+/// fails the test: it is not "the answer went through".
+async fn answered(
+    exchange: Option<Exchange>,
+    status: u16,
+    content_type: Option<&str>,
+    body: &[u8],
+) -> Option<Bytes> {
+    match rewritten(exchange, status, content_type, body).await {
         Rewrite::Replace(bytes) => Some(bytes),
-        Rewrite::Keep | Rewrite::Refuse(_) => None,
+        Rewrite::Keep => None,
+        Rewrite::Refuse(refusal) => panic!("the answer was refused: {refusal:?}"),
     }
+}
+
+/// Fails the test unless the guest gets the refusal for a sign-in that was not kept, and not the
+/// real answer (`Keep`) or a replacement.
+#[track_caller]
+fn assert_refused(rewrite: &Rewrite) {
+    let Rewrite::Refuse(refusal) = rewrite else {
+        panic!("the real answer can reach the guest: {rewrite:?}");
+    };
+    assert_eq!(refusal.status(), 502);
+    assert_eq!(refusal.code(), ReasonCode::LoginNotKept);
+}
+
+/// The JSON the guest gets in place of the answer, or `None` after checking it is the refusal.
+#[track_caller]
+fn given_or_refused(rewrite: Rewrite) -> Option<Value> {
+    match rewrite {
+        Rewrite::Replace(bytes) => Some(serde_json::from_slice(&bytes).unwrap()),
+        other => {
+            assert_refused(&other);
+            None
+        }
+    }
+}
+
+/// As [`answered`] for a sign-in that must not be kept: the guest gets the refusal.
+async fn refused(exchange: Option<Exchange>, status: u16, content_type: Option<&str>, body: &[u8]) {
+    assert_refused(&rewritten(exchange, status, content_type, body).await);
 }
 
 async fn claude_login(rig: &Rig, access: &str, refresh: &str) -> Value {
@@ -415,8 +457,8 @@ async fn answers_without_a_token_are_left_alone_and_say_nothing() {
             .logins
             .begin(&host("github.com"), "POST", "/login/oauth/access_token");
         assert_eq!(
-            answered(exchange, status, Some(content_type), body.as_bytes()).await,
-            None,
+            rewritten(exchange, status, Some(content_type), body.as_bytes()).await,
+            Rewrite::Keep,
             "{status} {body}"
         );
     }
@@ -464,16 +506,13 @@ async fn an_answer_that_does_not_parse_is_passed_on_and_the_user_is_told() {
     let exchange = rig
         .logins
         .begin(&host("platform.claude.com"), "POST", "/v1/oauth/token");
-    assert_eq!(
-        answered(
-            exchange,
-            200,
-            Some("application/json"),
-            b"{\"access_token\": "
-        )
-        .await,
-        None
-    );
+    refused(
+        exchange,
+        200,
+        Some("application/json"),
+        b"{\"access_token\": ",
+    )
+    .await;
     assert_eq!(
         rig.notices.seen(),
         [("claude".to_owned(), Problem::UnexpectedAnswer)]
@@ -489,10 +528,7 @@ async fn a_token_bound_to_a_key_cannot_be_captured() {
         .logins
         .begin(&host("platform.claude.com"), "POST", "/v1/oauth/token");
     let body = json!({"access_token": REAL_ACCESS, "token_type": "DPoP"}).to_string();
-    assert_eq!(
-        answered(exchange, 200, Some("application/json"), body.as_bytes()).await,
-        None
-    );
+    refused(exchange, 200, Some("application/json"), body.as_bytes()).await;
     assert_eq!(
         rig.notices.seen(),
         [("claude".to_owned(), Problem::BoundToken)]
@@ -508,10 +544,7 @@ async fn a_token_a_stand_in_cannot_copy_is_passed_on_and_the_user_is_told() {
             .logins
             .begin(&host("platform.claude.com"), "POST", "/v1/oauth/token");
         let body = json!({"access_token": token}).to_string();
-        assert_eq!(
-            answered(exchange, 200, Some("application/json"), body.as_bytes()).await,
-            None
-        );
+        refused(exchange, 200, Some("application/json"), body.as_bytes()).await;
     }
     assert_eq!(
         rig.notices.seen(),
@@ -530,16 +563,13 @@ async fn when_the_credential_store_is_not_there_the_login_passes_and_nothing_is_
     let exchange = rig
         .logins
         .begin(&host("platform.claude.com"), "POST", "/v1/oauth/token");
-    assert_eq!(
-        answered(
-            exchange,
-            200,
-            Some("application/json"),
-            &claude_answer(REAL_ACCESS, REAL_REFRESH)
-        )
-        .await,
-        None
-    );
+    refused(
+        exchange,
+        200,
+        Some("application/json"),
+        &claude_answer(REAL_ACCESS, REAL_REFRESH),
+    )
+    .await;
     assert_eq!(
         rig.notices.seen(),
         [("claude".to_owned(), Problem::StoreUnavailable)]
@@ -961,11 +991,21 @@ fn the_hosts_are_every_profiles_endpoints_and_api_hosts_while_capture_is_on() {
     assert!(!hosts.contains(&host("example.com")));
 }
 
-#[test]
-fn the_debug_output_names_no_token() {
+#[tokio::test]
+async fn the_debug_output_names_no_token_after_a_login_was_kept() {
     let rig = rig();
+    let given = claude_login(&rig, REAL_ACCESS, REAL_REFRESH).await;
+    assert_eq!(rig.registry.len(), 2, "the login was captured");
     let text = format!("{:?}", rig.logins);
-    assert!(text.contains("Logins") && !text.contains("CANARY"));
+    assert!(text.contains("Logins"), "{text}");
+    for secret in [
+        REAL_ACCESS,
+        REAL_REFRESH,
+        given["access_token"].as_str().unwrap(),
+        given["refresh_token"].as_str().unwrap(),
+    ] {
+        assert!(!text.contains(secret), "a token is printed in {text}");
+    }
 }
 
 #[test]
@@ -1042,10 +1082,7 @@ async fn a_refresh_with_a_token_a_header_cannot_carry_is_passed_on_and_the_user_
         .logins
         .begin(&host("platform.claude.com"), "POST", "/v1/oauth/token");
     let body = json!({"access_token": "has a space in it, 0123456789"}).to_string();
-    assert_eq!(
-        answered(exchange, 200, Some("application/json"), body.as_bytes()).await,
-        None
-    );
+    refused(exchange, 200, Some("application/json"), body.as_bytes()).await;
     assert_eq!(
         rig.notices.seen(),
         [("claude".to_owned(), Problem::UnusableToken)]
@@ -1196,12 +1233,12 @@ fn logins_on(store: &Arc<Scripted>, registry: &Arc<StandIns>) -> Logins {
     )
 }
 
-/// A Claude token answer as `logins` gives it to the tool, or `None` when it is refused.
+/// A Claude token answer as `logins` gives it to the tool, or `None` when the guest gets the
+/// refusal for a sign-in that was not kept (never when the real answer reaches it).
 async fn capture_claude(logins: &Logins, access: &str, refresh: &str) -> Option<Value> {
     let exchange = logins.begin(&host("platform.claude.com"), "POST", "/v1/oauth/token");
     let answer = claude_answer(access, refresh);
-    let given = answered(exchange, 200, Some("application/json"), &answer).await?;
-    Some(serde_json::from_slice(&given).unwrap())
+    given_or_refused(rewritten(exchange, 200, Some("application/json"), &answer).await)
 }
 
 #[tokio::test]
@@ -1298,7 +1335,7 @@ async fn a_write_that_times_out_with_nothing_to_put_back_refuses_after_one_timeo
     store.then([SetStep::Park(started, wait)]);
     let exchange = logins.begin(&host("platform.claude.com"), "POST", "/v1/oauth/token");
     let answer = claude_access_only_answer(REAL_ACCESS);
-    let mut capture = Box::pin(answered(exchange, 200, Some("application/json"), &answer));
+    let mut capture = Box::pin(rewritten(exchange, 200, Some("application/json"), &answer));
     // A parked blocking call stops the paused clock from advancing by itself: move it by hand,
     // once the write is parked, by one store timeout and no more.
     tokio::select! {
@@ -1312,11 +1349,10 @@ async fn a_write_that_times_out_with_nothing_to_put_back_refuses_after_one_timeo
     };
     // Let the parked write go, so the blocking thread ends with the test.
     let _ = go.send(());
-    assert_eq!(
-        given,
-        Some(None),
-        "the capture lock was still held a store timeout after a write that left nothing to put back"
+    let given = given.expect(
+        "the capture lock was still held a store timeout after a write that left nothing to put back",
     );
+    assert_refused(&given);
 }
 
 #[tokio::test]
@@ -1495,7 +1531,7 @@ async fn a_long_token_in_a_field_the_profile_does_not_name_is_refused() {
     let exchange = rig
         .logins
         .begin(&host("platform.claude.com"), "POST", "/v1/oauth/token");
-    let _ = answered(
+    refused(
         exchange,
         200,
         Some("application/json"),
@@ -1558,14 +1594,15 @@ async fn copilot_exchange(rig: &Rig, method: &str, token: &str) -> Option<Value>
         method,
         "/copilot_internal/v2/token",
     );
-    answered(
-        exchange,
-        200,
-        Some("application/json"),
-        &session_answer(token),
+    given_or_refused(
+        rewritten(
+            exchange,
+            200,
+            Some("application/json"),
+            &session_answer(token),
+        )
+        .await,
     )
-    .await
-    .map(|body| serde_json::from_slice(&body).unwrap())
 }
 
 #[tokio::test]
@@ -1725,11 +1762,16 @@ async fn hostile_a_session_token_without_a_mac_is_never_given_to_the_guest_and_t
     for token in [
         "tid=1;exp=2;sku=free_limited_copilot;chat=1",
         "not-fields-and-no-colon-0123456789abcdef",
-        "",
     ] {
         let kept = copilot_exchange(&rig, "GET", token).await;
         assert!(kept.is_none(), "{token:?} is not replaced");
     }
+    // An empty token holds nothing real, so the answer goes through as sent.
+    let exchange = rig
+        .logins
+        .begin(&host("api.github.com"), "GET", "/copilot_internal/v2/token");
+    let empty = rewritten(exchange, 200, Some("application/json"), &session_answer("")).await;
+    assert_eq!(empty, Rewrite::Keep);
     assert_eq!(rig.registry.len(), 0, "nothing was registered");
     assert!(vault(&rig).read(&GITHUB, Role::Copilot).unwrap().is_none());
     let seen = rig.notices.seen();
@@ -1739,4 +1781,174 @@ async fn hostile_a_session_token_without_a_mac_is_never_given_to_the_guest_and_t
         "{seen:?}"
     );
     assert_eq!(seen.len(), 2, "the empty token is not a token");
+}
+
+/// A start where the store did not answer, then the store answers: the rig of the next start, and
+/// the stand-in the workspace's disk still holds for the access token.
+async fn start_with_the_store_down_after_a_login() -> (Rig, String) {
+    let first = rig();
+    let given = claude_login(&first, REAL_ACCESS, REAL_REFRESH).await;
+    first.store.break_it();
+    let next = rig_on(&first.store, true);
+    next.logins.load().await;
+    assert_eq!(next.registry.len(), 0);
+    (next, given["access_token"].as_str().unwrap().to_owned())
+}
+
+/// What the proxy does first with a request: finishes the exchange's own work.
+async fn first_exchange(rig: &Rig, token_host: &str, path: &str) {
+    let mut exchange = rig
+        .logins
+        .begin(&host(token_host), "POST", path)
+        .expect("the request is an exchange");
+    exchange.prepare().await;
+}
+
+#[tokio::test]
+async fn the_first_exchange_after_a_start_the_store_did_not_answer_reads_the_kept_login_again() {
+    let (next, given) = start_with_the_store_down_after_a_login().await;
+    next.store.heal();
+    first_exchange(&next, "platform.claude.com", "/v1/oauth/token").await;
+    assert_eq!(next.registry.len(), 2);
+    // The sign-in that follows reuses the kept stand-ins and does not write over the login.
+    let again = claude_login(&next, ACCESS_B, REFRESH_B).await;
+    assert_eq!(again["access_token"], given);
+    assert_eq!(next.registry.len(), 2);
+    assert_eq!(
+        vault(&next)
+            .read(&CLAUDE, Role::Access)
+            .unwrap()
+            .unwrap()
+            .real
+            .as_str(),
+        ACCESS_B
+    );
+}
+
+#[tokio::test]
+async fn a_service_is_read_again_once_even_when_the_store_still_does_not_answer() {
+    let (next, _) = start_with_the_store_down_after_a_login().await;
+    first_exchange(&next, "platform.claude.com", "/v1/oauth/token").await;
+    assert_eq!(next.registry.len(), 0);
+    next.store.heal();
+    first_exchange(&next, "platform.claude.com", "/v1/oauth/token").await;
+    assert_eq!(next.registry.len(), 0, "one attempt for each service");
+}
+
+#[tokio::test]
+async fn an_exchange_reads_again_only_its_own_service() {
+    let first = rig();
+    claude_login(&first, REAL_ACCESS, REAL_REFRESH).await;
+    let github = first
+        .logins
+        .begin(&host("github.com"), "POST", "/login/oauth/access_token");
+    answered(
+        github,
+        200,
+        Some("application/x-www-form-urlencoded"),
+        format!("access_token={REAL_GH}&scope=repo&token_type=bearer").as_bytes(),
+    )
+    .await
+    .unwrap();
+    first.store.break_it();
+    let next = rig_on(&first.store, true);
+    next.logins.load().await;
+    next.store.heal();
+    first_exchange(&next, "platform.claude.com", "/v1/oauth/token").await;
+    assert_eq!(next.registry.len(), 2, "claude's two tokens, not GitHub's");
+    first_exchange(&next, "github.com", "/login/oauth/access_token").await;
+    assert_eq!(next.registry.len(), 3);
+}
+
+#[tokio::test]
+async fn a_start_the_store_answered_has_nothing_to_read_again() {
+    let first = rig();
+    claude_login(&first, REAL_ACCESS, REAL_REFRESH).await;
+    let next = rig_on(&first.store, true);
+    next.logins.load().await;
+    assert_eq!(next.registry.len(), 2);
+    let mut exchange = next
+        .logins
+        .begin(&host("platform.claude.com"), "POST", "/v1/oauth/token")
+        .unwrap();
+    // Work the exchange asked for would show as a changed registry; none is asked for.
+    first.store.break_it();
+    exchange.prepare().await;
+    assert_eq!(next.registry.len(), 2);
+    assert_eq!(next.notices.seen(), []);
+}
+
+#[tokio::test]
+async fn the_login_read_again_is_noted_in_the_marker() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(MemoryStore::new());
+    rig_marked(&store, true, marker_in(&dir))
+        .logins
+        .load()
+        .await;
+    claude_login(&rig_on(&store, true), REAL_ACCESS, REAL_REFRESH).await;
+    store.break_it();
+    let next = rig_marked(&store, true, marker_in(&dir));
+    next.logins.load().await;
+    assert_eq!(next.logins.inner_marker_kept(), Some(vec![]));
+    store.heal();
+    first_exchange(&next, "platform.claude.com", "/v1/oauth/token").await;
+    assert_eq!(
+        next.logins.inner_marker_kept(),
+        Some(vec!["claude".to_owned()])
+    );
+}
+
+#[tokio::test]
+async fn a_service_with_nothing_kept_is_not_noted_when_it_is_read_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(MemoryStore::new());
+    store.break_it();
+    let next = rig_marked(&store, true, marker_in(&dir));
+    next.logins.load().await;
+    store.heal();
+    first_exchange(&next, "platform.claude.com", "/v1/oauth/token").await;
+    assert_eq!(next.registry.len(), 0);
+    assert!(
+        next.notices
+            .seen()
+            .iter()
+            .all(|(_, p)| *p == Problem::StoreUnavailable)
+    );
+}
+
+#[tokio::test]
+async fn a_damaged_entry_found_when_read_again_is_reported_as_unreadable() {
+    let (next, _) = start_with_the_store_down_after_a_login().await;
+    next.store.heal();
+    let id = crate::vault::slot_id("alpha", "claude", Role::Refresh).unwrap();
+    next.store
+        .set(&id, &puddle_secrets::Secret::new("not json".into()))
+        .unwrap();
+    first_exchange(&next, "platform.claude.com", "/v1/oauth/token").await;
+    assert_eq!(next.registry.len(), 1, "the access slot is back");
+    assert_eq!(
+        next.notices.seen().last(),
+        Some(&("claude".to_owned(), Problem::Unreadable))
+    );
+}
+
+#[tokio::test]
+async fn a_slot_that_holds_a_stand_in_already_is_not_read_again() {
+    let (next, _) = start_with_the_store_down_after_a_login().await;
+    next.store.heal();
+    let kept = claude_login(&next, ACCESS_B, REFRESH_B).await;
+    // The store now holds another pair than the one the slot was given.
+    vault(&next)
+        .write(
+            &CLAUDE,
+            Role::Access,
+            "puddle-other-stand-in-0123456789abcdef",
+            REAL_ACCESS,
+        )
+        .unwrap();
+    next.logins.read_again(&CLAUDE).await;
+    assert_eq!(next.registry.len(), 2);
+    let again = claude_login(&next, ACCESS_B, REFRESH_B).await;
+    assert_eq!(again["access_token"], kept["access_token"]);
 }

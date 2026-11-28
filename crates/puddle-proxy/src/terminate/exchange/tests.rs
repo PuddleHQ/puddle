@@ -37,12 +37,17 @@ fn an_exchange_says_what_it_asks_for_and_holds_nothing_a_log_should_not_have() {
         .answered_by(Box::new(Plain));
     assert_eq!(
         format!("{exchange:?}"),
-        r#"Exchange { swap_fields: ["refresh_token"], answer: true }"#
+        r#"Exchange { swap_fields: ["refresh_token"], answer: true, before: false }"#
     );
     let nothing = Exchange::default();
     assert_eq!(
         format!("{nothing:?}"),
-        "Exchange { swap_fields: [], answer: false }"
+        "Exchange { swap_fields: [], answer: false, before: false }"
+    );
+    let later = Exchange::new().after(Box::pin(std::future::ready(())));
+    assert_eq!(
+        format!("{later:?}"),
+        "Exchange { swap_fields: [], answer: false, before: true }"
     );
     assert!(!nothing.wants_request_body());
 }
@@ -277,4 +282,17 @@ async fn keep_pass_and_replace_are_the_only_ways_an_answer_gets_through() {
     .await
     .unwrap();
     assert!(matches!(replaced.body(), AnswerBody::Buffered(Some(b)) if b == "new"));
+}
+
+#[tokio::test]
+async fn the_work_an_exchange_asks_for_runs_once_when_it_is_prepared() {
+    let ran = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = std::sync::Arc::clone(&ran);
+    let mut exchange = Exchange::new().after(Box::pin(async move {
+        counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }));
+    assert_eq!(ran.load(std::sync::atomic::Ordering::SeqCst), 0);
+    exchange.prepare().await;
+    exchange.prepare().await;
+    assert_eq!(ran.load(std::sync::atomic::Ordering::SeqCst), 1);
 }

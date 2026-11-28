@@ -385,6 +385,62 @@ async fn a_stand_in_in_the_named_field_is_swapped_for_the_real_value_toward_its_
     assert!(!captured_logs().contains(REAL_REFRESH));
 }
 
+/// An exchange that registers its stand-in only in work it asks to finish first.
+#[derive(Debug)]
+struct Late(Arc<StandIns>);
+
+impl ExchangeRewriter for Late {
+    fn begin(&self, host: &Host, _: &str, _: &str) -> Option<Exchange> {
+        let registry = Arc::clone(&self.0);
+        let hosts = TerminationSet::parse([host.to_string().as_str()]).unwrap();
+        Some(
+            Exchange::new()
+                .swapping("refresh_token")
+                .after(Box::pin(async move {
+                    tokio::task::yield_now().await;
+                    registry
+                        .insert(
+                            StandIn::new(
+                                StandInOrigin::CapturedLogin,
+                                "late-refresh",
+                                STAND_IN,
+                                SecretValue::new(REAL_REFRESH),
+                                hosts,
+                            )
+                            .unwrap(),
+                        )
+                        .unwrap();
+                })),
+        )
+    }
+}
+
+#[tokio::test]
+async fn work_an_exchange_asks_to_finish_first_is_done_before_its_stand_ins_are_swapped() {
+    let pki = Pki::new();
+    let upstream = server(&pki, Arc::new(|_| json_reply("{}"))).await;
+    let stand_ins = Arc::new(StandIns::new());
+    let exchanges = Arc::new(Late(Arc::clone(&stand_ins)));
+    let rig = RigBuilder::new(&pki)
+        .bound(vec![HOST])
+        .allow(vec![HOST])
+        .name(HOST, upstream.addr)
+        .injector(pass_through())
+        .stand_ins(&stand_ins)
+        .exchanges(exchanges)
+        .build();
+    let mut guest = rig.guest();
+    let mut client = guest.tls(&format!("{HOST}:443"), None).await.unwrap();
+    let json = format!(r#"{{"refresh_token":"{STAND_IN}"}}"#);
+    client
+        .send(&post(PATH, "application/json", &json, ""))
+        .await;
+    assert_eq!(client.response("POST").await.status, 200);
+    let sent: serde_json::Value = serde_json::from_slice(&upstream.recorded()[0].body).unwrap();
+    assert_eq!(sent["refresh_token"], REAL_REFRESH);
+    client.close().await;
+}
+
 #[tokio::test]
 async fn hostile_hg32_a_stand_in_in_the_refresh_field_goes_out_unchanged_toward_a_host_it_is_not_for()
  {

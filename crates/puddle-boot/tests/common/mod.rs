@@ -55,6 +55,19 @@ grep -q 0C38 "$PUDDLE_ROOT/proc/net/tcp" || echo "   0: 0100007F:0C38 00000000:0
 exec sleep 1000
 "#;
 
+/// Runs detached from the test (own session). Waits for the test process `$1` to exit, then
+/// does what `FakeRoot::drop` does for a root `$2`, so a killed test (nextest SIGTERM or
+/// timeout, `cargo mutants`) leaves no supervisor, agent or folder behind.
+const JANITOR: &str = r#"
+pid=$1; root=$2
+while kill -0 "$pid" 2>/dev/null; do sleep 0.3; done
+for n in supervisor.pid entrypoint.pid; do
+    p=$(cut -d' ' -f2 "$root/run/puddle/$n" 2>/dev/null) && [ -n "$p" ] && kill -9 "$p" 2>/dev/null
+done
+for p in $(cat "$root/agent.pids" 2>/dev/null); do kill -9 "$p" 2>/dev/null; done
+case $root in */puddle-boot-test-*) rm -r -f "$root" ;; esac
+"#;
+
 /// A temporary fake guest root, removed (with its processes) on drop.
 pub(crate) struct FakeRoot {
     pub(crate) root: PathBuf,
@@ -62,6 +75,8 @@ pub(crate) struct FakeRoot {
     stubs: PathBuf,
     /// Owns the folder `root` names; removed after `Drop` has killed the stub processes.
     _dir: tempfile::TempDir,
+    /// Cleans up after this process if it dies without running `Drop`.
+    janitor: std::process::Child,
 }
 
 /// The POSIX shells on this host to run the hook with (dash and bash). Not busybox: Ubuntu's
@@ -120,11 +135,21 @@ impl FakeRoot {
         ] {
             std::fs::write(root.join("proc/sys").join(f), "0\n").unwrap();
         }
+        let janitor = Command::new("setsid")
+            .args(["/bin/sh", "-c", JANITOR, "janitor"])
+            .arg(std::process::id().to_string())
+            .arg(&root)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
         Self {
             root,
             shell: shell.to_owned(),
             stubs,
             _dir: dir,
+            janitor,
         }
     }
 
@@ -254,6 +279,9 @@ impl Drop for FakeRoot {
         for pid in self.agent_pids() {
             kill9(pid);
         }
+        // The janitor is done once this runs; `_dir` removes the folder after it.
+        let _ = self.janitor.kill();
+        let _ = self.janitor.wait();
     }
 }
 

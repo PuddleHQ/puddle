@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+use super::git::git_author_name;
 use super::*;
 use crate::machine::MACHINE_SETTINGS_GUEST;
 use puddle_types::FileMode;

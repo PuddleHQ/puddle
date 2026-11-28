@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+use super::git::git_author_name;
 use super::*;
 use crate::machine::MACHINE_SETTINGS_GUEST;
 use puddle_types::FileMode;
@@ -698,7 +699,8 @@ fn a_nested_shell_keeps_what_its_caller_set_instead_of_the_blocks_exports() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("block.sh");
     std::fs::write(&file, &block).unwrap();
-    let source = format!(". '{}'", file.display());
+    // `sh` reads a backslash in a Windows temp path as an escape, so it gets forward slashes.
+    let source = format!(". '{}'", file.display().to_string().replace('\\', "/"));
     // A first shell has no sentinel: the block applies.
     assert_eq!(
         sh_out(&format!("{source}; printf %s \"$TEST_OVERRIDE\""), &[]),

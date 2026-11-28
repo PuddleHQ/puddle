@@ -19,12 +19,10 @@
 #   D       the run reached the end
 # A failure exits non-zero with the reason on stderr.
 #
-# PUDDLE_CHOWN replaces `chown` for the unit tests only: a test that is not root cannot chown.
 set -u
 
 mount=$1
 user=$2
-chown_cmd=${PUDDLE_CHOWN:-chown}
 
 fail() {
     printf '%s\n' "$1" >&2
@@ -45,12 +43,12 @@ had=$(stat -c %u "$mount") || fail "cannot read the owner of $mount"
 if [ "$had" != "$uid" ]; then
     n=$(find "$mount" -xdev -mindepth 1 -path "$mount/lost+found" -prune -o -print | wc -l)
     find "$mount" -xdev -mindepth 1 -path "$mount/lost+found" -prune -o \
-        -exec "$chown_cmd" -h "$owner" {} + ||
+        -exec chown -h "$owner" {} + ||
         fail "cannot give the files on $mount to $user"
     printf 'R\t%s\n' "$((n))"
 fi
 if [ -d "$mount/.puddle/editor" ]; then
-    "$chown_cmd" -R -h "$owner" "$mount/.puddle/editor" || fail "cannot give $mount/.puddle/editor to $user"
+    chown -R -h "$owner" "$mount/.puddle/editor" || fail "cannot give $mount/.puddle/editor to $user"
 fi
-"$chown_cmd" -h "$owner" "$mount/.puddle" "$mount" || fail "cannot give $mount to $user"
+chown -h "$owner" "$mount/.puddle" "$mount" || fail "cannot give $mount to $user"
 printf 'D\n'

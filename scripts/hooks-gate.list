@@ -61,6 +61,7 @@ scripts/cap-test-memory-test.sh
 scripts/flake-rules-test.sh
 ci/check-mise-pin-test.sh
 ci/fetch-baseline-msi-test.sh
+ci/capture-upgrade-fixture-test.sh
 ci/workflow-split-test.sh
 ci/cargo-fetch-test.sh
 ci/deny-fresh-test.sh

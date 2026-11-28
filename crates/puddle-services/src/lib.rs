@@ -17,6 +17,7 @@ pub mod error;
 pub mod fake_workspaces;
 pub mod learned;
 pub mod network_health;
+pub mod owned;
 pub mod ports;
 pub mod proxy_sign_in;
 pub mod repos;

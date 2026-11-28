@@ -2,14 +2,12 @@
 //! Tests of a field whose stand-in is a JWT ([`StandInKind::Jwt`]): a refresh makes a new stand-in, and
 //! the slot keeps the last few older ones registered.
 
-use base64::Engine as _;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use puddle_types::WorkspaceId;
 use serde_json::{Value, json};
 
 use crate::profile::{Audience, Endpoint, Field, Keep, Method, Profile, Role, Scope, StandInKind};
+use crate::test_rig::{Rig, answered, claims_of, jwt_signed, rig_for, rig_with};
 use crate::vault::Vault;
-use crate::widened_tests::{Rig, answered, rig_for};
 
 static JWT_PROFILE: [Profile; 1] = [Profile {
     id: "jwt",
@@ -50,11 +48,7 @@ static JWT_PROFILE: [Profile; 1] = [Profile {
 }];
 
 fn jwt(exp: u64, signature: &str) -> String {
-    format!(
-        "{}.{}.{signature}",
-        URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256"}"#),
-        URL_SAFE_NO_PAD.encode(json!({"sub": "me", "exp": exp}).to_string()),
-    )
+    jwt_signed(&json!({"sub": "me", "exp": exp}).to_string(), signature)
 }
 
 async fn token(rig: &Rig, access: &str, refresh: &str) -> Value {
@@ -66,11 +60,6 @@ async fn token(rig: &Rig, access: &str, refresh: &str) -> Value {
         &json!({"access_token": access, "refresh_token": refresh, "expires_in": 3600}),
     )
     .await
-}
-
-fn claims_of(token: &str) -> Value {
-    let payload = token.split('.').nth(1).unwrap();
-    serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).unwrap()).unwrap()
 }
 
 const REFRESH: &str = "rt_CANARY0refresh0AAAAAAAAAAAAAAAAAAAAAAAA";
@@ -194,19 +183,5 @@ async fn forgetting_removes_every_stand_in_and_a_restart_registers_the_newest_on
 }
 
 fn rig_for_store(old: &Rig) -> Rig {
-    let registry = std::sync::Arc::new(puddle_proxy::StandIns::new());
-    let logins = crate::Logins::new(
-        WorkspaceId::new("alpha").unwrap(),
-        true,
-        &JWT_PROFILE,
-        std::sync::Arc::clone(&registry),
-        old.store.clone(),
-        std::sync::Arc::new(crate::widened_tests::Quiet),
-        crate::Marker::none(),
-    );
-    Rig {
-        logins,
-        store: old.store.clone(),
-        registry,
-    }
+    rig_with(&JWT_PROFILE, &old.store, true, crate::Marker::none())
 }

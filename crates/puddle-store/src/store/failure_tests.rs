@@ -166,6 +166,7 @@ fn a_request_rule_whose_switch_cannot_be_recorded_stays_as_it_was() {
     store.fail_audit_writes("rule_switched");
 
     let err = store
+        .as_user(UserId::OWNER)
         .set_request_rule_enabled(rule.id, false, Actor::Cli)
         .unwrap_err();
 
@@ -245,6 +246,7 @@ fn a_decision_that_cannot_update_its_row_makes_no_rule() {
     store.break_database(PENDING_UPDATES_FAIL);
 
     let err = store
+        .as_user(UserId::OWNER)
         .resolve_pending(id, &Resolution::allow(), Actor::Ui)
         .unwrap_err();
 
@@ -263,6 +265,7 @@ fn a_decision_whose_record_cannot_be_written_makes_no_rule() {
     store.fail_audit_writes("pending_decided");
 
     let err = store
+        .as_user(UserId::OWNER)
         .resolve_pending(id, &Resolution::allow(), Actor::Ui)
         .unwrap_err();
 
@@ -551,7 +554,10 @@ fn a_request_rule_whose_deletion_cannot_be_recorded_stays() {
         .unwrap();
     store.fail_audit_writes("request_rule_deleted");
 
-    let err = store.delete_request_rule(rule.id, Actor::Cli).unwrap_err();
+    let err = store
+        .as_user(UserId::OWNER)
+        .delete_request_rule(rule.id, Actor::Cli)
+        .unwrap_err();
 
     assert_eq!(err.to_string(), DISK_FULL);
     assert_eq!(

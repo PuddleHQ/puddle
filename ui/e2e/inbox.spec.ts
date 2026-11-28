@@ -16,6 +16,7 @@ import {
   watchCsp,
   staysEmpty,
   hostName,
+  showArrived,
 } from "./support";
 
 interface Rule {
@@ -84,6 +85,8 @@ test.describe("the program that asked", () => {
       "shop · 1 try",
     );
     await ask(backend, "shop", "live.example.com", { program: "node" });
+    // A request that arrives later waits behind a line: it never moves the rows on screen.
+    await page.getByRole("button", { name: /new request/ }).click();
     await expect(rowFor(page, "live.example.com")).toContainText(
       "shop (node) · 1 try",
     );
@@ -400,9 +403,11 @@ test.describe("live", () => {
     await openInbox(page, backend);
     await expect(rowFor(page, "live.example.com")).toHaveCount(0);
     await ask(backend, "shop", "live.example.com");
-    await expect(rowFor(page, "live.example.com")).toBeVisible({
+    await expect(rowFor(page, "live.example.com")).toHaveCount(0);
+    await page.getByRole("button", { name: /new request/ }).click({
       timeout: CONVERGE_WAIT_MS,
     });
+    await expect(rowFor(page, "live.example.com")).toBeVisible();
     await expect(page).toHaveTitle("Inbox (2) - Puddle");
     await expect(page.getByTestId("pending-badge")).toContainText("2 pending");
     await ask(backend, "shop", "live.example.com", { repeat: 2 });
@@ -418,9 +423,7 @@ test.describe("live", () => {
     await page.route("**/api/events", (route) => route.abort());
     await openInbox(page, backend);
     await ask(backend, "shop", "nostream.example.com");
-    await expect(rowFor(page, "nostream.example.com")).toBeVisible({
-      timeout: CONVERGE_WAIT_MS,
-    });
+    await showArrived(page, rowFor(page, "nostream.example.com"));
   });
 
   test("a restarted API makes the page resync at once", async ({
@@ -430,9 +433,11 @@ test.describe("live", () => {
     await openInbox(page, backend);
     await ask(backend, "shop", "resync.example.com");
     await backend.control.restart();
-    await expect(rowFor(page, "resync.example.com")).toBeVisible({
-      timeout: RECONNECT_WAIT_MS,
-    });
+    await showArrived(
+      page,
+      rowFor(page, "resync.example.com"),
+      RECONNECT_WAIT_MS,
+    );
   });
 
   test("the badge and the title follow decisions at once", async ({

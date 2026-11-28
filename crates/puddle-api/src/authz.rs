@@ -267,14 +267,10 @@ impl Isolation {
                 self.store.workspace_owner(id)?,
                 ApiError::from(WorkspaceError::NotFound(format!("no workspace {id}"))),
             ),
-            ResourceRef::Pending(id) => {
-                let user = match self.store.pending(*id) {
-                    Ok(row) => self.store.workspace_owner(&row.workspace)?,
-                    Err(StoreError::UnknownPending(_)) => None,
-                    Err(err) => return Err(err),
-                };
-                (user, ApiError::from(StoreError::UnknownPending(*id)))
-            }
+            ResourceRef::Pending(id) => (
+                self.store.pending_owner(*id)?,
+                ApiError::from(StoreError::UnknownPending(*id)),
+            ),
             ResourceRef::Rule(id) => (
                 self.store.rule_owner(*id),
                 ApiError::from(StoreError::UnknownRule(*id)),

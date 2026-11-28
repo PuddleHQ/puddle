@@ -204,7 +204,7 @@ impl AgentGate for StoreGate {
         };
         let deadline = Instant::now() + self.wait;
         loop {
-            match self.store.ssh_agent_ask(id) {
+            match self.store.ssh_agent_ask(workspace, id) {
                 Ok(Some(ask)) if ask.state.allows() => return Ok(()),
                 Ok(Some(ask)) if ask.state != puddle_store::SshAgentAskState::Requested => {
                     return Err(Disapproval::Denied);

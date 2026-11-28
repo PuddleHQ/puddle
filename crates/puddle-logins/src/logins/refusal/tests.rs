@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use super::*;
-use crate::profile::{CLAUDE, Role, Scope};
+use crate::profile::{Audience, CLAUDE, Field, Keep, Role, Scope};
 
 fn field(path: &str, kind: FieldKind) -> BodyField {
     BodyField {

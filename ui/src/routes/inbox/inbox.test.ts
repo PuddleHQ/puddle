@@ -214,6 +214,10 @@ describe("the inbox page", () => {
       registrable_domain: "example.com",
     });
     await tick();
+    expect(queryHostEl("new.example.com")).toBeNull();
+    await fireEvent.click(
+      screen.getByRole("button", { name: "1 new request" }),
+    );
     expect(hostEl("new.example.com")).toBeInTheDocument();
     source.emit({
       type: "pending_updated",

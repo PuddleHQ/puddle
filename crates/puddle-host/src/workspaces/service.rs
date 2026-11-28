@@ -3,6 +3,7 @@
 
 use futures_util::future::BoxFuture;
 use puddle_compute::{DiskSize, Runtime};
+use puddle_services::owned::OwnedWorkspace;
 use puddle_services::workspaces::phase::{Action, admit, begin};
 use puddle_services::{
     terminals::TerminalError, terminals::TerminalLink, terminals::TerminalService,
@@ -31,7 +32,8 @@ use crate::boot::root_disk_size;
 use crate::op_error::OpError;
 
 impl<R: Runtime + Clone> TerminalService for HostWorkspaces<R> {
-    fn check(&self, workspace: &WorkspaceId) -> BoxFuture<'_, Result<(), TerminalError>> {
+    fn check(&self, workspace: &OwnedWorkspace) -> BoxFuture<'_, Result<(), TerminalError>> {
+        let workspace = workspace.id();
         let running = self.state().slots.get(workspace).is_some_and(|s| {
             matches!(
                 s.record.status,
@@ -51,10 +53,10 @@ impl<R: Runtime + Clone> TerminalService for HostWorkspaces<R> {
 
     fn open(
         &self,
-        workspace: &WorkspaceId,
+        workspace: &OwnedWorkspace,
         size: TerminalSize,
     ) -> BoxFuture<'_, Result<TerminalLink, TerminalError>> {
-        let workspace = workspace.clone();
+        let workspace = workspace.id().clone();
         Box::pin(async move {
             let identity = self
                 .inner
@@ -126,14 +128,11 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
 
     fn get<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
-            self.state()
-                .slots
-                .get(id)
-                .map(|s| s.record.clone())
-                .ok_or_else(|| not_found(id))
+            let id = workspace.id();
+            self.get_record(id)
         })
     }
 
@@ -253,9 +252,10 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
 
     fn start<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
+            let id = workspace.id();
             let ticket = self.accept(id, Operation::Starting)?;
             let record = ticket.record().clone();
             self.status_event(&record);
@@ -268,9 +268,10 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
 
     fn stop<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
+            let id = workspace.id();
             let ticket = self.accept(id, Operation::Stopping)?;
             let record = ticket.record().clone();
             self.status_event(&record);
@@ -289,9 +290,10 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
 
     fn reclaim<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
+            let id = workspace.id();
             let ticket = self.accept(id, Operation::Reclaiming)?;
             let record = ticket.record().clone();
             let this = self.clone();
@@ -311,9 +313,10 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
 
     fn reset_root_disk<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
+            let id = workspace.id();
             let ticket = self.accept(id, Operation::ResettingRootDisk)?;
             let record = ticket.record().clone();
             let this = self.clone();
@@ -328,10 +331,11 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
 
     fn grow_root_disk<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
         size_mib: u32,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
+            let id = workspace.id();
             let size = DiskSize::mib(size_mib);
             let current = {
                 let state = self.state();
@@ -375,9 +379,10 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
 
     fn delete_check<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<DeleteCheck, WorkspaceError>> {
         Box::pin(async move {
+            let id = workspace.id();
             if !self.state().slots.contains_key(id) {
                 return Err(not_found(id));
             }
@@ -397,10 +402,11 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
 
     fn delete<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
         fingerprint: Option<&'a str>,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
+            let id = workspace.id();
             let ticket = self.accept(id, Operation::Deleting)?;
             let record = ticket.record().clone();
             // The check runs before the call returns, so a refusal reaches the caller.
@@ -457,10 +463,11 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
 
     fn rename<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
         name: DisplayName,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
+            let id = workspace.id();
             let record = {
                 let mut state = self.state();
                 if state.closed {
@@ -517,10 +524,11 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
 
     fn set_start_folder<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
         start_folder: Option<StartFolder>,
     ) -> BoxFuture<'a, Result<StartFolderChange, WorkspaceError>> {
         Box::pin(async move {
+            let id = workspace.id();
             let record = {
                 let mut state = self.state();
                 if state.closed {
@@ -562,10 +570,11 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
 
     fn set_session_user<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
         user: SessionUser,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         Box::pin(async move {
+            let id = workspace.id();
             let mut state = self.state();
             if state.closed {
                 return Err(WorkspaceError::Unavailable(
@@ -601,7 +610,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         mode: AttachMode,
     ) -> BoxFuture<'a, Result<Attached, WorkspaceError>> {
         Box::pin(async move {
-            let record = self.get(id).await?;
+            let record = self.get_record(id)?;
             admit(&record, Action::Attach)?;
             self.refresh_editor_file(&record).await;
             match mode {
@@ -623,7 +632,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         id: &'a WorkspaceId,
     ) -> BoxFuture<'a, Result<KeptLogins, WorkspaceError>> {
         Box::pin(async move {
-            let record = self.get(id).await?;
+            let record = self.get_record(id)?;
             let list = self.inner.injection.kept_logins(&record.id).await;
             Ok(KeptLogins {
                 logins: list
@@ -642,7 +651,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         service: &'a str,
     ) -> BoxFuture<'a, Result<(), WorkspaceError>> {
         Box::pin(async move {
-            let record = self.get(id).await?;
+            let record = self.get_record(id)?;
             match self.inner.injection.forget_login(&record.id, service).await {
                 Ok(true) => Ok(()),
                 Ok(false) => Err(WorkspaceError::NotFound(format!(
@@ -659,7 +668,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         script: &'a str,
     ) -> BoxFuture<'a, Result<ShellInitCheck, WorkspaceError>> {
         Box::pin(async move {
-            let record = self.get(id).await?;
+            let record = self.get_record(id)?;
             let running = self
                 .inner
                 .live

@@ -1683,4 +1683,29 @@ async fn a_workspace_with_keys_of_its_own_start_is_served_with_them_and_not_the_
     assert_ne!(shown, decoy.public_key().to_openssh().unwrap());
 }
 
+#[tokio::test]
+async fn a_push_whose_pack_comes_late_is_sent_whole_under_the_configured_pack_read_limit() {
+    let (t, _) = SshRig::https(smart_host(), GitSshAccount::Unnamed, &[]).await;
+    let mut guest = t.git.rig.guest();
+    let mut ssh = t.client(&mut guest, "bound.test:22").await;
+    login(&mut ssh).await;
+    let update = format!("{SHA} 2222222222222222222222222222222222222222 refs/heads/main\n");
+    let commands = format!("{:04x}{update}0000", update.len() + 4);
+    let mut channel = ssh.channel_open_session().await.unwrap();
+    channel
+        .exec(true, "git-receive-pack 'acme/web.git'")
+        .await
+        .unwrap();
+    channel.data(commands.as_bytes()).await.unwrap();
+    // flake-ok: the guest is slow on purpose; a zero pack read limit would cut the push here.
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    channel.data(&b"PACK"[..]).await.unwrap();
+    channel.eof().await.unwrap();
+    let ran = collect(&mut channel, 1).await;
+    assert_eq!(ran.exit, Some(0), "{ran:?}");
+    let seen = t.git.server.recorded();
+    let push = seen.last().expect("a push reached the host");
+    assert_eq!(push.body, format!("{commands}PACK").as_bytes());
+}
+
 mod hostile;

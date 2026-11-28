@@ -12,7 +12,7 @@ use puddle_types::{Decision, Host, WorkspaceId};
 
 use crate::authz::{self, Action, Principal, ResourceRef};
 use crate::routes::AppState;
-use crate::routes::workspaces::workspace_id;
+use crate::routes::workspaces::{owned, workspace_id};
 use puddle_services::error::ApiErrorBody;
 use puddle_services::error::{ApiError, ErrorCode, blocking};
 use puddle_services::wire::{
@@ -145,7 +145,8 @@ pub(crate) async fn repository_hosts(
             ResourceRef::Workspace(id.clone()),
         )
         .await?;
-        state.workspaces.get(id).await?;
+        let handle = owned(&state, principal, id.as_str()).await?;
+        state.workspaces.get(&handle).await?;
     }
     let hosts = hosts_of(body.urls.iter().map(String::as_str));
     let store = state.store.clone();

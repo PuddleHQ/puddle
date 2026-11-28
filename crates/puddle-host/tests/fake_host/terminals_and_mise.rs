@@ -65,7 +65,10 @@ async fn a_terminal_runs_as_the_session_user_and_a_stop_ends_it_with_the_stopped
         .as_str()
         .unwrap()
         .to_owned();
-    let id = WorkspaceId::new("acme").unwrap();
+    let id = puddle_services::owned::OwnedWorkspace::for_test(
+        puddle_store::UserId::OWNER,
+        &WorkspaceId::new("acme").unwrap(),
+    );
     let size = puddle_services::terminals::TerminalSize::new(80, 24).unwrap();
 
     let service = host.workspaces();
@@ -128,7 +131,10 @@ async fn sandbox_a_terminal_reaches(
     service: &puddle_host::HostWorkspaces<FakeRuntime>,
     workspace: &str,
 ) -> String {
-    let id = WorkspaceId::new(workspace).unwrap();
+    let id = puddle_services::owned::OwnedWorkspace::for_test(
+        puddle_store::UserId::OWNER,
+        &WorkspaceId::new(workspace).unwrap(),
+    );
     let size = puddle_services::terminals::TerminalSize::new(80, 24).unwrap();
     let mut link = puddle_services::terminals::TerminalService::open(service, &id, size)
         .await

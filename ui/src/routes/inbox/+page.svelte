@@ -114,6 +114,7 @@
     if (wanted === null || pending.status !== "ready") return;
     const id = wanted;
     wanted = null;
+    pending.show(id);
     if (!flat.some((r) => r.request.id === id)) return;
     currentId = id;
     afterPaint(() => rowElement(id)?.focus());
@@ -227,17 +228,6 @@
   {/if}
 </div>
 
-{#each pending.full as workspace (workspace)}
-  <p class="full" role="status">
-    <b>
-      <span class="mono">{workspaces.labelOf(workspace)}</span> has {pending.openLimit}
-      waiting requests
-    </b>, the most Puddle lists. If it asks about more hosts, they are listed
-    once you answer some. Allowing or denying a domain with its subdomains
-    clears many at once.
-  </p>
-{/each}
-
 {#if pending.status === "ready" && pending.loadError}
   <LoadNotice what="the requests" message={pending.loadError} stale />
 {/if}
@@ -252,9 +242,6 @@
     <p>Nothing is waiting. New requests from your workspaces appear here.</p>
   </section>
 {:else}
-  {#if sshAgentAsks.asks.length > 0}
-    <SshAgentAsks asks={sshAgentAsks.asks} {now} onAnswer={answerAsk} />
-  {/if}
   {#each shownGroups as group (group.domain)}
     <section class="group" aria-labelledby="group-{group.domain}">
       <div class="group-head">
@@ -282,6 +269,29 @@
       </ul>
     </section>
   {/each}
+{/if}
+
+<!-- Below the rows, never above: a section that appears above them would push every row down
+     under the pointer, and a guest chooses when it appears. -->
+{#if sshAgentAsks.asks.length > 0}
+  <SshAgentAsks asks={sshAgentAsks.asks} {now} onAnswer={answerAsk} />
+{/if}
+
+{#each pending.full as workspace (workspace)}
+  <p class="full" role="status">
+    <b>
+      <span class="mono">{workspaces.labelOf(workspace)}</span> has {pending.openLimit}
+      waiting requests
+    </b>, the most Puddle lists. If it asks about more hosts, they are listed
+    once you answer some. Allowing or denying a domain with its subdomains
+    clears many at once.
+  </p>
+{/each}
+
+{#if pending.held > 0}
+  <button type="button" class="new-requests" onclick={() => pending.showHeld()}>
+    {pending.held} new {pending.held === 1 ? "request" : "requests"}
+  </button>
 {/if}
 
 {#if pending.decided.length > 0}
@@ -342,11 +352,27 @@
     color: var(--color-text-muted);
   }
   .full {
-    margin: 0 0 var(--space-3);
+    margin: 0 0 var(--space-4);
     padding: var(--space-3) var(--space-4);
     background: var(--color-surface-raised);
     border: 1px solid var(--color-border-subtle);
     border-radius: var(--radius-md);
+  }
+  /* Out of the flow: the line that offers new requests must not move a row either. */
+  .new-requests {
+    position: fixed;
+    inset-block-end: var(--space-4);
+    inset-inline: 0;
+    margin-inline: auto;
+    width: max-content;
+    padding: var(--space-2) var(--space-4);
+    color: var(--color-text);
+    background: var(--color-surface-raised);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-pill);
+    box-shadow: 0 2px 8px rgb(0 0 0 / 0.25);
+    cursor: pointer;
+    z-index: 5;
   }
   .group,
   .decided {

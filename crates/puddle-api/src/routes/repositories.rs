@@ -12,7 +12,7 @@ use puddle_types::EntryId;
 
 use crate::authz::Principal;
 use crate::extract::Path;
-use crate::routes::workspaces::{StoreGitSetup, git_request, view, workspace_id};
+use crate::routes::workspaces::{StoreGitSetup, git_request, owned, view, workspace_id};
 use crate::routes::{AppState, record_op, repository_hosts};
 use puddle_services::checkouts::AddRepository;
 use puddle_services::error::ApiErrorBody;
@@ -75,7 +75,8 @@ pub(crate) async fn add_repository(
     Path(id): Path<String>,
     crate::extract::Json(body): crate::extract::Json<AddRepositoryRequest>,
 ) -> Result<(StatusCode, Json<Workspace>), ApiError> {
-    let id = workspace_id(&id)?;
+    let workspace = owned(&state, principal, &id).await?;
+    let id = workspace.id().clone();
     let store = state.store.clone();
     let known: BTreeSet<IdentityId> = blocking(move || {
         Ok(store
@@ -86,7 +87,7 @@ pub(crate) async fn add_repository(
     })
     .await?;
     let add = body.into_add(|identity| known.contains(&identity))?;
-    let record = state.workspaces.get(&id).await?;
+    let record = state.workspaces.get(&workspace).await?;
     let status = match &add {
         AddRepository::Clone(new) => {
             let requests: Vec<_> = git_request(new).into_iter().collect();
@@ -193,10 +194,11 @@ pub(crate) async fn remove_repository(
     principal: Principal,
     Path((id, entry)): Path<(String, String)>,
 ) -> Result<Json<Workspace>, ApiError> {
-    let (id, entry) = (workspace_id(&id)?, entry_id(&entry)?);
+    let (workspace, entry) = (owned(&state, principal, &id).await?, entry_id(&entry)?);
+    let id = workspace.id().clone();
     let directory = state
         .workspaces
-        .get(&id)
+        .get(&workspace)
         .await?
         .repositories
         .iter()

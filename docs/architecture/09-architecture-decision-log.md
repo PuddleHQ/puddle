@@ -365,7 +365,7 @@ profile does not name. A UUID in such a field counts as an identifier, not a cre
 notice and log name the field (never the value).
 
 **Where:** [ADR 0009](../adr/0009-login-capture-fails-closed.md) (and the superseded
-[fail-open record](../adr/0007-login-capture-fails-open.md)); `crates/puddle-logins/src/logins.rs`.
+[fail-open record](../adr/0007-login-capture-fails-open.md)); `crates/puddle-logins/src/logins/capture.rs`.
 
 ### 9.3.3 Unknown tokens: conservative detection and a choice per field
 
@@ -389,7 +389,7 @@ answer fails the login, and tokens in other answers are only observed (a warning
 token, never the value, and nothing changes). The choice per field adds a decision the user makes
 once per field, recorded like a rule.
 
-**Where today:** `crates/puddle-logins/src/logins.rs` (`holds_unnamed_token`),
+**Where today:** `crates/puddle-logins/src/logins/refusal.rs` (`holds_unnamed_token`),
 `crates/puddle-proxy/src/terminate/stand_in/scan.rs`.
 
 ### 9.3.4 Identities are first-class, with pull and push switches per repository

@@ -16,7 +16,7 @@ use hyper::header::HeaderValue;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
-use puddle_repos::{Api, ApiRequest, Authorization, HostApi, MAX_BODY, TransportError};
+use puddle_repos::{Api, ApiRequest, Authorization, HostApi, TransportError};
 use puddle_secrets::Secret;
 use puddle_upstream::{
     BasicAuth, Behaviour, Chain, ChainConfig, Config, Credentials, Discovery, FakeOs, FakeProxy,
@@ -281,8 +281,12 @@ fn request(host: &str, path: &str) -> ApiRequest {
     }
 }
 
+/// The largest answer the test client takes: the real limit is 16 MiB, and a test that crosses it
+/// does not need to push that much through a socket.
+const TEST_MAX_BODY: usize = 64 * 1024;
+
 fn api(chain: Arc<Chain>, pki: &Pki) -> HostApi {
-    HostApi::new(chain, TlsClient::new([pki.root.clone()]).unwrap())
+    HostApi::new(chain, TlsClient::new([pki.root.clone()]).unwrap()).with_max_body(TEST_MAX_BODY)
 }
 
 #[tokio::test]
@@ -464,7 +468,7 @@ async fn a_request_that_failed_for_another_reason_is_not_sent_again_on_a_new_con
         &pki,
         Mode::Answer(Arc::new(|seen| {
             if seen.path == "/big" {
-                Reply::ok(&"x".repeat(MAX_BODY + 1))
+                Reply::ok(&"x".repeat(TEST_MAX_BODY + 1))
             } else {
                 Reply::ok("[]")
             }
@@ -588,7 +592,7 @@ async fn an_answer_over_the_size_limit_is_refused() {
             status: 200,
             headers: Vec::new(),
             raw_headers: Vec::new(),
-            body: vec![b' '; MAX_BODY + 1],
+            body: vec![b' '; TEST_MAX_BODY + 1],
         })),
     )
     .await;
@@ -893,7 +897,7 @@ async fn the_other_ways_a_listing_request_fails_have_their_own_audit_codes() {
     let hangs_up = Server::start(&pki, Mode::HangUp).await;
     let big = Server::start(
         &pki,
-        Mode::Answer(Arc::new(|_| Reply::ok(&"x".repeat(MAX_BODY + 1)))),
+        Mode::Answer(Arc::new(|_| Reply::ok(&"x".repeat(TEST_MAX_BODY + 1)))),
     )
     .await;
     let written = Arc::new(Written::default());

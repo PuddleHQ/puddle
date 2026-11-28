@@ -106,7 +106,7 @@ async fn hostile_hg10_malformed_heads_are_refused_for_their_own_reason() {
     let cases = malformed_heads();
     let attack = async {
         for (what, bytes, code, cause) in cases {
-            let (got, body) = guest.refused(bytes.into()).await;
+            let (got, body) = guest.refused(bytes.into()).await.answered();
             assert_eq!(
                 (got, body.contains(cause)),
                 (code, true),

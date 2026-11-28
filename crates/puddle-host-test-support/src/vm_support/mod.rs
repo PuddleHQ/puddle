@@ -38,7 +38,7 @@ use puddle_vm_tests::{RuntimePair, Settings, VmEnv, test_owner};
 use serde_json::json;
 
 /// The harness has set the environment and checked the runtime pair already.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct HarnessPlatform {
     /// The corporate roots the host reports (the guest trusts them, the upstream TLS leg uses them).
     pub roots: CorporateRoots,
@@ -287,6 +287,16 @@ pub struct VmHost {
     pub root: std::path::PathBuf,
     /// Where the host keeps the values of secrets: never the machine's own credential store.
     pub secrets: Arc<MemoryStore>,
+    /// What the host was started with, so [`restart_vm_host`] starts the same host again.
+    launch: Box<Launch>,
+}
+
+/// The configuration (after the test's tweak), options and platform a [`VmHost`] started with.
+#[derive(Clone)]
+struct Launch {
+    config: HostConfig,
+    options: HostOptions,
+    platform: HarnessPlatform,
 }
 
 /// The host configuration over `root`: what [`start_vm_host_with`] and the second process of the
@@ -379,6 +389,7 @@ pub async fn start_vm_host_platform(
     );
     let mut config = harness_config(&settings, &pair, &root, agent);
     tweak(&mut config);
+    let launch_config = config.clone();
     let factory = HarnessFactory {
         settings: settings.clone(),
         msb: pair.msb.clone(),
@@ -389,6 +400,11 @@ pub async fn start_vm_host_platform(
     let secrets = Arc::new(MemoryStore::new());
     let mut options = options;
     options.secret_store = Some(secrets.clone());
+    let launch = Box::new(Launch {
+        config: launch_config,
+        options: options.clone(),
+        platform: platform.clone(),
+    });
     let host = Host::start(prepared, &factory, options)
         .await
         .expect("the host starts");
@@ -400,38 +416,34 @@ pub async fn start_vm_host_platform(
         settings,
         root,
         secrets,
+        launch,
     }
 }
 
 /// Quits `vm`'s host and starts a new one over the same data folder and runtime, as a quit and a
 /// launch of Puddle do (or a reboot of the computer): the sandboxes stay in the runtime, stopped.
+/// The new host has the options, platform and configuration the old one started with.
 pub async fn restart_vm_host(vm: VmHost) -> VmHost {
     let VmHost {
         host,
         settings,
         root,
         secrets,
+        launch,
         ..
     } = vm;
     let down = host.shutdown().await;
     assert!(down.sandboxes.all_stopped(), "{down:?}");
     drop(host);
     let pair = settings.prepare().expect("msb runtime pair");
-    let agent = std::path::PathBuf::from(
-        std::env::var_os("PUDDLE_AGENT_BIN")
-            .expect("PUDDLE_AGENT_BIN: the static puddle-agent (ci/build-agent.sh)"),
-    );
-    let config = harness_config(&settings, &pair, &root, agent);
     let factory = HarnessFactory {
         settings: settings.clone(),
         msb: pair.msb.clone(),
         libkrunfw: pair.libkrunfw.clone(),
         opened: std::sync::Mutex::new(None),
     };
-    let prepared = prepare(config, &HarnessPlatform::default()).unwrap();
-    let mut options = crate::support::named_id_options();
-    options.secret_store = Some(secrets.clone());
-    let host = Host::start(prepared, &factory, options)
+    let prepared = prepare(launch.config.clone(), &launch.platform).unwrap();
+    let host = Host::start(prepared, &factory, launch.options.clone())
         .await
         .expect("the host starts again");
     let runtime = factory.opened.lock().unwrap().clone().unwrap();
@@ -441,6 +453,7 @@ pub async fn restart_vm_host(vm: VmHost) -> VmHost {
         settings,
         root,
         secrets,
+        launch,
     }
 }
 

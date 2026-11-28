@@ -772,7 +772,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -925,6 +925,16 @@ dependencies = [
  "memchr",
  "pin-project-lite",
  "slab",
+]
+
+[[package]]
+name = "generic-array"
+version = "1.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "337d46834ee672ab3e48caca2cb0c78cc174fb12b3a68d0d88f99a0519a5e36e"
+dependencies = [
+ "rustversion",
+ "typenum",
 ]
 
 [[package]]
@@ -1769,8 +1779,7 @@ dependencies = [
 [[package]]
 name = "pageant"
 version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0bc922d9aa8cfcf598de27b3c6122cb2eeda9d6fe71527a22ebcb7f633540ff"
+source = "git+https://github.com/PuddleHQ/russh?tag=v0.65.2-puddle.2#d7be74282199f14b00570996d7cd9876ddfa6eb9"
 dependencies = [
  "base16ct",
  "byteorder",
@@ -2346,9 +2355,8 @@ dependencies = [
 
 [[package]]
 name = "russh"
-version = "0.65.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "569d8c45e20c123af2fc5ecb4803fde0a98572449ba4c24ed97741d7b02fedf7"
+version = "0.65.2"
+source = "git+https://github.com/PuddleHQ/russh?tag=v0.65.2-puddle.2#d7be74282199f14b00570996d7cd9876ddfa6eb9"
 dependencies = [
  "aes",
  "aws-lc-rs",
@@ -2371,6 +2379,7 @@ dependencies = [
  "enum_dispatch",
  "flate2",
  "futures",
+ "generic-array",
  "getrandom 0.4.3",
  "ghash",
  "hex-literal",
@@ -2417,8 +2426,7 @@ dependencies = [
 [[package]]
 name = "russh-cryptovec"
 version = "0.62.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3aec6cb630dbe85d72ffd7bcd95f07e1bd69f9f270ee8adfa1afe443a6331438"
+source = "git+https://github.com/PuddleHQ/russh?tag=v0.65.2-puddle.2#d7be74282199f14b00570996d7cd9876ddfa6eb9"
 dependencies = [
  "log",
  "nix 0.31.4",
@@ -2429,8 +2437,7 @@ dependencies = [
 [[package]]
 name = "russh-util"
 version = "0.52.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "668424a5dde0bcb45b55ba7de8476b93831b4aa2fa6947e145f3b053e22c60b6"
+source = "git+https://github.com/PuddleHQ/russh?tag=v0.65.2-puddle.2#d7be74282199f14b00570996d7cd9876ddfa6eb9"
 dependencies = [
  "chrono",
  "tokio",
@@ -2466,7 +2473,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2522,7 +2529,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3342,7 +3349,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

@@ -253,11 +253,12 @@ impl Read {
     }
 
     fn decode(self, text: &str) -> String {
-        if self.has(Self::ONE_ROUND) {
+        let decoded = if self.has(Self::ONE_ROUND) {
             decode_once(text)
         } else {
             percent_decoded(text)
-        }
+        };
+        narrow_fullwidth(decoded)
     }
 
     fn separators(self) -> &'static [char] {
@@ -267,6 +268,21 @@ impl Read {
             &['/', '\\']
         }
     }
+}
+
+/// `text` with each fullwidth ASCII character (`U+FF01..=U+FF5E`) as the ASCII one it looks
+/// like: Windows servers that call an ANSI API narrow it so ("best fit"), `／` and `＼` included.
+/// Other Unicode spellings are not folded (`docs/spec/rules.md` R-52).
+fn narrow_fullwidth(text: String) -> String {
+    if text.is_ascii() {
+        return text;
+    }
+    text.chars()
+        .map(|c| match u32::from(c) {
+            wide @ 0xFF01..=0xFF5E => char::from_u32(wide - 0xFEE0).unwrap_or(c),
+            _ => c,
+        })
+        .collect()
 }
 
 /// The segments of `path` in canonical form, read the way `read` says.

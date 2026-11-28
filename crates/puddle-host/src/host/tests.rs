@@ -176,7 +176,7 @@ fn the_distribution_points_come_from_the_synced_roots_and_only_from_them() {
 fn sandboxes_ended_by_force_at_start_are_a_problem_that_names_them() {
     let sandbox = |n: &str| puddle_types::SandboxName::new(n).unwrap();
     let mut report = puddle_lifecycle::ReconcileReport::default();
-    assert!(reconcile_problems(&report).is_empty());
+    assert_eq!(reconcile_problems(&report), []);
 
     report.forced = vec![sandbox("acme")];
     let problems = reconcile_problems(&report);

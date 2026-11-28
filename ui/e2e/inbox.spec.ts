@@ -84,6 +84,8 @@ test.describe("the program that asked", () => {
       "shop · 1 try",
     );
     await ask(backend, "shop", "live.example.com", { program: "node" });
+    // A request that arrives later waits behind a line: it never moves the rows on screen.
+    await page.getByRole("button", { name: /new request/ }).click();
     await expect(rowFor(page, "live.example.com")).toContainText(
       "shop (node) · 1 try",
     );
@@ -400,9 +402,11 @@ test.describe("live", () => {
     await openInbox(page, backend);
     await expect(rowFor(page, "live.example.com")).toHaveCount(0);
     await ask(backend, "shop", "live.example.com");
-    await expect(rowFor(page, "live.example.com")).toBeVisible({
+    await expect(rowFor(page, "live.example.com")).toHaveCount(0);
+    await page.getByRole("button", { name: /new request/ }).click({
       timeout: CONVERGE_WAIT_MS,
     });
+    await expect(rowFor(page, "live.example.com")).toBeVisible();
     await expect(page).toHaveTitle("Inbox (2) - Puddle");
     await expect(page.getByTestId("pending-badge")).toContainText("2 pending");
     await ask(backend, "shop", "live.example.com", { repeat: 2 });

@@ -197,10 +197,15 @@ describe("events", () => {
       request: request(2, { host: "x.other.org" }),
       registrable_domain: "other.org",
     });
+    // The arrival is held: the drawn groups stay as the user saw them until asked.
+    expect(store.groups.map((g) => g.domain)).toEqual(["example.com"]);
+    expect(store.held).toBe(1);
+    store.showHeld();
     expect(store.groups.map((g) => g.domain).sort()).toEqual([
       "example.com",
       "other.org",
     ]);
+    expect(store.held).toBe(0);
     source.emit({ type: "pending_updated", id: 2, attempts: 5, last_seen: 77 });
     expect(rowOf(store, 2).request).toMatchObject({
       attempts: 5,

@@ -279,16 +279,9 @@ fn jwt_field() -> Field {
     }
 }
 
-/// A JWT of `signature_len` signature characters, header `{"alg":"RS256"}`, claims `claims`.
+/// A JWT of `signature_len` signature characters and the claims text `claims`.
 fn jwt(claims: &str, signature_len: usize) -> String {
-    use base64::Engine as _;
-    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    format!(
-        "{}.{}.{}",
-        URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256","typ":"JWT"}"#),
-        URL_SAFE_NO_PAD.encode(claims),
-        "S".repeat(signature_len)
-    )
+    crate::test_rig::jwt_signed(claims, &"S".repeat(signature_len))
 }
 
 #[test]

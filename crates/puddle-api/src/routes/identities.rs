@@ -13,7 +13,7 @@ use puddle_types::WorkspaceId;
 
 use crate::authz::Principal;
 use crate::extract::Path;
-use crate::routes::workspaces::named;
+use crate::routes::workspaces::owned;
 use crate::routes::{AppState, record_op};
 use puddle_services::error::ApiErrorBody;
 use puddle_services::error::{ApiError, blocking};
@@ -414,9 +414,10 @@ pub(crate) async fn set_git_defaults(
 )]
 pub(crate) async fn get_workspace_git(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
 ) -> Result<Json<WorkspaceGitView>, ApiError> {
-    let name = named(&state, &id).await?;
+    let name = owned(&state, principal, &id).await?.id().clone();
     let found = blocking(move || {
         let git = state.store.workspace_git(&name)?;
         git_view(&state, name, git)
@@ -446,7 +447,7 @@ pub(crate) async fn set_workspace_identities(
     Path(id): Path<String>,
     crate::extract::Json(body): crate::extract::Json<WorkspaceIdentitiesRequest>,
 ) -> Result<Json<WorkspaceGitView>, ApiError> {
-    let name = named(&state, &id).await?;
+    let name = owned(&state, principal, &id).await?.id().clone();
     let ids: Vec<_> = body.ids.into_iter().map(IdentityId).collect();
     let set = blocking(move || {
         let git = state.store.set_workspace_identities(&name, &ids)?;
@@ -483,7 +484,7 @@ pub(crate) async fn attach_identity(
     Path(id): Path<String>,
     crate::extract::Json(body): crate::extract::Json<AttachIdentityRequest>,
 ) -> Result<Json<WorkspaceGitView>, ApiError> {
-    let name = named(&state, &id).await?;
+    let name = owned(&state, principal, &id).await?.id().clone();
     let set = blocking(move || {
         let position = body
             .position
@@ -523,7 +524,7 @@ pub(crate) async fn detach_identity(
     principal: Principal,
     Path((id, identity)): Path<(String, i64)>,
 ) -> Result<Json<WorkspaceGitView>, ApiError> {
-    let name = named(&state, &id).await?;
+    let name = owned(&state, principal, &id).await?.id().clone();
     let set = blocking(move || {
         let git = state.store.detach_identity(&name, IdentityId(identity))?;
         record_op(
@@ -559,7 +560,7 @@ pub(crate) async fn set_git_switches(
     Path(id): Path<String>,
     crate::extract::Json(body): crate::extract::Json<WorkspaceSwitchesRequest>,
 ) -> Result<Json<WorkspaceGitView>, ApiError> {
-    let name = named(&state, &id).await?;
+    let name = owned(&state, principal, &id).await?.id().clone();
     let (push, pull) = body.changes()?;
     let set = blocking(move || {
         let git = state.store.change_git_switches(&name, push, pull)?;
@@ -613,7 +614,7 @@ pub(crate) async fn add_git_repo(
     Path(id): Path<String>,
     crate::extract::Json(body): crate::extract::Json<GitRepoRequest>,
 ) -> Result<(StatusCode, Json<GitRepoView>), ApiError> {
-    let name = named(&state, &id).await?;
+    let name = owned(&state, principal, &id).await?.id().clone();
     let repo = body.repo_ref()?;
     let row = blocking(move || {
         let entry = state.store.add_repo(
@@ -656,7 +657,7 @@ pub(crate) async fn set_git_repo(
     Path((id, repo)): Path<(String, i64)>,
     crate::extract::Json(body): crate::extract::Json<GitRepoToggles>,
 ) -> Result<Json<GitRepoView>, ApiError> {
-    let name = named(&state, &id).await?;
+    let name = owned(&state, principal, &id).await?.id().clone();
     let row = blocking(move || {
         let entry = state.store.set_repo_toggles(&name, repo, body.toggles())?;
         record_op(
@@ -695,7 +696,7 @@ pub(crate) async fn remove_git_repo(
     principal: Principal,
     Path((id, repo)): Path<(String, i64)>,
 ) -> Result<StatusCode, ApiError> {
-    let name = named(&state, &id).await?;
+    let name = owned(&state, principal, &id).await?.id().clone();
     blocking(move || {
         state.store.remove_repo(&name, repo)?;
         record_op(

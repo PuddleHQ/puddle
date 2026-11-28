@@ -14,7 +14,7 @@ use puddle_types::{CURATED_PASS_THROUGH, Host, HostPattern, InterceptionMode, Wo
 use crate::authz::{self, Action, Principal, ResourceRef};
 use crate::extract::Path;
 use crate::routes::AppState;
-use crate::routes::workspaces::{named, owned};
+use crate::routes::workspaces::owned;
 use puddle_services::error::ApiErrorBody;
 use puddle_services::error::{ApiError, blocking};
 use puddle_services::wire::{
@@ -124,9 +124,10 @@ fn view(state: &AppState, name: &WorkspaceId) -> Result<InterceptionView, ApiErr
 )]
 pub(crate) async fn get_interception(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
 ) -> Result<Json<InterceptionView>, ApiError> {
-    let name = named(&state, &id).await?;
+    let name = owned(&state, principal, &id).await?.id().clone();
     Ok(Json(blocking(move || view(&state, &name)).await?))
 }
 
@@ -147,10 +148,11 @@ pub(crate) async fn get_interception(
 )]
 pub(crate) async fn put_interception(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
     crate::extract::Json(body): crate::extract::Json<InterceptionRequest>,
 ) -> Result<Json<InterceptionView>, ApiError> {
-    let name = named(&state, &id).await?;
+    let name = owned(&state, principal, &id).await?.id().clone();
     let never = body.never_decrypt.as_deref().map(patterns).transpose()?;
     blocking(move || {
         state.store.patch_workspace_interception(

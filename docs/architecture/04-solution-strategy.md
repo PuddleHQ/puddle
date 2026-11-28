@@ -42,8 +42,9 @@ from the place that decides: a request no rule covers must become a question in 
 answered in seconds and retried; a credential must be added per request and per repository; and
 every decision must be recorded where the user can read it. Those need a decision hook per request
 and an audit stream, which only Puddle's own proxy gives. With one place that decides there is one
-rule list to audit, and a guest process that ignores the proxy settings reaches nothing at all, not
-an unmonitored path.
+rule list to audit, and a guest process that ignores the proxy settings reaches no socket at all, not
+an unmonitored path. "No socket" is the claim: a few non-socket channels cross the boundary
+(the editor page, links, desktop SSH, port forwards), and section 8.1 lists each.
 
 Two rules make the proxy safe to rely on. The route a connection arrives on is the workspace's
 identity, and nothing the guest says changes it (`crates/puddle-ipc`). And the rules decide on the

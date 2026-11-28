@@ -13,6 +13,7 @@
 #   - git-pins
 #   - mutants-exclusions
 #   - quality
+#   - layering
 #   - silent-skips
 #   - silent-revert
 #   - early-exit-pipes
@@ -316,6 +317,8 @@ run_gate() {
     silent-revert) scripts/check-silent-revert.sh --self-test && scripts/check-silent-revert.sh ;;
     early-exit-pipes) scripts/check-early-exit-pipes.sh --self-test && scripts/check-early-exit-pipes.sh ;;
     workflow-yaml) python3 -I scripts/check-workflow-yaml.py --self-test && python3 -I scripts/check-workflow-yaml.py ;;
+    # Forbidden crate edges from `cargo metadata`, and the "Depends on" column of docs/architecture 5.2 kept in step (`--write` regenerates it).
+    layering) python3 -I scripts/check-layering.py --self-test && python3 -I scripts/check-layering.py ;;
     spawn) python3 -I scripts/check-spawn.py --self-test && python3 -I scripts/check-spawn.py ;;
     test-hooks) scripts/check-test-hooks.sh --self-test && scripts/check-test-hooks.sh ;;
     secrets)
@@ -630,6 +633,7 @@ workflow-yaml
 test-hooks"
 all_gates="$fast_gates
 quality
+layering
 git-env
 secrets
 clippy

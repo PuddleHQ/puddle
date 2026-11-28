@@ -2086,19 +2086,44 @@ ls -1 "$exts" 2>/dev/null
 true
 "#;
 
-/// Clicks, once it exists, the button of the editor's modal dialog labelled `label`; true then.
-fn click_dialog_button(label: &str) -> String {
-    let label = serde_json::to_string(label).unwrap();
+/// The Extensions view's row that shows `name`, as a JavaScript expression (undefined until it exists).
+fn extension_row(name: &str) -> String {
+    let name = serde_json::to_string(name).unwrap();
     format!(
-        "(() => {{ const b = [...document.querySelectorAll('.monaco-dialog-box .monaco-button')].find(b => b.textContent.trim() === {label}); if (!b) return false; b.click(); return true; }})()"
+        "[...document.querySelectorAll('.extensions-list .monaco-list-row')].find(r => r.textContent.includes({name}))"
     )
 }
 
-/// Clicks "Install" on the Extensions view's row that shows `name`; true once it has.
+/// The row's "Install" action when it can be clicked: the editor draws it disabled (`disabled`
+/// class, `aria-disabled`) while it checks that the extension fits, and a click on it then does
+/// nothing.
+const ENABLED_INSTALL: &str = "?.querySelector('a.extension-action.install:not(.disabled)')";
+
+/// Clicks "Install" on the Extensions view's row that shows `name`, once the action is enabled;
+/// true once it has. Stamps the click so [`install_until_trust_dialog`] does not repeat it at once.
 fn click_install_in_row(name: &str) -> String {
-    let name = serde_json::to_string(name).unwrap();
+    let row = extension_row(name);
     format!(
-        "(() => {{ const row = [...document.querySelectorAll('.extensions-list .monaco-list-row')].find(r => r.textContent.includes({name})); const a = row?.querySelector('a.extension-action.install'); if (!a) return false; a.click(); return true; }})()"
+        "(() => {{ const a = ({row}){ENABLED_INSTALL}; if (!a || a.getAttribute('aria-disabled') === 'true') return false; a.click(); window.__installClickedAt = Date.now(); return true; }})()"
+    )
+}
+
+/// Clicks the editor's modal dialog button labelled `label` when the dialog is up; otherwise, when
+/// the install click has gone unanswered for 8 s, clicks the row's enabled "Install" again. True
+/// once the dialog's button was clicked.
+fn install_until_trust_dialog(name: &str, label: &str) -> String {
+    let row = extension_row(name);
+    let label = serde_json::to_string(label).unwrap();
+    format!(
+        "(() => {{ const b = [...document.querySelectorAll('.monaco-dialog-box .monaco-button')].find(b => b.textContent.trim() === {label}); if (b) {{ b.click(); return true; }} if (Date.now() - (window.__installClickedAt || 0) > 8000) {{ const a = ({row}){ENABLED_INSTALL}; if (a && a.getAttribute('aria-disabled') !== 'true') {{ a.click(); window.__installClickedAt = Date.now(); }} }} return false; }})()"
+    )
+}
+
+/// What the page shows about `name`'s row, its dialogs and its notifications, for a failed wait.
+fn install_state(name: &str) -> String {
+    let row = extension_row(name);
+    format!(
+        "(() => {{ const row = {row}; const text = e => e.textContent.replace(/\\s+/g, ' ').trim(); const actions = row ? [...row.querySelectorAll('a.extension-action')].map(a => a.className + ' | ' + text(a) + ' | ' + a.getAttribute('aria-disabled')) : null; const dialogs = [...document.querySelectorAll('.monaco-dialog-box')].map(text); const notes = [...document.querySelectorAll('.notification-list-item')].map(text); return JSON.stringify({{ row: row ? text(row) : null, actions, dialogs, notes }}); }})()"
     )
 }
 
@@ -2147,15 +2172,21 @@ async fn vm_browser_code_server_installs_extensions_from_the_view_after_trusting
         shell
             .wait(name, &click_install_in_row(row), "true", PAGE_BUDGET)
             .await;
-        // Nothing is downloaded until the dialog is answered.
-        shell
-            .wait(
-                name,
-                &click_dialog_button("Trust Publisher & Install"),
-                "true",
-                PAGE_BUDGET,
-            )
+        // Nothing is downloaded until the dialog is answered. An install click the editor ignored
+        // is repeated; a dialog that never comes fails with what the page shows.
+        let answered = install_until_trust_dialog(row, "Trust Publisher & Install");
+        let outcome = shell
+            .browser
+            .lock()
+            .await
+            .wait(page, &PageRequest::new("", &answered).budget(PAGE_BUDGET))
             .await;
+        if let Err(e) = outcome {
+            let seen = shell
+                .wait_in(page, "true", &install_state(row), PAGE_BUDGET)
+                .await;
+            panic!("no trust dialog for {id} within {PAGE_BUDGET:?}: {e}; the page shows {seen}");
+        }
         let folders = puddle_test_kit::eventually_async(
             &format!("{id} is in the editor's extensions folder"),
             Duration::from_secs(180),

@@ -19,12 +19,9 @@
 //! assert_eq!(Request::parse(b"password\n"), Ok(Request::Password));
 //! ```
 
-use tokio::io::AsyncWriteExt;
 use tokio_yamux::StreamHandle;
 
-use crate::forward::{
-    ANSWER_TIMEOUT, Answer, GuestLink, MAX_ANSWER_LINE, OpenError, read_line_exact,
-};
+use crate::forward::{ANSWER_TIMEOUT, Answer, GuestLink, MAX_ANSWER_LINE, OpenError};
 
 /// Bytes that open an editor stream ([`crate::kind::StreamKind::Editor`] v1).
 pub const PREAMBLE: &[u8] = crate::kind::StreamKind::Editor.preamble();
@@ -95,21 +92,8 @@ impl GuestLink {
         &self,
         what: Request,
     ) -> Result<(StreamHandle, Vec<u8>), OpenError> {
-        let mut control = self.control.clone();
-        let mut stream = control
-            .open_stream()
+        self.exchange(&request(what), MAX_ANSWER_LINE, ANSWER_TIMEOUT)
             .await
-            .map_err(|_| OpenError::Disconnected)?;
-        let exchange = async {
-            stream.write_all(&request(what)).await?;
-            stream.flush().await?;
-            read_line_exact(&mut stream, MAX_ANSWER_LINE).await
-        };
-        let line = tokio::time::timeout(ANSWER_TIMEOUT, exchange)
-            .await
-            .map_err(|_| OpenError::Timeout(ANSWER_TIMEOUT))?
-            .map_err(|e| OpenError::Io(e.to_string()))?;
-        Ok((stream, line))
     }
 
     /// Opens a connection to the guest's editor server. The returned stream carries the

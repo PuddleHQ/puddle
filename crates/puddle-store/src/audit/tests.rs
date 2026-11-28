@@ -598,31 +598,49 @@ fn a_character_the_line_escapes_counts_as_six_bytes_when_choosing_what_to_cut() 
 #[test]
 fn connection_window_counts_excess_per_second() {
     let mut w = ConnectionWindow::default();
-    assert_eq!(w.admit(5_000, 2), (true, None));
-    assert_eq!(w.admit(5_100, 2), (true, None));
-    assert_eq!(w.admit(5_200, 2), (false, None));
-    assert_eq!(w.admit(5_999, 2), (false, None));
-    assert_eq!(w.admit(6_000, 2), (true, Some((5_000, 2))));
+    assert_eq!(w.admit(5_000, 5_000, 2), (true, None));
+    assert_eq!(w.admit(5_100, 5_100, 2), (true, None));
+    assert_eq!(w.admit(5_200, 5_200, 2), (false, None));
+    assert_eq!(w.admit(5_999, 5_999, 2), (false, None));
+    assert_eq!(w.admit(6_000, 6_000, 2), (true, Some((5_000, 2))));
     assert_eq!(w.roll(6_500), None);
     assert_eq!(w.roll(9_000), None);
 }
 
 #[test]
-fn a_clock_step_back_keeps_the_window_and_its_limit() {
+fn a_wall_clock_step_back_neither_restarts_nor_stalls_the_window() {
     let mut w = ConnectionWindow::default();
-    assert_eq!(w.admit(5_000, 1), (true, None));
-    assert_eq!(w.admit(5_100, 1), (false, None));
-    // The clock steps back: the second does not restart, so the limit still holds.
-    assert_eq!(w.admit(3_000, 1), (false, None));
-    assert_eq!(w.admit(5_900, 1), (false, None));
-    assert_eq!(w.admit(6_000, 1), (true, Some((5_000, 3))));
+    assert_eq!(w.admit(5_000, 100_000, 1), (true, None));
+    assert_eq!(w.admit(5_100, 100_100, 1), (false, None));
+    // The wall clock steps back an hour while the monotonic clock goes on: same second, same limit.
+    assert_eq!(w.admit(1_400, 100_900, 1), (false, None));
+    // The next monotonic second opens a fresh window, whatever the wall clock reads, and the
+    // finished one's summary carries the wall time its second began at.
+    assert_eq!(w.admit(1_500, 101_000, 1), (true, Some((5_000, 2))));
+    assert_eq!(w.admit(1_600, 101_100, 1), (false, None));
+    assert_eq!(w.roll(102_000), Some((1_000, 1)));
+}
+
+#[test]
+fn a_wall_clock_step_forward_does_not_restart_the_window() {
+    let mut w = ConnectionWindow::default();
+    assert_eq!(w.admit(5_000, 100_000, 1), (true, None));
+    assert_eq!(w.admit(9_999_000, 100_500, 1), (false, None));
+    assert_eq!(w.roll(100_999), None);
+}
+
+#[test]
+fn a_window_with_no_limit_still_stamps_its_summary() {
+    let mut w = ConnectionWindow::default();
+    assert_eq!(w.admit(7_300, 3_000, 0), (false, None));
+    assert_eq!(w.roll(4_000), Some((7_000, 1)));
 }
 
 #[test]
 fn a_summary_whose_write_failed_is_handed_out_again_merged_with_the_next_one() {
     let mut w = ConnectionWindow::default();
-    assert_eq!(w.admit(5_000, 1), (true, None));
-    assert_eq!(w.admit(5_100, 1), (false, None));
+    assert_eq!(w.admit(5_000, 5_000, 1), (true, None));
+    assert_eq!(w.admit(5_100, 5_100, 1), (false, None));
     // The second ended, its summary was taken and its write failed twice.
     assert_eq!(w.roll(6_000), Some((5_000, 1)));
     w.owe(5_000, 1);
@@ -634,8 +652,8 @@ fn a_summary_whose_write_failed_is_handed_out_again_merged_with_the_next_one() {
     );
     assert_eq!(w.roll(6_200), None, "handed out once");
     // Owed while the next second also had excess: both come out as one summary.
-    assert_eq!(w.admit(6_300, 1), (true, None));
-    assert_eq!(w.admit(6_400, 1), (false, None));
+    assert_eq!(w.admit(6_300, 6_300, 1), (true, None));
+    assert_eq!(w.admit(6_400, 6_400, 1), (false, None));
     w.owe(5_000, 4);
     assert_eq!(w.roll(7_000), Some((5_000, 5)));
 }
@@ -945,4 +963,70 @@ fn search_text_is_the_lower_case_fields_a_person_would_type() {
         count: 1,
     };
     assert_eq!(nothing.search_text(), None);
+}
+
+#[test]
+fn search_text_is_built_from_the_capped_fields_the_line_keeps() {
+    let mut record = ConnectionRecord::from_event(9, &event());
+    record.method = Some("M".repeat(3_000));
+    record.path = Some(format!("/{}?secret=1", "é".repeat(2_000)));
+    let search = AuditRecord::connection(record).search_text().unwrap();
+    for part in search.split('\n') {
+        assert!(part.len() <= MAX_FIELD_BYTES, "{} bytes", part.len());
+    }
+    let parts: Vec<&str> = search.split('\n').collect();
+    assert_eq!(parts[1], "m".repeat(MAX_FIELD_BYTES));
+    assert!(
+        parts[2].starts_with("/éé") && parts[2].len() >= MAX_FIELD_BYTES - 1,
+        "{}",
+        parts[2].len()
+    );
+    assert!(
+        !search.contains("secret"),
+        "the query string is not in the line, nor here"
+    );
+
+    let rule = RequestRuleWire {
+        id: 1,
+        scope: RequestRuleWireScope::Global,
+        workspace_id: None,
+        host: "h".repeat(2_000),
+        methods: vec![],
+        path: format!("/{}", "p".repeat(2_000)),
+        created_at: 1,
+        created_by: ActorWire::Cli,
+        precedence: 5,
+    };
+    let search = AuditRecord::RequestRuleCreated { ts: 1, rule }
+        .search_text()
+        .unwrap();
+    let lens: Vec<usize> = search.split('\n').map(str::len).collect();
+    assert_eq!(lens, [MAX_FIELD_BYTES, MAX_FIELD_BYTES]);
+}
+
+#[test]
+fn only_a_connection_has_a_category_and_it_is_the_one_the_line_keeps() {
+    let mut company = ConnectionRecord::from_event(9, &event());
+    assert_eq!(AuditRecord::connection(company.clone()).category(), None);
+    company.category = Some("company_network".into());
+    assert_eq!(
+        AuditRecord::connection(company.clone())
+            .category()
+            .as_deref(),
+        Some("company_network")
+    );
+    company.category = Some("c".repeat(2_000));
+    assert_eq!(
+        AuditRecord::connection(company).category().map(|c| c.len()),
+        Some(MAX_FIELD_BYTES)
+    );
+    assert_eq!(
+        AuditRecord::AuditTrimmed {
+            ts: 1,
+            deleted_records: 1,
+            oldest_ts_kept: None
+        }
+        .category(),
+        None
+    );
 }

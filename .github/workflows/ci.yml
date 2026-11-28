@@ -28,6 +28,8 @@
 # the `light` job and the unit tier (`unit`: fmt, clippy, deny, quick gates, Rust unit tests;
 # `unit-ui`: the UI gate without its end-to-end tests) run, and the result jobs accept the skips. The
 # full set then runs on every push to develop and by hand (`workflow_dispatch`).
+# The `unit` and `unit-ui` tiers and the `queue-tested` lookup live in ci-unit.yml, ci-unit-ui.yml and
+# ci-queue-tested.yml (reusable workflows; ci/workflow-split-test.sh keeps every file under 1000 lines).
 name: ci
 
 on:
@@ -114,93 +116,11 @@ jobs:
   # jobs would save (the Rust `linux` and `gates` entries, the Chromium and WebKit browsers, cargo-xwin) are all on develop
   # for this exact key. Any error or doubt says skip=false and everything runs.
   queue-tested:
-    name: already tested in the merge queue?
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && vars.PUDDLE_QUEUE_SKIP_PUSH == 'on' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
     permissions:
       contents: read
       actions: read
-    outputs:
-      skip: ${{ steps.decide.outputs.skip }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: a green merge queue run on this commit?
-        id: queue
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PUDDLE_QUEUE_SKIP_PUSH: ${{ vars.PUDDLE_QUEUE_SKIP_PUSH }}
-          PUDDLE_LIGHT_CI: ${{ vars.PUDDLE_LIGHT_CI }}
-        run: ci/should-run.sh ci.yml --queue-tested
-      # The Rust key hashes the toolchain, the manifests and the environment, as in the rust job (no extra
-      # CARGO or RUST variables may be set in this job, or the key differs). If the two keys ever drift
-      # apart, the lookup misses and the push run always tests: safe, but option D then saves nothing.
-      - name: Toolchain (from rust-toolchain.toml)
-        if: steps.queue.outputs.tested == 'true'
-        continue-on-error: true
-        run: rustup toolchain install && rustc --version
-      - name: Rust cache entry (lookup only)
-        id: rust-cache
-        if: steps.queue.outputs.tested == 'true'
-        continue-on-error: true
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          shared-key: linux
-          lookup-only: true
-          save-if: false
-      - name: Rust cache entry of the gates job (lookup only)
-        id: gates-cache
-        if: steps.queue.outputs.tested == 'true'
-        continue-on-error: true
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          shared-key: gates
-          lookup-only: true
-          save-if: false
-      - name: Playwright browsers entry (lookup only)
-        id: browsers
-        if: steps.queue.outputs.tested == 'true'
-        continue-on-error: true
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
-          lookup-only: true
-      - name: Playwright WebKit entry (lookup only)
-        id: webkit
-        if: steps.queue.outputs.tested == 'true'
-        continue-on-error: true
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-webkit-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
-          lookup-only: true
-      - name: cargo-xwin entry (lookup only)
-        id: xwin
-        if: steps.queue.outputs.tested == 'true'
-        continue-on-error: true
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/cargo-xwin
-          key: cargo-xwin-0.23.1-x86_64
-          lookup-only: true
-      - name: skip the heavy jobs?
-        id: decide
-        env:
-          TESTED: ${{ steps.queue.outputs.tested }}
-          RUST_HIT: ${{ steps.rust-cache.outputs.cache-hit }}
-          GATES_HIT: ${{ steps.gates-cache.outputs.cache-hit }}
-          BROWSERS_HIT: ${{ steps.browsers.outputs.cache-hit }}
-          WEBKIT_HIT: ${{ steps.webkit.outputs.cache-hit }}
-          XWIN_HIT: ${{ steps.xwin.outputs.cache-hit }}
-        run: |
-          echo "merge queue tested this commit: ${TESTED:-unknown}; cache hits: rust ${RUST_HIT:-none}, gates ${GATES_HIT:-none}, browsers ${BROWSERS_HIT:-none}, webkit ${WEBKIT_HIT:-none}, cargo-xwin ${XWIN_HIT:-none}"
-          if [ "$TESTED" = true ] && [ "$RUST_HIT" = true ] && [ "$GATES_HIT" = true ] && [ "$BROWSERS_HIT" = true ] && [ "$WEBKIT_HIT" = true ] && [ "$XWIN_HIT" = true ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
+    uses: ./.github/workflows/ci-queue-tested.yml
 
   # The Rust tests, with coverage: the instrumented build, the git-env gate (it shares that build) and
   # everything those need installed. The gates that only read the tree run in `gates` beside it.
@@ -980,106 +900,22 @@ jobs:
   # queue run check in that mode instead of the `rust` and `gates` jobs (the `msvc` job still runs when a crate or fixture changed, scope `msvc`). Off the mode scope says `unit=false` and it
   # skips. It restores the `gates` job's Rust cache (its clippy, doc test and desktop shell builds cover these) and saves none.
   unit:
-    name: unit (fmt, clippy, Rust unit tests)
     needs: scope
     if: ${{ !cancelled() && github.event_name != 'schedule' && needs.scope.outputs.unit != 'false' }}
     permissions:
       contents: read
       actions: write
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: free disk space on a runner that starts low
-        run: ci/free-disk.sh
-      - name: Toolchain (from rust-toolchain.toml)
-        run: rustup toolchain install && rustc --version
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          shared-key: gates
-          save-if: false
-      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
-        with:
-          tool: cargo-nextest@0.9.146,cargo-deny@0.20.2
-      - name: apt package cache
-        uses: ./.github/actions/apt-debs-cache
-        with:
-          name: gates
-      # libayatana-appindicator3-1 and xvfb: the tray unit test opens the tray library at run time on a virtual display it starts itself.
-      - name: System packages (WebKitGTK to compile the desktop shell; the tray library and Xvfb for its unit test)
-        timeout-minutes: 10
-        run: |
-          ci/apt-setup.sh
-          ci/apt-retry.sh sudo apt-get update
-          ci/apt-retry.sh sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-1 xvfb
-      - name: fmt
-        run: scripts/check.sh fmt
-      - name: quick gates (platform literals, silent skips, early-exit pipes, spawn, test hooks)
-        if: ${{ !cancelled() }}
-        run: scripts/check.sh platform-literals silent-skips early-exit-pipes spawn test-hooks
-      - name: clippy (linux)
-        if: ${{ !cancelled() }}
-        run: scripts/check.sh clippy
-      - name: cargo-deny (bans, licences, sources)
-        if: ${{ !cancelled() }}
-        run: scripts/check.sh deny
-      - name: Rust unit tests (every crate's library tests, all features)
-        if: ${{ !cancelled() }}
-        run: cargo nextest run --workspace --lib --all-features --locked
-      - name: Cancel the rest of the merge group
-        if: ${{ failure() && github.event_name == 'merge_group' }}
-        continue-on-error: true
-        uses: ./.github/actions/cancel-group
+    uses: ./.github/workflows/ci-unit.yml
 
   # The light CI mode's UI unit tier (scope `unit_ui`): the `ui` job's UI gate (format, lint, types, unit and component tests
   # with coverage, build) without the licences and end-to-end steps. Off the mode it skips.
   unit-ui:
-    name: unit (UI format, lint, types, unit tests)
     needs: scope
     if: ${{ !cancelled() && github.event_name != 'schedule' && needs.scope.outputs.unit_ui != 'false' }}
     permissions:
       contents: read
       actions: write
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0 # the diff-coverage gate needs the base commit
-      - name: Toolchain (from rust-toolchain.toml)
-        run: rustup toolchain install && rustc --version
-      - name: Node for the UI
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: ui/package-lock.json
-      - name: Playwright browsers cache
-        id: browsers
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
-      - name: apt package cache
-        uses: ./.github/actions/apt-debs-cache
-        with:
-          name: ui-chromium
-      - name: Playwright Chromium and its system libraries
-        timeout-minutes: 10
-        run: |
-          ci/apt-setup.sh
-          cd ui
-          npm ci --ignore-scripts --no-audit --no-fund
-          ../ci/apt-retry.sh npx playwright install-deps chromium
-          if [ "${{ steps.browsers.outputs.cache-hit }}" != true ]; then
-            npx playwright install chromium
-          fi
-      - name: UI (format, lint, types, unit and component tests with coverage, build)
-        run: scripts/check.sh ui
-      - name: Cancel the rest of the merge group
-        if: ${{ failure() && github.event_name == 'merge_group' }}
-        continue-on-error: true
-        uses: ./.github/actions/cancel-group
+    uses: ./.github/workflows/ci-unit-ui.yml
 
   # RustSec advisories (`scripts/check.sh advisories`). The result job needs it, but it skips on a pull
   # request to develop and on a merge queue run by its own event rule (not a scope verdict; the result job

@@ -435,6 +435,29 @@ fn entrypoint_is_chained_once_with_puddle_env_and_workdir() {
     }
 }
 
+#[test]
+fn an_entrypoint_that_already_exited_is_not_started_again_by_a_hook_rerun() {
+    for sh in shells() {
+        let fr = FakeRoot::new(&sh);
+        let entry = fr.path("/entry.sh");
+        puddle_test_kit::write_executable(
+            &entry,
+            "#!/bin/sh\necho ran >>\"$PUDDLE_ROOT/entry.out\"\nexit 0\n",
+        );
+        let plan = BootPlan::builder(&image(&[entry.display().to_string()], &[]))
+            .build()
+            .unwrap();
+        let out = fr.run(&plan);
+        assert!(out.status.success(), "{}", show(&out));
+        eventually_blocking("the entrypoint finishes", Duration::from_secs(5), || {
+            fr.path("/run/puddle/entrypoint.exit").exists()
+        });
+        let out = fr.run(&plan);
+        assert!(out.status.success(), "{}", show(&out));
+        assert_eq!(fr.read("/entry.out"), "ran\n", "{}", show(&out));
+    }
+}
+
 /// Boots `script` as the image's entrypoint and returns what the hook said.
 fn entrypoint_report(sh: &std::path::Path, script: &str) -> String {
     let fr = FakeRoot::new(sh);

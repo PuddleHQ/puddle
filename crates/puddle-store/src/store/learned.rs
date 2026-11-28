@@ -6,7 +6,7 @@
 use puddle_types::WorkspaceId;
 use rusqlite::{OptionalExtension, Transaction, params};
 
-use super::{Store, lock};
+use super::{Store, lock, write_tx};
 use crate::error::StoreError;
 
 /// One host a workspace's tools refused Puddle's certificate for.
@@ -38,17 +38,22 @@ impl Store {
         let cap = self.learned_limits()?.cap;
         let now = self.clock.now_ms();
         let mut conn = lock(&self.conn);
-        let tx = conn.transaction()?;
+        let tx = write_tx(&mut conn)?;
+        // A clock that stepped back must not make this refusal the oldest: stamp it no earlier
+        // than the newest row, so the cap evicts an older row and never the one just recorded.
+        let newest: Option<i64> = tx.query_row(
+            "SELECT max(last_at) FROM learned_hosts WHERE workspace_id = ?1",
+            [workspace.as_str()],
+            |r| r.get(0),
+        )?;
+        let now = i64::try_from(now).unwrap_or(i64::MAX);
+        let stamp = now.max(newest.unwrap_or(0));
         tx.execute(
             "INSERT INTO learned_hosts (workspace_id, host, first_at, last_at, count)
-             VALUES (?1, ?2, ?3, ?3, 1)
+             VALUES (?1, ?2, ?3, ?4, 1)
              ON CONFLICT (workspace_id, host)
-             DO UPDATE SET last_at = ?3, count = count + 1",
-            params![
-                workspace.as_str(),
-                host,
-                i64::try_from(now).unwrap_or(i64::MAX)
-            ],
+             DO UPDATE SET last_at = ?4, count = count + 1",
+            params![workspace.as_str(), host, now, stamp],
         )?;
         tx.execute(
             "DELETE FROM learned_hosts WHERE workspace_id = ?1 AND host NOT IN (

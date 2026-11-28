@@ -105,9 +105,10 @@ async fn vm_three_sandboxes_at_once_each_with_its_own_route() {
     }
     cleanup(&rt, &names.iter().collect::<Vec<_>>()).await;
     for (i, collector) in collectors.into_iter().enumerate() {
-        let lines = collector.await.unwrap();
-        if lines != [format!("from-{i}")] {
-            failures.push(format!("{i}: endpoint got {lines:?}"));
+        match collector.finish().await {
+            Ok(lines) if lines == [format!("from-{i}")] => {}
+            Ok(lines) => failures.push(format!("{i}: endpoint got {lines:?}")),
+            Err(e) => failures.push(format!("{i}: endpoint collector: {e}")),
         }
     }
     assert!(failures.is_empty(), "{failures:#?}");

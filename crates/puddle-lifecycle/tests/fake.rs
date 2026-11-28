@@ -590,15 +590,78 @@ async fn an_orphan_left_starting_draining_or_paused_is_killed_and_its_record_rem
 }
 
 #[tokio::test]
-async fn reconcile_fails_only_when_the_runtime_cannot_list() {
-    for op in [Op::List, Op::StaleDirs, Op::ListVolumes] {
-        let rt = FakeRuntime::new();
-        rt.inject(op, Fault::once(runtime_error("list")));
-        let err = reconcile(&rt, &Inventory::default(), &ShutdownConfig::default())
+async fn reconcile_fails_only_when_the_runtime_cannot_list_its_sandboxes() {
+    let rt = FakeRuntime::new();
+    rt.inject(Op::List, Fault::once(runtime_error("list")));
+    let err = reconcile(&rt, &Inventory::default(), &ShutdownConfig::default())
+        .await
+        .unwrap_err();
+    assert_eq!(err, runtime_error("list"));
+}
+
+#[tokio::test]
+async fn a_failed_listing_of_stale_dirs_or_volumes_keeps_what_was_already_done() {
+    for (op, item, action) in [
+        (Op::StaleDirs, "stale directories", "list stale dirs"),
+        (Op::ListVolumes, "volumes", "list volumes"),
+    ] {
+        let w = killed_puddle_world().await;
+        w.rt.inject(op, Fault::once(runtime_error("list")));
+
+        let report = reconcile(&w.rt, &w.inventory, &ShutdownConfig::default())
             .await
-            .unwrap_err();
-        assert_eq!(err, runtime_error("list"), "{op:?}");
+            .unwrap();
+
+        // The sandboxes were stopped and removed before the listing failed, and stay reported.
+        assert_eq!(
+            report.stopped,
+            [name("known-running"), name("unknown-running")],
+            "{op:?}"
+        );
+        assert_eq!(
+            report.removed,
+            [name("unknown-running"), name("unknown-stopped")],
+            "{op:?}"
+        );
+        assert_eq!(report.crashed, [name("known-crashed")], "{op:?}");
+        let failed: Vec<(&str, &str)> = report
+            .failures
+            .iter()
+            .map(|f| (f.item.as_str(), f.action))
+            .collect();
+        assert_eq!(failed, [(item, action)], "{op:?}");
+        assert!(report.failures[0].error.contains("injected"), "{op:?}");
+        // The other listing still ran.
+        if op == Op::StaleDirs {
+            assert_eq!(report.volumes_removed, [vol("ws-half")]);
+            assert_eq!(report.stale_dirs_removed, []);
+        } else {
+            assert_eq!(report.stale_dirs_removed, [name("failed-create")]);
+            assert_eq!(report.volumes_removed, []);
+            // No listing, no verdict: a known workspace is not called volume-less.
+            assert_eq!(report.missing_volumes, []);
+        }
     }
+}
+
+#[tokio::test]
+async fn an_orphan_ended_by_force_is_reported_as_forced_not_stopped() {
+    let rt = FakeRuntime::new();
+    fstrim_ok(&rt);
+    let forced = rt.create(spec("stuck")).await.unwrap();
+    let clean = rt.create(spec("clean")).await.unwrap();
+    rt.force_next_stop(&name("stuck"));
+
+    let report = reconcile(&rt, &Inventory::default(), &ShutdownConfig::default())
+        .await
+        .unwrap();
+
+    assert_eq!(report.forced, [name("stuck")]);
+    assert_eq!(report.stopped, [name("clean")]);
+    // Forced is down all the same, so its stale record goes like the clean one's.
+    assert_eq!(report.removed, [name("clean"), name("stuck")]);
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    drop((forced, clean));
 }
 
 #[tokio::test]

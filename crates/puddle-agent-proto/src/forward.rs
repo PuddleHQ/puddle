@@ -24,6 +24,8 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio_yamux::{Control, StreamHandle};
 
+use crate::host::SessionId;
+
 /// Bytes that open a forward stream ([`crate::kind::StreamKind::Forward`] v1).
 pub const PREAMBLE: &[u8] = crate::kind::StreamKind::Forward.preamble();
 
@@ -166,7 +168,8 @@ pub enum OpenError {
 /// The host's handle on one agent session: opens streams to the agent. Cheap to clone.
 #[derive(Clone)]
 pub struct GuestLink {
-    pub(crate) control: Control,
+    control: Control,
+    session: SessionId,
 }
 
 impl std::fmt::Debug for GuestLink {
@@ -176,8 +179,46 @@ impl std::fmt::Debug for GuestLink {
 }
 
 impl GuestLink {
-    pub(crate) fn new(control: Control) -> Self {
-        Self { control }
+    pub(crate) fn new(control: Control, session: SessionId) -> Self {
+        Self { control, session }
+    }
+
+    /// The session this link opens streams on. The same value comes to
+    /// [`crate::host::GuestWatcher::session_ended`] when that session ends, so a watcher can tell
+    /// whether the session that ended carried the link it holds.
+    #[must_use]
+    pub fn session(&self) -> SessionId {
+        self.session
+    }
+
+    /// Opens a stream to the agent, writes `request`, and reads the agent's one answer line
+    /// (at most `limit` bytes, newline included) within `timeout`. The stream is returned
+    /// beside the line: for some requests it carries the connection afterwards.
+    ///
+    /// # Errors
+    ///
+    /// [`OpenError`] says whether the agent is gone, silent, or the stream failed.
+    pub(crate) async fn exchange(
+        &self,
+        request: &[u8],
+        limit: usize,
+        timeout: Duration,
+    ) -> Result<(StreamHandle, Vec<u8>), OpenError> {
+        let mut control = self.control.clone();
+        let mut stream = control
+            .open_stream()
+            .await
+            .map_err(|_| OpenError::Disconnected)?;
+        let asked = async {
+            stream.write_all(request).await?;
+            stream.flush().await?;
+            read_line_exact(&mut stream, limit).await
+        };
+        let line = tokio::time::timeout(timeout, asked)
+            .await
+            .map_err(|_| OpenError::Timeout(timeout))?
+            .map_err(|e| OpenError::Io(e.to_string()))?;
+        Ok((stream, line))
     }
 
     /// Opens a connection to `port` on the guest's loopback. The returned stream carries the
@@ -187,20 +228,9 @@ impl GuestLink {
     ///
     /// [`OpenError`] says whether the agent is gone, silent, or could not connect.
     pub async fn open_forward(&self, port: u16) -> Result<StreamHandle, OpenError> {
-        let mut control = self.control.clone();
-        let mut stream = control
-            .open_stream()
-            .await
-            .map_err(|_| OpenError::Disconnected)?;
-        let exchange = async {
-            stream.write_all(&request(port)).await?;
-            stream.flush().await?;
-            read_line_exact(&mut stream, MAX_ANSWER_LINE).await
-        };
-        let line = tokio::time::timeout(ANSWER_TIMEOUT, exchange)
-            .await
-            .map_err(|_| OpenError::Timeout(ANSWER_TIMEOUT))?
-            .map_err(|e| OpenError::Io(e.to_string()))?;
+        let (stream, line) = self
+            .exchange(&request(port), MAX_ANSWER_LINE, ANSWER_TIMEOUT)
+            .await?;
         match Answer::from_line(&line) {
             Ok(Answer::Ok) => Ok(stream),
             Ok(Answer::Refused(reason)) => Err(OpenError::Refused(reason)),

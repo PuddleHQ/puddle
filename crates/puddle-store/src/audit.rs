@@ -696,16 +696,18 @@ impl AuditRecord {
 
     /// The text the audit search box matches, lower case (ASCII), one part per line: a
     /// connection's host, method, path and reason; a rule on method and path's host and path;
-    /// otherwise the record's [`host`](Self::host). Stored in a column so `q` needs no JSON
-    /// parsing. The migration that added the column derives the same value in SQL
-    /// (`schema.rs`); a test keeps the two equal.
+    /// otherwise the record's [`host`](Self::host). Each part is cut to [`MAX_FIELD_BYTES`] and
+    /// a path loses its query string, as in the line, so the column stays within what the line
+    /// holds (the audit size counts it). Stored in a column so `q` needs no JSON parsing. The
+    /// migration that added the column derives the same value in SQL (`schema.rs`); a test
+    /// keeps the two equal.
     #[must_use]
     pub fn search_text(&self) -> Option<String> {
         let parts: Vec<Option<String>> = match self {
             Self::Connection(r) => vec![
                 r.host.clone(),
                 r.method.clone(),
-                r.path.clone(),
+                r.path.as_deref().map(|path| request_path(path).to_owned()),
                 Some(r.reason.clone()),
                 r.category.clone(),
             ],
@@ -717,11 +719,23 @@ impl AuditRecord {
         let text = parts
             .into_iter()
             .flatten()
+            .map(capped_field)
             .filter(|part| !part.is_empty())
             .collect::<Vec<_>>()
             .join("\n")
             .to_ascii_lowercase();
         (!text.is_empty()).then_some(text)
+    }
+
+    /// The destination category of a `connection` record (`company_network`), cut to
+    /// [`MAX_FIELD_BYTES`] as the line has it. Stored in a column of its own, so the category
+    /// filter never matches a request method or a path that spells it.
+    #[must_use]
+    pub fn category(&self) -> Option<String> {
+        match self {
+            Self::Connection(record) => record.category.clone().map(capped_field),
+            _ => None,
+        }
     }
 
     /// Whose connection the record describes: `connection` records only (every other record
@@ -898,6 +912,13 @@ impl AuditRecord {
         }
         Ok(line)
     }
+}
+
+/// `text` cut to [`MAX_FIELD_BYTES`], at a character boundary.
+fn capped_field(mut text: String) -> String {
+    let keep = text.floor_char_boundary(MAX_FIELD_BYTES);
+    text.truncate(keep);
+    text
 }
 
 /// Maps a stored actor to the wire string.

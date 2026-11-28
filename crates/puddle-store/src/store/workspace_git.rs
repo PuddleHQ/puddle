@@ -221,6 +221,7 @@ impl Store {
         pull: SwitchChange,
     ) -> Result<WorkspaceGit, StoreError> {
         self.change(|tx, _now, fx| {
+            users::owner_in(tx, ws)?;
             let (own_push, own_pull) = tx
                 .query_row(
                     "SELECT only_push_listed, only_pull_listed FROM workspace_git WHERE workspace_id = ?1",
@@ -256,6 +257,7 @@ impl Store {
         push_block: Option<PushBlock>,
     ) -> Result<RepoEntry, StoreError> {
         let id = self.change(|tx, now, fx| {
+            users::owner_in(tx, ws)?;
             let added = tx.execute(
                 "INSERT INTO workspace_repos (workspace_id, host, owner, repo, pull, push, push_block, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)

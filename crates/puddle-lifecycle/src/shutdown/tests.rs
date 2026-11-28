@@ -5,8 +5,9 @@ use puddle_compute::{ExecOutput, ExecRequest, SshStream};
 
 use super::*;
 
-/// A sandbox whose exec and stop never answer (a hung runtime).
-struct Hung(SandboxName);
+/// A sandbox whose exec and stop never answer (a hung runtime); `status_hangs` makes its status
+/// check hang too, where otherwise it answers `Running` at once.
+struct Hung(SandboxName, bool);
 
 impl Sandbox for Hung {
     fn name(&self) -> &SandboxName {
@@ -18,7 +19,13 @@ impl Sandbox for Hung {
     }
 
     fn status(&self) -> impl Future<Output = Result<WorkspaceStatus, ComputeError>> + Send {
-        std::future::ready(Ok(WorkspaceStatus::Running))
+        let hangs = self.1;
+        async move {
+            if hangs {
+                std::future::pending::<()>().await;
+            }
+            Ok(WorkspaceStatus::Running)
+        }
     }
 
     fn stop(&self) -> impl Future<Output = Result<(), ComputeError>> + Send {
@@ -74,7 +81,7 @@ async fn a_hung_trim_and_stop_time_out_in_order() {
         trim_timeout: Duration::from_secs(3),
         stop_timeout: Duration::from_secs(5),
     };
-    let hung = Hung(SandboxName::new("hung").unwrap());
+    let hung = Hung(SandboxName::new("hung").unwrap(), false);
     let start = tokio::time::Instant::now();
     let (trim, stop) = trim_and_stop(&hung, &[], &config).await;
     assert!(matches!(trim, TrimOutcome::Error(ref e) if e.contains("no answer")));
@@ -83,4 +90,19 @@ async fn a_hung_trim_and_stop_time_out_in_order() {
     assert!(hung.owns_lifecycle());
     // A runtime that does not say counts as not forced.
     assert!(!hung.stopped_by_force());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_status_check_that_never_answers_is_bounded_by_the_trim_deadline_and_the_stop_goes_on() {
+    let config = ShutdownConfig {
+        trim_timeout: Duration::from_secs(3),
+        stop_timeout: Duration::from_secs(5),
+    };
+    let hung = Hung(SandboxName::new("hung").unwrap(), true);
+    let start = tokio::time::Instant::now();
+    let (trim, stop) = trim_and_stop(&hung, &[], &config).await;
+    assert_eq!(trim, TrimOutcome::Error("no answer within 3s".to_owned()));
+    assert_eq!(stop, StopOutcome::TimedOut);
+    // One trim deadline for status and exec together, then the stop's own.
+    assert_eq!(start.elapsed(), Duration::from_secs(8));
 }

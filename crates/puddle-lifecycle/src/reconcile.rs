@@ -18,6 +18,8 @@
 //! holder registry (it lives in memory) from the inventory.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::future::Future;
+use std::time::Duration;
 
 use puddle_compute::{ComputeError, Runtime, SandboxInfo};
 use puddle_types::{SandboxName, VolumeName, WorkspaceId, WorkspaceStatus};
@@ -49,7 +51,8 @@ pub struct Inventory {
 pub struct Failure {
     /// The sandbox, directory or volume.
     pub item: String,
-    /// What was being done (`stop`, `remove`, `remove stale dir`, `remove volume`).
+    /// What was being done (`stop`, `kill`, `remove`, `list stale dirs`, `remove stale dir`,
+    /// `list volumes`, `remove volume`).
     pub action: &'static str,
     /// Why it failed.
     pub error: String,
@@ -58,8 +61,11 @@ pub struct Failure {
 /// What [`reconcile`] did. Every list is in name order.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ReconcileReport {
-    /// Running sandboxes a previous Puddle left behind, now trimmed and stopped.
+    /// Running sandboxes a previous Puddle left behind, now trimmed and stopped cleanly.
     pub stopped: Vec<SandboxName>,
+    /// Sandboxes a previous Puddle left behind that did not shut down in time and were ended
+    /// by force: they are down, but what the guest had not yet written may be lost.
+    pub forced: Vec<SandboxName>,
     /// Records of sandboxes Puddle no longer knows, removed.
     pub removed: Vec<SandboxName>,
     /// Known sandboxes found `Crashed`: kept, and reported so the UI can say so.
@@ -88,17 +94,22 @@ pub struct ReconcileReport {
 /// workspace claims is kept and reported. Foreign names are never touched. Run it before Puddle starts any sandbox
 /// and while no other Puddle runs (single instance).
 ///
+/// Every runtime call runs under [`ShutdownConfig::stop_timeout`]: a call that does not answer
+/// is a failure like one that errs.
+///
 /// # Errors
 ///
-/// Only when the runtime can't list its sandboxes, stale directories or volumes; a failed step
-/// on one item is in [`ReconcileReport::failures`].
+/// Only when the runtime can't list its sandboxes (nothing has been done yet then). A failed
+/// step on one item, and a failed listing of stale directories or volumes, is in
+/// [`ReconcileReport::failures`] and the steps already taken stay in the report.
 pub async fn reconcile<R: Runtime>(
     runtime: &R,
     inventory: &Inventory,
     config: &ShutdownConfig,
 ) -> Result<ReconcileReport, ComputeError> {
     let mut report = ReconcileReport::default();
-    for info in runtime.list().await? {
+    let limit = config.stop_timeout;
+    for info in bounded("list", limit, runtime.list()).await? {
         let Some(name) = owned(&info) else {
             report.foreign.push(info.name);
             continue;
@@ -106,12 +117,18 @@ pub async fn reconcile<R: Runtime>(
         reconcile_sandbox(runtime, inventory, config, name, info.status, &mut report).await;
     }
 
-    for dir in runtime.stale_dirs().await? {
+    let dirs = bounded("stale dirs", limit, runtime.stale_dirs())
+        .await
+        .unwrap_or_else(|e| {
+            report.fail("stale directories", "list stale dirs", &e);
+            Vec::new()
+        });
+    for dir in dirs {
         let Ok(name) = SandboxName::new(&dir) else {
             report.foreign.push(dir);
             continue;
         };
-        match runtime.remove_stale_dir(&name).await {
+        match bounded("remove stale dir", limit, runtime.remove_stale_dir(&name)).await {
             Ok(()) => {
                 tracing::info!(sandbox = %name, "reconcile: stale directory removed");
                 report.stale_dirs_removed.push(name);
@@ -121,7 +138,11 @@ pub async fn reconcile<R: Runtime>(
     }
 
     let mut present = BTreeSet::new();
-    for volume in runtime.list_volumes().await? {
+    let listed = bounded("list volumes", limit, runtime.list_volumes()).await;
+    if let Err(e) = &listed {
+        report.fail("volumes", "list volumes", e);
+    }
+    for volume in listed.as_ref().ok().into_iter().flatten().cloned() {
         let Some((name, workspace)) = volume
             .volume_name()
             .and_then(|v| v.workspace_id().map(|w| (v, w)))
@@ -148,7 +169,7 @@ pub async fn reconcile<R: Runtime>(
             });
             continue;
         }
-        match runtime.remove_volume(&name).await {
+        match bounded("remove volume", limit, runtime.remove_volume(&name)).await {
             Ok(()) => {
                 tracing::info!(volume = %name, "reconcile: volume of an unfinished create removed");
                 report.volumes_removed.push(name);
@@ -159,11 +180,15 @@ pub async fn reconcile<R: Runtime>(
 
     report.foreign.sort();
     report.unknown_volumes.sort();
-    report.missing_volumes = inventory.workspaces.difference(&present).cloned().collect();
+    // Without a listing every workspace would look volume-less: say nothing then.
+    if listed.is_ok() {
+        report.missing_volumes = inventory.workspaces.difference(&present).cloned().collect();
+    }
     let missing = report.missing_volumes.len();
     tracing::info!(missing, "reconcile: workspaces without a volume");
     tracing::info!(
         stopped = report.stopped.len(),
+        forced = report.forced.len(),
         removed = report.removed.len(),
         stale_dirs = report.stale_dirs_removed.len(),
         volumes = report.volumes_removed.len(),
@@ -220,11 +245,16 @@ async fn reconcile_sandbox<R: Runtime>(
     if !down {
         // Left running by a Puddle that died (VMs never outlive Puddle). Starting,
         // Draining and Paused are treated the same: stop is the only way back to a known state.
-        match runtime.get(&name).await {
+        match bounded("get", config.stop_timeout, runtime.get(&name)).await {
             Ok(handle) => match trim_and_stop(&handle, &[], config).await.1 {
-                StopOutcome::Stopped | StopOutcome::Forced => {
+                StopOutcome::Stopped => {
                     tracing::info!(sandbox = %name, %status, "reconcile: orphaned VM stopped");
                     report.stopped.push(name.clone());
+                    down = true;
+                }
+                StopOutcome::Forced => {
+                    tracing::warn!(sandbox = %name, %status, "reconcile: orphaned VM ended by force");
+                    report.forced.push(name.clone());
                     down = true;
                 }
                 StopOutcome::Failed(e) => report.fail(name.as_str(), "stop", &e),
@@ -241,7 +271,7 @@ async fn reconcile_sandbox<R: Runtime>(
             // `get` refuses a VM that is not running (starting, draining, paused: a dead Puddle
             // left it mid-stop), and stop needs a connection. End it by name instead.
             Err(ComputeError::InvalidState { status: held, .. }) => {
-                match runtime.kill(&name).await {
+                match bounded("kill", config.stop_timeout, runtime.kill(&name)).await {
                     Ok(()) => {
                         tracing::info!(sandbox = %name, status = %held, "reconcile: VM that refuses connections killed by name");
                         report.stopped.push(name.clone());
@@ -262,13 +292,28 @@ async fn reconcile_sandbox<R: Runtime>(
     if !down {
         return;
     }
-    match runtime.remove(&name).await {
+    match bounded("remove", config.stop_timeout, runtime.remove(&name)).await {
         Ok(()) => {
             tracing::info!(sandbox = %name, %status, "reconcile: stale record removed");
             report.removed.push(name);
         }
         Err(e) => report.fail(name.as_str(), "remove", &e),
     }
+}
+
+/// `call` within `limit`; no answer is a [`ComputeError::Runtime`] naming `op`, so a hung
+/// runtime call fails one step instead of holding up the whole reconcile.
+async fn bounded<T>(
+    op: &'static str,
+    limit: Duration,
+    call: impl Future<Output = Result<T, ComputeError>>,
+) -> Result<T, ComputeError> {
+    tokio::time::timeout(limit, call).await.unwrap_or_else(|_| {
+        Err(ComputeError::Runtime {
+            op,
+            message: format!("no answer within {limit:?}"),
+        })
+    })
 }
 
 impl ReconcileReport {

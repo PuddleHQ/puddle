@@ -7,6 +7,7 @@
   import {
     EXTENSIONS_DEFAULT,
     FONT_DEFAULT,
+    CUSTOM_SETTINGS_DEFAULT,
     KEYBINDINGS_DEFAULT,
     THEME_DEFAULT,
     editorOf,
@@ -14,6 +15,7 @@
     fontSizeText,
     parseExtensions,
     parseFontSize,
+    parseCustomSettings,
     parseKeybindings,
     parseTheme,
     type EditorField,
@@ -86,6 +88,19 @@
       parse={parseKeybindings}
       onsave={(text) =>
         save("set-editor-keybindings", stored, "keybindings", text)}
+    />
+    <ValueRow
+      id="set-editor-custom-settings"
+      label="Custom editor settings"
+      desc="Your own editor settings as a JSON object, the shape of the editor's settings.json without comments, used as defaults for new workspaces. Empty adds {CUSTOM_SETTINGS_DEFAULT.toLowerCase()}."
+      how="A setting you change inside a workspace is never overwritten. The theme and font size have their own fields above and are refused here."
+      value={stored.settings ?? ""}
+      mono
+      multiline
+      placeholder={'{"editor.tabSize": 2, "files.autoSave": "afterDelay"}'}
+      parse={parseCustomSettings}
+      onsave={(text) =>
+        save("set-editor-custom-settings", stored, "settings", text)}
     />
   </SettingsGroup>
 {/if}

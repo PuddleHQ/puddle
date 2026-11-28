@@ -129,6 +129,7 @@ const noLayer = (): Layer => ({
     font_size: null,
     extensions: null,
     keybindings: null,
+    settings: null,
   },
   clipboard_read: null,
   direct_ssh: null,
@@ -184,6 +185,7 @@ export class FakeWorkspaces {
     font_size: null,
     extensions: null,
     keybindings: null,
+    settings: null,
   };
   /** The computer's logical cores, the most CPUs a workspace may have here. */
   hostCpus = 16;
@@ -352,6 +354,7 @@ export class FakeWorkspaces {
           "keybindings",
           null,
         ),
+        settings: this.editorField(o.editor.settings, "settings", null),
       },
     };
   }

@@ -317,6 +317,12 @@ export const SETTINGS: readonly SettingEntry[] = [
     "Key bindings",
     "editor vs code keyboard shortcuts keymap",
   ),
+  entry(
+    "editor",
+    "set-editor-custom-settings",
+    "Custom editor settings",
+    "editor vs code settings.json json tab size auto save extension settings",
+  ),
 
   entry(
     "editor-server",

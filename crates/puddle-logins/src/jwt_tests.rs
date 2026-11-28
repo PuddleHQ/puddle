@@ -107,16 +107,18 @@ async fn a_jwt_login_gives_the_tool_a_token_whose_claims_read_the_same() {
 async fn a_refresh_makes_a_new_stand_in_and_a_few_older_ones_stay_registered() {
     let rig = rig_for(&JWT_PROFILE);
     let mut given = Vec::new();
-    let mut last_real = String::new();
+    let mut reals = Vec::new();
     for (n, letter) in (0_u64..).zip(["A", "B", "C", "D", "E"]) {
-        last_real = jwt(1_000_000_001 + 3600 * n, &letter.repeat(86));
+        let last_real = jwt(1_000_000_001 + 3600 * n, &letter.repeat(86));
         given.push(
             token(&rig, &last_real, REFRESH).await["access_token"]
                 .as_str()
                 .unwrap()
                 .to_owned(),
         );
+        reals.push(last_real);
     }
+    let last_real = reals[4].clone();
     for (a, stand_in) in given.iter().enumerate() {
         assert_eq!(
             claims_of(stand_in)["exp"],
@@ -126,14 +128,16 @@ async fn a_refresh_makes_a_new_stand_in_and_a_few_older_ones_stay_registered() {
     }
     // The newest and the three before it, and the one refresh stand-in, which a refresh keeps.
     assert_eq!(rig.registry.len(), 5);
-    let registered = |stand_in: &str| {
-        rig.registry
-            .set_real(stand_in, puddle_proxy::SecretValue::new(last_real.as_str()))
-            == Ok(true)
-    };
-    assert!(!registered(&given[0]), "the oldest is no longer swapped");
-    for stand_in in &given[1..] {
-        assert!(registered(stand_in), "{stand_in}");
+    assert_eq!(
+        rig.registry.real_of(&given[0]),
+        None,
+        "the oldest is no longer swapped"
+    );
+    for (stand_in, real) in given.iter().zip(&reals).skip(1) {
+        assert_eq!(
+            rig.registry.real_of(stand_in).as_deref(),
+            Some(real.as_str())
+        );
     }
     // The store holds the newest pair only.
     let kept = Vault::new(rig.store.clone(), &WorkspaceId::new("alpha").unwrap())

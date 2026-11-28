@@ -5095,13 +5095,16 @@ async fn vm_host_a_terminal_is_a_shell_as_the_session_user_in_the_start_folder()
     assert_eq!(renamed.status, 200, "{}", renamed.body);
 
     let size = puddle_services::terminals::TerminalSize::new(100, 30).unwrap();
+    let sandbox_handle =
+        puddle_services::owned::OwnedWorkspace::for_test(puddle_store::UserId::OWNER, &sandbox);
     let service = host.workspaces();
-    puddle_services::terminals::TerminalService::check(service, &sandbox)
+    puddle_services::terminals::TerminalService::check(service, &sandbox_handle)
         .await
         .unwrap();
-    let mut link = puddle_services::terminals::TerminalService::open(service, &sandbox, size)
-        .await
-        .unwrap();
+    let mut link =
+        puddle_services::terminals::TerminalService::open(service, &sandbox_handle, size)
+            .await
+            .unwrap();
     assert_eq!(service.open_terminals(), 1);
     // The typed line carries `$(...)` and the answer does not, so the echo cannot satisfy the wait.
     let typed =
@@ -5138,9 +5141,10 @@ async fn vm_host_a_terminal_is_a_shell_as_the_session_user_in_the_start_folder()
     assert_eq!(ended_with.status, Some(7), "{ended_with:?}");
 
     // A terminal still open when the workspace stops ends with `stopped`.
-    let mut open = puddle_services::terminals::TerminalService::open(service, &sandbox, size)
-        .await
-        .unwrap();
+    let mut open =
+        puddle_services::terminals::TerminalService::open(service, &sandbox_handle, size)
+            .await
+            .unwrap();
     let prompt = terminal_text_until(&mut open, "$").await;
     assert!(prompt.contains('$'), "{prompt:?}");
     let stop = api.post(&format!("/api/workspaces/{name}/stop"), "").await;

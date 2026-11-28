@@ -3,6 +3,7 @@
 
 use futures_util::future::BoxFuture;
 use puddle_compute::{DiskSize, Runtime};
+use puddle_services::owned::OwnedWorkspace;
 use puddle_services::workspaces::phase::{Action, admit, begin};
 use puddle_services::{
     terminals::TerminalError, terminals::TerminalLink, terminals::TerminalService,
@@ -31,7 +32,8 @@ use crate::boot::root_disk_size;
 use crate::op_error::OpError;
 
 impl<R: Runtime + Clone> TerminalService for HostWorkspaces<R> {
-    fn check(&self, workspace: &WorkspaceId) -> BoxFuture<'_, Result<(), TerminalError>> {
+    fn check(&self, workspace: &OwnedWorkspace) -> BoxFuture<'_, Result<(), TerminalError>> {
+        let workspace = workspace.id();
         let running = self.state().slots.get(workspace).is_some_and(|s| {
             matches!(
                 s.record.status,
@@ -51,10 +53,10 @@ impl<R: Runtime + Clone> TerminalService for HostWorkspaces<R> {
 
     fn open(
         &self,
-        workspace: &WorkspaceId,
+        workspace: &OwnedWorkspace,
         size: TerminalSize,
     ) -> BoxFuture<'_, Result<TerminalLink, TerminalError>> {
-        let workspace = workspace.clone();
+        let workspace = workspace.id().clone();
         Box::pin(async move {
             let identity = self
                 .inner

@@ -84,6 +84,11 @@ fn injection_with_events(
 const REAL: &str = "real-value-CANARY-4711";
 
 /// A secret for `hosts` in the workspace's own scope, its value in `vault`.
+/// The handle of the workspace for its one test user, as the API makes it.
+fn handle(ws: &WorkspaceId) -> puddle_services::owned::OwnedWorkspace {
+    puddle_services::owned::OwnedWorkspace::for_test(puddle_store::UserId::OWNER, ws)
+}
+
 fn add_secret(store: &Store, vault: &MemoryStore, ws: &WorkspaceId, var: &str, hosts: &[&str]) {
     let id = StoredId::new(format!("env-{var}")).unwrap();
     vault.set(&id, &Secret::new(REAL.to_owned())).unwrap();
@@ -484,10 +489,10 @@ async fn a_host_a_tool_refused_is_announced_with_its_count_and_listed_with_its_h
     let service = crate::learned::HostLearned::new(Arc::clone(&terminations), Arc::clone(&store));
     let ws = workspace("alpha");
     let host = |h: &str| Host::parse_normalised(h).unwrap();
-    assert_eq!(service.list(&ws).len(), 0, "nothing learned yet");
-    assert!(!service.forget(&ws, "pinned.example"));
-    assert_eq!(service.clear(&ws), 0);
-    assert!(!service.discard(&ws, "pinned.example"));
+    assert_eq!(service.list(&handle(&ws)).len(), 0, "nothing learned yet");
+    assert!(!service.forget(&handle(&ws), "pinned.example"));
+    assert_eq!(service.clear(&handle(&ws)), 0);
+    assert!(!service.discard(&handle(&ws), "pinned.example"));
 
     injection.begin(&ws, false).await.unwrap();
     let learned = Arc::clone(
@@ -514,7 +519,7 @@ async fn a_host_a_tool_refused_is_announced_with_its_count_and_listed_with_its_h
         "each new host once, renewing says nothing"
     );
 
-    let listed = service.list(&ws);
+    let listed = service.list(&handle(&ws));
     assert_eq!(listed.len(), 2);
     assert!(
         listed.iter().all(|h| h.passed_through
@@ -524,16 +529,16 @@ async fn a_host_a_tool_refused_is_announced_with_its_count_and_listed_with_its_h
                 .is_some_and(|s| (43_199..=43_200).contains(&s))),
         "{listed:?}: the time is the built-in twelve hours, rounded up"
     );
-    assert!(!service.forget(&ws, "never.example"));
-    assert!(!service.forget(&ws, "not a host"));
-    assert!(service.forget(&ws, "pinned.example"));
+    assert!(!service.forget(&handle(&ws), "never.example"));
+    assert!(!service.forget(&handle(&ws), "not a host"));
+    assert!(service.forget(&handle(&ws), "pinned.example"));
     assert!(!learned.contains(&host("pinned.example")));
     assert!(
-        !service.forget(&ws, "pinned.example"),
+        !service.forget(&handle(&ws), "pinned.example"),
         "no longer passed through"
     );
 
-    let after = service.list(&ws);
+    let after = service.list(&handle(&ws));
     assert_eq!(
         after
             .iter()
@@ -552,21 +557,25 @@ async fn a_host_a_tool_refused_is_announced_with_its_count_and_listed_with_its_h
     );
     assert_eq!(
         service
-            .list(&ws)
+            .list(&handle(&ws))
             .iter()
             .find(|h| h.host == "pinned.example")
             .map(|h| h.count),
         Some(2)
     );
 
-    assert_eq!(service.clear(&ws), 2);
-    assert_eq!(service.list(&ws).len(), 2, "clearing keeps the history");
-    assert!(service.discard(&ws, "pinned.example"));
-    assert!(!service.discard(&ws, "pinned.example"));
-    assert_eq!(service.list(&ws).len(), 1);
+    assert_eq!(service.clear(&handle(&ws)), 2);
+    assert_eq!(
+        service.list(&handle(&ws)).len(),
+        2,
+        "clearing keeps the history"
+    );
+    assert!(service.discard(&handle(&ws), "pinned.example"));
+    assert!(!service.discard(&handle(&ws), "pinned.example"));
+    assert_eq!(service.list(&handle(&ws)).len(), 1);
     assert!(!learned.contains(&host("other.example")));
-    assert!(service.discard(&ws, "other.example"));
-    assert_eq!(service.list(&ws).len(), 0);
+    assert!(service.discard(&handle(&ws), "other.example"));
+    assert_eq!(service.list(&handle(&ws)).len(), 0);
 }
 
 #[tokio::test]
@@ -608,7 +617,7 @@ async fn a_store_that_cannot_keep_the_history_still_passes_the_host_through_and_
         }],
         "the user is told, with a count of one"
     );
-    let listed = service.list(&ws);
+    let listed = service.list(&handle(&ws));
     assert_eq!(
         listed
             .iter()
@@ -618,11 +627,11 @@ async fn a_store_that_cannot_keep_the_history_still_passes_the_host_through_and_
         "a host passed through is listed even without its history"
     );
     assert!(
-        !service.discard(&ws, "not a host"),
+        !service.discard(&handle(&ws), "not a host"),
         "not a name: nothing to discard"
     );
     assert!(
-        service.discard(&ws, "pinned.example"),
+        service.discard(&handle(&ws), "pinned.example"),
         "it was passed through, so it is discarded although its history cannot be dropped"
     );
     assert!(!learned.contains(&Host::parse_normalised("pinned.example").unwrap()));
@@ -643,9 +652,9 @@ async fn the_history_of_a_refused_host_outlives_the_workspace_run_but_the_pass_t
         .interception()
         .learned()
         .learn(&Host::parse_normalised("pinned.example").unwrap());
-    assert!(service.list(&ws)[0].passed_through);
+    assert!(service.list(&handle(&ws))[0].passed_through);
     injection.end(&ws);
-    let kept = service.list(&ws);
+    let kept = service.list(&handle(&ws));
     assert_eq!(kept.len(), 1);
     assert_eq!(
         (
@@ -659,7 +668,7 @@ async fn the_history_of_a_refused_host_outlives_the_workspace_run_but_the_pass_t
     );
     injection.begin(&ws, false).await.unwrap();
     assert!(
-        !service.list(&ws)[0].passed_through,
+        !service.list(&handle(&ws))[0].passed_through,
         "a start begins with none passed through"
     );
 }

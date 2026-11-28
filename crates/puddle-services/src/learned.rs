@@ -11,8 +11,10 @@ use std::collections::BTreeMap;
 #[cfg(any(test, feature = "testing"))]
 use std::sync::{Mutex, PoisonError};
 
+#[cfg(any(test, feature = "testing"))]
 use puddle_types::WorkspaceId;
 
+use crate::owned::OwnedWorkspace;
 use crate::wire::LearnedHost;
 
 /// What the learned list asks of the host. Workspaces are named by their stored name; a
@@ -20,18 +22,18 @@ use crate::wire::LearnedHost;
 pub trait LearnedService: Send + Sync {
     /// The workspace's learned hosts: the ones passed through now first (soonest to expire
     /// first), then the others, the most recently refused first.
-    fn list(&self, workspace: &WorkspaceId) -> Vec<LearnedHost>;
+    fn list(&self, workspace: &OwnedWorkspace) -> Vec<LearnedHost>;
 
     /// Makes `host` (already normalised) decrypted again from the next connection; its history
     /// stays. `false` when it was not passed through.
-    fn forget(&self, workspace: &WorkspaceId, host: &str) -> bool;
+    fn forget(&self, workspace: &OwnedWorkspace, host: &str) -> bool;
 
     /// Decrypts every host of the workspace again; how many were passed through.
-    fn clear(&self, workspace: &WorkspaceId) -> usize;
+    fn clear(&self, workspace: &OwnedWorkspace) -> usize;
 
     /// Removes `host` (already normalised) from the list altogether, history included, once the
     /// caller has made it permanent elsewhere. `false` when it was not listed.
-    fn discard(&self, workspace: &WorkspaceId, host: &str) -> bool;
+    fn discard(&self, workspace: &OwnedWorkspace, host: &str) -> bool;
 }
 
 /// The service when none is wired in: nothing is ever learned.
@@ -39,19 +41,19 @@ pub trait LearnedService: Send + Sync {
 pub struct NoLearned;
 
 impl LearnedService for NoLearned {
-    fn list(&self, _: &WorkspaceId) -> Vec<LearnedHost> {
+    fn list(&self, _: &OwnedWorkspace) -> Vec<LearnedHost> {
         Vec::new()
     }
 
-    fn forget(&self, _: &WorkspaceId, _: &str) -> bool {
+    fn forget(&self, _: &OwnedWorkspace, _: &str) -> bool {
         false
     }
 
-    fn clear(&self, _: &WorkspaceId) -> usize {
+    fn clear(&self, _: &OwnedWorkspace) -> usize {
         0
     }
 
-    fn discard(&self, _: &WorkspaceId, _: &str) -> bool {
+    fn discard(&self, _: &OwnedWorkspace, _: &str) -> bool {
         false
     }
 }
@@ -105,9 +107,9 @@ impl FakeLearned {
 
 #[cfg(any(test, feature = "testing"))]
 impl LearnedService for FakeLearned {
-    fn list(&self, workspace: &WorkspaceId) -> Vec<LearnedHost> {
+    fn list(&self, workspace: &OwnedWorkspace) -> Vec<LearnedHost> {
         let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        let mut rows = state.get(workspace).cloned().unwrap_or_default();
+        let mut rows = state.get(workspace.id()).cloned().unwrap_or_default();
         rows.sort_by(|a, b| {
             let key = |h: &LearnedHost| {
                 (
@@ -122,10 +124,10 @@ impl LearnedService for FakeLearned {
         rows
     }
 
-    fn forget(&self, workspace: &WorkspaceId, host: &str) -> bool {
+    fn forget(&self, workspace: &OwnedWorkspace, host: &str) -> bool {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let Some(row) = state
-            .get_mut(workspace)
+            .get_mut(workspace.id())
             .and_then(|rows| rows.iter_mut().find(|row| row.host == host))
             .filter(|row| row.passed_through)
         else {
@@ -141,10 +143,10 @@ impl LearnedService for FakeLearned {
         true
     }
 
-    fn clear(&self, workspace: &WorkspaceId) -> usize {
+    fn clear(&self, workspace: &OwnedWorkspace) -> usize {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let mut cleared = 0;
-        for row in state.entry(workspace.clone()).or_default() {
+        for row in state.entry(workspace.id().clone()).or_default() {
             if row.passed_through {
                 cleared += 1;
                 *row = LearnedHost::new(
@@ -159,9 +161,9 @@ impl LearnedService for FakeLearned {
         cleared
     }
 
-    fn discard(&self, workspace: &WorkspaceId, host: &str) -> bool {
+    fn discard(&self, workspace: &OwnedWorkspace, host: &str) -> bool {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        let Some(rows) = state.get_mut(workspace) else {
+        let Some(rows) = state.get_mut(workspace.id()) else {
             return false;
         };
         let before = rows.len();

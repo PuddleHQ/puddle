@@ -658,14 +658,14 @@ async fn serve(handler: &WorkspaceHandler, stream: GuestStream) {
         Ok(head) => head,
         Err(None) => return,
         Err(Some(refusal)) => {
-            refuse(reader.get_mut(), &refusal).await;
+            handler.refuse_head(reader.get_mut(), &refusal).await;
             return;
         }
     };
     let (target, path, _) = match parse_request(&head) {
         Ok(parsed) => parsed,
         Err(refusal) => {
-            refuse(reader.get_mut(), &refusal).await;
+            handler.refuse_head(reader.get_mut(), &refusal).await;
             return;
         }
     };
@@ -839,7 +839,16 @@ pub(crate) async fn read_request<R: AsyncBufRead + Unpin>(
             "431 Request Header Fields Too Large",
             format!("request head over {} KiB", http::MAX_HEAD / 1024),
         ))),
-        Ok(Ok(Err(HeadError::Bad(why)))) => Err(Some(Refusal::new("400 Bad Request", why))),
+        Ok(Ok(Err(HeadError::Bad(why, line)))) => {
+            let refusal = Refusal::new("400 Bad Request", why);
+            let target = line
+                .and_then(|(method, uri)| http::parse_target(&method, &uri).ok())
+                .and_then(|raw| target_of(&raw.host, raw.port));
+            Err(Some(match target {
+                Some(target) => refusal.at(target),
+                None => refusal,
+            }))
+        }
         Ok(Ok(Ok(head))) => Ok(head),
     }
 }
@@ -858,12 +867,43 @@ pub(crate) fn parse_request(head: &Head) -> Result<(Target, Option<String>, Body
     let host = normalise_host(&host)
         .map_err(|why| Refusal::new("400 Bad Request", why.to_string()))?
         .into_host();
+    let target = Target { host, port };
     let body = if head.is_connect() {
         Body::None
     } else {
-        http::body_framing(&head.headers).map_err(|why| Refusal::new("400 Bad Request", why))?
+        http::body_framing(&head.headers)
+            .map_err(|why| Refusal::new("400 Bad Request", why).at(target.clone()))?
     };
-    Ok((Target { host, port }, path, body))
+    Ok((target, path, body))
+}
+
+/// The normalised target of a raw host and port, if the host normalises.
+fn target_of(host: &str, port: u16) -> Option<Target> {
+    let host = normalise_host(host).ok()?.into_host();
+    Some(Target { host, port })
+}
+
+impl WorkspaceHandler {
+    /// Answers a head that never became a request and records the refusal against where it was
+    /// going, as `bad_request` unless the refusal has its own code. A refusal that names no
+    /// target (a timeout, a head with no readable request line) has no host to record against.
+    pub(crate) async fn refuse_head<S: tokio::io::AsyncWrite + Unpin>(
+        &self,
+        stream: &mut S,
+        refusal: &Refusal,
+    ) {
+        refuse(stream, refusal).await;
+        let Some(target) = &refusal.target else {
+            return;
+        };
+        let request = EgressRequest::new(self.workspace.clone(), target.host.clone(), target.port);
+        let event = ConnectionEvent::new(
+            &request,
+            ConnectionDecision::Blocked,
+            ConnectionReason::Refused(refusal.code.unwrap_or(ReasonCode::BadRequest)),
+        );
+        self.proxy.record(event).await;
+    }
 }
 
 #[cfg(test)]

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The error response a refused connection gets.
 
+use crate::request_target::Target;
 use puddle_types::{ConnectionOutcome, ReasonCode};
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
@@ -16,6 +17,9 @@ pub(crate) struct Refusal {
     /// How reaching the destination went, for a refusal that is a failure to get there (not a
     /// decision): the connection record's `outcome`.
     pub(crate) outcome: Option<ConnectionOutcome>,
+    /// Where the guest was going, for a refusal of a request head that never became a request:
+    /// the proxy records it (a refusal of a decided request is recorded where it is decided).
+    pub(crate) target: Option<Target>,
 }
 
 impl Refusal {
@@ -29,7 +33,14 @@ impl Refusal {
             message: message.into(),
             code: None,
             outcome: None,
+            target: None,
         }
+    }
+
+    /// Names where the guest was going, so the refusal is recorded against it.
+    pub(crate) fn at(mut self, target: Target) -> Self {
+        self.target = Some(target);
+        self
     }
 
     /// Marks this refusal as a failure to reach the destination, which the connection record

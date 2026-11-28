@@ -133,7 +133,8 @@ fn foreign_structure(conn: &Connection) -> Result<Option<String>, StoreError> {
 /// BK-14). Entries match by natural key.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PartCounts {
-    /// Entries in the backup.
+    /// Entries in the backup by key: a backup that holds one key twice counts it once, so
+    /// `in_backup` is `add + differ + same`.
     pub in_backup: usize,
     /// In the backup and not here: both modes add them.
     pub add: usize,
@@ -146,8 +147,7 @@ pub struct PartCounts {
 }
 
 impl PartCounts {
-    /// Compares two key-to-content maps; `in_backup` is the number of rows, which may exceed the
-    /// number of keys when a backup holds the same key twice.
+    /// Compares two key-to-content maps; `in_backup` is the number of keys of `backup`.
     fn compare(present: &BTreeMap<String, String>, backup: &BTreeMap<String, String>) -> Self {
         let mut counts = Self {
             in_backup: backup.len(),

@@ -2,7 +2,10 @@
 //! The cases about the sandbox's network surface and the settings that apply at the next start:
 //! the SSH banner, vsock routes, memory, CPUs and environment.
 
-use super::*;
+use super::{
+    AsyncReadExt, Case, ComputeError, CpuCount, Duration, ExecRequest, GuestEnv, MemoryMib,
+    Outcome, Runtime, Sandbox, VsockRoute, fails, read_file, sh, spec, step, write_file,
+};
 
 /// How many connections [`ssh_server_speaks_first`] opens at once on a fresh sandbox.
 const FIRST_SSH_CONNECTIONS: usize = 16;

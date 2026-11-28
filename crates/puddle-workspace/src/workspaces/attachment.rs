@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-use super::*;
+use super::{
+    ComputeError, DiskSize, HoldKind, Holder, Runtime, SandboxName, SandboxSpec, VolumeMount,
+    VolumeSpec, WorkspaceError, WorkspaceId, Workspaces, cleanup_failed_create, debug, info,
+    mount_for, warn,
+};
 
 /// A workspace reserved for a sandbox that is being created (from [`Workspaces::prepare`]).
 /// Finish it with [`Attachment::commit`] or [`Attachment::abort`]; dropping it unfinished only
@@ -153,7 +157,7 @@ impl Drop for Attachment<'_> {
 impl Workspaces {
     /// Gets workspace `id` ready to attach to the sandbox about to be created as `sandbox`:
     /// checks no other sandbox holds it, reserves it, and creates its volume (`size`, or
-    /// [`WorkspaceConfig::default_size`]) if it has none yet. An existing volume keeps its size.
+    /// [`super::WorkspaceConfig::default_size`]) if it has none yet. An existing volume keeps its size.
     ///
     /// Add [`Attachment::mount`] to the spec, create the sandbox (with [`Runtime::create`] or
     /// the boot hook), then [`Attachment::commit`] on success or [`Attachment::abort`] on

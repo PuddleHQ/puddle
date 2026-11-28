@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The git identity and author rules of a plan, and the git config files they become.
 
-use super::*;
+use super::{
+    BTreeSet, BootPlanBuilder, GENERATED, GIT_AUTHOR_DIR_GUEST, GIT_CONFIG_GUEST, GuestFile,
+    GuestPath, MAX_GIT_AUTHOR_GLOBS, PlanError, guest_path,
+};
 
 /// The git identity Puddle writes into the sandbox (a basic identities feature: the user
 /// sets it in Puddle, nothing is copied from the host's `.gitconfig`).

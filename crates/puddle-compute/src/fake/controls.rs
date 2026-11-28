@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-use super::*;
+use super::{
+    Arc, Call, DiskSize, ExecHandler, FakeRuntime, Fault, Files, GuestPath, ImageConfig, ImageRef,
+    Op, PullProgress, RootDiskUse, SandboxName, VolumeName, VolumeRecord, WaitOnce,
+    WorkspaceStatus,
+};
 
 impl FakeRuntime {
-    /// Makes every [`Runtime::pull_image_reporting`] report `steps`, in order, before it answers,
+    /// Makes every [`crate::Runtime::pull_image_reporting`] report `steps`, in order, before it answers,
     /// as a pull that downloads would.
     pub fn script_pull(&self, steps: Vec<PullProgress>) {
         self.lock().pull_script = steps;
@@ -45,7 +49,7 @@ impl FakeRuntime {
     }
 
     /// Makes every sandbox's `serve_ssh` an SSH server with a pseudo-terminal stand-in (see
-    /// [`pty`]) instead of the banner-only fake.
+    /// [`super::pty`]) instead of the banner-only fake.
     pub fn serve_terminals(&self) {
         self.lock().terminals = true;
     }
@@ -156,7 +160,7 @@ impl FakeRuntime {
     }
 
     /// Adds a sandbox Puddle didn't create (another tool's, or one without Puddle's owner label).
-    /// [`Runtime::list`] shows it with `puddle_owned: false`; no other operation sees it, so a
+    /// [`crate::Runtime::list`] shows it with `puddle_owned: false`; no other operation sees it, so a
     /// test can check through [`FakeRuntime::calls`] that nothing touched it. `name` need not be
     /// a valid [`SandboxName`].
     pub fn add_foreign_sandbox(&self, name: &str, status: WorkspaceStatus) {
@@ -183,7 +187,7 @@ impl FakeRuntime {
     }
 
     /// Sets what the volume `name` "takes on the host" from now on; the runtime reports it in
-    /// [`VolumeInfo::used`]. A volume that does not exist is left alone.
+    /// [`crate::VolumeInfo::used`]. A volume that does not exist is left alone.
     pub fn set_volume_used(&self, name: &VolumeName, used: DiskSize) {
         if let Some(volume) = self.lock().volumes.get_mut(name.as_str()) {
             volume.used = Some(used);
@@ -191,7 +195,7 @@ impl FakeRuntime {
     }
 
     /// Sets how full the root disk of sandbox `name` "is" from now on; the runtime reports it in
-    /// [`SandboxInfo::root_disk`]. A sandbox that does not exist is left alone.
+    /// [`crate::SandboxInfo::root_disk`]. A sandbox that does not exist is left alone.
     pub fn set_root_disk_use(&self, name: &SandboxName, size: DiskSize, used: DiskSize) {
         if let Some(record) = self.lock().sandboxes.get_mut(name.as_str()) {
             record.root_disk = Some(RootDiskUse { size, used });
@@ -199,13 +203,13 @@ impl FakeRuntime {
     }
 
     /// Whether a running sandbox grows its root disk live (the default). Off, it answers
-    /// [`RootDiskGrowth::NextStart`] and grows at its next boot, as msb does on Windows.
+    /// [`crate::RootDiskGrowth::NextStart`] and grows at its next boot, as msb does on Windows.
     pub fn set_live_root_grow(&self, live: bool) {
         self.lock().no_live_root_grow = !live;
     }
 
     /// Makes the next stop of `name` time out gracefully and end the VM by force, as msb does
-    /// after 30 seconds: the stop returns `Ok` and [`Sandbox::stopped_by_force`] says `true`.
+    /// after 30 seconds: the stop returns `Ok` and [`crate::Sandbox::stopped_by_force`] says `true`.
     pub fn force_next_stop(&self, name: &SandboxName) {
         self.lock().force_stop.insert(name.to_string());
     }

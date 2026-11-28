@@ -116,7 +116,7 @@ impl Store {
         }
     }
 
-    /// Whether the audit's lines are over [`Limits::audit_warn_bytes`].
+    /// Whether the audit's lines are over [`super::Limits::audit_warn_bytes`].
     ///
     /// # Errors
     /// A database error.

@@ -5,14 +5,15 @@
 //! The endpoint is the identity: every connection on it belongs to the workspace the route
 //! was created for, whatever the guest says.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use puddle_agent_proto::host::{SessionError, serve_session};
+use puddle_agent_proto::host::{SessionError, SessionId, serve_session};
 use puddle_ipc::{Endpoint, IpcError, Listener};
 use puddle_types::WorkspaceId;
 use tokio::sync::oneshot;
-use tokio::task::{JoinHandle, JoinSet};
+use tokio::task::{self, JoinHandle, JoinSet};
 use tracing::Instrument;
 
 use crate::proxy::{Proxy, WorkspaceHandler};
@@ -88,11 +89,11 @@ async fn end_sessions(
     proxy: &Proxy,
     workspace: &WorkspaceId,
     sessions: &mut JoinSet<Result<(), SessionError>>,
+    ids: &mut HashMap<task::Id, SessionId>,
 ) {
-    let cut = sessions.len();
     sessions.shutdown().await;
-    for _ in 0..cut {
-        proxy.session_ended(workspace);
+    for (_, session) in ids.drain() {
+        proxy.session_ended(workspace, session);
     }
 }
 
@@ -104,10 +105,12 @@ async fn accept_loop(
 ) {
     let max = proxy.config.max_sessions_per_route;
     let mut sessions = JoinSet::new();
+    // The session each running task serves.
+    let mut ids = HashMap::new();
     loop {
         tokio::select! {
             _ = &mut stopped => {
-                end_sessions(&proxy, handler.workspace(), &mut sessions).await;
+                end_sessions(&proxy, handler.workspace(), &mut sessions, &mut ids).await;
                 listener.close().await;
                 return;
             }
@@ -121,13 +124,15 @@ async fn accept_loop(
                     let sink = Arc::clone(&proxy.sink);
                     let config = proxy.config.session;
                     let handler = Arc::clone(&handler);
-                    sessions.spawn(async move {
-                        serve_session(conn, workspace, sink, handler, config).await
+                    let session = SessionId::next();
+                    let running = sessions.spawn(async move {
+                        serve_session(conn, workspace, session, sink, handler, config).await
                     });
+                    ids.insert(running.id(), session);
                 }
                 Err(IpcError::Closed { .. }) => {
                     tracing::info!("route closed");
-                    end_sessions(&proxy, handler.workspace(), &mut sessions).await;
+                    end_sessions(&proxy, handler.workspace(), &mut sessions, &mut ids).await;
                     return;
                 }
                 Err(err) => {
@@ -135,11 +140,17 @@ async fn accept_loop(
                     tokio::time::sleep(ACCEPT_BACKOFF).await;
                 }
             },
-            Some(done) = sessions.join_next(), if !sessions.is_empty() => {
-                proxy.session_ended(handler.workspace());
+            Some(done) = sessions.join_next_with_id(), if !sessions.is_empty() => {
+                let task = match &done {
+                    Ok((task, _)) => *task,
+                    Err(err) => err.id(),
+                };
+                if let Some(session) = ids.remove(&task) {
+                    proxy.session_ended(handler.workspace(), session);
+                }
                 match done {
-                Ok(Ok(())) => tracing::debug!("agent session ended"),
-                Ok(Err(err)) => tracing::info!(error = %err, "agent session failed"),
+                Ok((_, Ok(()))) => tracing::debug!("agent session ended"),
+                Ok((_, Err(err))) => tracing::info!(error = %err, "agent session failed"),
                 Err(err) if err.is_panic() => tracing::error!("agent session panicked"),
                 Err(_) => {}
                 }

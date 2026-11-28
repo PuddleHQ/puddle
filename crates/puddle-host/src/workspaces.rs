@@ -57,11 +57,11 @@ use tokio::sync::watch;
 use tokio::task::JoinSet;
 
 use crate::boot::{BootKit, MiseLayer};
-use crate::files::{Stored, WorkspaceBook};
 use crate::front::Flavours;
 use crate::git_hosts::{Authors, SshListing};
 use crate::injection::Injection;
 use crate::op_error::{OpError, SAVE_HINT};
+use crate::state_files::{Stored, WorkspaceBook};
 
 mod clone_detail;
 mod repositories;
@@ -71,7 +71,10 @@ pub(crate) mod orphans;
 mod access;
 mod boot;
 mod create_and_grow;
+mod images;
 mod memory_at_start;
+mod monitor;
+mod operations;
 mod plumbing;
 mod service;
 mod settle;
@@ -92,7 +95,7 @@ impl<R: Runtime + Clone> crate::editor_updates::Builds for HostWorkspaces<R> {
     }
 }
 
-impl<R: Runtime + Clone> crate::changes::Changes for HostWorkspaces<R> {
+impl<R: Runtime + Clone> crate::setting_changes::Changes for HostWorkspaces<R> {
     fn decrypt_changed(&self, workspace: &WorkspaceId) -> Option<puddle_store::WorkspaceGit> {
         Self::decrypt_changed(self, workspace)
     }

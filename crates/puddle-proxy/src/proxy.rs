@@ -82,6 +82,8 @@ pub struct Proxy {
     records: Arc<dyn RecordResolver>,
     addresses: Arc<dyn AddressCheck>,
     log: Arc<dyn ConnectionLog>,
+    /// The threads of every store call this proxy makes ([`crate::lane`]).
+    lane: Arc<crate::lane::Lane>,
     upstream: Option<Upstream>,
     terminations: Option<TerminationConfig>,
     git_ssh: Option<crate::ssh_git::GitSsh>,
@@ -121,6 +123,7 @@ impl Proxy {
             records: Arc::new(SystemRecords),
             addresses: Arc::new(NetPolicy::new(Arc::new(LocalAccess::NONE))),
             log: Arc::new(NullConnectionLog),
+            lane: Arc::new(crate::lane::Lane::new()),
             upstream: None,
             terminations: None,
             git_ssh: None,
@@ -454,7 +457,9 @@ impl Proxy {
             request.port,
         );
         // A miss writes a pending row, so the call may block on SQLite.
-        let decided = tokio::task::spawn_blocking(move || policy.decide(&request, suffix_allows))
+        let decided = self
+            .lane
+            .run(move || policy.decide(&request, suffix_allows))
             .await
             .unwrap_or_else(|_| {
                 Err(PolicyError {
@@ -477,33 +482,30 @@ impl Proxy {
     pub(crate) async fn workspace_label(&self, workspace: &WorkspaceId) -> String {
         let policy = Arc::clone(&self.policy);
         let id = workspace.clone();
-        tokio::task::spawn_blocking(move || policy.workspace_name(&id))
+        self.lane
+            .run(move || policy.workspace_name(&id))
             .await
             .ok()
             .flatten()
             .unwrap_or_else(|| workspace.to_string())
     }
 
-    /// Hands `event` to the connection log on a blocking thread without waiting for it: for a
+    /// Hands `event` to the connection log on a lane thread without waiting for it: for a
     /// caller that cannot await (a drop). Outside a runtime the write happens on the caller.
     pub(crate) fn record_detached(&self, event: ConnectionEvent) {
         let log = Arc::clone(&self.log);
-        match tokio::runtime::Handle::try_current() {
-            Ok(runtime) => {
-                drop(runtime.spawn_blocking(move || log.record(&event)));
-            }
-            Err(_) => log.record(&event),
+        if tokio::runtime::Handle::try_current().is_ok() {
+            self.lane.detach(move || log.record(&event));
+        } else {
+            log.record(&event);
         }
     }
 
-    /// Hands `event` to the connection log on a blocking thread (it may write to SQLite).
+    /// Hands `event` to the connection log on a lane thread (it may write to SQLite).
     pub(crate) async fn record(&self, event: ConnectionEvent) {
         let log = Arc::clone(&self.log);
         tracing::debug!(workspace = ?event.workspace, host = %event.host, port = event.port, decision = ?event.decision, outcome = ?event.outcome, reason = ?event.reason, upstream = ?event.upstream, "connection recorded");
-        if tokio::task::spawn_blocking(move || log.record(&event))
-            .await
-            .is_err()
-        {
+        if self.lane.run(move || log.record(&event)).await.is_err() {
             tracing::warn!("connection log panicked; record lost");
         }
     }

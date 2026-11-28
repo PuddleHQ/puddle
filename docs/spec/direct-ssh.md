@@ -25,7 +25,8 @@ computer and read the editor's secrets (a signed-in GitHub token). The browser e
    always `false`.
 7. The setting is in the connect step, the workspace's Settings tab and the global Settings page.
 8. Puddle keeps its own ssh config file, `ssh/config` in its data folder, with one `Host
-   puddle-<id>` entry per running workspace that has direct SSH on: user `root`, the
+   puddle-<id>` entry per running workspace that has direct SSH on: the workspace's session user (`agent` by default; `root` for a
+   workspace made to run as root), the
    `puddle ssh-bridge` as `ProxyCommand`, and a login key that only Puddle holds
    (`ssh/login_ed25519`; the host gives the runtime only its public half). The entry never uses the
    user's own keys or ssh agent. Puddle rewrites the whole file from what is running, and empties

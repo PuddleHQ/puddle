@@ -78,11 +78,20 @@ fn start_with(config: HostConfig) -> Harness {
 }
 
 fn start_handler<H: StreamHandler>(handler: Arc<H>, config: HostConfig) -> Harness {
+    start_session(handler, config, SessionId::next())
+}
+
+fn start_session<H: StreamHandler>(
+    handler: Arc<H>,
+    config: HostConfig,
+    session: SessionId,
+) -> Harness {
     let (guest, host) = tokio::io::duplex(1 << 20);
     let (tx, events) = mpsc::unbounded_channel();
     let server = tokio::spawn(serve_session(
         host,
         name(),
+        session,
         Arc::new(ChanSink(tx)),
         handler,
         config,

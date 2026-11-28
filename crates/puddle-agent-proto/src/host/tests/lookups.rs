@@ -57,6 +57,7 @@ async fn a_handler_without_a_name_policy_answers_unavailable() {
     let server = tokio::spawn(serve_session(
         host,
         name(),
+        SessionId::next(),
         Arc::new(puddle_types::NullSink),
         Arc::new(Silent),
         HostConfig::default(),

@@ -40,10 +40,14 @@ pub enum Check {
     DbGrowth,
     /// The machine's commit charge came within 5 % of its commit limit (Windows).
     CommitCharge,
+    /// The samples do not cover the run: no process series, samples that stop before the night
+    /// ends or start after hour 0, or far fewer than the sampler's pace gives. Every other rule
+    /// skips a window it has too little data for, so without this a dead sampler passes them all.
+    Coverage,
 }
 
 /// Every rule.
-pub const ALL: [Check; 8] = [
+pub const ALL: [Check; 9] = [
     Check::Leak,
     Check::IdleGrowth,
     Check::ApiLatency,
@@ -52,6 +56,7 @@ pub const ALL: [Check; 8] = [
     Check::WalSize,
     Check::DbGrowth,
     Check::CommitCharge,
+    Check::Coverage,
 ];
 
 /// The timeline of a run, in UTC epoch seconds.
@@ -143,6 +148,7 @@ pub fn judge_only(series: &Series, schedule: Schedule, checks: &[Check]) -> Vec<
             Check::WalSize => wal_size(series, &mut out),
             Check::DbGrowth => db_growth(series, schedule, &mut out),
             Check::CommitCharge => commit_charge(series, &mut out),
+            Check::Coverage => coverage(series, schedule, &mut out),
         }
     }
     out
@@ -496,6 +502,52 @@ fn commit_charge(series: &Series, out: &mut Vec<Finding>) {
                 COMMIT_LINE * 100.0
             ),
         );
+    }
+}
+
+/// The sampler's pace in playbook minutes.
+const SAMPLE_MINUTES: u64 = 5;
+
+fn coverage(series: &Series, sched: Schedule, out: &mut Vec<Finding>) {
+    let mut major = |detail: String| find(out, Severity::Major, Check::Coverage, "samples", detail);
+    let mut times: Vec<u64> = series
+        .metrics("", "")
+        .flat_map(|m| series.points(m).iter().map(|&(t, _)| t))
+        .collect();
+    times.sort_unstable();
+    times.dedup();
+    let (Some(&first), Some(&last)) = (times.first(), times.last()) else {
+        major("the metrics file holds no samples".to_owned());
+        return;
+    };
+    if series.metrics("proc.", "").next().is_none() {
+        major("no process series at all: the sampler read no process".to_owned());
+    }
+    let slack = sched.level_window();
+    if first > sched.start + slack {
+        major(format!(
+            "the first sample is {} s after hour 0 (allowed: {slack} s)",
+            first - sched.start
+        ));
+    }
+    if last + slack < sched.night_end() {
+        major(format!(
+            "the last sample is {} s before the night ends (allowed: {slack} s): the sampler stopped",
+            sched.night_end() - last
+        ));
+    }
+    let span = sched.night_end() - sched.start;
+    let pace = (sched.hour * SAMPLE_MINUTES / 60).max(1);
+    let expected = span / pace;
+    let inside = times
+        .iter()
+        .filter(|&&t| (sched.start..=sched.night_end()).contains(&t))
+        .count() as u64;
+    if inside * 2 < expected {
+        major(format!(
+            "{inside} sample times in the run, at least {} expected at one every {pace} s",
+            expected / 2
+        ));
     }
 }
 

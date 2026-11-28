@@ -54,6 +54,11 @@ fn flat_rss(h: f64) -> f64 {
     100_000.0
 }
 
+/// Every rule but the coverage one, for a test that shapes one metric of a partial series.
+fn rules_only(series: &Series, schedule: Schedule) -> Vec<Finding> {
+    judge_only(series, schedule, &checks_without(Check::Coverage))
+}
+
 fn checks_without(check: Check) -> Vec<Check> {
     ALL.iter().copied().filter(|&c| c != check).collect()
 }
@@ -84,7 +89,7 @@ fn flat_series_with_noise_get_no_finding() {
         s.push(t, "proc.worker.100.handles", 200.0 + jitter(i, 1));
         let _ = h;
     });
-    assert_eq!(judge(&s, sched()), []);
+    assert_eq!(rules_only(&s, sched()), []);
 }
 
 #[test]
@@ -378,28 +383,28 @@ fn too_little_data_is_not_judged() {
             100_000.0 + 50_000.0 * f64::from(u32::try_from(i).unwrap()),
         );
     }
-    assert_eq!(judge(&s, sched()), []);
+    assert_eq!(rules_only(&s, sched()), []);
     // A latency that was never measured in hour 0 has no baseline.
     let late = run(|s, t, h| {
         if h >= 3.0 {
             s.push(t, "api.late.ms", 900.0);
         }
     });
-    assert_eq!(judge(&late, sched()), []);
+    assert_eq!(rules_only(&late, sched()), []);
     // A database size with no record count cannot be compared with it.
     let mut db_only = Series::default();
     for i in 0..=(8 * 12_u64) {
         let big = if i < 24 { 5.0e6 } else { 50.0e6 };
         db_only.push(START + i * STEP, "file.db.bytes", big);
     }
-    assert_eq!(judge(&db_only, sched()), []);
+    assert_eq!(rules_only(&db_only, sched()), []);
 }
 
 #[test]
 fn a_silence_with_no_reconnect_series_at_all_counts_as_no_reconnect() {
     let mut s = Series::default();
     s.push(START + 3600, "sse.age_s", 700.0);
-    let f = judge(&s, sched());
+    let f = rules_only(&s, sched());
     assert_eq!(f.len(), 1, "{f:?}");
     assert_eq!(f[0].check, Check::SseSilence);
 }
@@ -438,7 +443,7 @@ fn a_compressed_run_is_judged_in_its_own_hours() {
     );
     // Read in real hours the whole run sits before "hour 1", so nothing is found: the scale is
     // what makes the leak visible.
-    assert_eq!(judge(&s, Schedule::day(START)), []);
+    assert_eq!(rules_only(&s, Schedule::day(START)), []);
     let flat = squeezed(&with_rss(flat_rss), hour);
     assert_eq!(judge(&flat, compressed), []);
 }
@@ -530,4 +535,73 @@ fn a_commit_charge_at_94_percent_of_the_limit_is_quiet() {
 fn a_run_with_no_commit_readings_has_no_commit_finding() {
     // The Linux sampler writes no commit lines: the rule has nothing to read and says nothing.
     assert_eq!(judge(&with_rss(flat_rss), sched()), []);
+}
+
+fn coverage_only(series: &Series) -> Vec<Finding> {
+    judge_only(series, sched(), &[Check::Coverage])
+}
+
+#[test]
+fn a_complete_run_has_full_coverage() {
+    assert_eq!(coverage_only(&with_rss(flat_rss)), []);
+}
+
+#[test]
+fn a_run_with_no_samples_has_no_coverage() {
+    let f = coverage_only(&Series::default());
+    assert_eq!(f.len(), 1, "{f:?}");
+    assert_eq!(f[0].severity, Severity::Major);
+}
+
+#[test]
+fn a_run_with_no_process_series_is_major() {
+    let s = shape(&run(|_, _, _| {}), "proc.worker.100.threads", |_, _| None);
+    let mut without = Series::default();
+    for m in s.metrics("", "").filter(|m| !m.starts_with("proc.")) {
+        for &(t, v) in s.points(m) {
+            without.push(t, m, v);
+        }
+    }
+    let f = coverage_only(&without);
+    assert!(
+        f.iter()
+            .any(|f| f.severity == Severity::Major && f.detail.contains("process")),
+        "{f:?}"
+    );
+}
+
+#[test]
+fn samples_that_stop_before_the_night_ends_are_major() {
+    // A sampler that died at hour 6 leaves a leak-free, idle-quiet series that every rule passes.
+    let mut s = Series::default();
+    for i in 0..=(6 * 3600 / STEP) {
+        s.push(START + i * STEP, "proc.worker.100.rss_kb", 100_000.0);
+    }
+    assert_eq!(
+        judge_only(&s, sched(), &checks_without(Check::Coverage)),
+        []
+    );
+    let f = found_only_by(&s, Check::Coverage, Severity::Major);
+    assert!(f.detail.contains("stopped"), "{f}");
+}
+
+#[test]
+fn samples_that_start_late_are_major() {
+    let mut s = Series::default();
+    for i in (3 * 3600 / STEP)..=(12 * 3600 / STEP) {
+        s.push(START + i * STEP, "proc.worker.100.rss_kb", 100_000.0);
+    }
+    let f = found_only_by(&s, Check::Coverage, Severity::Major);
+    assert!(f.detail.contains("first sample"), "{f}");
+}
+
+#[test]
+fn far_fewer_samples_than_the_pace_gives_are_major() {
+    // Samples at both ends and one an hour between: present, but a tenth of the pace.
+    let mut s = Series::default();
+    for i in 0..=12_u64 {
+        s.push(START + i * 3600, "proc.worker.100.rss_kb", 100_000.0);
+    }
+    let f = found_only_by(&s, Check::Coverage, Severity::Major);
+    assert!(f.detail.contains("sample times"), "{f}");
 }

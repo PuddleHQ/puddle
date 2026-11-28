@@ -179,8 +179,10 @@ for a future update list. It has a signing command for a scheduled job
 
 ### 5.2.12 Test-only crates
 
-None of these is a dependency of a product crate; `scripts/quality-gate.py` fails a manifest that
-lists `puddle-test-kit` outside `[dev-dependencies]`.
+None of these is a dependency of a product crate; `scripts/quality-gate.py` fails a product manifest
+that lists any of them (`puddle-test-kit`, `puddle-e2e`, `puddle-vm-tests` and the three
+`*-test-support` crates) under `[dependencies]` or `[build-dependencies]`, by name, by `package =`
+rename or through a workspace rename, and fails a manifest it cannot parse.
 
 | Crate                             | Responsibility                                                                                                                                                                     |
 | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

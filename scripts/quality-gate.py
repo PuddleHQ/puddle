@@ -556,7 +556,8 @@ def crate_root_rows(texts, stripped, add):
 # [dependencies] or [build-dependencies] (also per target, or renamed) would ship test helpers. The test-only
 # crates (TEST_CRATES) may list it as a normal dependency, since they are not product code.
 TEST_KIT = ("puddle-test-kit", "puddle-proxy-test-support", "puddle-host-test-support",
-            "puddle-compute-msb-test-support")
+            "puddle-compute-msb-test-support", "puddle-e2e",
+            "puddle-vm-tests")
 
 
 # Bans in the standards' own words (docs/adr/0002 "never `#[serde(untagged)]`", docs/STANDARDS.md section 5 "error messages
@@ -644,18 +645,29 @@ def ban_html_sink_rows(f, lines, add):
 
 
 def kit_dependency_rows(texts, add):
+    """A product manifest listing a test crate (TEST_KIT) under [dependencies] or [build-dependencies] fails, by key,
+    by `package = ...` or through `{ workspace = true }` resolved against the root [workspace.dependencies]. A manifest
+    that does not parse fails too: a guard that skips what it cannot read passes the files most worth reading."""
+    try:
+        root = tomllib.loads("\n".join(texts.get("Cargo.toml", [])))
+    except tomllib.TOMLDecodeError:
+        root = {}
+    shared = {k: v.get("package", k) if isinstance(v, dict) else k for k, v in root.get("workspace", {}).get("dependencies", {}).items()}
     for f, lines in texts.items():
         if not (f.startswith("crates/") and f.endswith("/Cargo.toml")) or f.startswith(TEST_CRATES):
             continue
         try:
             doc = tomllib.loads("\n".join(lines))
-        except tomllib.TOMLDecodeError:
+        except tomllib.TOMLDecodeError as e:
+            add("noreason", "config", f, 0, f"unparsable manifest, the test-kit dependency guard cannot read it: {e} | {lines[0] if lines else ''}")
             continue
         tables = [doc, *(t for t in doc.get("target", {}).values() if isinstance(t, dict))]
         for table in tables:
             for kind in ("dependencies", "build-dependencies"):
                 for name, spec in table.get(kind, {}).items():
-                    kit = next((k for k in TEST_KIT if k in (name, spec.get("package") if isinstance(spec, dict) else None)), None)
+                    spec = spec if isinstance(spec, dict) else {}
+                    package = shared.get(name, name) if spec.get("workspace") else spec.get("package", name)
+                    kit = next((k for k in TEST_KIT if k in (name, package)), None)
                     if kit:
                         at = next((i for i, line in enumerate(lines) if re.match(rf"\s*{re.escape(name)}\b", line)), 0)
                         add("noreason", "config", f, at,

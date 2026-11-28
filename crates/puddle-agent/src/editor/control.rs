@@ -116,7 +116,7 @@ impl Control {
 }
 
 impl Control {
-    /// Follows why the server cannot be installed ([`forward_editor_problems`] sends it to the
+    /// Follows why the server cannot be installed ([`super::forward_editor_problems`] sends it to the
     /// host). Subscribe before the server runs: a receiver sees only what is set after it exists.
     #[must_use]
     pub fn install_problem(&self) -> watch::Receiver<Option<String>> {

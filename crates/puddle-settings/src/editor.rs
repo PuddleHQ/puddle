@@ -299,7 +299,7 @@ impl CustomEditorSettings {
     pub const MAX_BYTES: usize = 64 * 1024;
 
     /// Checks `text`: within [`Self::MAX_BYTES`], a JSON object (no comments), and none of the
-    /// keys in [`OWNED_EDITOR_KEYS`].
+    /// keys in `OWNED_EDITOR_KEYS`.
     ///
     /// # Errors
     ///

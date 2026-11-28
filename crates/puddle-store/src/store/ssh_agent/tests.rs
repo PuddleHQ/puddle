@@ -32,6 +32,11 @@ fn store() -> (Arc<ManualClock>, Store, Arc<Seen>) {
     let store = Store::open_in_memory(clock.clone(), Limits::default())
         .unwrap()
         .with_events(seen.clone());
+    for name in ["a", "b"] {
+        store
+            .set_workspace_owner(&ws(name), crate::users::UserId::OWNER)
+            .unwrap();
+    }
     (clock, store, seen)
 }
 

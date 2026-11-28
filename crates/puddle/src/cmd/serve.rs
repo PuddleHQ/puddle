@@ -12,7 +12,7 @@ use std::future::Future;
 use std::process::ExitCode;
 
 use puddle_host::{Host, HostConfig, HostOptions, MsbFactory, SystemPlatform, prepare};
-use puddle_lifecycle::{Role, supervise, wait_for_shutdown};
+use puddle_lifecycle::{Role, ShutdownSignals, supervise};
 
 use crate::cli::{Command, UsageError};
 
@@ -222,6 +222,15 @@ pub fn run(args: &ServeArgs) -> ExitCode {
         }
     };
     runtime.block_on(async {
+        // Before the host starts: a signal that arrives during the start would end the process
+        // the default way, with no stop.
+        let mut signals = match ShutdownSignals::install() {
+            Ok(signals) => signals,
+            Err(e) => {
+                eprintln!("puddle: cannot install the shutdown handlers: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
         let host = match Host::start(prepared, &MsbFactory, host_options(&options)).await {
             Ok(host) => host,
             Err(e) => {
@@ -235,8 +244,11 @@ pub fn run(args: &ServeArgs) -> ExitCode {
                 println!("{line}");
             }
         }
-        let stop = stop_cause(wait_for_shutdown(), host.restore_requested()).await;
-        let code = exit_after(&host.shutdown().await.sandboxes);
+        let stop = stop_cause(signals.recv(), host.restore_requested()).await;
+        let stopped = signals
+            .until_again(async { host.shutdown().await.sandboxes })
+            .await;
+        let code = exit_after_stop(&stopped);
         if stop == Stop::Restore {
             println!("A restore from a backup is waiting. Start Puddle again to apply it.");
         }
@@ -255,15 +267,12 @@ enum Stop {
 
 /// Waits for whichever comes first, a request to stop or a confirmed restore, and logs which.
 async fn stop_cause(
-    request: impl Future<Output = std::io::Result<puddle_lifecycle::ShutdownCause>>,
+    request: impl Future<Output = puddle_lifecycle::ShutdownCause>,
     restore: impl Future<Output = ()>,
 ) -> Stop {
     tokio::select! {
         cause = request => {
-            match cause {
-                Ok(cause) => tracing::info!(cause = cause.as_str(), "shutting down"),
-                Err(e) => tracing::error!(error = %e, "cannot wait for a shutdown request; stopping"),
-            }
+            tracing::info!(cause = cause.as_str(), "shutting down");
             Stop::Request
         }
         () = restore => {
@@ -294,6 +303,26 @@ fn listener_lines(listener: &puddle_host::RemoteListener) -> [String; 3] {
             listener.certificate_file.display()
         ),
     ]
+}
+
+/// The exit code after a stop: the sandboxes' report, or a second request to stop that came
+/// before the stop ended (the next start reconciles what is left).
+#[expect(
+    clippy::print_stderr,
+    reason = "the daemon's last words go to the console"
+)]
+fn exit_after_stop(
+    stopped: &Result<puddle_lifecycle::ShutdownReport, puddle_lifecycle::ShutdownCause>,
+) -> ExitCode {
+    match stopped {
+        Ok(report) => exit_after(report),
+        Err(cause) => {
+            eprintln!(
+                "puddle: stopped by a second request ({cause}) before every sandbox stopped; the next start cleans up"
+            );
+            ExitCode::FAILURE
+        }
+    }
 }
 
 /// Prints what is wrong with the sandboxes at exit, and picks the exit code.

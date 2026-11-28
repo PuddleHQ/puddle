@@ -226,6 +226,7 @@ impl Leg<'_> {
             return;
         };
         drop(open.send);
+        // The wait only orders the record before the report: a timeout or a failed task changes nothing, the leg's own task keeps the outcome.
         let _ = tokio::time::timeout(OUTCOME_WAIT, open.done).await;
     }
 }

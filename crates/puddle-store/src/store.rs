@@ -185,6 +185,8 @@ pub struct SweepReport {
     pub audit_over_warn_size: bool,
     /// Records of waiting requests merged into summaries by the per-workspace cap.
     pub waiting_records_merged: u64,
+    /// Revoked and expired devices deleted once they had been stopped for 30 days.
+    pub devices_removed: u64,
 }
 
 /// What deleting a workspace removed (R-21).

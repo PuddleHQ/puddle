@@ -77,7 +77,26 @@ pub(crate) fn revoke_devices_in(
     Ok(revoked)
 }
 
+/// How long a revoked or expired device stays after it stopped working (30 days), so the user
+/// list can still date the last sign-in.
+const STOPPED_DEVICE_KEPT_MS: u64 = 30 * 24 * 60 * 60 * 1000;
+
 impl Store {
+    /// Deletes the devices that stopped working (revoked or expired) more than
+    /// [`STOPPED_DEVICE_KEPT_MS`] ago, and with each one its refresh token digest. Returns how
+    /// many went. One step of [`Store::sweep`].
+    ///
+    /// # Errors
+    /// A database error.
+    pub(super) fn prune_stopped_devices(&self) -> Result<u64, StoreError> {
+        let before = sql_ts(self.clock.now_ms().saturating_sub(STOPPED_DEVICE_KEPT_MS));
+        let removed = lock(&self.conn).execute(
+            "DELETE FROM devices WHERE min(coalesce(revoked_at, expires_at), expires_at) <= ?1",
+            [before],
+        )?;
+        Ok(removed as u64)
+    }
+
     /// The user called `name` (ignoring ASCII case), if there is one.
     ///
     /// # Errors

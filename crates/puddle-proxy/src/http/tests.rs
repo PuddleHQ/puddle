@@ -146,7 +146,7 @@ async fn malformed_heads_are_bad_requests() {
         b"GET http://x/ HTTP/1.1\r\n: empty name\r\n\r\n",
     ] {
         assert!(
-            matches!(head(bad).await, Err(HeadError::Bad(_))),
+            matches!(head(bad).await, Err(HeadError::Bad(..))),
             "{}",
             String::from_utf8_lossy(bad)
         );

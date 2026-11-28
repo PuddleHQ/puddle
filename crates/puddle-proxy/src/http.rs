@@ -44,14 +44,15 @@ impl Head {
 }
 
 /// Why a head was refused.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum HeadError {
     /// The connection closed before a request line.
     Empty,
     /// Over [`MAX_HEAD`] bytes or [`MAX_HEADERS`] lines: `431`.
     TooLarge,
-    /// Malformed: `400`, with the reason.
-    Bad(&'static str),
+    /// Malformed: `400`, with the reason and, when the request line was well-formed, its method
+    /// and target, so the refusal can name where the guest was going.
+    Bad(&'static str, Option<(String, String)>),
 }
 
 /// Reads the request head. Never buffers more than [`MAX_HEAD`] bytes, whatever the guest sends.
@@ -72,7 +73,7 @@ pub(crate) async fn read_head<R: AsyncBufRead + Unpin>(
             return Ok(Err(if lines.is_empty() {
                 HeadError::Empty
             } else {
-                HeadError::Bad("head ended early")
+                HeadError::Bad("head ended early", None)
             }));
         }
         if n > budget {
@@ -80,16 +81,16 @@ pub(crate) async fn read_head<R: AsyncBufRead + Unpin>(
         }
         budget -= n;
         if !buf.ends_with(b"\n") {
-            return Ok(Err(HeadError::Bad("head ended early")));
+            return Ok(Err(HeadError::Bad("head ended early", None)));
         }
         let Ok(line) = String::from_utf8(buf) else {
-            return Ok(Err(HeadError::Bad("non-UTF-8 head")));
+            return Ok(Err(HeadError::Bad("non-UTF-8 head", None)));
         };
         let line = line
             .strip_suffix('\n')
             .map_or(line.as_str(), |l| l.strip_suffix('\r').unwrap_or(l));
         if line.bytes().any(|b| b == 0x7f || (b < 0x20 && b != b'\t')) {
-            return Ok(Err(HeadError::Bad("control character in head")));
+            return Ok(Err(HeadError::Bad("control character in head", None)));
         }
         if line.is_empty() {
             if lines.is_empty() {
@@ -109,16 +110,22 @@ pub(crate) async fn read_head<R: AsyncBufRead + Unpin>(
     let (Some(method), Some(uri), Some(version), None) =
         (parts.next(), parts.next(), parts.next(), parts.next())
     else {
-        return Ok(Err(HeadError::Bad("malformed request line")));
+        return Ok(Err(HeadError::Bad("malformed request line", None)));
     };
     if method.is_empty() || uri.is_empty() || !method.bytes().all(is_tchar) {
-        return Ok(Err(HeadError::Bad("malformed request line")));
+        return Ok(Err(HeadError::Bad("malformed request line", None)));
     }
     if version != "HTTP/1.1" && version != "HTTP/1.0" {
-        return Ok(Err(HeadError::Bad("unsupported HTTP version")));
+        return Ok(Err(HeadError::Bad(
+            "unsupported HTTP version",
+            Some((method.to_owned(), uri.to_owned())),
+        )));
     }
     if headers.iter().any(|h| !valid_header_line(h)) {
-        return Ok(Err(HeadError::Bad("malformed header line")));
+        return Ok(Err(HeadError::Bad(
+            "malformed header line",
+            Some((method.to_owned(), uri.to_owned())),
+        )));
     }
     Ok(Ok(Head {
         method: method.to_owned(),

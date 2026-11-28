@@ -250,16 +250,17 @@ where
                     Err(refusal) => refusal,
                 }
             }
-            Ok((_, None, _)) => Refusal::new(
+            Ok((target, None, _)) => Refusal::new(
                 "400 Bad Request",
                 "CONNECT on a connection that carried plain HTTP; send it on a connection of its own",
-            ),
+            )
+            .at(target),
             Err(refusal) => refusal,
         },
         Err(None) => return None,
         Err(Some(refusal)) => refusal,
     };
-    refuse(writer, &refusal).await;
+    handler.refuse_head(writer, &refusal).await;
     None
 }
 

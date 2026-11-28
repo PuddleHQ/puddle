@@ -108,7 +108,7 @@ overlay() {
   "version": "$2",
   "bundle": {
     "active": true,
-    "resources": { "$rel/runtime": "runtime" },
+    "resources": { "$rel/runtime": "runtime", "wix/puddle-uninstall.ps1": "uninstall/puddle-uninstall.ps1" },
     "externalBin": ["$rel/bin/puddle"]
   }
 }

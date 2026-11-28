@@ -270,6 +270,7 @@ async fn vm_soak_host_sleep_fake_5_min() {
     wait_for_row(&vm, &workspace, SHORT_GRANT).await;
     vm.host
         .store()
+        .as_user(puddle_store::UserId::OWNER)
         .resolve_pending(asked, &Resolution::allow(), Actor::Cli)
         .unwrap();
     let decided = fetch(&vm, &workspace, ASKED).await;

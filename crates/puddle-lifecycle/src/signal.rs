@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! What tells Puddle to shut down.
 
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Write};
 
 use tokio::sync::oneshot;
 
@@ -84,6 +84,26 @@ fn read_request<R: Read>(control: R) -> ShutdownCause {
         Ok(n) if n > 0 => ShutdownCause::parse(line.trim_end()).unwrap_or(ShutdownCause::FrontGone),
         _ => ShutdownCause::FrontGone,
     }
+}
+
+/// The front's side of the control pipe: passes a console event on to the worker, `control`
+/// being the pipe while it is still open. The first event writes the cause and closes the pipe
+/// (closing is the request too, so a failed write changes nothing); later ones find it closed.
+/// Returns whether the default handler should end the front: a repeated interrupt or break once
+/// the shutdown was requested (a hung shutdown can be cut short). A deadline event (the console
+/// closes, the user logs off, the system shuts down) never does: the front must stay to wait.
+#[cfg_attr(
+    all(not(windows), not(test)),
+    expect(dead_code, reason = "the front exists on Windows only")
+)]
+pub(crate) fn request_worker_shutdown<W: Write>(control: Option<W>, cause: ShutdownCause) -> bool {
+    let requested_before = control.is_none();
+    if let Some(mut control) = control {
+        let _ = writeln!(control, "{cause}");
+        drop(control);
+        tracing::info!(%cause, "front: shutdown requested");
+    }
+    requested_before && !cause.is_deadline()
 }
 
 /// Reads [`read_request`] on a thread of its own, started now. A blocking read on the runtime's

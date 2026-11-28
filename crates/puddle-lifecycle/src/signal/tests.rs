@@ -121,3 +121,48 @@ async fn a_shutdown_that_finishes_returns_its_result() {
     let mut signals = ShutdownSignals::install().unwrap();
     assert_eq!(signals.until_again(async { 7 }).await.unwrap(), 7);
 }
+
+#[test]
+fn a_repeated_interrupt_ends_the_front_but_a_repeated_deadline_event_does_not() {
+    for cause in [ShutdownCause::Interrupt, ShutdownCause::Break] {
+        assert!(
+            !request_worker_shutdown(Some(Vec::new()), cause),
+            "{cause}: first"
+        );
+        assert!(
+            request_worker_shutdown(None::<Vec<u8>>, cause),
+            "{cause}: repeated"
+        );
+    }
+    for cause in [
+        ShutdownCause::ConsoleClose,
+        ShutdownCause::Logoff,
+        ShutdownCause::SystemShutdown,
+    ] {
+        assert!(
+            !request_worker_shutdown(None::<Vec<u8>>, cause),
+            "{cause}: repeated"
+        );
+    }
+}
+
+/// The front's two Ctrl-C over a real pipe, read the way the worker reads it: the first one is
+/// the worker's one request, the second finds the pipe closed and ends the front.
+#[tokio::test]
+async fn the_second_ctrl_c_reaches_the_worker_once_and_ends_the_front() {
+    let (reader, writer) = std::io::pipe().unwrap();
+    let request = spawn_request_reader(reader).unwrap();
+    let mut control = Some(writer);
+
+    assert!(!request_worker_shutdown(
+        control.take(),
+        ShutdownCause::Interrupt
+    ));
+    assert_eq!(request.await.unwrap(), ShutdownCause::Interrupt);
+
+    assert!(control.is_none(), "the first event closed the pipe");
+    assert!(request_worker_shutdown(
+        control.take(),
+        ShutdownCause::Interrupt
+    ));
+}

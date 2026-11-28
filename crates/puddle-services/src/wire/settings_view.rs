@@ -97,6 +97,12 @@ pub struct EditorSettings {
     #[serde(default)]
     #[schema(required = true, max_length = 65_536)]
     pub keybindings: Option<String>,
+    /// The user's own editor settings, merged into new workspaces: the text of a JSON object of
+    /// setting keys to values (at most 64 KiB). Keys Puddle owns (`workbench.colorTheme`,
+    /// `window.autoDetectColorScheme`, `editor.fontSize`) are refused.
+    #[serde(default)]
+    #[schema(required = true, max_length = 65_536)]
+    pub settings: Option<String>,
 }
 
 impl From<&settings::EditorLayer> for EditorSettings {
@@ -109,6 +115,7 @@ impl From<&settings::EditorLayer> for EditorSettings {
                 .as_ref()
                 .map(|ids| ids.iter().cloned().map(Into::into).collect()),
             keybindings: layer.keybindings.clone().map(Into::into),
+            settings: layer.settings.clone().map(Into::into),
         }
     }
 }
@@ -122,6 +129,7 @@ impl EditorSettings {
             font_size,
             extensions,
             keybindings,
+            settings,
         } = self;
         layer.colour_theme = colour_theme
             .as_deref()
@@ -154,6 +162,11 @@ impl EditorSettings {
         layer.keybindings = keybindings
             .as_deref()
             .map(settings::Keybindings::new)
+            .transpose()
+            .map_err(invalid)?;
+        layer.settings = settings
+            .as_deref()
+            .map(settings::CustomEditorSettings::new)
             .transpose()
             .map_err(invalid)?;
         Ok(())
@@ -947,6 +960,8 @@ pub struct EffectiveEditor {
     pub extensions: ResolvedTextList,
     /// The key bindings text; `null` adds none.
     pub keybindings: ResolvedText,
+    /// The custom editor settings text; `null` adds none.
+    pub settings: ResolvedText,
 }
 
 /// An optional effective text and where it came from.
@@ -985,6 +1000,7 @@ impl From<settings::EffectiveEditor> for EffectiveEditor {
             font_size,
             extensions,
             keybindings,
+            settings,
         } = e;
         Self {
             colour_theme: ResolvedText {
@@ -1002,6 +1018,10 @@ impl From<settings::EffectiveEditor> for EffectiveEditor {
             keybindings: ResolvedText {
                 value: keybindings.value.map(Into::into),
                 source: keybindings.source.into(),
+            },
+            settings: ResolvedText {
+                value: settings.value.map(Into::into),
+                source: settings.source.into(),
             },
         }
     }

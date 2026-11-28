@@ -95,7 +95,8 @@ fn full_layer() -> settings::WorkspaceLayer {
             "editor": {
                 "colour_theme": "Default Dark Modern", "font_size": 14,
                 "extensions": ["rust-lang.rust-analyzer"],
-                "keybindings": "[{\"key\":\"ctrl+j\",\"command\":\"a.b\"}]"
+                "keybindings": "[{\"key\":\"ctrl+j\",\"command\":\"a.b\"}]",
+                "settings": "{\"editor.tabSize\":2}"
             }
         }
     });

@@ -19,6 +19,8 @@ use subtle::ConstantTimeEq as _;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
+use crate::owned::OwnedWorkspace;
+
 /// How long a ticket works.
 pub const TICKET_LIFETIME: Duration = Duration::from_secs(30);
 /// Terminals one workspace can have open.
@@ -147,12 +149,12 @@ pub enum TerminalError {
 /// What the terminal routes ask the host.
 pub trait TerminalService: Send + Sync {
     /// Whether a terminal can be asked for now: the workspace is running or starting.
-    fn check(&self, workspace: &WorkspaceId) -> BoxFuture<'_, Result<(), TerminalError>>;
+    fn check(&self, workspace: &OwnedWorkspace) -> BoxFuture<'_, Result<(), TerminalError>>;
 
     /// Opens a shell session in the workspace, waiting while it finishes starting.
     fn open(
         &self,
-        workspace: &WorkspaceId,
+        workspace: &OwnedWorkspace,
         size: TerminalSize,
     ) -> BoxFuture<'_, Result<TerminalLink, TerminalError>>;
 }
@@ -166,13 +168,13 @@ fn unavailable() -> TerminalError {
 }
 
 impl TerminalService for NoTerminals {
-    fn check(&self, _: &WorkspaceId) -> BoxFuture<'_, Result<(), TerminalError>> {
+    fn check(&self, _: &OwnedWorkspace) -> BoxFuture<'_, Result<(), TerminalError>> {
         Box::pin(async { Err(unavailable()) })
     }
 
     fn open(
         &self,
-        _: &WorkspaceId,
+        _: &OwnedWorkspace,
         _: TerminalSize,
     ) -> BoxFuture<'_, Result<TerminalLink, TerminalError>> {
         Box::pin(async { Err(unavailable()) })
@@ -219,12 +221,12 @@ impl FakeTerminals {
 
 #[cfg(any(test, feature = "testing"))]
 impl TerminalService for FakeTerminals {
-    fn check(&self, workspace: &WorkspaceId) -> BoxFuture<'_, Result<(), TerminalError>> {
+    fn check(&self, workspace: &OwnedWorkspace) -> BoxFuture<'_, Result<(), TerminalError>> {
         let stopped = self
             .stopped
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .contains(workspace);
+            .contains(workspace.id());
         Box::pin(async move {
             if stopped {
                 Err(TerminalError::NotRunning(
@@ -238,11 +240,11 @@ impl TerminalService for FakeTerminals {
 
     fn open(
         &self,
-        workspace: &WorkspaceId,
+        workspace: &OwnedWorkspace,
         size: TerminalSize,
     ) -> BoxFuture<'_, Result<TerminalLink, TerminalError>> {
         let checked = self.check(workspace);
-        let workspace = workspace.clone();
+        let workspace = workspace.id().clone();
         let refused = self
             .refuse_next
             .lock()
@@ -354,7 +356,7 @@ impl fmt::Display for Limit {
 }
 
 struct Entry {
-    workspace: WorkspaceId,
+    workspace: OwnedWorkspace,
     size: TerminalSize,
     ticket: Option<(String, Instant)>,
     /// The signed-in browser the terminal was made for, if it was not made with the install token.
@@ -381,7 +383,7 @@ impl Registry {
     /// An invalid-request [`crate::ApiError`] (422) when a value is not valid.
     pub fn create(
         &self,
-        workspace: &WorkspaceId,
+        workspace: &OwnedWorkspace,
         size: TerminalSize,
         ticket: String,
     ) -> Result<u64, Limit> {
@@ -397,7 +399,7 @@ impl Registry {
         if inner
             .entries
             .values()
-            .filter(|e| &e.workspace == workspace)
+            .filter(|e| e.workspace.id() == workspace.id())
             .count()
             >= MAX_PER_WORKSPACE
         {
@@ -442,16 +444,17 @@ impl Registry {
     }
 
     /// Uses the ticket of terminal `id` of `workspace`: works once, within its lifetime, for that
-    /// terminal only. A wrong guess leaves the ticket as it was.
+    /// terminal only. A wrong guess leaves the ticket as it was. The handle is the one the
+    /// ticket was made for, so the socket opens the shell for the user who asked for it.
     pub fn claim(
         &self,
         workspace: &WorkspaceId,
         id: u64,
         presented: &[u8],
-    ) -> Option<TerminalSize> {
+    ) -> Option<(OwnedWorkspace, TerminalSize)> {
         let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let entry = inner.entries.get_mut(&id)?;
-        if &entry.workspace != workspace {
+        if entry.workspace.id() != workspace {
             return None;
         }
         let (ticket, issued) = entry.ticket.as_ref()?;
@@ -460,7 +463,7 @@ impl Registry {
             return None;
         }
         entry.ticket = None;
-        Some(entry.size)
+        Some((entry.workspace.clone(), entry.size))
     }
 
     /// Frees the terminal's place.

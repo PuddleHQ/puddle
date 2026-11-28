@@ -12,6 +12,7 @@ use axum::extract::State;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade, close_code};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
+use puddle_services::owned::OwnedWorkspace;
 use puddle_types::WorkspaceId;
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
@@ -21,7 +22,7 @@ use crate::auth::ReachedPublicly;
 use crate::authz::{Principal, Via};
 use crate::extract::{Json as BodyJson, Path};
 use crate::routes::AppState;
-use crate::routes::workspaces::named;
+use crate::routes::workspaces::owned;
 use puddle_services::error::ApiErrorBody;
 use puddle_services::error::{ApiError, ErrorCode};
 use puddle_services::terminals::{
@@ -90,7 +91,7 @@ pub(crate) async fn create_terminal(
     Path(id): Path<String>,
     BodyJson(body): BodyJson<TerminalRequest>,
 ) -> Result<(StatusCode, Json<TerminalTicket>), ApiError> {
-    let workspace = named(&state, &id).await?;
+    let workspace = owned(&state, principal, &id).await?;
     let size = TerminalSize::new(body.cols, body.rows)
         .ok_or_else(|| ApiError::invalid("a terminal is 2 to 500 columns and 1 to 300 rows"))?;
     state.terminal_service.check(&workspace).await?;
@@ -167,12 +168,11 @@ pub(crate) async fn terminal_socket(
         .ok()
         .filter(|_| admitted)
         .and_then(|workspace| {
-            let size = ticket_of(&headers).and_then(|ticket| {
+            ticket_of(&headers).and_then(|ticket| {
                 state
                     .terminals
                     .claim(&workspace, terminal, ticket.as_bytes())
-            })?;
-            Some((workspace, size))
+            })
         });
     let (workspace, size) = claimed.ok_or_else(|| {
         ApiError::new(
@@ -222,7 +222,7 @@ async fn when_handed<S, F: Future<Output = ()>>(
 async fn run(
     mut socket: WebSocket,
     state: &AppState,
-    workspace: &WorkspaceId,
+    workspace: &OwnedWorkspace,
     size: TerminalSize,
     shutdown: watch::Receiver<bool>,
     ended: impl Future<Output = ()> + Unpin,

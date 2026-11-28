@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use super::{
     Before, CheckoutDir, ComputeError, DiskSize, ExecRequest, FileMount, ImageRef, Import, Layout,
-    Loan, Runtime, Sandbox, SandboxSpec, SessionUser, VolumeInfo, VolumeMount, WorkspaceError,
-    WorkspaceId, Workspaces, cleanup_failed_create, clear_leftover, debug, import_mount, info,
-    maintenance_name, mount_for, tail, warn,
+    Loan, Runtime, Sandbox, SandboxSpec, VolumeInfo, VolumeMount, WorkspaceError, WorkspaceId,
+    Workspaces, cleanup_failed_create, clear_leftover, debug, import_mount, info, maintenance_name,
+    mount_for, tail, warn,
 };
 
 /// What [`Workspaces::import`] did.
@@ -15,18 +15,12 @@ pub struct ImportReport {
     pub failed: Vec<(CheckoutDir, String)>,
 }
 
-/// Who an import runs as and what it clones.
-#[derive(Clone, Copy)]
-struct ImportRun<'a> {
-    user: SessionUser,
-    imports: &'a [Import],
-}
-
 impl Workspaces {
     /// Clones the checkouts `imports` (on this computer) onto workspace `id`'s volume, making
     /// the volume with `size` if it does not exist yet. It runs in the workspace's short-lived
-    /// maintenance sandbox, booted from `image` (the workspace's own, so the clones belong to the
-    /// user its sandbox runs commands as): no route, the volume, and each checkout's `.git`
+    /// maintenance sandbox, booted from `image` (the workspace's own), as root: the bare image has
+    /// no session user yet (the boot hook adds it) and the first start's prepare step gives the
+    /// volume to that user. No route, the volume, and each checkout's `.git`
     /// read-only at [`import_mount`]. Each clone gets every branch and tag of the checkout and
     /// `origin` set to its [`Import::url`] (see [`crate::FINISH_IMPORT_SH`]); one `sync` follows.
     /// The sandbox is removed again whatever happened. A checkout git refuses fails only itself:
@@ -42,7 +36,6 @@ impl Workspaces {
         id: &WorkspaceId,
         image: &ImageRef,
         size: DiskSize,
-        user: SessionUser,
         imports: &[Import],
     ) -> Result<ImportReport, WorkspaceError> {
         let name = maintenance_name(id)?;
@@ -59,14 +52,7 @@ impl Workspaces {
             .map_err(|e| WorkspaceError::runtime("look up the volume", id, e))?;
         let existed = existing.is_some();
         let result = self
-            .run_import(
-                rt,
-                id,
-                image,
-                existing.as_ref(),
-                size,
-                ImportRun { user, imports },
-            )
+            .run_import(rt, id, image, existing.as_ref(), size, imports)
             .await;
         // The create makes the volume; whether it got that far is read, not assumed.
         let made = if existed {
@@ -111,9 +97,8 @@ impl Workspaces {
         image: &ImageRef,
         existing: Option<&VolumeInfo>,
         size: DiskSize,
-        run: ImportRun<'_>,
+        imports: &[Import],
     ) -> Result<Vec<(CheckoutDir, String)>, WorkspaceError> {
-        let ImportRun { user, imports } = run;
         let name = &maintenance_name(id)?;
         clear_leftover(rt, id, name).await?;
         let layout = Layout::new()?;
@@ -144,7 +129,7 @@ impl Workspaces {
                 return Err(WorkspaceError::runtime("create the import sandbox", id, e));
             }
         };
-        let work = self.import_into(&sandbox, id, &layout, user, imports).await;
+        let work = self.import_into(&sandbox, id, &layout, imports).await;
         let stopped = sandbox.stop().await;
         drop(sandbox);
         let removed = rt.remove(name).await;
@@ -172,7 +157,6 @@ impl Workspaces {
         sandbox: &S,
         id: &WorkspaceId,
         layout: &Layout,
-        user: SessionUser,
         imports: &[Import],
     ) -> Result<Vec<(CheckoutDir, String)>, WorkspaceError> {
         let mut failed = Vec::new();
@@ -200,13 +184,14 @@ impl Workspaces {
                 }
             };
             // git removes the folder of a clone it refused; a clone it was stopped in, or whose
-            // finishing step failed, is half made.
-            let reason = match step(layout.import_request(n, dir)?.as_user(user.name())).await? {
+            // finishing step failed, is half made. Both steps run as root, like every other exec
+            // on a bare image.
+            let reason = match step(layout.import_request(n, dir)?.as_user("root")).await? {
                 Some((reason, stopped)) => Some((reason, stopped)),
                 None => step(
                     layout
                         .finish_import_request(n, dir, &import.url)?
-                        .as_user(user.name()),
+                        .as_user("root"),
                 )
                 .await?
                 .map(|(reason, _)| (reason, true)),

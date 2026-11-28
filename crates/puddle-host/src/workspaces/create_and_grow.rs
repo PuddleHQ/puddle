@@ -92,14 +92,7 @@ impl<R: Runtime + Clone> HostWorkspaces<R> {
         let report = self
             .inner
             .workspaces
-            .import(
-                &self.inner.runtime,
-                &record.id,
-                &image,
-                size,
-                record.session_user,
-                imports,
-            )
+            .import(&self.inner.runtime, &record.id, &image, size, imports)
             .await?;
         for (directory, reason) in &report.failed {
             if let Some(repository) = record

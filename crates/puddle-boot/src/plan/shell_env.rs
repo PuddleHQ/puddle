@@ -25,6 +25,11 @@ pub const BASH_RC_GUEST: &str = "/etc/bash.bashrc";
 /// zsh's system-wide startup file, read by every zsh.
 pub const ZSH_ENV_GUEST: &str = "/etc/zsh/zshenv";
 
+/// Set (and exported) by the block the first time it runs in a process tree. A nested shell
+/// finds it and keeps the `PATH` or proxy its caller chose; `sudo` drops it with the rest of the
+/// environment, so the block applies again there.
+const SHELL_ENV_SENTINEL: &str = "PUDDLE_SHELL_ENV_APPLIED";
+
 const SUDOERS_MODE: FileMode = FileMode::new(0o440);
 
 /// The files for `env`: none when it is empty.
@@ -44,9 +49,12 @@ pub(super) fn files(env: &GuestEnv) -> Result<Vec<GuestFile>, PlanError> {
     .with_mode(SUDOERS_MODE);
     let exports = env
         .iter()
-        .map(|(name, value)| format!("export {name}={}", sh_word(value)))
+        .map(|(name, value)| format!("  export {name}={}", sh_word(value)))
         .collect::<Vec<_>>()
         .join("\n");
+    let exports = format!(
+        "if [ -z \"${{{SHELL_ENV_SENTINEL}:-}}\" ]; then\n  export {SHELL_ENV_SENTINEL}=1\n{exports}\nfi"
+    );
     let activate = activates_mise(env);
     let merged = |path: &str, hook: Option<&str>| -> Result<GuestFile, PlanError> {
         let body = hook.map_or_else(|| exports.clone(), |h| format!("{exports}\n{h}"));

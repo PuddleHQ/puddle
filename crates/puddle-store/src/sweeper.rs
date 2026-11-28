@@ -24,7 +24,7 @@ fn audit_size_problem(bytes: u64, retention_days: u32) -> Problem {
         AUDIT_SIZE_PROBLEM,
         "The activity log is getting large",
         format!(
-            "It holds about {} MiB, over the size Puddle warns at. Nothing is deleted for its size: \
+            "Its file holds about {} MiB, over the size Puddle warns at. Nothing is deleted for its size: \
              records are kept for {retention_days} days. If the disk is getting full, shorten that \
              in the admin screen, or prune it by hand with the `audit prune` command.",
             bytes / (1024 * 1024)
@@ -51,7 +51,10 @@ fn warn_when_large(store: &Store, problems: &Problems, over: bool) {
         return;
     }
     // A read that fails is not worth a second problem; the next pass looks again.
-    if let (Ok(bytes), Ok(days)) = (store.audit_bytes(), store.audit_retention_days()) {
+    if let (Ok(bytes), Ok(days)) = (
+        store.audit_file_in_use_bytes(),
+        store.audit_retention_days(),
+    ) {
         problems.raise(audit_size_problem(bytes, days));
     }
 }

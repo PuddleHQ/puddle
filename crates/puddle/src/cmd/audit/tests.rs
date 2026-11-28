@@ -130,10 +130,10 @@ fn sizes_read_in_tenths_of_a_mebibyte() {
     assert_eq!(mib(10 * 1024 * 1024 + 104_858), "10.1 MiB");
 }
 
-fn stats(bytes: u64) -> puddle_host::AuditStats {
+fn stats(file_in_use: u64) -> puddle_host::AuditStats {
     puddle_host::AuditStats {
         records: 12,
-        bytes,
+        bytes: 2_097_152,
         oldest_ts: Some(1),
         records_last_day: 3,
         bytes_last_day: 1_048_576,
@@ -141,7 +141,7 @@ fn stats(bytes: u64) -> puddle_host::AuditStats {
         bytes_last_week: 2_097_152,
         retention_days: 90,
         warn_bytes: 2_097_152,
-        file_bytes: 4_194_304,
+        file_bytes: file_in_use + 524_288,
         free_bytes: 524_288,
     }
 }

@@ -147,6 +147,23 @@ fn a_host_with_a_port_or_trailing_dot_and_a_dot_owner_are_refused() {
 }
 
 #[test]
+fn an_empty_host_label_and_a_foreign_owner_on_a_legacy_azure_host_are_refused() {
+    for host in [
+        "github..com",
+        ".github.com",
+        "git..hub.com",
+        "a..visualstudio.com",
+    ] {
+        assert!(RepoRef::new(host, "acme", "web").is_err(), "{host:?}");
+    }
+    assert!(RepoRef::new("contoso.visualstudio.com", "contoso", "proj/api").is_ok());
+    assert!(RepoRef::new("contoso.visualstudio.com", "Contoso", "proj/api").is_ok());
+    assert!(RepoRef::new("contoso.visualstudio.com", "other", "proj/api").is_err());
+    assert!(RepoRef::new("dev.azure.com", "contoso", "proj/api").is_ok());
+    assert!(RepoRef::new("gitlab.example", "any-group", "web").is_ok());
+}
+
+#[test]
 fn only_ascii_letters_fold_so_a_look_alike_is_another_name() {
     let kelvin = RepoRef::new("dev.azure.com", "org", "proj\u{212a}/x").unwrap();
     assert_ne!(

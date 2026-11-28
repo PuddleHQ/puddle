@@ -165,7 +165,7 @@ fn naive(records: &[AuditRecord], filter: &AuditFilter) -> Vec<i64> {
                 && filter.to.is_none_or(|t| r.ts() < t)
                 && filter.host_contains.as_ref().is_none_or(|h| {
                     r.host()
-                        .is_some_and(|host| host.contains(&h.to_lowercase()))
+                        .is_some_and(|host| host.contains(&h.to_ascii_lowercase()))
                 })
                 && filter.q.as_ref().is_none_or(|q| {
                     r.search_text()
@@ -390,6 +390,32 @@ fn filters_combine_and_the_host_is_case_folded() {
         }),
         [2, 3]
     );
+}
+
+#[test]
+fn the_host_needle_folds_ascii_only_like_the_column_it_matches() {
+    let (_dir, store) = seeded(&[connection(
+        T0,
+        "a",
+        "kite.example.com",
+        ConnectionDecision::Allow,
+    )]);
+    let q = |needle: &str| {
+        ids(store
+            .audit_query_every_user(
+                &puddle_store::testing::all_users(),
+                &AuditFilter {
+                    host_contains: Some(needle.into()),
+                    ..AuditFilter::default()
+                },
+                AuditCursor::After(0),
+                100,
+            )
+            .unwrap())
+    };
+    assert_eq!(q("KITE"), [1]);
+    // The Kelvin sign lower-cases to an ASCII `k` under Unicode folding, and no host has it.
+    assert_eq!(q("\u{212A}ite"), Vec::<i64>::new());
 }
 
 #[test]

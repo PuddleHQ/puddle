@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Git identities and a workspace's Git settings on the wire (credentials spec §7, §8). A
+//! Git identities and a workspace's Git settings on the wire. A
 //! credential names a source; no request or response carries a secret value.
 
 use std::collections::BTreeSet;

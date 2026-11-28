@@ -22,6 +22,17 @@ fn copy_has_the_committed_rows_and_the_schema_version() {
         copy.rules_every_user(&crate::testing::all_users()).len(),
         rules
     );
+    drop(copy);
+    let beside_the_copy: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("copy.db"))
+        .collect();
+    assert_eq!(
+        beside_the_copy,
+        ["copy.db"],
+        "the copy leaves no sidecar files"
+    );
 }
 
 #[test]
@@ -53,6 +64,42 @@ fn destination_path_with_a_quote_works() {
     let dest = dir.path().join("it's a copy.db");
     backup_database(&src, &dest).unwrap();
     assert!(dest.exists());
+}
+
+#[test]
+fn a_failure_after_the_copy_removes_the_copy() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("puddle.db");
+    drop(open(&src));
+    Connection::open(&src)
+        .unwrap()
+        .execute_batch(
+            "CREATE TRIGGER keep_hashes BEFORE DELETE ON account_passwords
+             BEGIN SELECT RAISE(ABORT, 'no'); END;
+             INSERT INTO account_passwords (user_id, hash, changed_at)
+             SELECT id, 'CANARY-hash', 0 FROM users;",
+        )
+        .unwrap();
+    let dest = dir.path().join("copy.db");
+    assert!(backup_database(&src, &dest).is_err());
+    assert!(!dest.exists(), "a copy with password hashes was left");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_destination_that_is_not_utf8_is_refused_and_creates_nothing() {
+    use std::os::unix::ffi::OsStrExt;
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("puddle.db");
+    drop(open(&src));
+    let dest = dir
+        .path()
+        .join(std::ffi::OsStr::from_bytes(b"copy-\xff.db"));
+    assert!(matches!(
+        backup_database(&src, &dest),
+        Err(StoreError::PathNotUtf8(_))
+    ));
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
 }
 
 #[test]

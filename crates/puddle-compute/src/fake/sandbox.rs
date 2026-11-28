@@ -43,12 +43,46 @@ impl FakeSandbox {
         Ok(())
     }
 
+    /// Refuses an exec as a named user the sandbox's image does not have, as the real guest does
+    /// (a bare image has `root` and its `USER`; a numeric id is not looked up).
+    fn check_user(&self, state: &State, request: &ExecRequest) -> Result<(), ComputeError> {
+        let Some(user) = request.user.as_deref() else {
+            return Ok(());
+        };
+        let name = user.split(':').next().unwrap_or(user);
+        if name == "root" || name.bytes().all(|b| b.is_ascii_digit()) {
+            return Ok(());
+        }
+        let Some(record) = state.sandboxes.get(self.name.as_str()) else {
+            return Ok(());
+        };
+        let image = record.spec.image.as_str();
+        let from_image = state
+            .images
+            .get(image)
+            .and_then(|c| c.user.as_deref())
+            .and_then(|u| u.split(':').next())
+            == Some(name);
+        let added = state
+            .guest_users
+            .get(image)
+            .is_some_and(|users| users.contains(name));
+        if from_image || added {
+            return Ok(());
+        }
+        Err(ComputeError::Runtime {
+            op: "exec",
+            message: format!("exec session error: guest user not found: {name}"),
+        })
+    }
+
     pub(super) fn run(
         &self,
         state: &mut State,
         request: &ExecRequest,
     ) -> Result<ExecOutput, ComputeError> {
         let handlers = state.handlers.clone();
+        self.check_user(state, request)?;
         let State {
             sandboxes, volumes, ..
         } = state;

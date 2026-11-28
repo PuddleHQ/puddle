@@ -1109,9 +1109,12 @@ fn dir(name: &str) -> puddle_types::CheckoutDir {
 #[tokio::test]
 async fn a_clone_goes_into_its_directory_and_the_sync_after_it_runs_as_root() {
     let rt = FakeRuntime::new();
+    // The workspace's own sandbox has the session user: the boot hook adds it.
+    let box_spec = spec("box");
+    rt.add_guest_user(&box_spec.image, "agent");
     let w = Workspaces::default();
     let id = ws("acme");
-    let sb = w.create(&rt, &id, spec("box"), None).await.unwrap();
+    let sb = w.create(&rt, &id, box_spec, None).await.unwrap();
     let seen = record_execs(&rt, &[("sh", 0, ""), ("sync", 0, "")]);
     let path = w
         .clone_checkout(

@@ -541,6 +541,7 @@ macro_rules! contract_tests {
             remove_needs_a_stopped_sandbox_and_frees_the_name,
             kill_ends_a_vm_by_name_and_is_idempotent,
             exec_exit_codes_are_exact,
+            exec_as_an_unknown_user_is_refused,
             signal_killed_exec_is_a_failure,
             exec_timeout_is_enforced,
             exec_needs_a_running_sandbox,

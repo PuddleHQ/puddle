@@ -18,7 +18,7 @@ use puddle_agent::editor::EditorConfig;
 use puddle_agent::{Agent, Config};
 use puddle_agent_proto::editor::EditorServer;
 use puddle_agent_proto::forward::{GuestLink, OpenError};
-use puddle_agent_proto::host::{GuestStream, HostConfig, StreamHandler, serve_session};
+use puddle_agent_proto::host::{GuestStream, HostConfig, SessionId, StreamHandler, serve_session};
 use puddle_front::Editor;
 use puddle_test_kit::eventually;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -90,6 +90,7 @@ async fn rig_in(tag: &str, editor: Option<(u16, Option<&str>)>, files: Option<&[
                 let _ = serve_session(
                     conn,
                     common::workspace(),
+                    SessionId::next(),
                     Arc::new(common::ChanSink(tx)),
                     Arc::new(handler),
                     HostConfig::default(),

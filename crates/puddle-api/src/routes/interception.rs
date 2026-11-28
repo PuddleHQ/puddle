@@ -146,12 +146,11 @@ pub(crate) async fn put_interception(
     let name = named(&state, &id).await?;
     let never = body.never_decrypt.as_deref().map(patterns).transpose()?;
     blocking(move || {
-        if let Some(choice) = body.mode {
-            state.store.set_workspace_mode(&name, choice.own())?;
-        }
-        if let Some(never) = never {
-            state.store.set_never_decrypt(&name, &never)?;
-        }
+        state.store.patch_workspace_interception(
+            &name,
+            body.mode.map(WorkspaceMode::own),
+            never.as_deref(),
+        )?;
         view(&state, &name)
     })
     .await
@@ -185,19 +184,11 @@ pub(crate) async fn put_interception_settings(
     crate::extract::Json(body): crate::extract::Json<InterceptionSettingsRequest>,
 ) -> Result<Json<InterceptionSettingsView>, ApiError> {
     blocking(move || {
-        let mut saved = state.store.interception_settings()?;
-        if let Some(mode) = body.mode {
-            saved.mode = Some(mode);
-            // Choosing answers the notice.
-            saved.notice_seen = true;
-        }
-        if let Some(on) = body.learn_from_rejections {
-            saved.learn_from_rejections = on;
-        }
-        if let Some(seen) = body.notice_seen {
-            saved.notice_seen = seen;
-        }
-        state.store.set_interception_settings(saved)?;
+        state.store.patch_interception_settings(
+            body.mode,
+            body.learn_from_rejections,
+            body.notice_seen,
+        )?;
         settings_view(&state)
     })
     .await

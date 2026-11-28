@@ -398,13 +398,22 @@ async fn the_end_of_an_agent_session_finds_a_dead_vm_without_a_list() {
     let id = WorkspaceId::new("acme").unwrap();
 
     // The agent restarting ends a session too: the VM is up, so nothing changes.
-    puddle_agent_proto::host::GuestWatcher::session_ended(host.workspaces().ports(), &id);
+    puddle_agent_proto::host::GuestWatcher::session_ended(
+        host.workspaces().ports(),
+        &id,
+        puddle_agent_proto::host::SessionId::next(),
+    );
+    // An absence window: nothing signals that the status stayed as it was.
     tokio::time::sleep(Duration::from_secs(3)).await;
     assert_eq!(status_of(&api.get("/api/workspaces/acme").await), "running");
 
     // The VM dies and its session ends: the host reads the sandboxes by itself, no list asked.
     assert!(rig.runtime.crash(&SandboxName::new("acme").unwrap()));
-    puddle_agent_proto::host::GuestWatcher::session_ended(host.workspaces().ports(), &id);
+    puddle_agent_proto::host::GuestWatcher::session_ended(
+        host.workspaces().ports(),
+        &id,
+        puddle_agent_proto::host::SessionId::next(),
+    );
     events
         .until(
             |e| e["type"] == "status_changed" && e["status"] == "crashed",

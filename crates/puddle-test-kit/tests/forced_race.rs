@@ -18,6 +18,8 @@ fn host_emitting_late(event: &'static str) -> broadcast::Receiver<&'static str> 
         // Simulated latency: the host's forwarder is slow, on virtual time.
         tokio::time::sleep(Duration::from_millis(300)).await;
         let _ = tx.send(event);
+        // The host stays up, so the channel stays open and an absence check has a window to watch.
+        std::future::pending::<()>().await;
     });
     rx
 }

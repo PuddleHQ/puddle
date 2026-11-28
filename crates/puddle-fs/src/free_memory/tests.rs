@@ -14,8 +14,32 @@ fn a_text_without_the_line_or_with_a_bad_figure_gives_nothing() {
     assert_eq!(mem_available_bytes("MemAvailable: 5\n"), None);
 }
 
-#[cfg(any(target_os = "linux", windows))]
 #[test]
-fn the_host_reports_some_memory() {
-    assert!(available_memory_bytes().unwrap() > 0);
+fn a_figure_too_large_for_bytes_gives_nothing() {
+    assert_eq!(mem_available_bytes("MemAvailable: 18446744073709551615 kB\n"), None);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn the_host_reports_memory_between_a_megabyte_and_its_total() {
+    let available = available_memory_bytes().unwrap();
+    let meminfo = std::fs::read_to_string("/proc/meminfo").unwrap();
+    let total_kib: u64 = meminfo
+        .lines()
+        .find_map(|l| l.strip_prefix("MemTotal:"))
+        .unwrap()
+        .trim()
+        .strip_suffix("kB")
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(available > 1024 * 1024, "{available}");
+    assert!(available <= total_kib * 1024, "{available}");
+}
+
+#[cfg(windows)]
+#[test]
+fn the_host_reports_some_commit() {
+    assert!(available_memory_bytes().unwrap() > 1024 * 1024);
 }

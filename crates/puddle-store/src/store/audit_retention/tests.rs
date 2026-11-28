@@ -277,6 +277,24 @@ fn a_shrink_frees_all_its_pages_and_reports_the_bytes_it_freed() {
     assert_eq!(pragma_u64(&lock(&store.conn), "freelist_count").unwrap(), 0);
 }
 
+#[test]
+fn a_shrink_of_more_free_pages_than_one_step_frees_takes_several_steps() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("puddle.db");
+    let limits = Limits {
+        max_open_rows: 100_000,
+        ..Limits::default()
+    };
+    let store = store_with_records_pruned(&path, limits, "h", 20_000);
+    let free_pages = pragma_u64(&lock(&store.conn), "freelist_count").unwrap();
+    assert!(
+        free_pages > u64::from(SHRINK_STEP_PAGES),
+        "{free_pages} free pages: the test needs more than one step can free"
+    );
+    assert!(store.shrink_file(0).unwrap() > 0);
+    assert_eq!(pragma_u64(&lock(&store.conn), "freelist_count").unwrap(), 0);
+}
+
 fn a_store_with_old_records_only() -> (Arc<ManualClock>, Store) {
     let clock = Arc::new(ManualClock::new(1_800_000_000_000));
     let store = Store::open_in_memory(clock.clone(), Limits::default()).unwrap();

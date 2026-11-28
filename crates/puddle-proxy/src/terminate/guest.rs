@@ -293,11 +293,10 @@ struct SniGate {
     flags: Arc<GateFlags>,
 }
 
-/// What the gate saw go wrong on one connection.
+/// What the gate saw go wrong on one connection. A name mismatch is not here: the session
+/// checks the name in the hello before this gate runs (`sni_mismatch`).
 #[derive(Debug, Default)]
 pub(crate) struct GateFlags {
-    /// The client asked for another name, or none.
-    pub(crate) mismatch: AtomicBool,
     /// The client asked for the right name and the CA could not make a certificate for it.
     pub(crate) leaf_failed: AtomicBool,
 }
@@ -305,7 +304,6 @@ pub(crate) struct GateFlags {
 impl ResolvesServerCert for SniGate {
     fn resolve(&self, hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
         if !name_is(hello.server_name(), &self.host) {
-            self.flags.mismatch.store(true, Ordering::Relaxed);
             return None;
         }
         match self.ca.leaf(&self.host) {

@@ -144,7 +144,6 @@ async fn worker_child() {
 #[cfg(windows)]
 #[test]
 fn the_worker_reads_the_front_s_request_from_stdin() {
-    use std::io::Write as _;
     use std::process::{Command, Stdio};
 
     let mut child = Command::new(std::env::current_exe().unwrap())
@@ -160,11 +159,8 @@ fn the_worker_reads_the_front_s_request_from_stdin() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    let mut stdin = child.stdin.take().unwrap();
-    stdin.write_all(b"logoff\n").unwrap();
-    // the front keeps the pipe open after its request
+    puddle_test_kit::feed_stdin(&mut child, b"logoff\n");
     let output = child.wait_with_output().unwrap();
-    drop(stdin);
     assert!(
         output.status.success(),
         "{}{}",

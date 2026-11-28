@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <script lang="ts">
   import { tick } from "svelte";
+  import { SvelteSet } from "svelte/reactivity";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import OptionsPopover from "./OptionsPopover.svelte";
   import { decidedSentence, type Decided } from "#lib/decision/decided.ts";
@@ -91,9 +92,21 @@
     else heading()?.focus();
   }
 
+  // The row stays listed until the API answers, so a second click or key press on it would send a
+  // second decision that fails as already decided.
+  const deciding = new SvelteSet<number>();
+
   async function submit(row: Row, choice: Choice, confirmed: boolean) {
-    const nextId = neighbourOf(row.request.id);
-    const result = await store.decide(row, choice, confirmed);
+    const id = row.request.id;
+    if (deciding.has(id)) return;
+    deciding.add(id);
+    const nextId = neighbourOf(id);
+    let result;
+    try {
+      result = await store.decide(row, choice, confirmed);
+    } finally {
+      deciding.delete(id);
+    }
     if (!result.ok) {
       toasts.push(result.message, { tone: "error", ms: 8000 });
       if (result.reason === "stale") await settleFocus(nextId);

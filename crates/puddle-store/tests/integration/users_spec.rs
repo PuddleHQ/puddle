@@ -1040,7 +1040,7 @@ fn a_user_cannot_switch_or_delete_the_request_rule_of_another_user() {
         .as_user(ann)
         .add_request_rule(&NewRequestRule {
             workspace: None,
-            host: "api.example".to_owned(),
+            host: puddle_types::HostPattern::parse_normalised("api.example").unwrap(),
             methods: Methods::parse(["DELETE"]).unwrap(),
             path: PathPattern::parse("/x").unwrap(),
             created_by: Actor::Api,

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
+# shellcheck shell=sh
 # The git guard shared by delete-check.sh and checkouts.sh. Not a script on its own: the Rust
 # constants DELETE_CHECK_SH and CHECKOUTS_SH put this text in front of the script. `g` runs git in
 # the checkout named by $repo, after read_filters has set $filters for it.
@@ -49,7 +50,6 @@ read_filters() {
     [ -z "$why" ]
 }
 
-# shellcheck disable=SC2154 # $repo is set by the script this text is put in front of
 g() {
     for f in $filters; do
         set -- -c "filter.$f.clean=" -c "filter.$f.smudge=" -c "filter.$f.process=" \

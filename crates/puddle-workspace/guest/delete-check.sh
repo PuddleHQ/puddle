@@ -17,6 +17,7 @@
 #   E <dir> <message>  something could not be checked
 #   D                  the check ran to the end
 # Names have tabs and newlines replaced by '?'. Lines are cut at 500 characters, lists at 200.
+# shellcheck disable=SC2034,SC2154 # `repo` and `why` are shared with git-guard.sh, put in front of this text
 set -u
 
 # git-guard.sh (the git calls' guard: `g`, `read_filters`) comes in front of this text; it is not

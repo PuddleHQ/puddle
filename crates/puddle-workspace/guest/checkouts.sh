@@ -23,6 +23,7 @@
 # Exit status: 0 when the listing ran to the end, 3 when it could not run (the E line says why),
 # 4 when the image has no git (the E line says so; puddle-workspace reports it on its own).
 # Fields have control characters replaced by '?' and are cut at 500 characters.
+# shellcheck disable=SC2034,SC2154 # `repo` and `why` are shared with git-guard.sh, put in front of this text
 set -u
 
 # git-guard.sh (the git calls' guard: `g`, `read_filters`) comes in front of this text; it is not

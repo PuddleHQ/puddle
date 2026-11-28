@@ -174,6 +174,28 @@ async fn handlers_run_before_builtins_newest_first() {
     assert_eq!(run(&sb, "cat", &["/hook-ran"]).await.stdout_text(), "y");
 }
 
+#[tokio::test(start_paused = true)]
+async fn a_handler_delay_holds_the_call_for_that_long_without_blocking_the_runtime() {
+    let rt = FakeRuntime::new();
+    rt.on_exec(|ctx: &mut ExecContext<'_>, r: &ExecRequest| {
+        (r.program == "slow").then(|| {
+            ctx.delay(Duration::from_secs(5));
+            ExecOutput::new(0, "done", "")
+        })
+    });
+    let sb = rt.create(spec("a")).await.unwrap();
+    let started = tokio::time::Instant::now();
+    let slow = run(&sb, "slow", &[]);
+    // The state is released while the call waits: another call completes first.
+    let (out, quick) = tokio::join!(slow, async {
+        let out = run(&sb, "true", &[]).await;
+        (out.status.code, started.elapsed())
+    });
+    assert_eq!(out.stdout_text(), "done");
+    assert_eq!(quick, (0, Duration::ZERO));
+    assert_eq!(started.elapsed(), Duration::from_secs(5));
+}
+
 #[tokio::test]
 async fn handlers_see_the_merged_env() {
     let rt = FakeRuntime::new();

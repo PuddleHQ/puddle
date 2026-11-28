@@ -36,6 +36,7 @@ case $max in '' | *[!0-9]*) usage ;; esac
 
 if [ "$cleanup" = 1 ]; then
     refs=$("$gh" api "repos/$repo/git/matching-refs/heads/bisect/$stem-" --jq '.[].ref') || exit 1
+    refs=$(printf '%s\n' "$refs" | grep -E "^refs/heads/bisect/$stem-[0-9a-f]{7}\$" || true)
     for ref in $refs; do
         "$gh" api -X DELETE "repos/$repo/git/$ref" >/dev/null || exit 1
         echo "deleted $ref"

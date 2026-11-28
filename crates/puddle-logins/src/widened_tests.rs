@@ -4,16 +4,17 @@
 
 use std::sync::Arc;
 
-use puddle_proxy::{AnswerHead, ExchangeRewriter, Rewrite, StandIns, Want};
+use puddle_proxy::{ExchangeRewriter, StandIns};
 use puddle_secrets::{MemoryStore, SecretStore};
-use puddle_types::{Host, WorkspaceId};
-use serde_json::{Value, json};
+use puddle_types::WorkspaceId;
+use serde_json::json;
 
 use crate::profile::{
     Audience, Endpoint, Field, Keep, Method, Profile, Role, Scope, Slot, StandInKind, path_matches,
 };
+use crate::test_rig::{Notices, Rig, answered, host, rig_for};
 use crate::vault::{Vault, slot_id};
-use crate::{LoginNotices, Logins, Marker, Problem};
+use crate::{Logins, Marker};
 
 const ARM_REAL: &str = "eyARMCANARY0real0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const GRAPH_REAL: &str = "eyGRAPHCANARY0real0BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
@@ -59,68 +60,8 @@ static WIDE: [Profile; 1] = [Profile {
     api_hosts: &["api.wide.test"],
 }];
 
-pub(crate) struct Quiet;
-impl LoginNotices for Quiet {
-    fn problem(&self, _: &WorkspaceId, _: &Profile, _: Problem) {}
-}
-
-pub(crate) struct Rig {
-    pub(crate) logins: Logins,
-    pub(crate) store: Arc<MemoryStore>,
-    pub(crate) registry: Arc<StandIns>,
-}
-
 fn rig() -> Rig {
     rig_for(&WIDE)
-}
-
-pub(crate) fn rig_for(profiles: &'static [Profile]) -> Rig {
-    let registry = Arc::new(StandIns::new());
-    let store = Arc::new(MemoryStore::new());
-    let logins = Logins::new(
-        WorkspaceId::new("alpha").unwrap(),
-        true,
-        profiles,
-        Arc::clone(&registry),
-        store.clone(),
-        Arc::new(Quiet),
-        Marker::none(),
-    );
-    Rig {
-        logins,
-        store,
-        registry,
-    }
-}
-
-pub(crate) fn host(name: &str) -> Host {
-    Host::parse_normalised(name).unwrap()
-}
-
-pub(crate) async fn answered(
-    rig: &Rig,
-    host_name: &str,
-    method: &str,
-    path: &str,
-    body: &Value,
-) -> Value {
-    let mut exchange = rig
-        .logins
-        .begin(&host(host_name), method, path)
-        .expect("the request is an exchange");
-    let bytes = serde_json::to_vec(body).unwrap();
-    let head = AnswerHead {
-        status: 200,
-        content_type: Some("application/json"),
-        content_encoding: None,
-        content_length: Some(bytes.len() as u64),
-    };
-    let answer = exchange.answer_mut().unwrap();
-    assert_eq!(answer.wants(&head), Want::Read);
-    let Rewrite::Replace(out) = answer.rewrite(&head, &bytes).await else {
-        panic!("captured");
-    };
-    serde_json::from_slice(&out).unwrap()
 }
 
 #[test]
@@ -307,7 +248,7 @@ fn builtin_rig() -> Logins {
         crate::builtin(),
         Arc::new(StandIns::new()),
         Arc::new(MemoryStore::new()),
-        Arc::new(Quiet),
+        Arc::new(Notices::default()),
         Marker::none(),
     )
 }

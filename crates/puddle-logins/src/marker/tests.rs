@@ -134,3 +134,20 @@ fn a_write_leaves_the_half_written_file_of_another_writer_alone() {
     // Its own files are gone: only the marker and the other writer's are left.
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn the_calls_off_the_async_threads_read_and_write_the_same_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let marker = Marker::in_file(dir.path().join("one.kept"));
+    assert_eq!(marker.read_off_thread().await, None);
+    marker.write_off_thread(set(&["claude"])).await;
+    marker.note_off_thread("github", true).await;
+    assert_eq!(
+        marker.read_off_thread().await,
+        Some(set(&["claude", "github"]))
+    );
+    assert_eq!(marker.read(), Some(set(&["claude", "github"])));
+    marker.note_off_thread("claude", false).await;
+    let since = marker.read_since_off_thread().await.unwrap();
+    assert_eq!(since.keys().collect::<Vec<_>>(), ["github"]);
+}

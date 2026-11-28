@@ -34,9 +34,18 @@ impl Logins {
         let mut parsed =
             TokenBody::parse(content_type, body).map_err(|_| Problem::UnexpectedAnswer)?;
         let mut fields = parsed.fields();
-        // An identifier in a field named like a credential (a `token_uuid`) is no credential.
+        // An identifier in a field named like a credential (a `token_uuid`) is no credential, but
+        // only a field that says so (`_id`, `_uuid`) and that the profile does not name: a UUID
+        // can be a token, and a field called `token` holding one is a token.
         fields.retain(|field| {
+            let says_identifier = {
+                let name = field.name.to_ascii_lowercase();
+                name.ends_with("_id") || name.ends_with("_uuid")
+            };
+            let named = endpoint.fields.iter().any(|f| f.path == field.path);
             !matches!(field.kind, FieldKind::Text(_))
+                || named
+                || !says_identifier
                 || !parsed
                     .text_at(&field.path)
                     .is_some_and(|text| is_uuid(&text))
@@ -94,6 +103,12 @@ impl Logins {
         }
         let mut one_at_a_time = Some(Arc::clone(&self.inner.capture).lock_owned().await);
         let planned = self.plan(profile, found)?;
+        // Every pair is checked before the store is written: a pair the registry refuses must not
+        // leave the others swapped in and everything in the store.
+        for (field, real, stand_in, _) in &planned {
+            Self::entry(profile, (field.slot(), field.scope), stand_in, real)
+                .map_err(|_| Problem::UnusableToken)?;
+        }
         // The credential store first: a token that was not kept is not replaced in the answer.
         self.keep_stored(profile, &planned, &mut one_at_a_time)
             .await?;

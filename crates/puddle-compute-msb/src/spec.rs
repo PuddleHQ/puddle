@@ -357,7 +357,7 @@ pub fn builder(spec: &SandboxSpec) -> SandboxBuilder {
             GUEST_OPEN_FILES_HARD,
         );
     if let Some(cpus) = spec.cpus {
-        b = b.cpus(cpus);
+        b = b.cpus(cpus.get());
     }
     for (name, value) in spec.env.iter() {
         b = b.env(name, value);

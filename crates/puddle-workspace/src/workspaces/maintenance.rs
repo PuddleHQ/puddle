@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use super::{
-    Before, CheckoutList, Findings, Registry, Runtime, Sandbox, SandboxSpec, TrimReport,
-    VolumeInfo, WorkspaceError, WorkspaceId, Workspaces, check, cleanup_failed_create,
-    clear_leftover, debug, maintenance_name, mount_for, warn,
+    CheckoutList, CpuCount, Findings, Registry, Runtime, SandboxSpec, Scratch, TrimReport,
+    VolumeInfo, WorkspaceError, WorkspaceId, Workspaces, check, clear_leftover, maintenance_name,
+    mount_for, with_scratch_sandbox,
 };
 
 /// The work a maintenance sandbox does.
@@ -64,52 +64,22 @@ impl Workspaces {
         let volume = id.volume_name();
         let spec = SandboxSpec::new(name.clone(), self.config.maintenance_image.clone())
             .with_memory(self.config.maintenance_memory)
-            .with_cpus(1)
+            .with_cpus(CpuCount::MIN)
             .with_volume(mount_for(&volume, info)?);
-        debug!(workspace = %id, sandbox = %name, "starting a maintenance sandbox");
-        let sandbox = match rt.create(spec).await {
-            Ok(s) => s,
-            Err(e) => {
-                if let Err(cleanup) = cleanup_failed_create(rt, &name, Before::NOTHING).await {
-                    warn!(workspace = %id, error = %cleanup, "cleanup after a failed maintenance create failed");
-                }
-                return Err(WorkspaceError::runtime(
-                    "create the maintenance sandbox",
-                    id,
-                    e,
-                ));
-            }
-        };
-        let output = match job {
-            Job::Check => check::run(&sandbox, id).await.map(JobOutput::Check),
-            Job::Trim => self.trim(&sandbox, id).await.map(JobOutput::Trim),
-            Job::Checkouts => self
-                .list_checkouts(&sandbox, id)
-                .await
-                .map(JobOutput::Checkouts),
-        };
-        let stopped = sandbox.stop().await;
-        drop(sandbox);
-        let removed = rt.remove(&name).await;
-        let cleanup = stopped
-            .map_err(|e| WorkspaceError::runtime("stop the maintenance sandbox", id, e))
-            .and_then(|()| {
-                removed
-                    .map_err(|e| WorkspaceError::runtime("remove the maintenance sandbox", id, e))
-            });
-        match (output, cleanup) {
-            (Ok(output), Ok(())) => Ok(output),
-            (Ok(_), Err(e)) => Err(e),
-            (Err(job), Ok(())) => Err(job),
-            // Say both: the job's error alone would hide that a sandbox is left behind.
-            (Err(job), Err(leftover)) => {
-                warn!(workspace = %id, error = %leftover, "the maintenance sandbox was left behind");
-                Err(WorkspaceError::Leftover {
-                    workspace: id.to_string(),
-                    job: job.to_string(),
-                    leftover: leftover.to_string(),
-                })
-            }
-        }
+        with_scratch_sandbox(
+            rt,
+            id,
+            spec,
+            Scratch::Maintenance,
+            async |sandbox| match job {
+                Job::Check => check::run(sandbox, id).await.map(JobOutput::Check),
+                Job::Trim => self.trim(sandbox, id).await.map(JobOutput::Trim),
+                Job::Checkouts => self
+                    .list_checkouts(sandbox, id)
+                    .await
+                    .map(JobOutput::Checkouts),
+            },
+        )
+        .await
     }
 }

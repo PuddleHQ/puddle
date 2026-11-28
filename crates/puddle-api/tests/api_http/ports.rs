@@ -8,6 +8,7 @@ use serde_json::json;
 use std::sync::Arc;
 
 use crate::common::{Api, START_MS, raw, start};
+use crate::sign_in::{Req, access_token, site_wired};
 
 const REPO: &str = "https://github.com/acme/api.git";
 
@@ -211,4 +212,76 @@ async fn without_a_ports_service_every_call_says_it_is_unavailable() {
         assert_eq!(reply.status, 503, "{method} {path}: {}", reply.body);
         assert_eq!(reply.error(), "unavailable");
     }
+}
+
+#[tokio::test]
+async fn a_signed_in_browser_cannot_open_a_forward_on_the_servers_loopback_but_the_install_token_can()
+ {
+    let site = site_wired(
+        false,
+        ApiConfig::default().reap_every,
+        |events, clock| {
+            Some(Arc::new(
+                puddle_services::fake_workspaces::FakeWorkspaces::with_options(
+                    events.clone(),
+                    clock.clone(),
+                    Arc::new(puddle_services::fake_workspaces::FakeLauncher::new()),
+                    std::time::Duration::ZERO,
+                ),
+            ))
+        },
+        |services| services.with_ports(Arc::new(puddle_services::ports::FakePorts::new())),
+    )
+    .await;
+    let browser = access_token(&site.setup().await);
+    let device = Req::bearer(&browser);
+    let host = site.loopback_host();
+    let install = Req::bearer(&site.install_token).on(&host);
+
+    let made = site
+        .send(
+            "POST",
+            "/api/workspaces",
+            &install,
+            Some(&json!({"name": "shop", "repositories": [{"url": REPO}]})),
+        )
+        .await;
+    assert_eq!(made.status, 202, "{made:?}");
+    let forward = json!({"host_port": 18080});
+
+    let refused = site
+        .send(
+            "PUT",
+            "/api/workspaces/shop/ports/8080",
+            &device,
+            Some(&forward),
+        )
+        .await;
+    assert_eq!(refused.status, 403, "{refused:?}");
+    assert_eq!(refused.error(), "forbidden");
+    let list = site
+        .send("GET", "/api/workspaces/shop/ports", &install, None)
+        .await;
+    assert_eq!(list.json()["ports"], json!([]), "nothing was forwarded");
+
+    let allowed = site
+        .send(
+            "PUT",
+            "/api/workspaces/shop/ports/8080",
+            &install,
+            Some(&forward),
+        )
+        .await;
+    assert_eq!(allowed.status, 200, "{allowed:?}");
+
+    // Reading the ports and stopping a forward stay open to the browser.
+    let list = site
+        .send("GET", "/api/workspaces/shop/ports", &device, None)
+        .await;
+    assert_eq!(list.status, 200, "{list:?}");
+    let stopped = site
+        .send("DELETE", "/api/workspaces/shop/ports/8080", &device, None)
+        .await;
+    assert_eq!(stopped.status, 204, "{stopped:?}");
+    site.running.shutdown().await;
 }

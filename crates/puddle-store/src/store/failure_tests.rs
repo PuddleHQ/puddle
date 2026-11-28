@@ -472,7 +472,7 @@ fn pinned_ports_that_cannot_be_read_are_a_database_error() {
 fn request_rule() -> NewRequestRule {
     NewRequestRule {
         workspace: Some(workspace()),
-        host: "api.example".to_owned(),
+        host: puddle_types::HostPattern::parse_normalised("api.example").unwrap(),
         methods: puddle_types::Methods::parse(["DELETE"]).unwrap(),
         path: puddle_types::PathPattern::parse("/**").unwrap(),
         created_by: Actor::Cli,

@@ -9,9 +9,10 @@ use axum::http::StatusCode;
 use puddle_types::{ToolName, ToolVersion, ToolsFileHash};
 use serde::Deserialize;
 
+use crate::authz::Principal;
 use crate::extract::{Path, Query};
 use crate::routes::AppState;
-use crate::routes::workspaces::workspace_id;
+use crate::routes::workspaces::owned;
 use puddle_services::error::ApiError;
 use puddle_services::error::ApiErrorBody;
 use puddle_services::wire::{ToolChangeRequest, ToolRegistry, ToolVersions, ToolsListing};
@@ -45,9 +46,15 @@ pub(crate) struct HashQuery {
 )]
 pub(crate) async fn list_tools(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
 ) -> Result<Json<ToolsListing>, ApiError> {
-    Ok(Json(state.workspaces.tools(&workspace_id(&id)?).await?))
+    Ok(Json(
+        state
+            .workspaces
+            .tools(&owned(&state, principal, &id).await?)
+            .await?,
+    ))
 }
 
 /// Sets a tool's version in the root `mise.toml` with `mise config set`: every other line, comments
@@ -72,17 +79,18 @@ pub(crate) async fn list_tools(
 )]
 pub(crate) async fn put_tool(
     State(state): State<AppState>,
+    principal: Principal,
     Path((id, name)): Path<(String, String)>,
     crate::extract::Json(body): crate::extract::Json<ToolChangeRequest>,
 ) -> Result<Json<ToolsListing>, ApiError> {
-    let id = workspace_id(&id)?;
+    let workspace = owned(&state, principal, &id).await?;
     let name = ToolName::new(&name).map_err(invalid)?;
     let version = ToolVersion::new(&body.version).map_err(invalid)?;
     let hash = ToolsFileHash::new(&body.sha256).map_err(invalid)?;
     Ok(Json(
         state
             .workspaces
-            .set_tool(&id, &name, &version, &hash)
+            .set_tool(&workspace, &name, &version, &hash)
             .await?,
     ))
 }
@@ -108,13 +116,19 @@ pub(crate) async fn put_tool(
 )]
 pub(crate) async fn delete_tool(
     State(state): State<AppState>,
+    principal: Principal,
     Path((id, name)): Path<(String, String)>,
     Query(query): Query<HashQuery>,
 ) -> Result<Json<ToolsListing>, ApiError> {
-    let id = workspace_id(&id)?;
+    let workspace = owned(&state, principal, &id).await?;
     let name = ToolName::new(&name).map_err(invalid)?;
     let hash = ToolsFileHash::new(&query.sha256).map_err(invalid)?;
-    Ok(Json(state.workspaces.remove_tool(&id, &name, &hash).await?))
+    Ok(Json(
+        state
+            .workspaces
+            .remove_tool(&workspace, &name, &hash)
+            .await?,
+    ))
 }
 
 /// The tools mise knows by name (`mise registry`, about a thousand), for the Add tool dialog's
@@ -132,10 +146,14 @@ pub(crate) async fn delete_tool(
 )]
 pub(crate) async fn tool_registry(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
 ) -> Result<Json<ToolRegistry>, ApiError> {
     Ok(Json(
-        state.workspaces.tool_registry(&workspace_id(&id)?).await?,
+        state
+            .workspaces
+            .tool_registry(&owned(&state, principal, &id).await?)
+            .await?,
     ))
 }
 
@@ -158,11 +176,14 @@ pub(crate) async fn tool_registry(
 )]
 pub(crate) async fn tool_versions(
     State(state): State<AppState>,
+    principal: Principal,
     Path((id, name)): Path<(String, String)>,
 ) -> Result<Json<ToolVersions>, ApiError> {
-    let id = workspace_id(&id)?;
+    let workspace = owned(&state, principal, &id).await?;
     let name = ToolName::new(&name).map_err(invalid)?;
-    Ok(Json(state.workspaces.tool_versions(&id, &name).await?))
+    Ok(Json(
+        state.workspaces.tool_versions(&workspace, &name).await?,
+    ))
 }
 
 /// Installs what the workspace's mise files ask for, in the background: the retry of a failed
@@ -180,8 +201,12 @@ pub(crate) async fn tool_versions(
 )]
 pub(crate) async fn install_tools(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    state.workspaces.install_tools(&workspace_id(&id)?).await?;
+    state
+        .workspaces
+        .install_tools(&owned(&state, principal, &id).await?)
+        .await?;
     Ok(StatusCode::ACCEPTED)
 }

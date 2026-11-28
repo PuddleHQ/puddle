@@ -18,7 +18,10 @@ use crate::{Layout, WorkspaceError};
 
 /// The listing script (POSIX sh, run as root with the mount point, and optionally one directory
 /// under it, as arguments).
-pub const CHECKOUTS_SH: &str = include_str!("../guest/checkouts.sh");
+pub const CHECKOUTS_SH: &str = concat!(
+    include_str!("../guest/git-guard.sh"),
+    include_str!("../guest/checkouts.sh")
+);
 
 /// The listing's exit status when the image has no git (`guest/checkouts.sh`).
 const GIT_MISSING_EXIT: i32 = 4;

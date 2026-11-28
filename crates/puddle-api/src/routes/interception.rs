@@ -14,7 +14,7 @@ use puddle_types::{CURATED_PASS_THROUGH, Host, InterceptionMode, WorkspaceId};
 use crate::authz::{self, Action, Principal, ResourceRef};
 use crate::extract::Path;
 use crate::routes::AppState;
-use crate::routes::workspaces::named;
+use crate::routes::workspaces::{named, owned};
 use puddle_services::error::ApiErrorBody;
 use puddle_services::error::{ApiError, blocking};
 use puddle_services::wire::{
@@ -257,11 +257,12 @@ const MAX_CAP: u32 = 10_000;
 )]
 pub(crate) async fn list_learned(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
 ) -> Result<Json<LearnedHosts>, ApiError> {
-    let name = named(&state, &id).await?;
+    let workspace = owned(&state, principal, &id).await?;
     Ok(Json(LearnedHosts {
-        hosts: state.learned.list(&name),
+        hosts: state.learned.list(&workspace),
     }))
 }
 
@@ -279,10 +280,11 @@ pub(crate) async fn list_learned(
 )]
 pub(crate) async fn clear_learned(
     State(state): State<AppState>,
+    principal: Principal,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let name = named(&state, &id).await?;
-    state.learned.clear(&name);
+    let workspace = owned(&state, principal, &id).await?;
+    state.learned.clear(&workspace);
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -303,18 +305,20 @@ pub(crate) async fn clear_learned(
 )]
 pub(crate) async fn forget_learned(
     State(state): State<AppState>,
+    principal: Principal,
     Path((id, host)): Path<(String, String)>,
 ) -> Result<StatusCode, ApiError> {
-    let name = named(&state, &id).await?;
+    let workspace = owned(&state, principal, &id).await?;
     let learned = match normalise_host(&host).map(puddle_netpolicy::Target::into_host) {
         Ok(Host::Name(host)) => host.to_string(),
         _ => String::new(),
     };
-    if !learned.is_empty() && state.learned.forget(&name, &learned) {
+    if !learned.is_empty() && state.learned.forget(&workspace, &learned) {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::not_found(format!(
-            "{host:?} is not passed through in {name}"
+            "{host:?} is not passed through in {}",
+            workspace.id()
         )))
     }
 }
@@ -354,18 +358,25 @@ pub(crate) async fn make_permanent(
         )
         .await?;
     }
-    let name = named(&state, &id).await?;
+    let workspace = owned(&state, principal, &id).await?;
     let learned = match normalise_host(&host).map(puddle_netpolicy::Target::into_host) {
         Ok(Host::Name(host)) => host.to_string(),
         _ => String::new(),
     };
-    if learned.is_empty() || !state.learned.list(&name).iter().any(|h| h.host == learned) {
+    if learned.is_empty()
+        || !state
+            .learned
+            .list(&workspace)
+            .iter()
+            .any(|h| h.host == learned)
+    {
         return Err(ApiError::not_found(format!(
-            "{host:?} is not on the learned list of {name}"
+            "{host:?} is not on the learned list of {}",
+            workspace.id()
         )));
     }
     let stored = blocking({
-        let (state, name, learned) = (state.clone(), name.clone(), learned.clone());
+        let (state, name, learned) = (state.clone(), workspace.id().clone(), learned.clone());
         move || {
             // One store transaction per add, so overlapping calls never drop each other's host.
             let stored = pattern(&learned)?;
@@ -386,7 +397,7 @@ pub(crate) async fn make_permanent(
             MAX_NAMES + 1
         )));
     }
-    state.learned.discard(&name, &learned);
+    state.learned.discard(&workspace, &learned);
     Ok(StatusCode::NO_CONTENT)
 }
 

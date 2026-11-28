@@ -938,6 +938,11 @@ pub(crate) struct Rig {
 }
 
 impl Rig {
+    /// Guest connections the proxy still handles; zero means every record is written.
+    pub(crate) fn open_guest_streams(&self) -> usize {
+        self.proxy.open_guest_streams()
+    }
+
     /// How many times the proxy asked the resolver for a name.
     pub(crate) fn lookups(&self) -> usize {
         self.lookups.load(Ordering::SeqCst)

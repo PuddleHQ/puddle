@@ -115,20 +115,13 @@ pub fn mise_config(settings: &MiseSettings) -> Result<MiseConfig, ConfigError> {
 /// with a character that could end a sudoers string leaves `secure_path` alone: a bad line there
 /// would lock `sudo` for everyone.
 fn sudoers(env: &GuestEnv, path: &str) -> String {
-    let names: Vec<&str> = env
-        .iter()
-        .map(|(name, _)| name)
-        .filter(|name| name.starts_with("MISE_"))
-        .collect();
+    let keep = env.sudo_keep_line(|name| name.starts_with("MISE_"));
     let secure_path = if path.chars().all(is_plain_path_char) {
         format!("Defaults secure_path=\"{path}\"\n")
     } else {
         String::new()
     };
-    format!(
-        "# {GENERATED}\n# Keeps mise's variables under sudo.\nDefaults env_keep += \"{}\"\n{secure_path}",
-        names.join(" ")
-    )
+    format!("# {GENERATED}\n# Keeps mise's variables under sudo.\n{keep}{secure_path}")
 }
 
 fn is_plain_path_char(c: char) -> bool {

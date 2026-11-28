@@ -248,7 +248,11 @@ async fn send(host: &Host<FakeRuntime>, request: Request, id: &WorkspaceId, wait
                 local: None,
             };
             drop_after(
-                service.add_repository(id, AddRepository::Clone(new), &GitThatWaits(host.store())),
+                service.add_repository(
+                    &OwnedWorkspace::for_test(puddle_store::UserId::OWNER, id),
+                    AddRepository::Clone(new),
+                    &GitThatWaits(host.store()),
+                ),
                 waits,
             )
             .await

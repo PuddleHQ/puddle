@@ -37,14 +37,10 @@ pub(super) fn files(env: &GuestEnv) -> Result<Vec<GuestFile>, PlanError> {
     if env.iter().next().is_none() {
         return Ok(Vec::new());
     }
-    let names = env
-        .iter()
-        .map(|(name, _)| name)
-        .collect::<Vec<_>>()
-        .join(" ");
+    let keep = env.sudo_keep_line(|_| true);
     let sudoers = GuestFile::new(
         guest_path!(SUDOERS_ENV_GUEST),
-        format!("{GENERATED}Defaults env_keep += \"{names}\"\n").into_bytes(),
+        format!("{GENERATED}{keep}").into_bytes(),
     )
     .with_mode(SUDOERS_MODE);
     let exports = env

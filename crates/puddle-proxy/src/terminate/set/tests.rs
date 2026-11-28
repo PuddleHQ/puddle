@@ -59,3 +59,17 @@ fn patterns_are_normalised() {
     assert!(TerminationSet::new().is_empty());
     assert!(!TerminationSet::new().contains(&host("github.com")));
 }
+
+#[test]
+fn a_checked_pattern_makes_the_same_set_as_its_text() {
+    for text in ["github.com", "*.visualstudio.com"] {
+        let pattern = HostPattern::parse_normalised(text).unwrap();
+        let mut set = TerminationSet::new();
+        set.insert_pattern(&pattern);
+        assert_eq!(set, TerminationSet::parse([text]).unwrap(), "{text}");
+    }
+    let mut set = TerminationSet::new();
+    set.insert_pattern(&HostPattern::parse_normalised("*.example.com").unwrap());
+    assert!(set.contains(&host("a.example.com")));
+    assert!(!set.contains(&host("example.com")));
+}

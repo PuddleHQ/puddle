@@ -27,4 +27,10 @@ pub enum ConfigError {
         /// Why.
         reason: String,
     },
+    /// Text for a guest file (a merged entry, an ssh config value) can't be written as it is.
+    #[error("invalid guest file content: {reason}")]
+    Content {
+        /// Why.
+        reason: String,
+    },
 }

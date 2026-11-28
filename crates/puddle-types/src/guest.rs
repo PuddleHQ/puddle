@@ -509,6 +509,30 @@ impl GuestEnv {
         self.0.iter().map(|(k, v)| (k.as_str(), v.as_str()))
     }
 
+    /// The sudoers line that keeps the variables whose names `keep` accepts under `sudo`, whose
+    /// `env_reset` drops the rest. Every sudoers file Puddle writes for a guest takes its
+    /// keep-list from here.
+    ///
+    /// ```
+    /// use puddle_types::GuestEnv;
+    /// let mut env = GuestEnv::new();
+    /// env.set("A", "1").unwrap();
+    /// env.set("B_C", "2").unwrap();
+    /// assert_eq!(env.sudo_keep_line(|_| true), "Defaults env_keep += \"A B_C\"\n");
+    /// assert_eq!(env.sudo_keep_line(|n| n.starts_with('B')), "Defaults env_keep += \"B_C\"\n");
+    /// ```
+    #[must_use]
+    pub fn sudo_keep_line(&self, keep: impl Fn(&str) -> bool) -> String {
+        let names = self
+            .0
+            .keys()
+            .map(String::as_str)
+            .filter(|name| keep(name))
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("Defaults env_keep += \"{names}\"\n")
+    }
+
     /// How many variables are set.
     #[must_use]
     pub fn len(&self) -> usize {

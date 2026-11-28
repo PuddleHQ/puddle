@@ -5,6 +5,10 @@ fn id(name: &str) -> WorkspaceId {
     WorkspaceId::new(name).unwrap()
 }
 
+fn own(name: &str) -> OwnedWorkspace {
+    OwnedWorkspace::for_test(puddle_store::UserId::OWNER, &id(name))
+}
+
 fn size() -> TerminalSize {
     TerminalSize::new(80, 24).unwrap()
 }
@@ -28,11 +32,11 @@ fn sizes_are_held_to_their_bounds() {
 async fn a_build_without_terminals_says_so_for_a_check_and_an_open() {
     let none = NoTerminals;
     assert!(matches!(
-        none.check(&id("a")).await,
+        none.check(&own("a")).await,
         Err(TerminalError::Unavailable(_))
     ));
     assert!(matches!(
-        none.open(&id("a"), size()).await,
+        none.open(&own("a"), size()).await,
         Err(TerminalError::Unavailable(_))
     ));
 }
@@ -40,18 +44,18 @@ async fn a_build_without_terminals_says_so_for_a_check_and_an_open() {
 #[test]
 fn a_ticket_already_used_keeps_its_place_while_new_ones_are_made() {
     let registry = Registry::default();
-    let a = id("a");
+    let a = own("a");
     let first = registry.create(&a, size(), "t1".into()).unwrap();
-    registry.claim(&a, first, b"t1").unwrap();
+    registry.claim(a.id(), first, b"t1").unwrap();
     registry.create(&a, size(), "t2".into()).unwrap();
-    assert_eq!(registry.claim(&a, first, b"t1"), None);
+    assert_eq!(registry.claim(a.id(), first, b"t1"), None);
 }
 
 #[tokio::test]
 async fn the_fake_shell_of_each_workspace_names_that_workspace() {
     let fake = FakeTerminals::new();
     for name in ["alpha", "bravo"] {
-        let mut link = fake.open(&id(name), size()).await.unwrap();
+        let mut link = fake.open(&own(name), size()).await.unwrap();
         link.input
             .send(TerminalInput::Bytes(b"hostname\r".to_vec()))
             .await
@@ -70,29 +74,33 @@ async fn the_fake_shell_of_each_workspace_names_that_workspace() {
 #[tokio::test(start_paused = true)]
 async fn a_ticket_works_once_for_its_own_terminal_within_thirty_seconds() {
     let registry = Registry::default();
-    let (a, b) = (id("a"), id("b"));
+    let (a, b) = (own("a"), own("b"));
     let first = registry.create(&a, size(), "t1".into()).unwrap();
     let second = registry.create(&a, size(), "t2".into()).unwrap();
-    assert_eq!(registry.claim(&b, first, b"t1"), None, "another workspace");
     assert_eq!(
-        registry.claim(&a, first, b"t2"),
+        registry.claim(b.id(), first, b"t1"),
+        None,
+        "another workspace"
+    );
+    assert_eq!(
+        registry.claim(a.id(), first, b"t2"),
         None,
         "another terminal's ticket"
     );
     assert_eq!(
-        registry.claim(&a, first, b"t1"),
-        Some(size()),
+        registry.claim(a.id(), first, b"t1"),
+        Some((a.clone(), size())),
         "a wrong guess spares it"
     );
-    assert_eq!(registry.claim(&a, first, b"t1"), None, "once");
+    assert_eq!(registry.claim(a.id(), first, b"t1"), None, "once");
     tokio::time::advance(TICKET_LIFETIME).await;
-    assert_eq!(registry.claim(&a, second, b"t2"), None, "late");
+    assert_eq!(registry.claim(a.id(), second, b"t2"), None, "late");
 }
 
 #[tokio::test(start_paused = true)]
 async fn the_limits_count_open_terminals_and_unused_tickets_and_free_with_the_socket() {
     let registry = Registry::default();
-    let a = id("a");
+    let a = own("a");
     let ids: Vec<u64> = (0..MAX_PER_WORKSPACE)
         .map(|_| registry.create(&a, size(), "t".into()).unwrap())
         .collect();
@@ -102,7 +110,7 @@ async fn the_limits_count_open_terminals_and_unused_tickets_and_free_with_the_so
     );
     registry.release(ids[0]);
     assert!(registry.create(&a, size(), "t".into()).is_ok());
-    let others: Vec<WorkspaceId> = (0..4).map(|n| id(&format!("w{n}"))).collect();
+    let others: Vec<OwnedWorkspace> = (0..4).map(|n| own(&format!("w{n}"))).collect();
     for other in &others {
         for _ in 0..MAX_PER_WORKSPACE {
             if registry.create(other, size(), "t".into()).is_err() {
@@ -111,12 +119,12 @@ async fn the_limits_count_open_terminals_and_unused_tickets_and_free_with_the_so
         }
     }
     assert_eq!(
-        registry.create(&id("z"), size(), "t".into()),
+        registry.create(&own("z"), size(), "t".into()),
         Err(Limit::All)
     );
     tokio::time::advance(TICKET_LIFETIME).await;
     assert!(
-        registry.create(&id("z"), size(), "t".into()).is_ok(),
+        registry.create(&own("z"), size(), "t".into()).is_ok(),
         "unused tickets run out"
     );
 }
@@ -124,7 +132,7 @@ async fn the_limits_count_open_terminals_and_unused_tickets_and_free_with_the_so
 #[test]
 fn a_terminal_made_for_a_signed_in_browser_remembers_which() {
     let registry = Registry::default();
-    let a = id("a");
+    let a = own("a");
     let made = registry.create(&a, size(), "t".into()).unwrap();
     assert_eq!(
         registry.device_of(made),

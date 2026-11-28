@@ -32,7 +32,8 @@ use crate::boot::root_disk_size;
 use crate::op_error::OpError;
 
 impl<R: Runtime + Clone> TerminalService for HostWorkspaces<R> {
-    fn check(&self, workspace: &WorkspaceId) -> BoxFuture<'_, Result<(), TerminalError>> {
+    fn check(&self, workspace: &OwnedWorkspace) -> BoxFuture<'_, Result<(), TerminalError>> {
+        let workspace = workspace.id();
         let running = self.state().slots.get(workspace).is_some_and(|s| {
             matches!(
                 s.record.status,
@@ -52,10 +53,10 @@ impl<R: Runtime + Clone> TerminalService for HostWorkspaces<R> {
 
     fn open(
         &self,
-        workspace: &WorkspaceId,
+        workspace: &OwnedWorkspace,
         size: TerminalSize,
     ) -> BoxFuture<'_, Result<TerminalLink, TerminalError>> {
-        let workspace = workspace.clone();
+        let workspace = workspace.id().clone();
         Box::pin(async move {
             let identity = self
                 .inner
@@ -129,10 +130,7 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         &'a self,
         workspace: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
-        Box::pin(async move {
-            let id = workspace.id();
-            self.get_record(id)
-        })
+        Box::pin(async move { self.get_record(workspace.id()) })
     }
 
     fn create<'a>(
@@ -605,10 +603,11 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
 
     fn attach<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
         mode: AttachMode,
     ) -> BoxFuture<'a, Result<Attached, WorkspaceError>> {
         Box::pin(async move {
+            let id = workspace.id();
             let record = self.get_record(id)?;
             admit(&record, Action::Attach)?;
             self.refresh_editor_file(&record).await;
@@ -628,9 +627,10 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
 
     fn kept_logins<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<KeptLogins, WorkspaceError>> {
         Box::pin(async move {
+            let id = workspace.id();
             let record = self.get_record(id)?;
             let list = self.inner.injection.kept_logins(&record.id).await;
             Ok(KeptLogins {
@@ -646,10 +646,11 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
 
     fn forget_login<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
         service: &'a str,
     ) -> BoxFuture<'a, Result<(), WorkspaceError>> {
         Box::pin(async move {
+            let id = workspace.id();
             let record = self.get_record(id)?;
             match self.inner.injection.forget_login(&record.id, service).await {
                 Ok(true) => Ok(()),
@@ -663,10 +664,11 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
 
     fn check_shell_init<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
         script: &'a str,
     ) -> BoxFuture<'a, Result<ShellInitCheck, WorkspaceError>> {
         Box::pin(async move {
+            let id = workspace.id();
             let record = self.get_record(id)?;
             let running = self
                 .inner
@@ -703,89 +705,92 @@ impl<R: Runtime + Clone> WorkspaceService for HostWorkspaces<R> {
         Box::pin(async move { self.restore_orphan_volume(id, owner, repository, git).await })
     }
 
-    fn known_branches(&self, id: &WorkspaceId) -> std::collections::BTreeMap<String, String> {
-        self.known_branches_of(id)
+    fn known_branches(
+        &self,
+        workspace: &OwnedWorkspace,
+    ) -> std::collections::BTreeMap<String, String> {
+        self.known_branches_of(workspace.id())
     }
 
     fn checkouts<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<puddle_services::checkouts::Checkouts, WorkspaceError>> {
-        Box::pin(async move { self.checkouts_of(id).await })
+        Box::pin(async move { self.checkouts_of(workspace.id()).await })
     }
 
     fn tools<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<puddle_services::wire::ToolsListing, WorkspaceError>> {
-        Box::pin(async move { self.tools_of(id).await })
+        Box::pin(async move { self.tools_of(workspace.id()).await })
     }
 
     fn set_tool<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
         name: &'a puddle_types::ToolName,
         version: &'a puddle_types::ToolVersion,
         hash: &'a puddle_types::ToolsFileHash,
     ) -> BoxFuture<'a, Result<puddle_services::wire::ToolsListing, WorkspaceError>> {
-        Box::pin(async move { self.set_tool_in(id, name, version, hash).await })
+        Box::pin(async move { self.set_tool_in(workspace.id(), name, version, hash).await })
     }
 
     fn remove_tool<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
         name: &'a puddle_types::ToolName,
         hash: &'a puddle_types::ToolsFileHash,
     ) -> BoxFuture<'a, Result<puddle_services::wire::ToolsListing, WorkspaceError>> {
-        Box::pin(async move { self.remove_tool_in(id, name, hash).await })
+        Box::pin(async move { self.remove_tool_in(workspace.id(), name, hash).await })
     }
 
     fn tool_registry<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<puddle_services::wire::ToolRegistry, WorkspaceError>> {
-        Box::pin(async move { self.tool_registry_of(id).await })
+        Box::pin(async move { self.tool_registry_of(workspace.id()).await })
     }
 
     fn tool_versions<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
         name: &'a puddle_types::ToolName,
     ) -> BoxFuture<'a, Result<puddle_services::wire::ToolVersions, WorkspaceError>> {
-        Box::pin(async move { self.tool_versions_of(id, name).await })
+        Box::pin(async move { self.tool_versions_of(workspace.id(), name).await })
     }
 
     fn install_tools<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<(), WorkspaceError>> {
-        Box::pin(async move { self.request_tool_install(id) })
+        Box::pin(async move { self.request_tool_install(workspace.id()) })
     }
 
     fn add_repository<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
         add: puddle_services::checkouts::AddRepository,
         git: &'a dyn GitSetup,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
-        Box::pin(async move { self.add_repository_to(id, add, git).await })
+        Box::pin(async move { self.add_repository_to(workspace.id(), add, git).await })
     }
 
     fn clone_again<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
         entry: &'a EntryId,
         git: &'a dyn GitSetup,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
-        Box::pin(async move { self.clone_entry_again(id, entry, git).await })
+        Box::pin(async move { self.clone_entry_again(workspace.id(), entry, git).await })
     }
 
     fn remove_repository<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
         entry: &'a EntryId,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
-        Box::pin(async move { self.remove_entry(id, entry) })
+        Box::pin(async move { self.remove_entry(workspace.id(), entry) })
     }
 
     fn settings_changed(&self) -> BoxFuture<'_, ()> {

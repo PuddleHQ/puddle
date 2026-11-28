@@ -317,13 +317,35 @@ async fn a_success_answer_puddle_cannot_read_is_passed_on_and_the_user_is_told()
             "{content_type:?} {encoding:?} {length:?}"
         );
     }
-    assert_eq!(rig.notices.seen().len(), 4);
-    assert!(
-        rig.notices
-            .seen()
-            .iter()
-            .all(|(profile, problem)| profile == "claude" && *problem == Problem::UnexpectedAnswer)
+    // four requests, one notice: the same problem is told once in ten seconds
+    assert_eq!(
+        rig.notices.seen(),
+        [("claude".to_owned(), Problem::UnexpectedAnswer)]
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_refused_login_is_told_once_in_ten_seconds_for_each_service_and_kind() {
+    let rig = rig();
+    let refuse = |rig: &Rig, host_name: &str, path: &str| {
+        let exchange = rig.logins.begin(&host(host_name), "POST", path);
+        refused(
+            exchange,
+            200,
+            Some("application/json"),
+            b"{\"access_token\": ",
+        )
+    };
+    for _ in 0..5 {
+        refuse(&rig, "platform.claude.com", "/v1/oauth/token").await;
+    }
+    assert_eq!(rig.notices.seen().len(), 1);
+    // another service has its own turn
+    refuse(&rig, "github.com", "/login/oauth/access_token").await;
+    assert_eq!(rig.notices.seen().len(), 2);
+    tokio::time::advance(NOTICE_WINDOW).await;
+    refuse(&rig, "platform.claude.com", "/v1/oauth/token").await;
+    assert_eq!(rig.notices.seen().len(), 3);
 }
 
 #[tokio::test]
@@ -362,10 +384,12 @@ async fn a_token_bound_to_a_key_cannot_be_captured() {
     assert_eq!(rig.registry.len(), 0);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_token_a_stand_in_cannot_copy_is_passed_on_and_the_user_is_told() {
     let rig = rig();
     for token in ["short", "has a space in it, 0123456789"] {
+        // each in its own notice window
+        tokio::time::advance(NOTICE_WINDOW).await;
         let exchange = rig
             .logins
             .begin(&host("platform.claude.com"), "POST", "/v1/oauth/token");
@@ -614,4 +638,37 @@ async fn an_identifier_in_a_token_named_field_does_not_stop_the_login() {
     assert_ne!(given["access_token"], REAL_ACCESS);
     assert_eq!(given["token_uuid"], "7a1b2c3d-0e4f-4a5b-8c6d-9e0f1a2b3c4d");
     assert_eq!(rig.notices.seen(), []);
+}
+
+/// A credential in a field the profile does not name stops the login, whatever the field is
+/// called and whatever the value looks like (a UUID is a valid token).
+#[tokio::test]
+async fn a_credential_in_an_unnamed_field_stops_the_login_for_every_name_that_says_credential() {
+    let uuid = "7a1b2c3d-0e4f-4a5b-8c6d-9e0f1a2b3c4d";
+    let long = "0123456789abcdef0123";
+    let cases = ["jwt", "credential", "session", "cookie", "assertion"]
+        .map(|name| (name, long))
+        .into_iter()
+        .chain([("session_token", uuid), ("jwt", uuid)]);
+    for (name, value) in cases {
+        let rig = rig();
+        let mut answer: Value =
+            serde_json::from_slice(&claude_answer(REAL_ACCESS, REAL_REFRESH)).unwrap();
+        answer[name] = json!(value);
+        let exchange = rig
+            .logins
+            .begin(&host("platform.claude.com"), "POST", "/v1/oauth/token");
+        refused(
+            exchange,
+            200,
+            Some("application/json"),
+            answer.to_string().as_bytes(),
+        )
+        .await;
+        assert_eq!(
+            rig.notices.seen(),
+            [("claude".to_owned(), Problem::UnnamedToken)],
+            "{name}"
+        );
+    }
 }

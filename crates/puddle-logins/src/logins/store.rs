@@ -84,6 +84,23 @@ impl Logins {
         let _ = tokio::time::timeout(limit, self.inner.store_gate.lock()).await;
     }
 
+    /// The registry entry of a pair: what [`Self::install`] puts in, and what a capture checks for
+    /// every pair before it writes anything.
+    pub(super) fn entry(
+        profile: &'static Profile,
+        (slot, scope): (Slot, Scope),
+        stand_in: &str,
+        real: &str,
+    ) -> Result<StandIn, StandInError> {
+        StandIn::new(
+            StandInOrigin::CapturedLogin,
+            &profile.slot_name_of(slot),
+            stand_in,
+            SecretValue::new(real),
+            profile.hosts_for(scope),
+        )
+    }
+
     /// Puts a pair into the registry and the slots: the stand-in the workspace holds and the real
     /// token behind it, swapped toward the hosts `scope` names. The slot's stand-in it replaces
     /// stays swapped as one of the last `keep_earlier` (none: it goes at once). The registry is the
@@ -96,13 +113,7 @@ impl Logins {
         real: &str,
         keep_earlier: usize,
     ) -> Result<(), StandInError> {
-        let entry = StandIn::new(
-            StandInOrigin::CapturedLogin,
-            &profile.slot_name_of(slot),
-            stand_in,
-            SecretValue::new(real),
-            profile.hosts_for(scope),
-        )?;
+        let entry = Self::entry(profile, (slot, scope), stand_in, real)?;
         let old = self.slots().insert((profile.id, slot), stand_in.to_owned());
         if let Some(old) = old {
             if keep_earlier > 0 {

@@ -95,6 +95,36 @@ async fn a_pasted_token_lists_its_organisation_in_one_call_with_addresses_that_c
 }
 
 #[tokio::test]
+async fn control_characters_in_project_and_repository_names_are_dropped() {
+    let rig = Rig::new();
+    let answer = r#"{"count":1,"value":[{"id":"1","name":"re\npo\u001b[2J","project":{"id":"2","name":"pro\r\nject\u0007","visibility":"private"}}]}"#;
+    rig.api.reply(
+        "dev.azure.com",
+        LIST,
+        ApiReply::new(200, answer).with_header("content-type", "application/json"),
+    );
+    let source = stored("tok-1", "dev.azure.com", Some("acme"));
+    rig.tokens.set(&source, PAT);
+    let ids = identities(vec![(
+        "Work",
+        vec![binding("dev.azure.com", source, &["acme"], false)],
+    )]);
+
+    let lists = rig.lists(&ids, Freshness::Cached).await;
+
+    assert_eq!(lists[0].state, ListState::Ok);
+    let repo = &lists[0].repos[0];
+    assert_eq!(repo.full_name, "acme/project/repo[2J");
+    assert_eq!(repo.project.as_deref(), Some("project"));
+    assert_eq!(repo.name, "repo[2J");
+    // The address names the repository as the host sent it, escaped.
+    assert_eq!(
+        repo.url,
+        "https://dev.azure.com/acme/pro%0D%0Aject%07/_git/re%0Apo%1B%5B2J"
+    );
+}
+
+#[tokio::test]
 async fn an_entra_token_goes_as_bearer() {
     let rig = Rig::new();
     rig.api
@@ -456,6 +486,33 @@ async fn the_sign_in_page_azure_devops_answers_a_bad_token_with_is_a_rejected_to
             "a pasted token is not cached to forget"
         );
     }
+}
+
+#[tokio::test]
+async fn a_page_that_is_not_azure_devops_sign_in_is_a_bad_answer_and_keeps_the_token() {
+    let rig = Rig::new();
+    rig.api.reply(
+        "dev.azure.com",
+        LIST,
+        ApiReply::new(200, "<html>Blocked. Sign in to the company network</html>")
+            .with_header("content-type", "text/html"),
+    );
+    let source = gcm("dev.azure.com", "acme");
+    rig.tokens
+        .set(&source, "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl");
+    let ids = identities(vec![(
+        "Work",
+        vec![binding("dev.azure.com", source, &["acme"], false)],
+    )]);
+    let lists = rig.lists(&ids, Freshness::Cached).await;
+    assert_eq!(
+        lists[0].problem.as_ref().unwrap().kind,
+        ProblemKind::BadAnswer
+    );
+    assert!(
+        rig.tokens.invalidated().is_empty(),
+        "the token was not rejected"
+    );
 }
 
 #[tokio::test]

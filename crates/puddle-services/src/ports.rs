@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use std::sync::{Mutex, PoisonError};
 
 use futures_util::future::BoxFuture;
+#[cfg(any(test, feature = "testing"))]
 use puddle_types::WorkspaceId;
 
 use crate::owned::OwnedWorkspace;

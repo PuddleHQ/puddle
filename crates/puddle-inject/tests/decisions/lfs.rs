@@ -21,6 +21,9 @@ async fn an_lfs_batch_with_a_second_operation_key_in_another_case_is_a_push() {
         br#"{"OPERATION":"upload","objects":[]}"#,
         br#"{"Operation":"download","objects":[]}"#,
         br#"{"operation":"download","oper\u0041tion":"upload","objects":[]}"#,
+        // A second value after the first: a reader that carries on sees the upload.
+        br#"{"operation":"download","objects":[]}{"operation":"upload","objects":[]}"#,
+        br#"{"operation":"download","objects":[]} x"#,
         // Not an object at all.
         br#"["operation","download"]"#,
         br#""download""#,
@@ -40,6 +43,12 @@ async fn an_lfs_batch_with_a_second_operation_key_in_another_case_is_a_push() {
         br#"{"operation":"download","operations":"upload","ref":{"operation":"upload"},"objects":[]}"#;
     let ok = w
         .decide_with("github.com", "POST", batch, &[], Some(download))
+        .await;
+    assert!(injected(&ok, &token_header("CANARY-PERSONAL")), "{ok:?}");
+    // Trailing white space is not a second value.
+    let padded = b"{\"operation\":\"download\",\"objects\":[]}\n";
+    let ok = w
+        .decide_with("github.com", "POST", batch, &[], Some(padded))
         .await;
     assert!(injected(&ok, &token_header("CANARY-PERSONAL")), "{ok:?}");
 }

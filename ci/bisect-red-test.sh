@@ -65,4 +65,10 @@ run 2
 REFS="refs/heads/bisect/vm-linux-aaaaaaa refs/heads/bisect/vm-linux-bbbbbbb"
 run 0 vm-linux.yml --cleanup
 [ "$(grep -c -- '-X DELETE repos/o/r/git/refs/heads/bisect/vm-linux-' "$tmp/log")" = 2 ] || fail "cleanup must delete both branches: $(cat "$tmp/log")"
+
+# a stem that is a prefix of another workflow's stem must not delete that workflow's branches
+REFS="refs/heads/bisect/soak-aaaaaaa refs/heads/bisect/soak-windows-bbbbbbb"
+run 0 soak.yml --cleanup
+grep -q -- '-X DELETE .*bisect/soak-aaaaaaa' "$tmp/log" || fail "cleanup must delete its own branch: $(cat "$tmp/log")"
+grep -q -- 'bisect/soak-windows-' "$tmp/log" && grep -q -- '-X DELETE .*soak-windows' "$tmp/log" && fail "cleanup of soak must keep soak-windows branches: $(cat "$tmp/log")"
 echo "bisect-red-test: ok"

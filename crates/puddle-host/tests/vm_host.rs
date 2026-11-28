@@ -25,6 +25,8 @@ use puddle_compute_msb::MsbRuntime;
 use puddle_e2e::lab::WebOptions;
 use puddle_host::{Host, HostOptions, SHUTDOWN_STEPS, prepare};
 use puddle_secrets::{AccountName, HostName, SourceSpec};
+use puddle_services::owned::OwnedWorkspace;
+use puddle_services::terminals::TerminalService;
 use puddle_store::{
     Actor, Author, Coverage, CredentialBinding, Effect, IdentityDraft, NewRule, Pattern, Scope,
 };
@@ -5016,6 +5018,28 @@ async fn terminal_end(
     }
 }
 
+/// The shell answers as `user`, in `folder`, on a tty of the size the terminal was opened with.
+async fn assert_shell_identity(
+    link: &mut puddle_services::terminals::TerminalLink,
+    user: &str,
+    folder: &str,
+) {
+    // The typed line carries `$(...)` and the answer does not, so the echo cannot satisfy the wait.
+    let typed =
+        "echo \"who=$(id -un) where=$(pwd) tty=$(test -t 0 && echo yes) size=$(stty size)\"\r";
+    link.input
+        .send(puddle_services::terminals::TerminalInput::Bytes(
+            typed.as_bytes().to_vec(),
+        ))
+        .await
+        .unwrap();
+    let seen = terminal_text_until(link, "size=30 100").await;
+    assert!(
+        seen.contains(&format!("who={user} where={folder} tty=yes size=30 100")),
+        "{seen:?}"
+    );
+}
+
 /// The prompt reads `user@<name>`, and the workspace id is nowhere in it.
 async fn assert_prompt_shows_name(
     link: &mut puddle_services::terminals::TerminalLink,
@@ -5095,30 +5119,16 @@ async fn vm_host_a_terminal_is_a_shell_as_the_session_user_in_the_start_folder()
     assert_eq!(renamed.status, 200, "{}", renamed.body);
 
     let size = puddle_services::terminals::TerminalSize::new(100, 30).unwrap();
+    let sandbox_handle = OwnedWorkspace::for_test(puddle_store::UserId::OWNER, &sandbox);
     let service = host.workspaces();
-    puddle_services::terminals::TerminalService::check(service, &sandbox)
+    TerminalService::check(service, &sandbox_handle)
         .await
         .unwrap();
-    let mut link = puddle_services::terminals::TerminalService::open(service, &sandbox, size)
+    let mut link = TerminalService::open(service, &sandbox_handle, size)
         .await
         .unwrap();
     assert_eq!(service.open_terminals(), 1);
-    // The typed line carries `$(...)` and the answer does not, so the echo cannot satisfy the wait.
-    let typed =
-        "echo \"who=$(id -un) where=$(pwd) tty=$(test -t 0 && echo yes) size=$(stty size)\"\r";
-    link.input
-        .send(puddle_services::terminals::TerminalInput::Bytes(
-            typed.as_bytes().to_vec(),
-        ))
-        .await
-        .unwrap();
-    let seen = terminal_text_until(&mut link, "size=30 100").await;
-    assert!(
-        seen.contains(&format!(
-            "who={user} where={root}/play/src tty=yes size=30 100"
-        )),
-        "{seen:?}"
-    );
+    assert_shell_identity(&mut link, &user, &format!("{root}/play/src")).await;
 
     assert_prompt_shows_name(&mut link, &user, &name).await;
 
@@ -5138,7 +5148,7 @@ async fn vm_host_a_terminal_is_a_shell_as_the_session_user_in_the_start_folder()
     assert_eq!(ended_with.status, Some(7), "{ended_with:?}");
 
     // A terminal still open when the workspace stops ends with `stopped`.
-    let mut open = puddle_services::terminals::TerminalService::open(service, &sandbox, size)
+    let mut open = TerminalService::open(service, &sandbox_handle, size)
         .await
         .unwrap();
     let prompt = terminal_text_until(&mut open, "$").await;

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The real `guest/prepare.sh` under dash and bash, against a temp dir that plays the volume root.
-//! A test is not root, so `chown` is a stub (`PUDDLE_CHOWN`) that records its arguments: the
+//! A test is not root, so `chown` is a stub first on `PATH` that records its arguments: the
 //! script's own choices (what to give away, in which order, what to leave) are what is checked.
 #![cfg(unix)]
 #![expect(
@@ -19,7 +19,7 @@ use crate::common::{command, shells};
 struct Fixture {
     _tmp: tempfile::TempDir,
     vol: PathBuf,
-    chown: PathBuf,
+    bin: PathBuf,
     log: PathBuf,
 }
 
@@ -36,15 +36,16 @@ fn fixture() -> Fixture {
     std::fs::write(vol.join("lost+found/#123"), "").unwrap();
     std::os::unix::fs::symlink(tmp.path(), vol.join("outside")).unwrap();
     let log = tmp.path().join("chown.log");
-    let chown = tmp.path().join("chown");
+    let bin = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
     puddle_test_kit::write_executable(
-        &chown,
+        &bin.join("chown"),
         &format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >>'{}'\n", log.display()),
     );
     Fixture {
         _tmp: tmp,
         vol,
-        chown,
+        bin,
         log,
     }
 }
@@ -54,8 +55,15 @@ fn run(shell: &str, fx: &Fixture, vol: &Path, user: &str) -> Output {
         .args(["-c", PREPARE_SH, "puddle-prepare"])
         .arg(vol)
         .arg(user)
-        .env("PUDDLE_CHOWN", &fx.chown)
+        .env("PATH", path_with(&fx.bin))
         .output()
+        .unwrap()
+}
+
+/// The test's own `PATH` with `bin` in front, so the stub shadows the real `chown`.
+fn path_with(bin: &Path) -> std::ffi::OsString {
+    let rest = std::env::var_os("PATH").unwrap_or_default();
+    std::env::join_paths(std::iter::once(bin.to_owned()).chain(std::env::split_paths(&rest)))
         .unwrap()
 }
 

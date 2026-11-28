@@ -3,6 +3,7 @@
 //! is kept, what survives a restart and what is never done.
 
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use puddle_proxy::{AnswerHead, ExchangeRewriter, Rewrite, StandIns, Want};
 use puddle_secrets::{MemoryStore, SecretStore};
@@ -24,6 +25,9 @@ const ACCESS_B: &str =
     "sk-ant-oat01-CANARY0access0second0EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE";
 const REFRESH_B: &str =
     "sk-ant-ort01-CANARY0refresh0second0FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF";
+
+/// Longer than the time a problem is told once in.
+const NOTICE_WINDOW: Duration = Duration::from_secs(11);
 
 fn rig_on(store: &Arc<MemoryStore>, enabled: bool) -> Rig {
     rig_marked(store, enabled, Marker::none())

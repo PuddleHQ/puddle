@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use puddle_types::{GuestEnv, GuestPath, ImageRef, MemoryMib, SandboxName, VolumeName};
+use puddle_types::{CpuCount, GuestEnv, GuestPath, ImageRef, MemoryMib, SandboxName, VolumeName};
 
 use crate::ComputeError;
 
@@ -313,7 +313,7 @@ pub struct SandboxSpec {
     /// Guest memory (`--memory`; Puddle never sets a max-memory).
     pub memory: MemoryMib,
     /// Virtual CPUs; `None` = the runtime's default.
-    pub cpus: Option<u8>,
+    pub cpus: Option<CpuCount>,
     /// Environment for every process: exec, SSH sessions and the boot hook.
     pub env: GuestEnv,
     /// The guest network: always none.
@@ -366,7 +366,7 @@ impl SandboxSpec {
 
     /// Sets the number of virtual CPUs.
     #[must_use]
-    pub fn with_cpus(mut self, cpus: u8) -> Self {
+    pub fn with_cpus(mut self, cpus: CpuCount) -> Self {
         self.cpus = Some(cpus);
         self
     }
@@ -416,9 +416,6 @@ impl SandboxSpec {
     /// [`ComputeError::InvalidSpec`] naming the first problem found.
     pub fn validate(&self) -> Result<(), ComputeError> {
         let invalid = |reason: String| Err(ComputeError::InvalidSpec { reason });
-        if self.cpus == Some(0) {
-            return invalid("cpus must be at least 1".into());
-        }
         if !self.routes.is_empty()
             && let Some(m) = self
                 .file_mounts

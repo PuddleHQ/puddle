@@ -44,7 +44,7 @@ impl RequestRule {
         Self {
             id: rule.id,
             workspace: rule.workspace,
-            host: rule.host,
+            host: rule.host.to_string(),
             methods: rule.methods.names().to_vec(),
             path: rule.path.to_string(),
             created_at: rule.created_at,
@@ -76,11 +76,12 @@ fn overridden_warning(
     never: &[(Option<String>, String)],
 ) -> Option<String> {
     let scope = rule.workspace.as_ref().map(WorkspaceId::as_str);
+    let rule_host = rule.host.to_string();
     let names: Vec<String> = never
         .iter()
         .filter(|(workspace, name)| {
             (workspace.is_none() || scope.is_none() || workspace.as_deref() == scope)
-                && overlap(&rule.host, name)
+                && overlap(&rule_host, name)
         })
         .map(|(workspace, name)| match workspace {
             None => format!("{name} (every workspace)"),
@@ -90,7 +91,7 @@ fn overridden_warning(
     (!names.is_empty()).then(|| {
         format!(
             "{} is decrypted for this rule although the never-decrypt list names it: {}. A tool there that does not trust Puddle's certificate will fail on it.",
-            rule.host,
+            rule_host,
             names.join(", ")
         )
     })

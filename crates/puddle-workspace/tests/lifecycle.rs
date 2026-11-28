@@ -1623,3 +1623,32 @@ async fn a_maintenance_sandbox_cut_off_with_its_request_is_down_and_the_workspac
     w.reclaim_space(&rt, &id).await.unwrap();
     assert_eq!(names(&rt).await, ["box"]);
 }
+
+#[tokio::test]
+async fn a_dropped_delete_check_gives_the_maintenance_loan_back() {
+    let rt = FakeRuntime::new();
+    let w = Workspaces::default();
+    let id = ws("acme");
+    rt.create_volume(VolumeSpec {
+        name: id.volume_name(),
+        size: DiskSize::gib(1),
+    })
+    .await
+    .unwrap();
+    // The runtime never answers the maintenance sandbox's creation: the request is dropped there,
+    // as when it times out.
+    let spy = Spy::new(rt.clone(), |op| {
+        if op == Op::Create {
+            Step::Hang
+        } else {
+            Step::Pass
+        }
+    });
+    let held = w.check_delete(&spy, &id);
+    let cut = tokio::time::timeout(Duration::from_millis(50), held).await;
+    assert!(cut.is_err(), "the check never ends");
+    assert_eq!(w.holder(&id), None, "the workspace is still borrowed");
+    let stub = CheckStub::install(&rt, CLEAN);
+    w.check_delete(&rt, &id).await.unwrap();
+    assert_eq!(stub.ran_in(), ["m--acme"]);
+}

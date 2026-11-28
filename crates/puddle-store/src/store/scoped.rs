@@ -79,8 +79,8 @@ impl UserStore<'_> {
     /// them, and tells running workspaces to read their rules again.
     ///
     /// # Errors
-    /// [`StoreError::SystemActor`], [`StoreError::RequestRuleInvalid`] over the per-scope limit
-    /// or an empty host, [`StoreError::UnknownWorkspace`] for a workspace that is not theirs, or
+    /// [`StoreError::SystemActor`], [`StoreError::RequestRuleInvalid`] over the per-scope limit,
+    /// [`StoreError::UnknownWorkspace`] for a workspace that is not theirs, or
     /// a database error.
     pub fn add_request_rule(&self, new: &NewRequestRule) -> Result<RequestRule, StoreError> {
         self.store.add_request_rule_by(self.user, new)
@@ -99,8 +99,9 @@ impl UserStore<'_> {
     /// transaction.
     ///
     /// # Errors
-    /// [`StoreError::UnknownPending`] for a row of another user's workspace, and the errors of
-    /// [`Store::resolve_pending_by`] for the rest.
+    /// [`StoreError::UnknownPending`] for a row of another user's workspace, and, for the rest,
+    /// [`StoreError::PendingNotOpen`], [`StoreError::Pattern`], [`StoreError::ExpiryNotInFuture`],
+    /// [`StoreError::ExactAllowOnly`], [`StoreError::SystemActor`], or a database error.
     pub fn resolve_pending(
         &self,
         id: PendingId,
@@ -129,8 +130,8 @@ impl UserStore<'_> {
     /// Switches this user's rule on method and path on or off (R-65).
     ///
     /// # Errors
-    /// [`StoreError::UnknownRequestRule`] for a rule that is not theirs, and the errors of
-    /// [`Store::set_request_rule_enabled_by`] for the rest.
+    /// [`StoreError::UnknownRequestRule`] for a rule that is not theirs, and, for the rest,
+    /// [`StoreError::SystemActor`] or a database error.
     pub fn set_request_rule_enabled(
         &self,
         id: i64,

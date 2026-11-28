@@ -5,6 +5,7 @@
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
 
 use puddle_agent_proto::host::HostConfig;
 use puddle_netpolicy::LocalCategory;
@@ -1878,4 +1879,54 @@ mod tunnel_end {
             .ok();
         assert!(nothing.is_empty(), "the server never got the hello");
     }
+}
+
+/// Isolation rule (REV A-3): every blocking thread of the runtime is held by one workspace's
+/// work, and another workspace's decision and its refusal label still
+/// finish, and an async handler (the stand-in for `GET /api/health`) still answers. The proxy's
+/// store calls run on their own threads, so a full ambient blocking pool does not reach them.
+#[test]
+fn a_full_blocking_pool_does_not_delay_another_workspaces_decision() {
+    const POOL: u32 = 4;
+    const BAR: Duration = Duration::from_secs(2);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .max_blocking_threads(POOL as usize)
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let held = Arc::new(std::sync::Mutex::new(held));
+        let started = Arc::new(AtomicU32::new(0));
+        for _ in 0..POOL {
+            let (held, started) = (Arc::clone(&held), Arc::clone(&started));
+            drop(tokio::task::spawn_blocking(move || {
+                started.fetch_add(1, Ordering::SeqCst);
+                // Holds the thread until the sender drops.
+                let _ = held.lock().unwrap().recv();
+            }));
+        }
+        puddle_test_kit::eventually("the pool holders start", Duration::from_secs(5), || {
+            started.load(Ordering::SeqCst) >= POOL
+        })
+        .await;
+        let policy = Arc::new(StaticPolicy::new());
+        policy.allow(&host("b.example.com"));
+        policy.set_workspace_name("workspace-b");
+        let p = proxy(policy, StaticResolver::new());
+        let b = EgressRequest::new(WorkspaceId::new("b").unwrap(), host("b.example.com"), 443);
+        let began = std::time::Instant::now();
+        let decided = tokio::time::timeout(BAR, p.decide(&b, SuffixAllows::Count)).await;
+        let label = tokio::time::timeout(BAR, p.workspace_label(&b.workspace)).await;
+        let health = tokio::time::timeout(BAR, async { "ok" }).await;
+        drop(release);
+        assert!(
+            matches!(decided, Ok(Ok(Decision::Allow { .. }))),
+            "B's decision after {:?}: {decided:?}",
+            began.elapsed()
+        );
+        assert_eq!(label.as_deref(), Ok("workspace-b"));
+        assert_eq!(health, Ok("ok"));
+    });
 }

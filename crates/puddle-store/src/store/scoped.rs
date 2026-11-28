@@ -79,8 +79,8 @@ impl UserStore<'_> {
     /// them, and tells running workspaces to read their rules again.
     ///
     /// # Errors
-    /// [`StoreError::SystemActor`], [`StoreError::RequestRuleInvalid`] over the per-scope limit
-    /// or an empty host, [`StoreError::UnknownWorkspace`] for a workspace that is not theirs, or
+    /// [`StoreError::SystemActor`], [`StoreError::RequestRuleInvalid`] over the per-scope limit,
+    /// [`StoreError::UnknownWorkspace`] for a workspace that is not theirs, or
     /// a database error.
     pub fn add_request_rule(&self, new: &NewRequestRule) -> Result<RequestRule, StoreError> {
         self.store.add_request_rule_by(self.user, new)

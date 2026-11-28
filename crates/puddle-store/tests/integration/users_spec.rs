@@ -296,7 +296,7 @@ fn rules_on_method_and_path_apply_to_their_users_workspaces_only() {
     let (store, ann, _) = fixture();
     let new = |workspace: Option<&str>| NewRequestRule {
         workspace: workspace.map(ws),
-        host: "api.example".to_owned(),
+        host: puddle_types::HostPattern::parse_normalised("api.example").unwrap(),
         methods: Methods::parse(["DELETE"]).unwrap(),
         path: PathPattern::parse("/x").unwrap(),
         created_by: Actor::Api,
@@ -553,7 +553,7 @@ fn every_list_read_keeps_to_one_user_and_a_workspace_with_no_user_to_nobody() {
     // Rules on method and path: Ann's, for her workspace only.
     let new = |workspace: Option<&str>| NewRequestRule {
         workspace: workspace.map(ws),
-        host: "api.example".to_owned(),
+        host: puddle_types::HostPattern::parse_normalised("api.example").unwrap(),
         methods: Methods::parse(["DELETE"]).unwrap(),
         path: PathPattern::parse("/x").unwrap(),
         created_by: Actor::Api,
@@ -721,7 +721,7 @@ fn a_workspace_with_no_user_is_refused_everywhere_and_still_cleaned_up() {
             .as_user(UserId::OWNER)
             .add_request_rule(&NewRequestRule {
                 workspace: Some(stray.clone()),
-                host: "api.example".to_owned(),
+                host: puddle_types::HostPattern::parse_normalised("api.example").unwrap(),
                 methods: Methods::parse(["DELETE"]).unwrap(),
                 path: PathPattern::parse("/x").unwrap(),
                 created_by: Actor::Api,
@@ -928,7 +928,7 @@ fn every_write_as_a_second_user_leaves_no_row_of_the_owner() {
     for workspace in [None, Some("anns")] {
         anns.add_request_rule(&NewRequestRule {
             workspace: workspace.map(ws),
-            host: "api.example".to_owned(),
+            host: puddle_types::HostPattern::parse_normalised("api.example").unwrap(),
             methods: Methods::parse(["GET"]).unwrap(),
             path: PathPattern::parse("/*").unwrap(),
             created_by: Actor::Api,
@@ -1040,7 +1040,7 @@ fn a_user_cannot_switch_or_delete_the_request_rule_of_another_user() {
         .as_user(ann)
         .add_request_rule(&NewRequestRule {
             workspace: None,
-            host: "api.example".to_owned(),
+            host: puddle_types::HostPattern::parse_normalised("api.example").unwrap(),
             methods: Methods::parse(["DELETE"]).unwrap(),
             path: PathPattern::parse("/x").unwrap(),
             created_by: Actor::Api,

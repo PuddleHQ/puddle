@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 
 use puddle_netpolicy::normalise_host;
-use puddle_types::Host;
+use puddle_types::{Host, HostPattern};
 
 /// The hosts whose TLS a workspace's proxy terminates: exact names (`github.com`) and
 /// every-name-below patterns (`*.visualstudio.com`). Anything else is spliced untouched.
@@ -87,6 +87,17 @@ impl TerminationSet {
             self.exact.insert(name);
         }
         Ok(())
+    }
+
+    /// Adds one pattern that is already checked. It cannot fail: [`HostPattern`] holds exactly
+    /// what [`Self::insert`] accepts.
+    pub fn insert_pattern(&mut self, pattern: &HostPattern) {
+        let name = pattern.name().to_string();
+        if pattern.is_below() {
+            self.below.insert(name);
+        } else {
+            self.exact.insert(name);
+        }
     }
 
     /// Whether `host` is decrypted. An IP literal never is.

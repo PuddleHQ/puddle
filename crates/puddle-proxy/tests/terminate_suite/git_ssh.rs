@@ -436,7 +436,10 @@ async fn a_listed_repository_is_read_and_written_and_the_record_says_who_with_wh
     );
     assert_eq!(line.protocol(), puddle_types::ConnectionProtocol::Ssh);
     assert!(event.injected);
-    assert!(event.binding_id.is_some());
+    assert_eq!(
+        event.binding_id, calls[0].binding_id,
+        "the record names the binding the upstream call used"
+    );
     assert!(event.bytes_up > 0 && event.bytes_down > 0);
     assert_eq!(t.git.raised(), []);
 }
@@ -984,8 +987,17 @@ async fn a_busy_connection_is_not_closed_by_the_idle_limit_and_channels_are_capp
         ssh.channel_open_session().await.is_err(),
         "a third channel is over the cap"
     );
-    // flake-ok: an absence window; the idle limit is 200 ms and nothing signals that it did not fire.
-    tokio::time::sleep(Duration::from_millis(600)).await;
+    // Barrier: a second connection that logs in later and then idles is closed by the same 200 ms
+    // limit. Once it is closed, this connection's own deadline (earlier, had it been idle) has passed.
+    let mut other_guest = t.git.rig.guest();
+    let mut other = t.client(&mut other_guest, "bound.test:22").await;
+    login(&mut other).await;
+    puddle_test_kit::eventually(
+        "the idle connection is closed by the limit",
+        Duration::from_secs(5),
+        || other.is_closed(),
+    )
+    .await;
     assert!(!ssh.is_closed(), "busy, so not idle");
     first.eof().await.unwrap();
     let ran = collect(&mut first, 1).await;
@@ -1492,6 +1504,37 @@ async fn the_https_leg_streams_a_push_and_returns_the_hosts_report() {
     let seen = t.git.server.recorded();
     assert_eq!(seen[1].body, input);
     assert_eq!(seen[1].header("transfer-encoding"), Some("chunked"));
+}
+
+#[tokio::test]
+async fn a_push_written_in_pieces_with_a_pause_before_the_end_arrives_whole() {
+    let (t, _) = SshRig::https(smart_host(), GitSshAccount::Unnamed, &[]).await;
+    let mut guest = t.git.rig.guest();
+    let mut ssh = t.client(&mut guest, "bound.test:22").await;
+    login(&mut ssh).await;
+    let update =
+        format!("{SHA} 2222222222222222222222222222222222222222 refs/heads/main\0report-status\n");
+    let mut input = format!("{:04x}{update}0000", update.len() + 4).into_bytes();
+    input.extend(std::iter::repeat_n(b'P', 50_000));
+    let (first, rest) = input.split_at(input.len() / 2);
+    let mut channel = ssh.channel_open_session().await.unwrap();
+    channel
+        .exec(true, "git-receive-pack 'acme/web.git'")
+        .await
+        .unwrap();
+    channel.data(first).await.unwrap();
+    // A client that keeps its input open after a first piece: the command must wait for the end,
+    // not treat the pause as one.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    channel.data(rest).await.unwrap();
+    channel.eof().await.unwrap();
+    let ran = collect(&mut channel, 1).await;
+    assert_eq!(ran.exit, Some(0), "{ran:?}");
+    assert!(
+        ran.out.ends_with(&format!("GOT {} bytes", input.len())),
+        "{ran:?}"
+    );
+    assert_eq!(t.git.server.recorded()[1].body, input);
 }
 
 #[tokio::test]

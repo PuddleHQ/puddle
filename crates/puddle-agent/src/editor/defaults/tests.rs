@@ -529,3 +529,82 @@ fn a_custom_entry_for_an_owned_key_is_ignored() {
     apply(&rig.server);
     assert!(!rig.user("settings.json").exists() || rig.settings().get("editor.fontSize").is_none());
 }
+
+#[test]
+fn the_system_scheme_comes_back_only_in_the_run_that_hands_the_theme_back() {
+    let rig = Rig::new();
+    rig.plan(&dark(None));
+    apply(&rig.server);
+    let mut settings = rig.settings();
+    settings["workbench.colorTheme"] = json!("Mine");
+    std::fs::write(rig.user("settings.json"), settings.to_string()).unwrap();
+    rig.plan(&EditorDefaults::default());
+    apply(&rig.server);
+    apply(&rig.server);
+    let settings = rig.settings();
+    assert_eq!(settings["workbench.colorTheme"], "Mine");
+    assert_eq!(
+        settings["window.autoDetectColorScheme"], false,
+        "the user's own theme keeps the scheme switch it came with"
+    );
+}
+
+fn plan_bindings(rig: &Rig, list: Value) {
+    rig.plan(&EditorDefaults {
+        keybindings: Some(list.to_string()),
+        ..EditorDefaults::default()
+    });
+}
+
+fn file_bindings(rig: &Rig) -> Value {
+    serde_json::from_slice(&std::fs::read(rig.user("keybindings.json")).unwrap()).unwrap()
+}
+
+#[test]
+fn a_key_binding_is_the_same_only_when_every_field_is_the_same() {
+    let rig = Rig::new();
+    plan_bindings(&rig, json!([{"key": "ctrl+k", "command": "b", "args": 1}]));
+    apply(&rig.server);
+    // The user edits the arguments of Puddle's entry; the plan drops it.
+    std::fs::write(
+        rig.user("keybindings.json"),
+        json!([{"key": "ctrl+k", "command": "b", "args": 2}]).to_string(),
+    )
+    .unwrap();
+    rig.unplan();
+    apply(&rig.server);
+    assert_eq!(
+        file_bindings(&rig),
+        json!([{"key": "ctrl+k", "command": "b", "args": 2}]),
+        "the user's edited copy stays"
+    );
+    // A user entry with other arguments does not hide a planned one.
+    let rig = Rig::new();
+    std::fs::write(
+        rig.user("keybindings.json"),
+        json!([{"key": "ctrl+k", "command": "b", "args": 2}]).to_string(),
+    )
+    .unwrap();
+    plan_bindings(&rig, json!([{"key": "ctrl+k", "command": "b", "args": 1}]));
+    apply(&rig.server);
+    assert_eq!(file_bindings(&rig).as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn a_planned_key_binding_without_a_key_or_a_command_is_refused() {
+    let rig = Rig::new();
+    std::fs::write(
+        rig.user("keybindings.json"),
+        json!([{"key": "ctrl+q", "command": "x"}]).to_string(),
+    )
+    .unwrap();
+    plan_bindings(
+        &rig,
+        json!([{"command": "y"}, {"key": "ctrl+w"}, {"key": "ctrl+e", "command": "z"}]),
+    );
+    apply(&rig.server);
+    assert_eq!(
+        file_bindings(&rig),
+        json!([{"key": "ctrl+q", "command": "x"}, {"key": "ctrl+e", "command": "z"}])
+    );
+}

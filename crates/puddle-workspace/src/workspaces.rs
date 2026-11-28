@@ -449,8 +449,8 @@ impl Workspaces {
     ///
     /// # Errors
     ///
-    /// [`WorkspaceError::Checkouts`] when the listing fails, times out or its output can't be
-    /// read; [`WorkspaceError::Runtime`].
+    /// [`WorkspaceError::Checkouts`] when the listing exits non-zero or its output can't be
+    /// read; [`WorkspaceError::Runtime`] when the exec fails, including a timeout.
     pub async fn list_checkouts<S: Sandbox>(
         &self,
         sandbox: &S,

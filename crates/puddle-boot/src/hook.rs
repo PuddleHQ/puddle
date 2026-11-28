@@ -398,6 +398,8 @@ impl BootHook {
 
     /// Re-adopts a running sandbox a previous Puddle left behind and runs the hook again
     /// (idempotent: it converges and starts nothing twice).
+    /// The host has no caller for this: it re-runs the hook on a sandbox it kept with
+    /// [`BootHook::run`]. The gate tests are the only callers.
     ///
     /// # Errors
     ///

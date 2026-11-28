@@ -8,6 +8,7 @@ use puddle_store::UserId;
 use puddle_types::{EntryId, SessionUser, ToolName, ToolVersion, ToolsFileHash, WorkspaceId};
 
 use crate::checkouts::{AddRepository, Checkouts};
+use crate::owned::OwnedWorkspace;
 use crate::wire::{ToolRegistry, ToolVersions, ToolsListing};
 
 use super::{
@@ -123,7 +124,7 @@ pub trait WorkspaceService: Send + Sync {
     /// One workspace.
     fn get<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
 
     /// Creates a workspace: its volume, then a clone of each repository, one at a time. Once the
@@ -150,26 +151,26 @@ pub trait WorkspaceService: Send + Sync {
     /// Boots a workspace that is down.
     fn start<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
 
     /// Shuts a running workspace down.
     fn stop<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
 
     /// Gives freed disk space back to the host.
     fn reclaim<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
 
     /// Removes the stopped workspace's sandbox, and with it the root disk (home directory, tool
     /// caches, installed packages); the next start makes a fresh one. The volume is untouched.
     fn reset_root_disk<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
 
     /// Makes the workspace's root disk `size_mib` big. A root disk only grows, so the size must
@@ -179,7 +180,7 @@ pub trait WorkspaceService: Send + Sync {
     /// the fresh one this big. Refused when the added room is more than the computer has free.
     fn grow_root_disk<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
         size_mib: u32,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
 
@@ -187,7 +188,7 @@ pub trait WorkspaceService: Send + Sync {
     /// workspace.
     fn delete_check<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<DeleteCheck, WorkspaceError>>;
 
     /// Deletes a workspace that is stopped. It checks again first: with `fingerprint` it goes
@@ -196,7 +197,7 @@ pub trait WorkspaceService: Send + Sync {
     /// [`WorkspaceError::Conflict`] and nothing is deleted.
     fn delete<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
         fingerprint: Option<&'a str>,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
 
@@ -206,7 +207,7 @@ pub trait WorkspaceService: Send + Sync {
     /// or deleted.
     fn rename<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
         name: DisplayName,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
 
@@ -217,7 +218,7 @@ pub trait WorkspaceService: Send + Sync {
     /// workspace is being created or deleted.
     fn set_start_folder<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
         start_folder: Option<StartFolder>,
     ) -> BoxFuture<'a, Result<StartFolderChange, WorkspaceError>>;
 
@@ -226,7 +227,7 @@ pub trait WorkspaceService: Send + Sync {
     /// [`WorkspaceError::Conflict`] while the workspace is being created or deleted.
     fn set_session_user<'a>(
         &'a self,
-        id: &'a WorkspaceId,
+        workspace: &'a OwnedWorkspace,
         user: SessionUser,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>>;
 
@@ -475,7 +476,7 @@ impl WorkspaceService for NoWorkspaces {
     }
     fn get<'a>(
         &'a self,
-        _: &'a WorkspaceId,
+        _: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         unavailable()
     }
@@ -488,65 +489,65 @@ impl WorkspaceService for NoWorkspaces {
     }
     fn start<'a>(
         &'a self,
-        _: &'a WorkspaceId,
+        _: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         unavailable()
     }
     fn stop<'a>(
         &'a self,
-        _: &'a WorkspaceId,
+        _: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         unavailable()
     }
     fn reclaim<'a>(
         &'a self,
-        _: &'a WorkspaceId,
+        _: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         unavailable()
     }
     fn reset_root_disk<'a>(
         &'a self,
-        _: &'a WorkspaceId,
+        _: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         unavailable()
     }
     fn grow_root_disk<'a>(
         &'a self,
-        _: &'a WorkspaceId,
+        _: &'a OwnedWorkspace,
         _: u32,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         unavailable()
     }
     fn delete_check<'a>(
         &'a self,
-        _: &'a WorkspaceId,
+        _: &'a OwnedWorkspace,
     ) -> BoxFuture<'a, Result<DeleteCheck, WorkspaceError>> {
         unavailable()
     }
     fn delete<'a>(
         &'a self,
-        _: &'a WorkspaceId,
+        _: &'a OwnedWorkspace,
         _: Option<&'a str>,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         unavailable()
     }
     fn rename<'a>(
         &'a self,
-        _: &'a WorkspaceId,
+        _: &'a OwnedWorkspace,
         _: DisplayName,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         unavailable()
     }
     fn set_start_folder<'a>(
         &'a self,
-        _: &'a WorkspaceId,
+        _: &'a OwnedWorkspace,
         _: Option<StartFolder>,
     ) -> BoxFuture<'a, Result<StartFolderChange, WorkspaceError>> {
         unavailable()
     }
     fn set_session_user<'a>(
         &'a self,
-        _: &'a WorkspaceId,
+        _: &'a OwnedWorkspace,
         _: SessionUser,
     ) -> BoxFuture<'a, Result<WorkspaceRecord, WorkspaceError>> {
         unavailable()

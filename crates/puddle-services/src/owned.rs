@@ -61,6 +61,16 @@ impl OwnedWorkspace {
         }
     }
 
+    /// A handle with no lookup, for a test that has no store: `workspace` is `user`'s.
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn for_test(user: UserId, workspace: &WorkspaceId) -> Self {
+        Self {
+            id: workspace.clone(),
+            user,
+        }
+    }
+
     /// The workspace.
     #[must_use]
     pub fn id(&self) -> &WorkspaceId {

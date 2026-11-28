@@ -3,6 +3,8 @@
 
 use super::start_folder_and_dev_cert::stop_and_start;
 use super::*;
+use puddle_services::owned::OwnedWorkspace;
+use puddle_store::UserId;
 
 /// Creates `acme` with a secret of its own and a settings file, then stops Puddle: what a
 /// delete has to clear besides the runtime. Returns the secrets that exist for it.
@@ -336,7 +338,10 @@ async fn a_busy_database_does_not_hold_up_the_workspace_list_while_a_rename_save
         // The list's lock is a plain mutex, so a reader that has to wait blocks its thread:
         // measure how long the read took rather than time it out.
         let started = std::time::Instant::now();
-        let read = host.workspaces().get(&id).await;
+        let read = host
+            .workspaces()
+            .get(&OwnedWorkspace::for_test(UserId::OWNER, &id))
+            .await;
         let took = started.elapsed();
         db.execute_batch("COMMIT").unwrap();
         (read, took)
@@ -1028,9 +1033,13 @@ async fn a_delete_waits_for_a_settings_change_in_flight_so_it_cannot_bring_the_f
     let in_flight = host.settings().lock().await;
     // Straight to the service: the HTTP route reads settings under the same lock.
     let id = WorkspaceId::new("acme").unwrap();
-    puddle_services::workspaces::WorkspaceService::delete(host.workspaces(), &id, None)
-        .await
-        .unwrap();
+    puddle_services::workspaces::WorkspaceService::delete(
+        host.workspaces(),
+        &OwnedWorkspace::for_test(UserId::OWNER, &id),
+        None,
+    )
+    .await
+    .unwrap();
     // Everything but the settings file goes; that waits on the change in flight.
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert!(

@@ -227,11 +227,16 @@ async fn hostile_hg16_ambiguous_framing_is_refused_before_anything_goes_upstream
         // Transfer-Encoding that does not end in chunked.
         (
             "POST /x HTTP/1.1\r\nHost: bound.test\r\nTransfer-Encoding: chunked, gzip\r\n\r\n",
-            "Transfer-Encoding without final chunked",
+            "Transfer-Encoding other than one chunked",
         ),
         (
             "POST /x HTTP/1.1\r\nHost: bound.test\r\nTransfer-Encoding: gzip\r\n\r\n",
-            "Transfer-Encoding without final chunked",
+            "Transfer-Encoding other than one chunked",
+        ),
+        // A coding before chunked would reach the origin as a coded body with no label.
+        (
+            "POST /x HTTP/1.1\r\nHost: bound.test\r\nTransfer-Encoding: gzip, chunked\r\n\r\n0\r\n\r\n",
+            "Transfer-Encoding other than one chunked",
         ),
         // Conflicting or malformed lengths.
         (
@@ -313,14 +318,9 @@ async fn hostile_hg16_ambiguous_framing_is_refused_before_anything_goes_upstream
         );
         assert!(client.closed().await, "{request:?}");
     }
-    assert!(
-        server
-            .recorded()
-            .iter()
-            .all(|r| r.body.is_empty() || r.target != "/x"),
-        "{:?}",
-        server.recorded()
-    );
+    // The bad-chunk case is only found while the body is read, so the injector may be asked first
+    // and the request may have been sent with its head; no other shape reaches the server.
+    assert!(server.recorded().len() <= 1, "{:?}", server.recorded());
     assert!(!captured_logs().contains(CANARY));
 }
 
@@ -499,8 +499,11 @@ async fn hostile_hg16_a_guest_that_stops_sending_a_body_does_not_hold_the_upstre
         "the request is failed, not completed"
     );
     assert!(client.closed().await);
-    // A complete request never reached the real server.
-    assert!(server.recorded().iter().all(|r| r.body.len() != 100));
+    // The upstream connection ended with the request, and the server saw no complete request.
+    rig.upstream_ended(1).await;
+    assert!(server.recorded().is_empty(), "{:?}", server.recorded());
+    let events = rig.events_exactly(1).await;
+    assert_eq!(events.len(), 1, "{events:?}");
 }
 
 // What the guest sends in `Authorization` and `Proxy-Authorization`. The injector of the

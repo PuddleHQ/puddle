@@ -155,9 +155,14 @@ pub(crate) fn header_name(line: &str) -> String {
         .to_ascii_lowercase()
 }
 
+/// Strips optional whitespace (space and tab) only: `str::trim` also strips non-ASCII spaces.
+fn trim_ows(text: &str) -> &str {
+    text.trim_matches([' ', '\t'])
+}
+
 /// The trimmed value of a header line.
 pub(crate) fn header_value(line: &str) -> &str {
-    line.split_once(':').map_or("", |(_, v)| v.trim())
+    line.split_once(':').map_or("", |(_, v)| trim_ows(v))
 }
 
 /// The destination a request names, before host normalisation.
@@ -258,7 +263,7 @@ pub(crate) fn body_framing(headers: &[String]) -> Result<Body, &'static str> {
         match header_name(h).as_str() {
             "content-length" => {
                 for v in header_value(h).split(',') {
-                    let v = v.trim();
+                    let v = trim_ows(v);
                     if v.is_empty() || !v.bytes().all(|b| b.is_ascii_digit()) {
                         return Err("bad Content-Length");
                     }
@@ -272,7 +277,7 @@ pub(crate) fn body_framing(headers: &[String]) -> Result<Body, &'static str> {
             "transfer-encoding" => codings.extend(
                 header_value(h)
                     .split(',')
-                    .map(|v| v.trim().to_ascii_lowercase())
+                    .map(|v| trim_ows(v).to_ascii_lowercase())
                     .filter(|v| !v.is_empty()),
             ),
             _ => {}
@@ -284,8 +289,8 @@ pub(crate) fn body_framing(headers: &[String]) -> Result<Body, &'static str> {
     if length.is_some() {
         return Err("both Content-Length and Transfer-Encoding");
     }
-    if codings.last().map(String::as_str) != Some("chunked") {
-        return Err("Transfer-Encoding without final chunked");
+    if codings != ["chunked"] {
+        return Err("Transfer-Encoding other than one chunked");
     }
     Ok(Body::Chunked)
 }
@@ -293,7 +298,12 @@ pub(crate) fn body_framing(headers: &[String]) -> Result<Body, &'static str> {
 /// The size in a chunk-size line (`1a;ext=1\r\n`).
 pub(crate) fn chunk_size(line: &[u8]) -> io::Result<u64> {
     let text = std::str::from_utf8(line).map_err(|_| invalid("bad chunk size"))?;
-    let hex = text.trim_end().split(';').next().unwrap_or("").trim();
+    let hex = trim_ows(
+        text.trim_end_matches([' ', '\t', '\r', '\n'])
+            .split(';')
+            .next()
+            .unwrap_or(""),
+    );
     if hex.is_empty() || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(invalid("bad chunk size"));
     }

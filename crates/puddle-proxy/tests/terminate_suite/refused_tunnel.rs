@@ -58,8 +58,17 @@ async fn a_client_in_a_container_gets_the_plain_refusal() {
     let pki = Pki::new();
     let rig = RigBuilder::new(&pki).build();
     let mut guest = rig.guest().in_container();
-    let (status, _) = guest.connect_to("stranger.test:443").await;
+    let (status, tunnel) = guest.connect_to("stranger.test:443").await;
     assert_eq!(status, 403);
+    drop(tunnel);
+    drop(guest);
+    let e = rig.events_exactly(1).await;
+    terminate_support::assert_record(
+        &e[0],
+        ConnectionDecision::Pending,
+        None,
+        puddle_types::ConnectionReason::NoRule,
+    );
 }
 
 #[tokio::test]
@@ -67,8 +76,17 @@ async fn a_refusal_on_another_port_is_the_plain_connect_answer() {
     let pki = Pki::new();
     let rig = RigBuilder::new(&pki).build();
     let mut guest = rig.guest();
-    let (status, _) = guest.connect_to("stranger.test:8443").await;
+    let (status, tunnel) = guest.connect_to("stranger.test:8443").await;
     assert_eq!(status, 403);
+    drop(tunnel);
+    drop(guest);
+    let e = rig.events_exactly(1).await;
+    terminate_support::assert_record(
+        &e[0],
+        ConnectionDecision::Pending,
+        None,
+        puddle_types::ConnectionReason::NoRule,
+    );
 }
 
 #[cfg(unix)]

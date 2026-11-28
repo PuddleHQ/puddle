@@ -184,11 +184,16 @@ fn body_framing_refuses_ambiguity() {
         Ok(Body::Length(5))
     );
     assert_eq!(
-        body_framing(&hs(&["Transfer-Encoding: gzip, chunked"])),
+        body_framing(&hs(&["Transfer-Encoding: Chunked"])),
         Ok(Body::Chunked)
     );
     for bad in [
-        &["Content-Length: 5", "Content-Length: 6"][..],
+        &["Transfer-Encoding: gzip, chunked"][..],
+        &["Transfer-Encoding: chunked, chunked"],
+        &["Transfer-Encoding: gzip"],
+        &["Content-Length: \u{a0}5"],
+        &["Content-Length: 5\u{2003}"],
+        &["Content-Length: 5", "Content-Length: 6"],
         &["Content-Length: 5", "Transfer-Encoding: chunked"],
         &["Transfer-Encoding: chunked, gzip"],
         &["Content-Length: -1"],
@@ -203,7 +208,14 @@ fn body_framing_refuses_ambiguity() {
 #[test]
 fn a_chunk_size_is_hexadecimal_digits_only() {
     assert_eq!(chunk_size(b"1a;ext=1\r\n").unwrap(), 26);
-    for bad in [&b"+5\r\n"[..], b"-5\r\n", b"0x5\r\n", b"\r\n", b";x\r\n"] {
+    for bad in [
+        &b"+5\r\n"[..],
+        b"-5\r\n",
+        b"0x5\r\n",
+        b"\r\n",
+        b";x\r\n",
+        "\u{a0}5\r\n".as_bytes(),
+    ] {
         assert!(chunk_size(bad).is_err(), "{}", String::from_utf8_lossy(bad));
     }
 }
@@ -221,7 +233,7 @@ proptest! {
         if let Ok(h) = got {
             prop_assert!(!h.method.is_empty());
             for line in std::iter::once(&h.uri).chain(&h.headers) {
-                prop_assert!(!line.bytes().any(|b| b < 0x20 && b != b'\t'));
+                prop_assert!(!line.bytes().any(|b| b < 0x20 && b != b'\t' || b == 0x7f));
             }
         }
     }

@@ -101,6 +101,12 @@ async fn a_401_for_a_request_with_an_added_credential_becomes_the_injectors_refu
         [format!("Basic {CANARY}")]
     );
     let events = rig.events(1).await;
+    terminate_support::assert_record(
+        &events[0],
+        puddle_types::ConnectionDecision::Blocked,
+        Some(puddle_types::ConnectionOutcome::Connected),
+        puddle_types::ConnectionReason::Refused(ReasonCode::CredentialRejected),
+    );
     assert!(
         events[0].injected,
         "the record still says a credential was added"

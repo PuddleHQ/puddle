@@ -1017,6 +1017,36 @@ impl Rig {
         assert!(events.len() >= count, "{count} events expected: {events:?}");
         events
     }
+
+    /// Exactly `count` records: waits for them, then for every guest connection the proxy
+    /// still handles to end (a record is written when its connection ends), then asserts no
+    /// further record came. Close the guest's streams first, or this waits for them.
+    pub(crate) async fn events_exactly(&self, count: usize) -> Vec<ConnectionEvent> {
+        self.events(count).await;
+        puddle_test_kit::eventually(
+            "every guest connection ended and wrote its record",
+            Duration::from_secs(5),
+            || self.open_guest_streams() == 0,
+        )
+        .await;
+        let events = self.log.events();
+        assert_eq!(events.len(), count, "{count} events exactly: {events:?}");
+        events
+    }
+}
+
+/// The decision, how reaching the destination went and the reason of one record.
+pub(crate) fn assert_record(
+    event: &ConnectionEvent,
+    decision: puddle_types::ConnectionDecision,
+    outcome: Option<puddle_types::ConnectionOutcome>,
+    reason: puddle_types::ConnectionReason,
+) {
+    assert_eq!(
+        (event.decision, event.outcome, &event.reason),
+        (decision, outcome, &reason),
+        "{event:?}"
+    );
 }
 
 pub(crate) struct Guest {

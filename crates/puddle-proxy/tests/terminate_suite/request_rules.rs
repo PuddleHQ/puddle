@@ -409,7 +409,8 @@ async fn a_tunnel_to_another_port_of_a_covered_host_is_refused_because_its_reque
     assert_eq!(events[0].request_rule, Some(RuleId(2)), "the rule is named");
     // A host with no rule keeps its tunnels.
     let (status, _) = guest.connect_to("other.test:8443").await;
-    assert_ne!(status, 403);
+    // The tunnel is opened (not the 403 of a covered host); the name does not resolve.
+    assert_eq!(status, 502, "a host with no rule keeps its tunnels");
     assert!(server.recorded().is_empty());
 }
 

@@ -2,7 +2,7 @@
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use puddle_test_kit::{eventually, no_event_for};
+use puddle_test_kit::{closes_without_event, eventually};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -573,7 +573,7 @@ async fn a_guest_agent_on_another_protocol_is_reported_once_and_nothing_else_it_
 
     let mut events = std::mem::replace(&mut h.events, mpsc::unbounded_channel().1);
     h.close().await.unwrap();
-    no_event_for(
+    closes_without_event(
         "an event from an agent on another protocol",
         Duration::from_millis(200),
         &mut events,

@@ -59,11 +59,11 @@ async fn a_control_stream_with_a_bad_preamble_is_dropped() {
     send(&mut s, &AgentMessage::oom_kill(Some(1), None)).await;
     let mut buf = [0u8; 1];
     assert!(s.read(&mut buf).await.is_err());
-    // Closing joins the session, which drops its end of the channel: no event is read at once, and a
-    // late one would still show inside the window.
+    // Closing joins the session, which drops its end of the channel: the channel then reads as closed, and an
+    // event sent before shows first.
     let mut events = std::mem::replace(&mut h.events, mpsc::unbounded_channel().1);
     h.close().await.unwrap();
-    no_event_for(
+    closes_without_event(
         "an event for a stream with a bad preamble",
         Duration::from_millis(200),
         &mut events,

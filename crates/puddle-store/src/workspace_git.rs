@@ -25,15 +25,19 @@ const MAX_NESTED: usize = 21;
 /// One exception: an Azure DevOps repository has two hosts, `dev.azure.com` and
 /// `<org>.visualstudio.com`, and so two `RepoRef`s. They are not merged: a table row or a listing
 /// under one host does not answer for the other, and the one the user typed is the one kept.
+///
+/// The fields are private: only [`RepoRef::new`] and [`RepoRef::from_https_url`] make one, so a
+/// value in hand has passed the checks and cannot be edited into one that would not.
+///
+/// ```compile_fail
+/// let mut repo = puddle_store::RepoRef::new("github.com", "acme", "web").unwrap();
+/// repo.repo = "../escape".to_owned();
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub struct RepoRef {
-    /// The host, lower-case.
-    pub host: HostName,
-    /// The user, organisation or Azure DevOps organisation.
-    pub owner: Owner,
-    /// `repo`, or `project/repo` on Azure DevOps.
-    pub repo: String,
+    host: HostName,
+    owner: Owner,
+    repo: String,
 }
 
 /// Whether `host` is an Azure DevOps name, whose project and repository names may hold a space
@@ -61,6 +65,24 @@ fn valid_segment(segment: &str, azure: bool) -> bool {
 }
 
 impl RepoRef {
+    /// The host, lower-case.
+    #[must_use]
+    pub fn host(&self) -> &HostName {
+        &self.host
+    }
+
+    /// The user, organisation or Azure DevOps organisation.
+    #[must_use]
+    pub fn owner(&self) -> &Owner {
+        &self.owner
+    }
+
+    /// `repo`, or `project/repo` on Azure DevOps.
+    #[must_use]
+    pub fn repo(&self) -> &str {
+        &self.repo
+    }
+
     /// How many names a repository's path holds at most on `host`: `project/repo` on Azure DevOps,
     /// one on github.com, and any depth of groups on another host (GitLab's subgroups).
     #[must_use]

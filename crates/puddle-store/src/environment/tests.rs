@@ -115,11 +115,11 @@ fn a_place_is_a_header_a_path_or_a_query_parameter_with_a_checked_name() {
     let hosts = vec![SecretHost::new("api.telegram.org").unwrap()];
     assert_eq!(
         EnvDraft::secret_in(id.clone(), hosts.clone(), SecretPlace::Path).unwrap(),
-        EnvDraft::Secret {
+        EnvDraft(DraftKind::Secret {
             id: id.clone(),
             hosts,
             place: SecretPlace::Path,
-        }
+        })
     );
     assert!(EnvDraft::secret_in(id, Vec::new(), SecretPlace::Path).is_err());
 }
@@ -134,13 +134,13 @@ fn a_secret_needs_hosts_and_they_are_sorted_without_repeats() {
     let draft = EnvDraft::secret(id.clone(), hosts).unwrap();
     assert_eq!(
         draft,
-        EnvDraft::Secret {
+        EnvDraft(DraftKind::Secret {
             id: id.clone(),
             hosts: ["a.example.com", "b.example.com"]
                 .map(|h| SecretHost::new(h).unwrap())
                 .to_vec(),
             place: SecretPlace::Header,
-        }
+        })
     );
     let many = (0..=MAX_SECRET_HOSTS)
         .map(|i| SecretHost::new(&format!("h{i}.example.com")).unwrap())

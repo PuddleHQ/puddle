@@ -212,13 +212,13 @@ impl GitInjector {
                 if self.denied.first(format!("{code}:{repo}")) {
                     self.events.emit(Event::GitAccessDenied {
                         workspace: self.workspace.clone(),
-                        host: repo.host.to_string(),
-                        owner: repo.owner.to_string(),
-                        repo: repo.repo.clone(),
+                        host: repo.host().to_string(),
+                        owner: repo.owner().to_string(),
+                        repo: repo.repo().to_owned(),
                         access,
                     });
                 }
-                wording::not_allowed(access, &what, Some(&repo.repo))
+                wording::not_allowed(access, &what, Some(repo.repo()))
             }
             None => wording::not_allowed(access, &what, None),
         };

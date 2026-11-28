@@ -264,9 +264,9 @@ impl Store {
                  ON CONFLICT DO NOTHING",
                 params![
                     ws.as_str(),
-                    repo.host.as_str(),
-                    repo.owner.as_str(),
-                    repo.repo,
+                    repo.host().as_str(),
+                    repo.owner().as_str(),
+                    repo.repo(),
                     toggles.pull,
                     toggles.push,
                     push_block.map(PushBlock::as_str),
@@ -342,7 +342,7 @@ fn choose<'a>(
     list: &'a [Identity],
     request: &RepoGitRequest,
 ) -> Result<(Option<&'a Identity>, StartBasis), StoreError> {
-    let (host, owner) = (request.repo.host.as_str(), request.repo.owner.as_str());
+    let (host, owner) = (request.repo.host().as_str(), request.repo.owner().as_str());
     if let Some(id) = request.identity {
         let named = everyone
             .iter()
@@ -415,9 +415,9 @@ fn start_in(
          ON CONFLICT DO NOTHING",
         params![
             ws.as_str(),
-            repo.host.as_str(),
-            repo.owner.as_str(),
-            repo.repo,
+            repo.host().as_str(),
+            repo.owner().as_str(),
+            repo.repo(),
             request.pull,
             request.push,
             request.push_block.map(PushBlock::as_str),

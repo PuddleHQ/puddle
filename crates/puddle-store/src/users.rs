@@ -84,8 +84,8 @@ impl UserName {
         if chars > MAX_USER_NAME_CHARS {
             return refuse("a user name has at most 64 characters");
         }
-        if text.chars().any(char::is_control) {
-            return refuse("a user name can't contain control characters");
+        if text.chars().any(is_hidden) {
+            return refuse("a user name can't contain control or invisible characters");
         }
         if text.trim() != text {
             return refuse("a user name can't start or end with a space");
@@ -188,8 +188,32 @@ impl SignInMethod {
     }
 }
 
-/// A device name: 1 to [`MAX_DEVICE_NAME_CHARS`] characters, no control characters; surrounding
-/// space is trimmed.
+/// A control character, or a Unicode format character (category Cf): zero-width spaces and
+/// joiners, bidirectional marks and overrides, the byte-order mark, soft hyphen. None of them
+/// shows, so two names that differ only in them look alike, and an override reorders what is
+/// around it.
+pub(crate) fn is_hidden(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{00AD}'
+                | '\u{0600}'..='\u{0605}'
+                | '\u{061C}'
+                | '\u{06DD}'
+                | '\u{070F}'
+                | '\u{180E}'
+                | '\u{200B}'..='\u{200F}'
+                | '\u{202A}'..='\u{202E}'
+                | '\u{2060}'..='\u{206F}'
+                | '\u{FEFF}'
+                | '\u{FFF9}'..='\u{FFFB}'
+                | '\u{E0001}'
+                | '\u{E0020}'..='\u{E007F}'
+        )
+}
+
+/// A device name: 1 to [`MAX_DEVICE_NAME_CHARS`] characters, no control or invisible characters;
+/// surrounding space is trimmed.
 ///
 /// # Errors
 /// [`crate::StoreError::DeviceName`] saying what is wrong.
@@ -202,8 +226,8 @@ pub fn device_name(text: &str) -> Result<String, crate::StoreError> {
     if text.chars().count() > MAX_DEVICE_NAME_CHARS {
         return refuse("a device name has at most 64 characters");
     }
-    if text.chars().any(char::is_control) {
-        return refuse("a device name can't contain control characters");
+    if text.chars().any(is_hidden) {
+        return refuse("a device name can't contain control or invisible characters");
     }
     Ok(text.to_owned())
 }

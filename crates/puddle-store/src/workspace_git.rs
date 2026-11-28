@@ -21,6 +21,10 @@ const MAX_NESTED: usize = 21;
 /// request's path (and refuses one that is not in its one canonical escaping) before it looks a
 /// repository up, and an address typed by the user is decoded the same way, so one repository has
 /// one spelling here however it is reached.
+///
+/// One exception: an Azure DevOps repository has two hosts, `dev.azure.com` and
+/// `<org>.visualstudio.com`, and so two `RepoRef`s. They are not merged: a table row or a listing
+/// under one host does not answer for the other, and the one the user typed is the one kept.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub struct RepoRef {
@@ -84,11 +88,18 @@ impl RepoRef {
         let host = HostName::new(host.trim().to_ascii_lowercase()).map_err(|_| bad("host"))?;
         // The proxy builds its reference from the plain host, so a port or a trailing dot would
         // be another spelling of the same repository that never matches.
-        if host.as_str().contains(':') || host.as_str().ends_with('.') {
+        if host.as_str().contains(':') || host.as_str().split('.').any(str::is_empty) {
             return Err(bad("host"));
         }
         let owner = Owner::new(owner).map_err(|_| bad("owner"))?;
         if matches!(owner.as_str(), "." | "..") {
+            return Err(bad("owner"));
+        }
+        // On `<org>.visualstudio.com` the organisation is the host's first label: another owner
+        // names no repository there.
+        if let Some(org) = host.as_str().strip_suffix(".visualstudio.com")
+            && !owner.as_str().eq_ignore_ascii_case(org)
+        {
             return Err(bad("owner"));
         }
         // ASCII only, as the proxy folds a request's path: `K` (the Kelvin sign) is not `k` to every host.

@@ -280,8 +280,7 @@ impl From<SecretHost> for String {
     }
 }
 
-/// Where in a request the proxy swaps a secret's stand-in for its real value (credentials spec
-/// §9). Anywhere else the stand-in goes out unchanged. The query name is the type the proxy uses.
+/// Where in a request the proxy swaps a secret's stand-in for its real value. Anywhere else the stand-in goes out unchanged. The query name is the type the proxy uses.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum SecretPlace {
     /// The values of request headers: what almost every tool uses.

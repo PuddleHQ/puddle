@@ -362,7 +362,9 @@ impl SignIn {
             return Ok(None);
         };
         let refresh = random_secret().map_err(|e| internal(&e))?;
-        self.secrets.put_session(device.id, &digest(&refresh))?;
+        if !self.secrets.put_session(device.id, &digest(&refresh))? {
+            return Ok(None);
+        }
         let grant = self.grant(checked.user(), &device)?;
         Ok(Some(Granted { grant, refresh }))
     }
